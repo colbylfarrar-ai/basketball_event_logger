@@ -38,8 +38,8 @@ st.sidebar.title("Navigation")
 pages = {
     "1. Input Hub": "pages/1_Input_Hub.py",
     "2. Game Tracker": "pages/2_Game_Tracker.py",
-    "4. Rankings": "pages/4_Rankings.py",
-    "5. Team Analytics": "pages/5_Team_Analytics.py",
+    "3. Rankings": "pages/3_Rankings.py",
+    "4. Team Analytics": "pages/4_Team_Analytics.py",
 }
 
 choice = st.sidebar.radio("Go to:", list(pages.keys()))

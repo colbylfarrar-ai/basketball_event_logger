@@ -34,10 +34,23 @@ def initialize_database():
         conn.executescript(f.read())
     # Migrations for columns added after initial release
     for stmt in [
+        # Schema migrations
         "ALTER TABLE players ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE players ADD COLUMN season TEXT NOT NULL DEFAULT 'Current'",
         "ALTER TABLE schedule ADD COLUMN season TEXT NOT NULL DEFAULT 'Current'",
         "ALTER TABLE game_lineup_players ADD COLUMN plus_minus INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE teams ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+        # Indexes — idempotent, safe to run every startup
+        "CREATE INDEX IF NOT EXISTS idx_glp_game_id       ON game_lineup_players(game_id)",
+        "CREATE INDEX IF NOT EXISTS idx_glp_game_player   ON game_lineup_players(game_id, player_id)",
+        "CREATE INDEX IF NOT EXISTS idx_glp_player_id     ON game_lineup_players(player_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ge_game_id         ON game_events(game_id)",
+        "CREATE INDEX IF NOT EXISTS idx_gel_event_id       ON game_event_lineup(event_id)",
+        "CREATE INDEX IF NOT EXISTS idx_gel_player_id      ON game_event_lineup(player_id)",
+        "CREATE INDEX IF NOT EXISTS idx_games_tracked      ON games(tracked)",
+        "CREATE INDEX IF NOT EXISTS idx_games_team1        ON games(team1_id)",
+        "CREATE INDEX IF NOT EXISTS idx_games_team2        ON games(team2_id)",
+        "CREATE INDEX IF NOT EXISTS idx_players_team_arch  ON players(team_id, archived)",
     ]:
         try:
             conn.execute(stmt)

@@ -17,6 +17,16 @@ HA_OPTIONS     = ["Home", "Away"]
 EDITOR_HELP = "**Click any cell to edit.** Hover a row and click 🗑 to delete. Use the **＋** row at the bottom to add."
 
 
+def sort_by_date(df: pd.DataFrame, col: str = "date", ascending: bool = False) -> pd.DataFrame:
+    """Sort a dataframe by a date column regardless of text format."""
+    if df.empty or col not in df.columns:
+        return df
+    df = df.copy()
+    df["_sort"] = pd.to_datetime(df[col], errors="coerce", dayfirst=False)
+    df = df.sort_values("_sort", ascending=ascending).drop(columns=["_sort"])
+    return df.reset_index(drop=True)
+
+
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
 def team_map():
@@ -38,20 +48,27 @@ def load_players_for(team_id):
     return pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["id","name","number","height","wingspan","weight"])
 
-def load_schedule_for(team_id):
+def load_games_for_team(team_id):
+    """Load all games involving team_id from the games table, presented from that team's POV."""
     rows = query("""
-        SELECT s.id, o.name AS opponent, s.date, s.home_away,
-               s.location, s.team_score, s.opp_score, s.tracked
-        FROM schedule s
-        JOIN teams o ON o.id = s.opponent_id
-        WHERE s.team_id = ? AND s.season = 'Current'
-        ORDER BY s.date DESC
-    """, (team_id,))
+        SELECT g.id,
+            CASE WHEN g.team1_id=? THEN t2.name ELSE t1.name END AS opponent,
+            g.date,
+            CASE WHEN g.team1_id=? THEN 'Home' ELSE 'Away' END   AS home_away,
+            g.location,
+            CASE WHEN g.team1_id=? THEN g.home_score ELSE g.away_score END AS team_score,
+            CASE WHEN g.team1_id=? THEN g.away_score ELSE g.home_score END AS opp_score,
+            g.tracked
+        FROM games g
+        JOIN teams t1 ON t1.id = g.team1_id
+        JOIN teams t2 ON t2.id = g.team2_id
+        WHERE g.team1_id=? OR g.team2_id=?
+    """, (team_id,)*6)
     df = pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["id","opponent","date","home_away","location","team_score","opp_score","tracked"])
     if not df.empty:
         df["tracked"] = df["tracked"].astype(bool)
-    return df
+    return sort_by_date(df, ascending=False)
 
 def load_officials():
     rows = query("SELECT id, name, official_id FROM officials ORDER BY name")
@@ -64,13 +81,12 @@ def load_games():
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
-        ORDER BY g.date DESC
     """)
     df = pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["id","team1","team2","date","location","home_score","away_score","tracked"])
     if not df.empty:
         df["tracked"] = df["tracked"].astype(bool)
-    return df
+    return sort_by_date(df, ascending=False)
 
 
 # ── delta applier ──────────────────────────────────────────────────────────────
@@ -129,6 +145,7 @@ with st.expander("New Season", expanded=False):
         execute("UPDATE schedule SET season=? WHERE season='Current'", (lbl,))
         invalidate("_players_orig", "players_editor", "_sched_orig", "sched_editor")
         st.success(f"Season '{lbl}' archived. Add new rosters and schedules to start fresh.")
+        st.cache_data.clear()
         st.rerun()
 
 st.divider()
@@ -176,6 +193,7 @@ with tab_teams:
         else:
             st.success("Saved!")
         invalidate("_teams_orig", "teams_editor")
+        st.cache_data.clear()
         st.rerun()
 
 
@@ -240,6 +258,7 @@ with tab_players:
             else:
                 st.success("Saved!")
             invalidate("_players_orig", "players_editor")
+            st.cache_data.clear()
             st.rerun()
 
 
@@ -298,11 +317,12 @@ with tab_games:
             else:
                 st.success("Saved!")
             invalidate("_games_orig", "games_editor")
+            st.cache_data.clear()
             st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TEAM SCHEDULE  (standalone team picker)
+#  TEAM SCHEDULE  — same games table as the Games tab, team POV
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_schedule:
     tnames = team_names()
@@ -318,38 +338,13 @@ with tab_schedule:
             invalidate("_sched_orig", "sched_editor")
             st.session_state[prev_key] = selected_team
 
-        # ── Games on Record (auto-populated from Games tab) ───────────────────
-        games_on_record = query("""
-            SELECT
-                CASE WHEN g.team1_id=? THEN t2.name ELSE t1.name END AS opponent,
-                g.date,
-                CASE WHEN g.team1_id=? THEN 'Home' ELSE 'Away' END  AS home_away,
-                g.location,
-                CASE WHEN g.team1_id=? THEN g.home_score ELSE g.away_score END AS team_score,
-                CASE WHEN g.team1_id=? THEN g.away_score ELSE g.home_score END AS opp_score,
-                g.tracked
-            FROM games g
-            JOIN teams t1 ON t1.id = g.team1_id
-            JOIN teams t2 ON t2.id = g.team2_id
-            WHERE g.team1_id=? OR g.team2_id=?
-            ORDER BY g.date DESC
-        """, (team_id, team_id, team_id, team_id, team_id, team_id))
-
-        if games_on_record:
-            df_gor = pd.DataFrame(games_on_record)
-            df_gor["tracked"] = df_gor["tracked"].astype(bool)
-            st.caption("**Games on Record** (managed in the Games tab)")
-            st.dataframe(df_gor, use_container_width=True, hide_index=True,
-                         column_config={
-                             "tracked": st.column_config.CheckboxColumn("Tracked"),
-                         })
-            st.divider()
-
-        # ── Manual schedule entries ───────────────────────────────────────────
-        st.caption("**Additional Schedule Entries** — " + EDITOR_HELP)
-        orig = get_orig("_sched_orig", lambda: load_schedule_for(team_id))
+        st.caption(EDITOR_HELP)
+        orig = get_orig("_sched_orig", lambda: load_games_for_team(team_id))
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
             columns=["opponent","date","home_away","location","team_score","opp_score","tracked"])
+
+        # Opponents are every team except the selected one
+        opp_options = [t for t in tnames if t != selected_team]
 
         st.data_editor(
             display,
@@ -357,43 +352,65 @@ with tab_schedule:
             num_rows="dynamic",
             use_container_width=True,
             column_config={
-                "opponent":   st.column_config.SelectboxColumn("Opponent",     options=tnames,    required=True),
-                "date":       st.column_config.TextColumn("Date (MM/DD/YY)",   required=True),
-                "home_away":  st.column_config.SelectboxColumn("Home/Away",    options=HA_OPTIONS, required=True),
+                "opponent":   st.column_config.SelectboxColumn("Opponent",       options=opp_options, required=True),
+                "date":       st.column_config.TextColumn("Date (MM/DD/YY)",     required=True),
+                "home_away":  st.column_config.SelectboxColumn("Home / Away",    options=HA_OPTIONS,  required=True),
                 "location":   st.column_config.TextColumn("Location"),
-                "team_score": st.column_config.NumberColumn("Team Score",      min_value=0, step=1),
-                "opp_score":  st.column_config.NumberColumn("Opp Score",       min_value=0, step=1),
-                "tracked":    st.column_config.CheckboxColumn("Tracked",       default=False),
+                "team_score": st.column_config.NumberColumn("Team Score",        min_value=0, step=1),
+                "opp_score":  st.column_config.NumberColumn("Opp Score",         min_value=0, step=1),
+                "tracked":    st.column_config.CheckboxColumn("Tracked",         default=False),
             },
         )
 
         if st.button("Save Changes", key="save_sched", type="primary"):
             def ins_sched(r):
-                if r.get("date","").strip() and r.get("opponent"):
-                    execute(
-                        "INSERT INTO schedule (team_id, opponent_id, date, home_away, location, team_score, opp_score, tracked) VALUES (?,?,?,?,?,?,?,?)",
-                        (team_id, tm[r["opponent"]], r["date"].strip(),
-                         r.get("home_away","Home"), r.get("location") or None,
-                         r.get("team_score") or None, r.get("opp_score") or None,
-                         int(bool(r.get("tracked", False))))
-                    )
-            def upd_sched(r):
+                opp = r.get("opponent")
+                date = r.get("date", "").strip()
+                if not opp or not date:
+                    return
+                opp_id = tm[opp]
+                ha = r.get("home_away", "Home")
+                t_score = r.get("team_score") or None
+                o_score = r.get("opp_score")  or None
+                tracked = int(bool(r.get("tracked", False)))
+                if ha == "Home":
+                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
+                else:
+                    t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
                 execute(
-                    "UPDATE schedule SET team_id=?, opponent_id=?, date=?, home_away=?, location=?, team_score=?, opp_score=?, tracked=? WHERE id=?",
-                    (team_id, tm[r["opponent"]], r["date"].strip(),
-                     r.get("home_away","Home"), r.get("location") or None,
-                     r.get("team_score") or None, r.get("opp_score") or None,
-                     int(bool(r.get("tracked", False))), r["id"])
+                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked) VALUES (?,?,?,?,?,?,?)",
+                    (t1, t2, date, r.get("location") or None, h_sc, a_sc, tracked)
                 )
+
+            def upd_sched(r):
+                opp = r.get("opponent")
+                date = r.get("date", "").strip()
+                if not opp or not date:
+                    return
+                opp_id = tm[opp]
+                ha = r.get("home_away", "Home")
+                t_score = r.get("team_score") or None
+                o_score = r.get("opp_score")  or None
+                tracked = int(bool(r.get("tracked", False)))
+                if ha == "Home":
+                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
+                else:
+                    t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
+                execute(
+                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, tracked=? WHERE id=?",
+                    (t1, t2, date, r.get("location") or None, h_sc, a_sc, tracked, r["id"])
+                )
+
             def del_sched(r):
-                execute("DELETE FROM schedule WHERE id=?", (r["id"],))
+                execute("DELETE FROM games WHERE id=?", (r["id"],))
 
             errs = apply_delta("sched_editor", orig, ins_sched, upd_sched, del_sched)
             if errs:
                 st.error("\n".join(errs))
             else:
                 st.success("Saved!")
-            invalidate("_sched_orig", "sched_editor")
+            invalidate("_sched_orig", "sched_editor", "_games_orig", "games_editor")
+            st.cache_data.clear()
             st.rerun()
 
 
@@ -434,6 +451,7 @@ with tab_officials:
         else:
             st.success("Saved!")
         invalidate("_officials_orig", "officials_editor")
+        st.cache_data.clear()
         st.rerun()
 
 

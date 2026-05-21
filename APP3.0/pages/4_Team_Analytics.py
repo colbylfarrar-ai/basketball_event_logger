@@ -5,13 +5,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import numpy as np
 import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
 from Database.db import query, initialize_database
+from helpers.constants import ZONES, SHOT_RATING, EST_FGP
+from helpers.game_utils import games_for_team, win_loss, opponent_name, home_away, record_from_games
+from helpers.charts import (zone_color, render_hot_zones, show_shot_chart, show_scoring_pie,
+                            show_four_factors_bars, show_trend_chart, show_player_radar)
+from helpers.stats_team import (compute_player_game_log, compute_player_career,
+                                compute_team_tracked, compute_on_off,
+                                compute_league_drtg, compute_league_four_factors,
+                                compute_matchup)
 
 initialize_database()
 
 st.title("Team Analytics")
-
-ZONES = ["LC", "LW", "C", "RW", "RC"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TEAM SELECTOR
@@ -32,288 +40,11 @@ st.caption(f"Class {team_info['class']} · {'Men' if team_info['gender']=='M' el
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SHARED HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def games_for_team(tid, tracked_only=False):
-    cond = "AND g.tracked=1" if tracked_only else ""
-    return query(f"""
-        SELECT g.*, t1.name AS t1_name, t2.name AS t2_name
-        FROM games g
-        JOIN teams t1 ON t1.id=g.team1_id
-        JOIN teams t2 ON t2.id=g.team2_id
-        WHERE (g.team1_id=? OR g.team2_id=?) {cond}
-          AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
-        ORDER BY g.date
-    """, (tid, tid))
-
-def win_loss(game, tid):
-    my   = game["home_score"] if game["team1_id"]==tid else game["away_score"]
-    opp  = game["away_score"] if game["team1_id"]==tid else game["home_score"]
-    return ("W" if my>opp else "L"), my, opp
-
-def opponent_name(game, tid):
-    return game["t2_name"] if game["team1_id"]==tid else game["t1_name"]
-
-def home_away(game, tid):
-    return "Home" if game["team1_id"]==tid else "Away"
-
-def record_from_games(games_list, tid):
-    w=l=pf=pa=0
-    for g in games_list:
-        res,my,opp = win_loss(g, tid)
-        pf+=my; pa+=opp
-        if res=="W": w+=1
-        else:        l+=1
-    return w,l,pf,pa
-
-def zone_color(m, a):
-    if not a: return "#2d2d2d","#555"
-    p=m/a
-    if p>=0.5: return "#1a5c38","#fff"
-    if p>=0.35: return "#7a5200","#fff"
-    return "#6b1515","#fff"
-
-def render_hot_zones(shot_rows, title=""):
-    if title: st.markdown(f"**{title}**")
-    zd={z:{2:[0,0],3:[0,0]} for z in ZONES}
-    for s in shot_rows:
-        z,t=s.get("zone"),s.get("shot_type")
-        if z and t:
-            zd[z][t][1]+=1
-            if s.get("shot_result")=="make": zd[z][t][0]+=1
-    for stype,lbl in [(2,"2-Point"),(3,"3-Point")]:
-        st.markdown(f"*{lbl}*")
-        cols=st.columns(5)
-        for i,zone in enumerate(ZONES):
-            m,a=zd[zone][stype]
-            pct=m/a*100 if a else 0
-            bg,fg=zone_color(m,a)
-            cols[i].markdown(
-                f"""<div style="background:{bg};color:{fg};padding:12px 4px;
-                border-radius:8px;text-align:center;font-size:0.85em">
-                <b>{zone}</b><br>{m}/{a}<br>{pct:.0f}%</div>""",
-                unsafe_allow_html=True)
-
-# ── Player career stats ───────────────────────────────────────────────────────
-
-def compute_player_career(player_id: int):
-    rows = query("""
-        SELECT glp.game_id, glp.team_id
-        FROM game_lineup_players glp
-        JOIN games g ON g.id=glp.game_id
-        WHERE glp.player_id=? AND g.tracked=1
-    """, (player_id,))
-    if not rows:
-        return None
-    game_team = {r["game_id"]: r["team_id"] for r in rows}
-
-    tot = dict(gp=len(rows), pts=0,ast=0,oreb=0,dreb=0,stl=0,blk=0,tov=0,
-               fgm=0,fga=0,tpm=0,tpa=0,ftm=0,fta=0,sc=0,pf=0,poss_secs=0.0,
-               shots=[])
-
-    for game_id, my_team in game_team.items():
-        pt_map = {r["player_id"]:r["team_id"] for r in
-                  query("SELECT player_id,team_id FROM game_lineup_players WHERE game_id=?", (game_id,))}
-        events = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (game_id,))
-
-        # All lineup players get full game time — no subs tracked
-        tot["poss_secs"] += sum(ev["possession_secs"] or 0.0 for ev in events)
-
-        for ev in events:
-            pid  = player_id
-            et=ev["event_type"]
-
-            if et=="shot":
-                if ev["primary_player_id"]==pid:
-                    tot["fga"]+=1; tot["sc"]+=1
-                    if ev["shot_type"]==3: tot["tpa"]+=1
-                    if ev["shot_result"]=="make":
-                        tot["fgm"]+=1; tot["pts"]+=ev["shot_type"]
-                        if ev["shot_type"]==3: tot["tpm"]+=1
-                    if ev["zone"]:
-                        tot["shots"].append({"zone":ev["zone"],"shot_type":ev["shot_type"],"shot_result":ev["shot_result"]})
-                if ev["pass_from_id"]==pid:
-                    tot["sc"]+=1
-                    if ev["shot_result"]=="make": tot["ast"]+=1
-                if ev["shot_created_by_id"]==pid: tot["sc"]+=1
-                if ev["blocked_by_id"]==pid: tot["blk"]+=1
-                if ev["rebound_by_id"]==pid:
-                    sh_team=pt_map.get(ev["primary_player_id"])
-                    if sh_team==my_team: tot["oreb"]+=1
-                    else:                tot["dreb"]+=1
-
-            elif et=="free_throw":
-                if ev["primary_player_id"]==pid:
-                    tot["fta"]+=1
-                    if ev["shot_result"]=="make": tot["ftm"]+=1; tot["pts"]+=1
-                if ev["rebound_by_id"]==pid:
-                    sh_team=pt_map.get(ev["primary_player_id"])
-                    if sh_team==my_team: tot["oreb"]+=1
-                    else:                tot["dreb"]+=1
-
-            elif et=="foul":
-                if ev["secondary_player_id"]==pid: tot["pf"]+=1
-
-            elif et=="turnover":
-                if ev["primary_player_id"]==pid: tot["tov"]+=1
-                if ev["stolen_by_id"]==pid:      tot["stl"]+=1
-    return tot
-
-# ── Team advanced stats (tracked) ────────────────────────────────────────────
-
-def compute_team_tracked(tid):
-    tracked = games_for_team(tid, tracked_only=True)
-    if not tracked:
-        return None
-
-    agg=dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,
-             tov=0,stl=0,blk=0,ast=0,poss_secs=0.0,pts=0,
-             opp_fga=0,opp_fgm=0,opp_tpa=0,opp_tpm=0,opp_fta=0,opp_ftm=0,
-             opp_oreb=0,opp_dreb=0,opp_tov=0,opp_pts=0)
-
-    for g in tracked:
-        t1id=g["team1_id"]; t2id=g["team2_id"]
-        lp=query("SELECT player_id,team_id FROM game_lineup_players WHERE game_id=?", (g["id"],))
-        if not lp: continue
-        pt={r["player_id"]:r["team_id"] for r in lp}
-        events=query("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (g["id"],))
-
-        def ts_(team): return agg if team==tid else None
-        def op_(team): return None  # we track opp separately below
-
-        my_s  = dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,tov=0,stl=0,blk=0,ast=0,poss_secs=0.0,pts=0)
-        opp_s = dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,tov=0,pts=0)
-
-        for ev in events:
-            prim=ev["primary_player_id"]
-            ptm =pt.get(prim)
-            psec=ev["possession_secs"] or 0.0
-            is_mine = ptm==tid
-
-            if is_mine: my_s["poss_secs"]+=psec
-
-            et=ev["event_type"]
-            if et=="shot":
-                if ptm:
-                    bucket = my_s if ptm==tid else opp_s
-                    bucket["fga"]+=1
-                    if ev["shot_type"]==3: bucket["tpa"]+=1
-                    if ev["shot_result"]=="make":
-                        bucket["fgm"]+=1; bucket["pts"]+=ev["shot_type"]
-                        if ev["shot_type"]==3: bucket["tpm"]+=1
-                        pf=ev["pass_from_id"]
-                        if pf and pt.get(pf)==ptm:
-                            (my_s if ptm==tid else {})["ast"] = my_s["ast"]+(1 if ptm==tid else 0)
-                            if ptm==tid: my_s["ast"]+=1
-                blk=ev["blocked_by_id"]
-                if blk and pt.get(blk)==tid: my_s["blk"]=(my_s.get("blk",0)+1)
-                reb=ev["rebound_by_id"]
-                if reb and prim:
-                    rt=pt.get(reb); st2=pt.get(prim)
-                    if rt and st2:
-                        if rt==st2:
-                            (my_s if rt==tid else opp_s)["oreb"]+=1
-                        else:
-                            (my_s if rt==tid else opp_s)["dreb"]+=1
-            elif et=="free_throw":
-                if ptm:
-                    bucket = my_s if ptm==tid else opp_s
-                    bucket["fta"]+=1
-                    if ev["shot_result"]=="make": bucket["ftm"]+=1; bucket["pts"]+=1
-            elif et=="turnover":
-                if ptm:
-                    (my_s if ptm==tid else opp_s)["tov"]+=1
-                stl=ev["stolen_by_id"]
-                if stl and pt.get(stl)==tid: my_s["stl"]=my_s.get("stl",0)+1
-
-        for k in my_s:  agg[k]+=my_s[k]
-        for k in opp_s: agg[f"opp_{k}"]+=opp_s[k]
-
-    gp=len(tracked)
-    poss   = max(0.1,agg["fga"]-agg["oreb"]+agg["tov"]+0.44*agg["fta"])
-    op_pos = max(0.1,agg["opp_fga"]-agg["opp_oreb"]+agg["opp_tov"]+0.44*agg["opp_fta"])
-    ortg=100*agg["pts"]/poss
-    drtg=100*agg["opp_pts"]/op_pos
-    pace=(poss+op_pos)/(2*gp) if gp else 0
-    efg =(agg["fgm"]+0.5*agg["tpm"])/agg["fga"] if agg["fga"] else 0
-    ts_ = agg["pts"]/(2*(agg["fga"]+0.44*agg["fta"])) if (agg["fga"]+0.44*agg["fta"]) else 0
-    oefg=(agg["opp_fgm"]+0.5*agg["opp_tpm"])/agg["opp_fga"] if agg["opp_fga"] else 0
-    tov_r=agg["tov"]/(agg["fga"]+0.44*agg["fta"]+agg["tov"]) if (agg["fga"]+0.44*agg["fta"]+agg["tov"]) else 0
-    oreb_p=agg["oreb"]/(agg["oreb"]+agg["opp_dreb"]) if (agg["oreb"]+agg["opp_dreb"]) else 0
-    ft_r=agg["fta"]/agg["fga"] if agg["fga"] else 0
-    tpar=agg["tpa"]/agg["fga"] if agg["fga"] else 0
-    fgp=agg["fgm"]/agg["fga"] if agg["fga"] else 0
-    tpp=agg["tpm"]/agg["tpa"] if agg["tpa"] else 0
-    ftp=agg["ftm"]/agg["fta"] if agg["fta"] else 0
-
-    return dict(gp=gp,poss=poss,op_pos=op_pos,ortg=ortg,drtg=drtg,net=ortg-drtg,pace=pace,
-                efg=efg,oefg=oefg,ts=ts_,tov_r=tov_r,oreb_p=oreb_p,ft_r=ft_r,tpar=tpar,
-                fgp=fgp,tpp=tpp,ftp=ftp,
-                ast_pg=agg["ast"]/gp,stl_pg=agg.get("stl",0)/gp,blk_pg=agg.get("blk",0)/gp,
-                tov_pg=agg["tov"]/gp,oreb_pg=agg["oreb"]/gp,dreb_pg=agg["dreb"]/gp,
-                pts_pg=agg["pts"]/gp, **agg)
-
-# ── Matchup projection ────────────────────────────────────────────────────────
-
-def compute_matchup(a_id, b_id):
-    gs_a = games_for_team(a_id)
-    gs_b = games_for_team(b_id)
-    wa,la,pfa,paa = record_from_games(gs_a, a_id)
-    wb,lb,pfb,pab = record_from_games(gs_b, b_id)
-    gpa=len(gs_a); gpb=len(gs_b)
-    ppg_a=pfa/gpa if gpa else 0; papg_a=paa/gpa if gpa else 0
-    ppg_b=pfb/gpb if gpb else 0; papg_b=pab/gpb if gpb else 0
-
-    adv_a = compute_team_tracked(a_id)
-    adv_b = compute_team_tracked(b_id)
-
-    if adv_a and adv_b:
-        # League avg DRtg for calibration
-        all_tr = query("""
-            SELECT team1_id,team2_id FROM games WHERE tracked=1
-              AND home_score IS NOT NULL AND away_score IS NOT NULL
-        """)
-        league_drtg=100.0  # default
-        adv_list=[]
-        for t in query("SELECT id FROM teams"):
-            ta=compute_team_tracked(t["id"])
-            if ta: adv_list.append(ta["drtg"])
-        if adv_list: league_drtg=np.mean(adv_list)
-
-        avg_pace=(adv_a["pace"]+adv_b["pace"])/2
-        proj_a = (adv_a["ortg"]/100) * avg_pace * (adv_b["drtg"]/league_drtg)
-        proj_b = (adv_b["ortg"]/100) * avg_pace * (adv_a["drtg"]/league_drtg)
-        method = "efficiency"
-    else:
-        proj_a = (ppg_a + papg_b) / 2
-        proj_b = (ppg_b + papg_a) / 2
-        method = "score"
-
-    diff = proj_a - proj_b
-    prob_a = 1 / (1 + np.exp(-diff * 0.15))
-
-    # Head-to-head
-    h2h = query("""
-        SELECT home_score,away_score,date,team1_id
-        FROM games
-        WHERE ((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))
-          AND home_score IS NOT NULL AND away_score IS NOT NULL
-        ORDER BY date DESC
-    """, (a_id, b_id, b_id, a_id))
-
-    return dict(proj_a=proj_a, proj_b=proj_b, prob_a=prob_a,
-                method=method, h2h=h2h,
-                adv_a=adv_a, adv_b=adv_b,
-                ppg_a=ppg_a, papg_a=papg_a, ppg_b=ppg_b, papg_b=papg_b,
-                wa=wa, la=la, wb=wb, lb=lb)
-
-# ══════════════════════════════════════════════════════════════════════════════
 #  TABS
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab_ov, tab_pl, tab_gm, tab_mu, tab_ai = st.tabs(
-    ["Overview", "Players", "Games", "Matchup Simulator", "AI Insights"]
+tab_ov, tab_ts, tab_pl, tab_gm, tab_mu, tab_notes, tab_ai = st.tabs(
+    ["Overview", "Team Stats", "Players", "Games", "Matchup Simulator", "Notes", "AI Insights"]
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -389,6 +120,263 @@ with tab_ov:
         render_hot_zones(shots)
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  TEAM STATS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_ts:
+    ts_adv = compute_team_tracked(team_id)
+    ts_all = games_for_team(team_id, tracked_only=True)
+    gp_ts  = len(ts_all)
+
+    if not ts_adv or gp_ts == 0:
+        st.info("No tracked game data yet.")
+    else:
+        a = ts_adv  # shorthand
+
+        # ── Per-game highlights ──────────────────────────────────────────────
+        st.subheader("Per Game")
+        r1 = st.columns(6)
+        r1[0].metric("PPG",    f"{a['pts_pg']:.1f}")
+        r1[1].metric("APG",    f"{a['ast_pg']:.1f}")
+        r1[2].metric("RPG",    f"{(a['oreb_pg']+a['dreb_pg']):.1f}")
+        r1[3].metric("SPG",    f"{a['stl_pg']:.1f}")
+        r1[4].metric("BPG",    f"{a['blk_pg']:.1f}")
+        r1[5].metric("TPG",    f"{a['tov_pg']:.1f}")
+
+        st.divider()
+
+        # ── Possessions ──────────────────────────────────────────────────────
+        st.subheader("Possessions")
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Total Possessions",  a["poss_count"],
+                  help="Count of non-free-throw events with a primary player (same definition as Game Tracker)")
+        p2.metric("Possessions / Game", f"{a['poss_pg']:.1f}")
+        p3.metric("Points Per Poss.",   f"{a['ppp']:.3f}",
+                  help="Total points scored ÷ total possessions")
+        p4.metric("Avg Poss. Length",   a["avg_poss_len"],
+                  help="Average time (M:SS) per possession")
+
+        poss_rows = [
+            {"Stat": "Total Possessions",    "Value": a["poss_count"]},
+            {"Stat": "Possessions / Game",   "Value": f"{a['poss_pg']:.1f}"},
+            {"Stat": "Total Poss. Time",     "Value": a["poss_time_total"]},
+            {"Stat": "Avg Poss. Length",     "Value": a["avg_poss_len"]},
+            {"Stat": "Points Per Possession","Value": f"{a['ppp']:.3f}"},
+        ]
+        st.dataframe(pd.DataFrame(poss_rows), hide_index=True, use_container_width=True)
+
+        st.divider()
+
+        # ── Shooting ────────────────────────────────────────────────────────
+        st.subheader("Shooting")
+        sh1, sh2, sh3 = st.columns(3)
+
+        with sh1:
+            st.markdown("**Field Goals**")
+            _2pm = a["fgm"]-a["tpm"]; _2pa = a["fga"]-a["tpa"]
+            fg_rows = [
+                {"Stat": "FGM",  "Total": a["fgm"],               "Per Game": round(a["fgm"]/gp_ts, 1)},
+                {"Stat": "FGA",  "Total": a["fga"],               "Per Game": round(a["fga"]/gp_ts, 1)},
+                {"Stat": "FG%",  "Total": f"{a['fgp']*100:.1f}%", "Per Game": "—"},
+                {"Stat": "2PM",  "Total": _2pm,                   "Per Game": round(_2pm/gp_ts, 1)},
+                {"Stat": "2PA",  "Total": _2pa,                   "Per Game": round(_2pa/gp_ts, 1)},
+                {"Stat": "2P%",  "Total": f"{a['two_pct']*100:.1f}%","Per Game": "—"},
+                {"Stat": "eFG%", "Total": f"{a['efg']*100:.1f}%", "Per Game": "—"},
+                {"Stat": "TS%",  "Total": f"{a['ts']*100:.1f}%",  "Per Game": "—"},
+            ]
+            st.dataframe(pd.DataFrame(fg_rows), hide_index=True, use_container_width=True)
+
+        with sh2:
+            st.markdown("**3-Pointers**")
+            tp_rows = [
+                {"Stat": "3PM",  "Total": a["tpm"],                         "Per Game": round(a["tpm"]/gp_ts, 1)},
+                {"Stat": "3PA",  "Total": a["tpa"],                         "Per Game": round(a["tpa"]/gp_ts, 1)},
+                {"Stat": "3P%",  "Total": f"{a['tpp']*100:.1f}%",           "Per Game": "—"},
+                {"Stat": "3PAr", "Total": f"{a['tpar']*100:.1f}%",          "Per Game": "—"},
+            ]
+            st.dataframe(pd.DataFrame(tp_rows), hide_index=True, use_container_width=True)
+
+        with sh3:
+            st.markdown("**Free Throws**")
+            ft_rows = [
+                {"Stat": "FTM",     "Total": a["ftm"],                      "Per Game": round(a["ftm"]/gp_ts, 1)},
+                {"Stat": "FTA",     "Total": a["fta"],                      "Per Game": round(a["fta"]/gp_ts, 1)},
+                {"Stat": "FT%",     "Total": f"{a['ftp']*100:.1f}%",        "Per Game": "—"},
+                {"Stat": "FT Rate", "Total": f"{a['ft_r']:.2f}",            "Per Game": "—"},
+            ]
+            st.dataframe(pd.DataFrame(ft_rows), hide_index=True, use_container_width=True)
+
+        st.divider()
+
+        # ── Other counting stats ─────────────────────────────────────────────
+        st.subheader("Other Stats")
+        other_rows = [
+            {"Stat": "Assists",       "Total": a["ast"],  "Per Game": round(a["ast_pg"], 1)},
+            {"Stat": "Off. Rebounds", "Total": a["oreb"], "Per Game": round(a["oreb_pg"], 1)},
+            {"Stat": "Def. Rebounds", "Total": a["dreb"], "Per Game": round(a["dreb_pg"], 1)},
+            {"Stat": "Rebounds",      "Total": a["oreb"]+a["dreb"], "Per Game": round(a["oreb_pg"]+a["dreb_pg"], 1)},
+            {"Stat": "Steals",        "Total": a["stl"],  "Per Game": round(a["stl_pg"], 1)},
+            {"Stat": "Blocks",        "Total": a["blk"],  "Per Game": round(a["blk_pg"], 1)},
+            {"Stat": "Turnovers",     "Total": a["tov"],  "Per Game": round(a["tov_pg"], 1)},
+        ]
+        st.dataframe(pd.DataFrame(other_rows), hide_index=True, use_container_width=True)
+
+        st.divider()
+
+        # ── Advanced ─────────────────────────────────────────────────────────
+        st.subheader("Advanced")
+        adv1, adv2 = st.columns(2)
+        with adv1:
+            adv_off = [
+                {"Stat": "Off. Rating (ORtg)",   "Value": f"{a['ortg']:.1f}",          "Note": "pts/100 poss"},
+                {"Stat": "Net Rating",            "Value": f"{a['net']:+.1f}",           "Note": "ORtg − DRtg"},
+                {"Stat": "Pace",                  "Value": f"{a['pace']:.1f}",           "Note": "poss/game"},
+                {"Stat": "eFG%",                  "Value": f"{a['efg']*100:.1f}%",       "Note": "(FGM+0.5×3PM)/FGA"},
+                {"Stat": "TS%",                   "Value": f"{a['ts']*100:.1f}%",        "Note": "true shooting"},
+                {"Stat": "TOV%",                  "Value": f"{a['tov_r']*100:.1f}%",     "Note": "tov per poss"},
+                {"Stat": "OREB%",                 "Value": f"{a['oreb_p']*100:.1f}%",    "Note": "off-glass rate"},
+                {"Stat": "FT Rate",               "Value": f"{a['ft_r']:.3f}",           "Note": "FTA/FGA"},
+                {"Stat": "AST%",                  "Value": f"{a.get('ast_pct',0):.1f}%", "Note": "% FGM assisted"},
+                {"Stat": "AST/TOV",               "Value": f"{a.get('ast_tov_r',0):.2f}","Note": "assist-to-tov ratio"},
+                {"Stat": "Paint FG%",             "Value": f"{a.get('paint_fg_p',0)*100:.1f}%","Note": "zone-C 2PT proxy"},
+                {"Stat": "Paint Pts/G",           "Value": f"{a.get('paint_pts_pg',0):.1f}",   "Note": "pts from paint/g"},
+            ]
+            st.markdown("**Offense**")
+            st.dataframe(pd.DataFrame(adv_off), hide_index=True, use_container_width=True)
+        with adv2:
+            adv_def = [
+                {"Stat": "Def. Rating (DRtg)",   "Value": f"{a['drtg']:.1f}",                      "Note": "pts/100 poss"},
+                {"Stat": "Opp eFG%",              "Value": f"{a['oefg']*100:.1f}%",                 "Note": "opp shooting qual"},
+                {"Stat": "Opp TS%",               "Value": f"{(a['opp_pts']/(2*(a['opp_fga']+0.44*a['opp_fta'])) if (a['opp_fga']+0.44*a['opp_fta']) else 0)*100:.1f}%","Note": "opp true shooting"},
+                {"Stat": "Opp TOV%",              "Value": f"{a.get('opp_tov_r',0)*100:.1f}%",      "Note": "forced tov rate"},
+                {"Stat": "Opp FT Rate",           "Value": f"{a.get('opp_ft_r',0):.3f}",            "Note": "FTA/FGA allowed"},
+                {"Stat": "DREB%",                 "Value": f"{a.get('dreb_p',0)*100:.1f}%",         "Note": "def rebound rate"},
+                {"Stat": "BLK Rate",              "Value": f"{a.get('blk_rate',0):.1f}%",           "Note": "BLK/opp 2PA"},
+                {"Stat": "STL Rate",              "Value": f"{a.get('stl_rate',0):.1f}%",           "Note": "STL/opp poss"},
+                {"Stat": "Opp TOV/G",             "Value": f"{a['opp_tov']/gp_ts:.1f}",             "Note": "opp turnovers/g"},
+            ]
+            st.markdown("**Defense**")
+            st.dataframe(pd.DataFrame(adv_def), hide_index=True, use_container_width=True)
+
+        st.divider()
+
+        # ── Shot Creation ────────────────────────────────────────────────────
+        st.subheader("Shot Creation")
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.metric("SC/G",   f"{a['sc_pg']:.1f}",       help="Shot creations per game (shots taken + passes on shots + dribble creates)")
+        sc2.metric("SCE",    f"{a['team_sce']:.3f}",    help="PTS / ((2PT_att×2) + (3PT_att×3)) — points scored per shot opportunity")
+        sc3.metric("PTS/SC", f"{(a['pts']/a['sc']):.2f}" if a['sc'] else "—", help="Points scored per shot creation act")
+        sc4.metric("SC/FGA", f"{(a['sc']/a['fga']):.2f}" if a['fga'] else "—", help=">1 = team creates more than it shoots, <1 = shoots more than it creates")
+
+        st.divider()
+
+        # ── Four Factors ─────────────────────────────────────────────────────
+        st.subheader("Dean Oliver's Four Factors")
+        st.caption("The four factors that drive winning: Shooting (40%), Turnovers (25%), Rebounding (20%), Free Throws (15%)")
+        _lg_ff = compute_league_four_factors()
+        show_four_factors_bars(a, _lg_ff if _lg_ff else None)
+
+        ff_col1, ff_col2, ff_col3, ff_col4 = st.columns(4)
+        ff_col1.metric("eFG%",      f"{a['efg']*100:.1f}%",       help="Effective FG% — weights 3s by 1.5×")
+        ff_col2.metric("TOV%",      f"{a['tov_r']*100:.1f}%",     help="Turnover rate — lower is better")
+        ff_col3.metric("OREB%",     f"{a['oreb_p']*100:.1f}%",    help="Offensive rebound rate")
+        ff_col4.metric("FT Rate",   f"{a['ft_r']:.3f}",           help="FTA per FGA — getting to the line")
+        ff_col1.metric("Opp eFG%",  f"{a['oefg']*100:.1f}%",      help="Opponent effective FG% — lower is better")
+        ff_col2.metric("Opp TOV%",  f"{a.get('opp_tov_r',0)*100:.1f}%", help="Forced turnover rate — higher is better")
+        ff_col3.metric("DREB%",     f"{a.get('dreb_p',0)*100:.1f}%",    help="Defensive rebound rate")
+        ff_col4.metric("Opp FT Rate",f"{a.get('opp_ft_r',0):.3f}",     help="FTA/FGA allowed — lower is better")
+
+        st.divider()
+
+        # ── Scoring Distribution ─────────────────────────────────────────────
+        st.subheader("Scoring Distribution")
+        _pts2 = (a["fgm"]-a["tpm"])*2
+        _pts3 = a["tpm"]*3
+        _ptft = a["ftm"]
+        sd_col1, sd_col2 = st.columns([1, 1])
+        with sd_col1:
+            show_scoring_pie(_pts2, _pts3, _ptft, f"{sel_name} — Scoring Sources")
+        with sd_col2:
+            pct_rows = [
+                {"Source": "2PT Field Goals", "Points": _pts2, "Pct": f"{a.get('pct_from_2',0):.1f}%",
+                 "Per Game": f"{_pts2/gp_ts:.1f}"},
+                {"Source": "3PT Field Goals", "Points": _pts3, "Pct": f"{a.get('pct_from_3',0):.1f}%",
+                 "Per Game": f"{_pts3/gp_ts:.1f}"},
+                {"Source": "Free Throws",     "Points": _ptft, "Pct": f"{a.get('pct_from_ft',0):.1f}%",
+                 "Per Game": f"{_ptft/gp_ts:.1f}"},
+                {"Source": "TOTAL",           "Points": _pts2+_pts3+_ptft,
+                 "Pct": "100%", "Per Game": f"{a['pts_pg']:.1f}"},
+            ]
+            st.dataframe(pd.DataFrame(pct_rows), hide_index=True, use_container_width=True)
+            st.markdown(f"**Ast%**: {a.get('ast_pct',0):.1f}% of FGM were assisted")
+            st.markdown(f"**Unast%**: {a.get('unast_pct',0):.1f}% of FGM were unassisted")
+
+        st.divider()
+
+        # ── Shot Chart ───────────────────────────────────────────────────────
+        st.subheader("Shot Chart (All Tracked Games)")
+        _gids = tuple(g["id"] for g in ts_all)
+        if _gids:
+            if len(_gids) == 1:
+                _shots_ts = query("""
+                    SELECT e.zone, e.shot_type, e.shot_result
+                    FROM game_events e
+                    JOIN game_lineup_players glp ON glp.game_id=e.game_id
+                                                AND glp.player_id=e.primary_player_id
+                    WHERE e.game_id=? AND e.event_type='shot'
+                      AND e.zone IS NOT NULL AND glp.team_id=?
+                """, (_gids[0], team_id))
+            else:
+                _shots_ts = query(f"""
+                    SELECT e.zone, e.shot_type, e.shot_result
+                    FROM game_events e
+                    JOIN game_lineup_players glp ON glp.game_id=e.game_id
+                                                AND glp.player_id=e.primary_player_id
+                    WHERE e.game_id IN ({','.join('?'*len(_gids))})
+                      AND e.event_type='shot' AND e.zone IS NOT NULL AND glp.team_id=?
+                """, (*_gids, team_id))
+            sc_c1, sc_c2 = st.columns(2)
+            with sc_c1:
+                show_shot_chart(_shots_ts, f"{sel_name} — Offense")
+            # Opponent shot chart
+            if len(_gids) == 1:
+                _opp_shots_ts = query("""
+                    SELECT e.zone, e.shot_type, e.shot_result
+                    FROM game_events e
+                    JOIN game_lineup_players glp ON glp.game_id=e.game_id
+                                                AND glp.player_id=e.primary_player_id
+                    WHERE e.game_id=? AND e.event_type='shot'
+                      AND e.zone IS NOT NULL AND glp.team_id!=?
+                """, (_gids[0], team_id))
+            else:
+                _opp_shots_ts = query(f"""
+                    SELECT e.zone, e.shot_type, e.shot_result
+                    FROM game_events e
+                    JOIN game_lineup_players glp ON glp.game_id=e.game_id
+                                                AND glp.player_id=e.primary_player_id
+                    WHERE e.game_id IN ({','.join('?'*len(_gids))})
+                      AND e.event_type='shot' AND e.zone IS NOT NULL AND glp.team_id!=?
+                """, (*_gids, team_id))
+            with sc_c2:
+                show_shot_chart(_opp_shots_ts, "Opponents — Offense (Defense Quality)")
+
+        st.divider()
+
+        # ── Q4 / Clutch ──────────────────────────────────────────────────────
+        st.subheader("Q4 / Clutch Performance")
+        q4_c1, q4_c2, q4_c3, q4_c4 = st.columns(4)
+        q4_c1.metric("Q4 Pts/G",  f"{a.get('q4_pts_pg',0):.1f}",
+                     help="Points scored in the 4th quarter per game")
+        q4_c2.metric("Q4 PA/G",   f"{a.get('opp_q4_pts_pg',0):.1f}",
+                     help="Points allowed in the 4th quarter per game")
+        _q4diff = a.get('q4_pts_pg',0) - a.get('opp_q4_pts_pg',0)
+        q4_c3.metric("Q4 Diff",   f"{_q4diff:+.1f}",
+                     help="Q4 point differential per game — positive = closing strong")
+        q4_c4.metric("Q4 Pts (total)", a.get("q4_pts", 0),
+                     help="Total points scored in 4th quarter across all tracked games")
+
+        st.caption(f"Based on {gp_ts} tracked game{'s' if gp_ts != 1 else ''}.")
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  PLAYERS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_pl:
@@ -402,6 +390,15 @@ with tab_pl:
         for p in players:
             c=compute_player_career(p["id"])
             player_careers[p["id"]]=c
+
+        # Team SC total (for SC%)
+        team_sc_total = sum(c["sc"] for c in player_careers.values() if c and c["gp"]>0)
+
+        # On/Off data (uses game_event_lineup snapshots)
+        on_off_data = compute_on_off(team_id)
+
+        for p in players:
+            c=player_careers[p["id"]]
             if c and c["gp"]>0:
                 gp=c["gp"]
                 fgp=c["fgm"]/c["fga"] if c["fga"] else 0
@@ -413,6 +410,36 @@ with tab_pl:
                 gs =round((c["pts"]+0.4*c["fgm"]-0.7*c["fga"]-0.4*(c["fta"]-c["ftm"])
                            +0.7*c["oreb"]+0.3*c["dreb"]+c["stl"]+0.7*c["ast"]
                            +0.7*c["blk"]-0.4*c["pf"]-c["tov"])/gp, 1)
+                sc_pct  = round(c["sc"]/team_sc_total*100, 1) if team_sc_total else 0
+                sce_den = (c["fga"] - c["tpa"]) * 2 + c["tpa"] * 3
+                sce     = round(c["pts"] / sce_den, 3) if sce_den else 0
+                ast_tov = round(c["ast"]/c["tov"], 2) if c["tov"] else ("∞" if c["ast"] else "—")
+                sc_fga  = round(c["sc"]/c["fga"], 2) if c["fga"] else 0
+                pts_sc  = round(c["pts"]/c["sc"], 2) if c["sc"] else 0
+                # On/Off derived metrics
+                oo = on_off_data.get(p["id"], {})
+                on_p  = oo.get("on_poss", 0)
+                off_p = oo.get("off_poss", 0)
+                on_pf = oo.get("on_pts_for", 0)
+                on_pa = oo.get("on_pts_against", 0)
+                off_pf= oo.get("off_pts_for", 0)
+                off_pa= oo.get("off_pts_against", 0)
+                pu    = oo.get("poss_used", 0)
+
+                net_on  = (on_pf  - on_pa)  / on_p  * 100 if on_p  else None
+                net_off = (off_pf - off_pa) / off_p * 100 if off_p else None
+                on_off  = round(net_on - net_off, 1) if (net_on is not None and net_off is not None) else "—"
+                usg_pct = round(pu / on_p * 100, 1) if on_p else 0
+                poss_pg = round(pu / gp, 1) if gp else 0
+                pts_poss= round(c["pts"] / pu, 3) if pu else 0
+
+                # Shot quality
+                sht_q    = round(c["shot_rating"] / c["est_fg_shots"], 2) if c["est_fg_shots"] else "—"
+                efg_est  = round(c["est_fg_sum"]  / c["est_fg_shots"] * 100, 1) if c["est_fg_shots"] else "—"
+                # Defensive
+                dfga_pg  = round(c["def_fga"] / gp, 1)
+                dsh_pct  = round(c["def_fga"] / c["on_court_opp_shots"] * 100, 1) if c["on_court_opp_shots"] else "—"
+
                 stat_rows.append({
                     "Player":p["name"],"#":p["number"],"GP":gp,
                     "PTS":round(c["pts"]/gp,1),"AST":round(c["ast"]/gp,1),
@@ -424,22 +451,51 @@ with tab_pl:
                     "3P%":f"{tpp*100:.1f}","FTM":round(c["ftm"]/gp,1),"FTA":round(c["fta"]/gp,1),
                     "FT%":f"{ftp*100:.1f}",
                     "eFG%":f"{efg*100:.1f}","TS%":f"{ts*100:.1f}",
-                    "SC":round(c["sc"]/gp,1),"MIN":round(c["poss_secs"]/60/gp,1),"GS":gs,
+                    "SC":round(c["sc"]/gp,1),"SC%":sc_pct,"SCE":sce,
+                    "AST/TOV":ast_tov,"SC/FGA":sc_fga,"PTS/SC":pts_sc,
+                    "MIN":round(c["poss_secs"]/60/gp,1),"GS":gs,
+                    # Shot quality
+                    "ShtQ":sht_q, "eFG%E":efg_est,
+                    # Possession & On/Off
+                    "+/-":c["plus_minus"],
+                    "Poss/G":poss_pg, "Usg%":usg_pct, "PTS/Poss":pts_poss,
+                    "Net On":round(net_on, 1) if net_on is not None else "—",
+                    "Net Off":round(net_off,1) if net_off is not None else "—",
+                    "On/Off":on_off,
+                    # Defensive
+                    "DFGA/G":dfga_pg, "DSh%":dsh_pct,
                     "_pid":p["id"],
                 })
             else:
                 stat_rows.append({"Player":p["name"],"#":p["number"],"GP":0,
                                    **{k:"—" for k in ["PTS","AST","REB","OREB","DREB","STL","BLK","TOV",
                                                        "FGM","FGA","FG%","3PM","3PA","3P%","FTM","FTA","FT%",
-                                                       "eFG%","TS%","SC","MIN","GS"]},
+                                                       "eFG%","TS%","SC","SC%","SCE","AST/TOV","SC/FGA",
+                                                       "PTS/SC","MIN","GS",
+                                                       "ShtQ","eFG%E",
+                                                       "+/-","Poss/G","Usg%","PTS/Poss",
+                                                       "Net On","Net Off","On/Off",
+                                                       "DFGA/G","DSh%"]},
                                    "_pid":p["id"]})
 
         disp_cols=["Player","#","GP","PTS","AST","REB","OREB","DREB","STL","BLK","TOV",
-                   "FGM","FGA","FG%","3PM","3PA","3P%","FTM","FTA","FT%","eFG%","TS%","SC","MIN","GS"]
+                   "FGM","FGA","FG%","3PM","3PA","3P%","FTM","FTA","FT%","eFG%","TS%",
+                   "SC","SC%","SCE","AST/TOV","SC/FGA","PTS/SC","MIN","GS",
+                   "ShtQ","eFG%E",
+                   "+/-","Poss/G","Usg%","PTS/Poss","Net On","Net Off","On/Off",
+                   "DFGA/G","DSh%"]
         df_pl=pd.DataFrame(stat_rows)
         st.subheader("Per Game Averages (Tracked Games)")
         if not df_pl.empty:
             st.dataframe(df_pl[disp_cols], use_container_width=True, hide_index=True)
+            st.download_button("⬇ Export Player Stats (CSV)",
+                               df_pl[disp_cols].to_csv(index=False),
+                               file_name=f"{sel_name}_player_stats.csv",
+                               mime="text/csv", key="dl_pl_stats")
+
+        st.divider()
+        st.subheader("Player Comparison Radar")
+        show_player_radar(df_pl[df_pl["GP"] > 0].copy(), key="main_radar")
 
         st.divider()
         st.subheader("Individual Breakdowns")
@@ -466,17 +522,206 @@ with tab_pl:
                 mc[4].metric("BLK/G", f"{c['blk']/c['gp']:.1f}")
 
                 shoot_cols=st.columns(4)
-                fgp=c["fgm"]/c["fga"] if c["fga"] else 0
-                tpp=c["tpm"]/c["tpa"] if c["tpa"] else 0
-                ftp=c["ftm"]/c["fta"] if c["fta"] else 0
-                ts =c["pts"]/(2*(c["fga"]+0.44*c["fta"])) if (c["fga"]+0.44*c["fta"]) else 0
-                shoot_cols[0].metric("FG%", f"{fgp*100:.1f}%")
-                shoot_cols[1].metric("3P%", f"{tpp*100:.1f}%")
-                shoot_cols[2].metric("FT%", f"{ftp*100:.1f}%")
-                shoot_cols[3].metric("TS%", f"{ts*100:.1f}%")
+                fgp_=c["fgm"]/c["fga"] if c["fga"] else 0
+                tpp_=c["tpm"]/c["tpa"] if c["tpa"] else 0
+                ftp_=c["ftm"]/c["fta"] if c["fta"] else 0
+                ts_ =c["pts"]/(2*(c["fga"]+0.44*c["fta"])) if (c["fga"]+0.44*c["fta"]) else 0
+                shoot_cols[0].metric("FG%", f"{fgp_*100:.1f}%")
+                shoot_cols[1].metric("3P%", f"{tpp_*100:.1f}%")
+                shoot_cols[2].metric("FT%", f"{ftp_*100:.1f}%")
+                shoot_cols[3].metric("TS%", f"{ts_*100:.1f}%")
+
+                # SC metrics
+                sc_pct_  = round(c["sc"]/team_sc_total*100, 1) if team_sc_total else 0
+                sce_den_ = (c["fga"] - c["tpa"]) * 2 + c["tpa"] * 3
+                sce_     = round(c["pts"] / sce_den_, 3) if sce_den_ else 0
+                ast_tov_ = round(c["ast"]/c["tov"], 2) if c["tov"] else ("∞" if c["ast"] else "—")
+                sc_fga_  = round(c["sc"]/c["fga"], 2) if c["fga"] else 0
+                pts_sc_  = round(c["pts"]/c["sc"], 2) if c["sc"] else 0
+
+                st.markdown("**Shot Creation**")
+                sc_cols = st.columns(6)
+                sc_cols[0].metric("SC/G",    f"{c['sc']/c['gp']:.1f}")
+                sc_cols[1].metric("SC%",     f"{sc_pct_}%",    help="% of team's total shot creation")
+                sc_cols[2].metric("SCE",     f"{sce_:.3f}",    help="PTS / ((2PT_att×2) + (3PT_att×3))")
+                sc_cols[3].metric("AST/TOV", f"{ast_tov_}",    help="Assist-to-turnover ratio")
+                sc_cols[4].metric("SC/FGA",  f"{sc_fga_:.2f}", help="Shot creations per field goal attempt")
+                sc_cols[5].metric("PTS/SC",  f"{pts_sc_:.2f}", help="Points scored per shot creation act")
+
+                # ── Shot Quality ────────────────────────────────────────────
+                _esf = c["est_fg_shots"]
+                _sht_q   = round(c["shot_rating"] / _esf, 2) if _esf else None
+                _efg_est = round(c["est_fg_sum"] / _esf * 100, 1) if _esf else None
+
+                st.markdown("**Shot Quality** *(zone-logged shots only)*")
+                sq_cols = st.columns(4)
+                sq_cols[0].metric("Shot Rating",
+                                  f"{_sht_q:+.2f}" if _sht_q is not None else "—",
+                                  help="Avg shot rating per attempt. Positive = good looks (open, high-% spot), Negative = difficult shots (contested, low-% spot)")
+                sq_cols[1].metric("Est FG%",
+                                  f"{_efg_est:.1f}%" if _efg_est is not None else "—",
+                                  help="Estimated FG% based on shot location and whether the shot was contested")
+                sq_cols[2].metric("Actual FG%",
+                                  f"{fgp_*100:.1f}%",
+                                  help="Actual field goal percentage — compare to Est FG% to see if they over/under-perform their shot quality")
+                _fg_diff = round(fgp_*100 - _efg_est, 1) if _efg_est is not None else None
+                sq_cols[3].metric("FG% vs Est",
+                                  f"{_fg_diff:+.1f}%" if _fg_diff is not None else "—",
+                                  help="Actual FG% minus Estimated FG%. Positive = outperforming shot quality; Negative = underperforming")
+
+                if c["shots"]:
+                    # Shot quality breakdown by zone — uses uncontested baseline (guarded flag not stored per shot)
+                    _zone_data = {}
+                    for sh in c["shots"]:
+                        _k = (sh["shot_type"], sh["zone"])
+                        _e = _zone_data.setdefault(_k, {"fga":0,"fgm":0})
+                        _e["fga"] += 1
+                        if sh["shot_result"] == "make": _e["fgm"] += 1
+                    _sq_table = []
+                    for (stype, zone), d in sorted(_zone_data.items()):
+                        _est_unc = EST_FGP.get((stype, zone, False))
+                        _est_con = EST_FGP.get((stype, zone, True))
+                        _sq_table.append({
+                            "Type": f"{stype}PT", "Zone": zone,
+                            "FGA": d["fga"],
+                            "Actual FG%": f"{d['fgm']/d['fga']*100:.0f}%" if d["fga"] else "—",
+                            "Open baseline": f"{_est_unc*100:.0f}%" if _est_unc else "—",
+                            "Contested baseline": f"{_est_con*100:.0f}%" if _est_con else "—",
+                            "Open rating": f"{SHOT_RATING.get((stype,zone,False),0):+.1f}",
+                            "Contested rating": f"{SHOT_RATING.get((stype,zone,True),0):+.1f}",
+                        })
+                    if _sq_table:
+                        st.dataframe(pd.DataFrame(_sq_table), hide_index=True, use_container_width=True)
+
+                # ── Per-32 Stats (HS equivalent of per-36) ──────────────────
+                _mins32 = c["poss_secs"]/60
+                if _mins32 > 0:
+                    _m32 = 32/_mins32
+                    st.markdown("**Per-32 Minutes** *(high-school game equivalent)*")
+                    p32_cols = st.columns(7)
+                    p32_cols[0].metric("PTS/32",  f"{c['pts']*_m32:.1f}")
+                    p32_cols[1].metric("AST/32",  f"{c['ast']*_m32:.1f}")
+                    p32_cols[2].metric("REB/32",  f"{(c['oreb']+c['dreb'])*_m32:.1f}")
+                    p32_cols[3].metric("STL/32",  f"{c['stl']*_m32:.1f}")
+                    p32_cols[4].metric("BLK/32",  f"{c['blk']*_m32:.1f}")
+                    p32_cols[5].metric("TOV/32",  f"{c['tov']*_m32:.1f}")
+                    p32_cols[6].metric("FGA/32",  f"{c['fga']*_m32:.1f}")
+
+                # ── Scoring Source ───────────────────────────────────────────
+                _c_pts2 = (c["fgm"]-c["tpm"])*2
+                _c_pts3 = c["tpm"]*3
+                _c_ptft = c["ftm"]
+                _c_tot  = _c_pts2 + _c_pts3 + _c_ptft
+                if _c_tot > 0:
+                    st.markdown("**Scoring Distribution**")
+                    show_scoring_pie(_c_pts2, _c_pts3, _c_ptft,
+                                     f"{p['name']} — Scoring Sources")
+
+                # ── Defensive Impact ────────────────────────────────────────
+                st.markdown("**Defensive Impact**")
+                _dfga   = c["def_fga"]
+                _oc_opp = c["on_court_opp_shots"]
+
+                di_cols = st.columns(2)
+                di_cols[0].metric("DFGA/G",
+                                  f"{_dfga/c['gp']:.1f}",
+                                  help="Shots defended per game (guarded_by logged on shot events)")
+                di_cols[1].metric("Contested Sh%",
+                                  f"{_dfga/_oc_opp*100:.1f}%" if _oc_opp else "—",
+                                  help="Defended shots ÷ total opponent shots while on court — how often this player contests shots")
+
+                # ── Possession & On/Off Impact ──────────────────────────────
+                oo_ = on_off_data.get(p["id"], {})
+                on_p_  = oo_.get("on_poss", 0)
+                off_p_ = oo_.get("off_poss", 0)
+                on_pf_ = oo_.get("on_pts_for", 0)
+                on_pa_ = oo_.get("on_pts_against", 0)
+                off_pf_= oo_.get("off_pts_for", 0)
+                off_pa_= oo_.get("off_pts_against", 0)
+                pu_    = oo_.get("poss_used", 0)
+
+                has_oo = on_p_ > 0
+
+                st.markdown("**Possession & On/Off Impact**")
+                po_cols = st.columns(4)
+                po_cols[0].metric("Poss Used/G",  f"{pu_/c['gp']:.1f}" if c['gp'] else "—",
+                                  help="Shots taken + turnovers per game — times they touched ball and ended a possession")
+                po_cols[1].metric("Usg%",         f"{pu_/on_p_*100:.1f}%" if on_p_ else "—",
+                                  help="% of team possessions used by this player while on court")
+                po_cols[2].metric("PTS/Poss",     f"{c['pts']/pu_:.3f}" if pu_ else "—",
+                                  help="Points scored per possession used")
+                po_cols[3].metric("Career +/-",   f"{c['plus_minus']:+d}",
+                                  help="Total plus/minus across all tracked games")
+
+                if has_oo:
+                    net_on_  = (on_pf_  - on_pa_)  / on_p_  * 100
+                    net_off_ = (off_pf_ - off_pa_) / off_p_ * 100 if off_p_ else None
+                    on_off_v = f"{net_on_ - net_off_:+.1f}" if net_off_ is not None else "—"
+
+                    st.markdown("*On-Court vs Off-Court (per 100 team possessions)*")
+                    oc_cols = st.columns(3)
+                    oc_cols[0].metric("Net Rtg ON",  f"{net_on_:+.1f}",
+                                      help="Team point differential per 100 possessions while this player is on court")
+                    oc_cols[1].metric("Net Rtg OFF",
+                                      f"{net_off_:+.1f}" if net_off_ is not None else "—",
+                                      help="Team point differential per 100 possessions while this player is off court")
+                    oc_cols[2].metric("On/Off Impact", on_off_v,
+                                      help="Net Rating ON minus Net Rating OFF — how much better/worse the team is with this player")
+
+                    # Detailed on/off table
+                    ortg_on  = on_pf_  / on_p_  * 100
+                    drtg_on  = on_pa_  / on_p_  * 100
+                    ortg_off = off_pf_ / off_p_ * 100 if off_p_ else 0
+                    drtg_off = off_pa_ / off_p_ * 100 if off_p_ else 0
+                    oo_table = pd.DataFrame([
+                        {"Split": "ON Court",  "Poss": on_p_,
+                         "ORtg": round(ortg_on,1),  "DRtg": round(drtg_on,1),
+                         "Net": round(net_on_,1),
+                         "Pts For": on_pf_,  "Pts Against": on_pa_},
+                        {"Split": "OFF Court", "Poss": off_p_,
+                         "ORtg": round(ortg_off,1), "DRtg": round(drtg_off,1),
+                         "Net": round(net_off_,1) if net_off_ is not None else "—",
+                         "Pts For": off_pf_, "Pts Against": off_pa_},
+                    ])
+                    st.dataframe(oo_table, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("On/Off data requires games with lineup snapshots logged in Game Tracker.")
 
                 if c["shots"]:
                     render_hot_zones(c["shots"])
+
+                # ── Game Log ────────────────────────────────────────────────
+                st.markdown("**Game Log**")
+                gl = compute_player_game_log(p["id"], team_id)
+                if gl:
+                    gl_cols = ["Date","Opp","W/L","Score",
+                               "PTS","AST","REB","STL","BLK","TOV",
+                               "FGM","FGA","FG%","3PM","3PA","3P%",
+                               "FTM","FTA","FT%","SC","SC%","Poss","+/-","MIN","GS"]
+                    gl_df = pd.DataFrame(gl)[gl_cols]
+
+                    # Colour W/L column green/red with styling
+                    def _wl_style(val):
+                        return "color:#2ecc71;font-weight:bold" if val=="W" else "color:#e74c3c;font-weight:bold"
+
+                    st.dataframe(
+                        gl_df.style.applymap(_wl_style, subset=["W/L"]),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "MIN":  st.column_config.NumberColumn("MIN",  format="%.1f"),
+                            "SC%":  st.column_config.NumberColumn("SC%",  format="%.1f"),
+                            "GS":   st.column_config.NumberColumn("GS",   format="%.1f"),
+                        },
+                    )
+                    st.download_button(
+                        "⬇ Export Game Log (CSV)",
+                        gl_df.to_csv(index=False),
+                        file_name=f"{p['name'].replace(' ','_')}_game_log.csv",
+                        mime="text/csv",
+                        key=f"dl_gl_{p['id']}",
+                    )
+                else:
+                    st.caption("No tracked game data yet.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  GAMES
@@ -486,18 +731,28 @@ with tab_gm:
     if not all_gs:
         st.info("No games with scores yet.")
     else:
+        # Build log in chronological order (all_gs is oldest→newest)
         log=[]
-        for g in reversed(all_gs):
+        for g in all_gs:
             res,my,opp=win_loss(g,team_id)
             log.append({"Date":g["date"],"Opponent":opponent_name(g,team_id),
                         "H/A":home_away(g,team_id),"Result":res,
                         "Tm":my,"Opp":opp,"Margin":my-opp,"Tracked":"✓" if g["tracked"] else ""})
-        st.dataframe(pd.DataFrame(log), use_container_width=True, hide_index=True)
 
-        # Scoring trend
+        # Table: newest first
+        st.dataframe(pd.DataFrame(list(reversed(log))), use_container_width=True, hide_index=True)
+
+        # Scoring trend: chronological (oldest→newest)
         st.subheader("Scoring Trend")
-        trend_df=pd.DataFrame(log)[["Date","Tm","Opp"]].set_index("Date")
-        st.line_chart(trend_df, color=["#2ecc71","#e74c3c"])
+        _adv_gm = compute_team_tracked(team_id)
+        if _adv_gm and _adv_gm.get("game_log"):
+            show_trend_chart(_adv_gm["game_log"], sel_name)
+        else:
+            # Fallback — simple score chart for untracked games
+            trend_df = pd.DataFrame(log)[["Date","Tm","Opp"]].copy()
+            trend_df["Date"] = pd.to_datetime(trend_df["Date"], errors="coerce")
+            trend_df = trend_df.dropna(subset=["Date"]).sort_values("Date").set_index("Date")
+            st.line_chart(trend_df, color=["#2ecc71","#e74c3c"])
 
         # Tracked game box scores
         tr_gs = [g for g in all_gs if g["tracked"]]
@@ -508,84 +763,281 @@ with tab_gm:
                 opp_nm=opponent_name(g,team_id)
                 lbl=f"{g['date']}  ·  {res}  {my}-{opp_sc}  vs {opp_nm}"
                 with st.expander(lbl):
-                    lp=query("""
-                        SELECT glp.team_id, p.id AS pid, p.name AS pname, t.name AS tname
-                        FROM game_lineup_players glp
-                        JOIN players p ON p.id=glp.player_id
-                        JOIN teams t ON t.id=glp.team_id
-                        WHERE glp.game_id=?
-                    """, (g["id"],))
-                    if not lp:
-                        st.info("No lineup saved for this game.")
-                        continue
-                    # Compute box score inline
                     t1id=g["team1_id"]; t2id=g["team2_id"]
-                    pt_map={r["pid"]:r["team_id"] for r in lp}
-                    player_team_id={r["pid"]:r["team_id"] for r in lp}
+                    t1nm=g["t1_name"]; t2nm=g["t2_name"]
 
-                    def blank_p():
+                    # ── Load all data once ───────────────────────────────────
+                    all_gp = query(
+                        "SELECT id AS pid, name AS pname, team_id FROM players "
+                        "WHERE team_id IN (?,?) AND archived=0 ORDER BY name",
+                        (t1id, t2id))
+                    if not all_gp:
+                        st.info("No players on roster.")
+                        continue
+
+                    def _blank_p():
                         return dict(pts=0,ast=0,oreb=0,dreb=0,stl=0,blk=0,tov=0,
-                                    fgm=0,fga=0,tpm=0,tpa=0,ftm=0,fta=0,sc=0,pf=0,poss_secs=0.0)
-                    stats_g={r["pid"]:{**blank_p(),"name":r["pname"],"team_id":r["team_id"]} for r in lp}
-                    events_g=query("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (g["id"],))
-                    total_poss_g=sum(ev["possession_secs"] or 0.0 for ev in events_g)
-                    t1p=t2p=0
+                                    fgm=0,fga=0,tpm=0,tpa=0,ftm=0,fta=0,sc=0,pf=0)
+                    stats_g = {p["pid"]: {**_blank_p(), "name": p["pname"], "team_id": p["team_id"]}
+                               for p in all_gp}
+                    player_team_id = {p["pid"]: p["team_id"] for p in all_gp}
+
+                    mins_rows_g = query("""
+                        SELECT gel.player_id, SUM(ge.possession_secs) AS secs
+                        FROM game_event_lineup gel
+                        JOIN game_events ge ON ge.id = gel.event_id
+                        WHERE ge.game_id = ?
+                        GROUP BY gel.player_id
+                    """, (g["id"],))
+                    player_mins_g = {r["player_id"]: r["secs"] or 0.0 for r in mins_rows_g}
+
+                    pm_rows_g = query("SELECT player_id, plus_minus FROM game_lineup_players WHERE game_id=?", (g["id"],))
+                    stored_pm_g = {r["player_id"]: r["plus_minus"] for r in pm_rows_g}
+
+                    events_g = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (g["id"],))
+                    t1p = t2p = 0
                     for ev in events_g:
-                        prim=ev["primary_player_id"]
-                        et=ev["event_type"]
-                        if et=="shot":
-                            sh=prim
+                        prim = ev["primary_player_id"]
+                        et   = ev["event_type"]
+                        if et == "shot":
+                            sh = prim
                             if sh and sh in stats_g:
-                                stats_g[sh]["fga"]+=1; stats_g[sh]["sc"]+=1
-                                if ev["shot_type"]==3: stats_g[sh]["tpa"]+=1
-                                if ev["shot_result"]=="make":
-                                    pts_=ev["shot_type"]; stats_g[sh]["fgm"]+=1; stats_g[sh]["pts"]+=pts_
-                                    if ev["shot_type"]==3: stats_g[sh]["tpm"]+=1
-                                    if stats_g[sh]["team_id"]==t1id: t1p+=pts_
-                                    else: t2p+=pts_
-                                    if ev["pass_from_id"] and ev["pass_from_id"] in stats_g: stats_g[ev["pass_from_id"]]["ast"]+=1
-                            for col,key in [("pass_from_id","sc"),("shot_created_by_id","sc"),("blocked_by_id","blk")]:
-                                pid2=ev[col]
-                                if pid2 and pid2 in stats_g: stats_g[pid2][key]+=1
-                            reb=ev["rebound_by_id"]
+                                stats_g[sh]["fga"] += 1; stats_g[sh]["sc"] += 1
+                                if ev["shot_type"] == 3: stats_g[sh]["tpa"] += 1
+                                if ev["shot_result"] == "make":
+                                    pts_ = ev["shot_type"]; stats_g[sh]["fgm"] += 1; stats_g[sh]["pts"] += pts_
+                                    if ev["shot_type"] == 3: stats_g[sh]["tpm"] += 1
+                                    if stats_g[sh]["team_id"] == t1id: t1p += pts_
+                                    else: t2p += pts_
+                                    if ev["pass_from_id"] and ev["pass_from_id"] in stats_g:
+                                        stats_g[ev["pass_from_id"]]["ast"] += 1
+                            for _col, _key in [("pass_from_id","sc"),("shot_created_by_id","sc"),("blocked_by_id","blk")]:
+                                _pid2 = ev[_col]
+                                if _pid2 and _pid2 in stats_g: stats_g[_pid2][_key] += 1
+                            reb = ev["rebound_by_id"]
                             if reb and reb in stats_g and prim and prim in stats_g:
-                                k2="oreb" if player_team_id.get(prim)==player_team_id.get(reb) else "dreb"
-                                stats_g[reb][k2]+=1
-                        elif et=="free_throw":
-                            sh=prim
+                                stats_g[reb]["oreb" if player_team_id.get(prim)==player_team_id.get(reb) else "dreb"] += 1
+                        elif et == "free_throw":
+                            sh = prim
                             if sh and sh in stats_g:
-                                stats_g[sh]["fta"]+=1
-                                if ev["shot_result"]=="make":
-                                    stats_g[sh]["ftm"]+=1; stats_g[sh]["pts"]+=1
-                                    if stats_g[sh]["team_id"]==t1id: t1p+=1
-                                    else: t2p+=1
-                            reb=ev["rebound_by_id"]
+                                stats_g[sh]["fta"] += 1
+                                if ev["shot_result"] == "make":
+                                    stats_g[sh]["ftm"] += 1; stats_g[sh]["pts"] += 1
+                                    if stats_g[sh]["team_id"] == t1id: t1p += 1
+                                    else: t2p += 1
+                            reb = ev["rebound_by_id"]
                             if reb and reb in stats_g and prim and prim in stats_g:
-                                k2="oreb" if player_team_id.get(prim)==player_team_id.get(reb) else "dreb"
-                                stats_g[reb][k2]+=1
-                        elif et=="foul":
-                            f2=ev["secondary_player_id"]
-                            if f2 and f2 in stats_g: stats_g[f2]["pf"]+=1
-                        elif et=="turnover":
-                            if prim and prim in stats_g: stats_g[prim]["tov"]+=1
-                            s2=ev["stolen_by_id"]
-                            if s2 and s2 in stats_g: stats_g[s2]["stl"]+=1
-                    pm=t1p-t2p
-                    for pid2 in stats_g:
-                        stats_g[pid2]["poss_secs"]=total_poss_g
-                    box_rows=[]
-                    for pid2,s in stats_g.items():
-                        if s["team_id"]!=team_id: continue
-                        reb=s["oreb"]+s["dreb"]
-                        mins=round(s["poss_secs"]/60,1)
-                        box_rows.append({"Player":s["name"],"PTS":s["pts"],"AST":s["ast"],
-                                         "REB":reb,"STL":s["stl"],"BLK":s["blk"],"TOV":s["tov"],
-                                         "FGM":s["fgm"],"FGA":s["fga"],"3PM":s["tpm"],"3PA":s["tpa"],
-                                         "FTM":s["ftm"],"FTA":s["fta"],"SC":s["sc"],"MIN":mins})
-                    if box_rows:
-                        st.dataframe(pd.DataFrame(box_rows), use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No player data.")
+                                stats_g[reb]["oreb" if player_team_id.get(prim)==player_team_id.get(reb) else "dreb"] += 1
+                        elif et == "foul":
+                            f2 = ev["secondary_player_id"]
+                            if f2 and f2 in stats_g: stats_g[f2]["pf"] += 1
+                        elif et == "turnover":
+                            if prim and prim in stats_g: stats_g[prim]["tov"] += 1
+                            s2 = ev["stolen_by_id"]
+                            if s2 and s2 in stats_g: stats_g[s2]["stl"] += 1
+
+                    # ── Quarter scores (above tabs) ──────────────────────────
+                    def _ql(qq): return f"Q{qq}" if qq <= 4 else f"OT{qq-4}"
+                    q_sc = {}
+                    for ev2 in events_g:
+                        if ev2["event_type"] in ("shot","free_throw") and ev2["shot_result"] == "make":
+                            qq = ev2["quarter"]
+                            if qq not in q_sc: q_sc[qq] = {t1id: 0, t2id: 0}
+                            pts_q = ev2["shot_type"] if ev2["event_type"] == "shot" else 1
+                            s_tid = player_team_id.get(ev2["primary_player_id"])
+                            if s_tid in q_sc[qq]: q_sc[qq][s_tid] += pts_q
+                    if q_sc:
+                        r1g = {"Team": t1nm}; r2g = {"Team": t2nm}
+                        tot1g = tot2g = 0
+                        for qq in sorted(q_sc.keys()):
+                            r1g[_ql(qq)] = q_sc[qq].get(t1id, 0)
+                            r2g[_ql(qq)] = q_sc[qq].get(t2id, 0)
+                            tot1g += q_sc[qq].get(t1id, 0)
+                            tot2g += q_sc[qq].get(t2id, 0)
+                        r1g["Total"] = tot1g; r2g["Total"] = tot2g
+                        st.dataframe(pd.DataFrame([r1g, r2g]), hide_index=True, use_container_width=True)
+
+                    # ── Quarter PPP (above tabs) ─────────────────────────────
+                    qp_g = {}
+                    for ev2 in events_g:
+                        pid2_ = ev2["primary_player_id"]
+                        if not pid2_: continue
+                        tid2_ = player_team_id.get(pid2_)
+                        if tid2_ not in (t1id, t2id): continue
+                        qq2 = ev2["quarter"]
+                        if qq2 not in qp_g:
+                            qp_g[qq2] = {t1id: {"poss":0,"pts":0}, t2id: {"poss":0,"pts":0}}
+                        if ev2["event_type"] in ("shot","turnover"):
+                            qp_g[qq2][tid2_]["poss"] += 1
+                        if ev2["event_type"] == "shot" and ev2["shot_result"] == "make":
+                            qp_g[qq2][tid2_]["pts"] += ev2["shot_type"] or 0
+                        elif ev2["event_type"] == "free_throw" and ev2["shot_result"] == "make":
+                            qp_g[qq2][tid2_]["pts"] += 1
+                    if qp_g:
+                        qp_r1 = {"Team": t1nm}; qp_r2 = {"Team": t2nm}
+                        t1_tp = t2_tp = t1_tpts = t2_tpts = 0
+                        for qq2 in sorted(qp_g.keys()):
+                            lbl2 = _ql(qq2)
+                            d1 = qp_g[qq2].get(t1id, {"poss":0,"pts":0})
+                            d2 = qp_g[qq2].get(t2id, {"poss":0,"pts":0})
+                            qp_r1[f"{lbl2} Poss"] = d1["poss"]
+                            qp_r1[f"{lbl2} PPP"]  = round(d1["pts"]/d1["poss"],3) if d1["poss"] else "—"
+                            qp_r2[f"{lbl2} Poss"] = d2["poss"]
+                            qp_r2[f"{lbl2} PPP"]  = round(d2["pts"]/d2["poss"],3) if d2["poss"] else "—"
+                            t1_tp += d1["poss"]; t1_tpts += d1["pts"]
+                            t2_tp += d2["poss"]; t2_tpts += d2["pts"]
+                        qp_r1["Total Poss"] = t1_tp
+                        qp_r1["Total PPP"]  = round(t1_tpts/t1_tp,3) if t1_tp else "—"
+                        qp_r2["Total Poss"] = t2_tp
+                        qp_r2["Total PPP"]  = round(t2_tpts/t2_tp,3) if t2_tp else "—"
+                        st.caption("Possessions per Quarter · PPP = points per possession")
+                        st.dataframe(pd.DataFrame([qp_r1, qp_r2]), hide_index=True, use_container_width=True)
+
+                    # ── Four tabs ────────────────────────────────────────────
+                    gtab_box, gtab_ts, gtab_off, gtab_hz = st.tabs(
+                        ["Box Score", "Team Stats", "Officials", "Hot Zones"])
+
+                    # ── Box Score ────────────────────────────────────────────
+                    with gtab_box:
+                        _BOX_COLS = ["Player","PTS","AST","OREB","DREB","REB","STL","BLK","TOV",
+                                     "FGM","FGA","3PM","3PA","FTM","FTA","SC","+/-","MIN","GS"]
+                        all_box_export = []
+                        for _tid, _tnm, _tpts in [(t1id, t1nm, t1p), (t2id, t2nm, t2p)]:
+                            st.markdown(f"### {_tnm} — {_tpts}")
+                            _rows = []
+                            for pid2, s in stats_g.items():
+                                if s["team_id"] != _tid: continue
+                                _reb  = s["oreb"] + s["dreb"]
+                                _mins = round(player_mins_g.get(pid2, 0.0) / 60, 1)
+                                _plus = stored_pm_g.get(pid2, 0)
+                                _gs   = round(s["pts"]+0.4*s["fgm"]-0.7*s["fga"]
+                                              -0.4*(s["fta"]-s["ftm"])+0.7*s["oreb"]
+                                              +0.3*s["dreb"]+s["stl"]+0.7*s["ast"]
+                                              +0.7*s["blk"]-0.4*s["pf"]-s["tov"], 1)
+                                _rows.append({
+                                    "Player":s["name"],"PTS":s["pts"],"AST":s["ast"],
+                                    "OREB":s["oreb"],"DREB":s["dreb"],"REB":_reb,
+                                    "STL":s["stl"],"BLK":s["blk"],"TOV":s["tov"],
+                                    "FGM":s["fgm"],"FGA":s["fga"],"3PM":s["tpm"],"3PA":s["tpa"],
+                                    "FTM":s["ftm"],"FTA":s["fta"],"SC":s["sc"],
+                                    "+/-":_plus,"MIN":_mins,"GS":_gs,
+                                })
+                            if _rows:
+                                _df = pd.DataFrame(_rows)[_BOX_COLS]
+                                st.dataframe(_df, use_container_width=True, hide_index=True)
+                                all_box_export.append(_df.assign(Team=_tnm))
+                        if all_box_export:
+                            _exp = pd.concat(all_box_export)[["Team"]+_BOX_COLS]
+                            st.download_button("⬇ Export Box Score (CSV)", _exp.to_csv(index=False),
+                                               file_name=f"boxscore_{g['id']}_{opp_nm}.csv",
+                                               mime="text/csv", key=f"dl_box_{g['id']}")
+
+                    # ── Team Stats ───────────────────────────────────────────
+                    with gtab_ts:
+                        def _fmt_s(s):
+                            _m, _sec = divmod(int(s), 60)
+                            return f"{_m}:{_sec:02d}"
+
+                        def _team_totals(tid_, pts_, poss_evs_):
+                            _sr = [s for s in stats_g.values() if s["team_id"] == tid_]
+                            if not _sr: return {}
+                            _fgm=sum(r["fgm"] for r in _sr); _fga=sum(r["fga"] for r in _sr)
+                            _tpm=sum(r["tpm"] for r in _sr); _tpa=sum(r["tpa"] for r in _sr)
+                            _ftm=sum(r["ftm"] for r in _sr); _fta=sum(r["fta"] for r in _sr)
+                            _oreb=sum(r["oreb"] for r in _sr); _dreb=sum(r["dreb"] for r in _sr)
+                            _poss  = sum(1   for ev in poss_evs_ if player_team_id.get(ev["primary_player_id"])==tid_)
+                            _psecs = sum(ev["possession_secs"] or 0 for ev in poss_evs_
+                                         if player_team_id.get(ev["primary_player_id"])==tid_)
+                            return {
+                                "PTS":pts_, "POSS":_poss,
+                                "POSS TIME":_fmt_s(_psecs),
+                                "AVG POSS":_fmt_s(_psecs/_poss) if _poss else "—",
+                                "PPP":round(pts_/_poss,3) if _poss else "—",
+                                "FGM":_fgm,"FGA":_fga,"FG%":f"{_fgm/_fga*100:.1f}%" if _fga else "—",
+                                "3PM":_tpm,"3PA":_tpa,"3P%":f"{_tpm/_tpa*100:.1f}%" if _tpa else "—",
+                                "FTM":_ftm,"FTA":_fta,"FT%":f"{_ftm/_fta*100:.1f}%" if _fta else "—",
+                                "AST":sum(r["ast"] for r in _sr),
+                                "OREB":_oreb,"DREB":_dreb,"REB":_oreb+_dreb,
+                                "STL":sum(r["stl"] for r in _sr),
+                                "BLK":sum(r["blk"] for r in _sr),
+                                "TOV":sum(r["tov"] for r in _sr),
+                                "PF":sum(r["pf"]  for r in _sr),
+                            }
+
+                        _poss_evs = [ev for ev in events_g
+                                     if ev["event_type"] != "free_throw" and ev["primary_player_id"]]
+                        t1_tot_g = _team_totals(t1id, t1p, _poss_evs)
+                        t2_tot_g = _team_totals(t2id, t2p, _poss_evs)
+
+                        if t1_tot_g and t2_tot_g:
+                            _stat_order = [
+                                ("PTS","Points"),("POSS","Possessions"),
+                                ("POSS TIME","Total Poss. Time"),("AVG POSS","Avg Poss. Length"),
+                                ("PPP","Points Per Possession"),
+                                ("FGM","FG Made"),("FGA","FG Attempted"),("FG%","FG%"),
+                                ("3PM","3PT Made"),("3PA","3PT Attempted"),("3P%","3P%"),
+                                ("FTM","FT Made"),("FTA","FT Attempted"),("FT%","FT%"),
+                                ("AST","Assists"),("REB","Rebounds"),
+                                ("OREB","Off. Rebounds"),("DREB","Def. Rebounds"),
+                                ("STL","Steals"),("BLK","Blocks"),
+                                ("TOV","Turnovers"),("PF","Personal Fouls"),
+                            ]
+                            _ts_rows = [{"Stat":lbl, t1nm:t1_tot_g.get(k,0), t2nm:t2_tot_g.get(k,0)}
+                                        for k,lbl in _stat_order]
+                            st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No events logged yet.")
+
+                    # ── Officials ────────────────────────────────────────────
+                    with gtab_off:
+                        _game_offs = query("""
+                            SELECT o.id AS oid, o.name AS oname
+                            FROM game_lineup_officials glo
+                            JOIN officials o ON o.id = glo.official_id
+                            WHERE glo.game_id = ?
+                        """, (g["id"],))
+                        if not _game_offs:
+                            st.info("No officials logged for this game.")
+                        else:
+                            _off_stats = {o["oid"]:{"name":o["oname"],"t1":0,"t2":0} for o in _game_offs}
+                            for ev in events_g:
+                                if ev["event_type"] != "foul": continue
+                                _oid = ev["official_id"]; _fp = ev["secondary_player_id"]
+                                if _oid in _off_stats and _fp and _fp in player_team_id:
+                                    if player_team_id[_fp] == t1id: _off_stats[_oid]["t1"] += 1
+                                    else: _off_stats[_oid]["t2"] += 1
+                            _off_rows = [{"Official":s["name"],
+                                          f"Calls vs {t1nm}":s["t1"],
+                                          f"Calls vs {t2nm}":s["t2"],
+                                          "Total":s["t1"]+s["t2"]}
+                                         for s in _off_stats.values()]
+                            st.dataframe(pd.DataFrame(_off_rows), use_container_width=True, hide_index=True)
+
+                    # ── Hot Zones ────────────────────────────────────────────
+                    with gtab_hz:
+                        _zf1, _zf2 = st.columns(2)
+                        _team_filt = _zf1.selectbox("Team", ["Both Teams", t1nm, t2nm],
+                                                    key=f"hz_team_{g['id']}")
+                        if _team_filt == t1nm:
+                            _hz_pls = [{"pid":pid,"pname":s["name"]} for pid,s in stats_g.items() if s["team_id"]==t1id]
+                        elif _team_filt == t2nm:
+                            _hz_pls = [{"pid":pid,"pname":s["name"]} for pid,s in stats_g.items() if s["team_id"]==t2id]
+                        else:
+                            _hz_pls = [{"pid":pid,"pname":s["name"]} for pid,s in stats_g.items()]
+                        _pl_filt = _zf2.selectbox("Player", ["All Players"]+[p["pname"] for p in _hz_pls],
+                                                  key=f"hz_player_{g['id']}")
+
+                        _shot_evs = [ev for ev in events_g
+                                     if ev["event_type"]=="shot" and ev.get("zone")]
+                        if _pl_filt != "All Players":
+                            _mp = next((p for p in _hz_pls if p["pname"]==_pl_filt), None)
+                            if _mp:
+                                _shot_evs = [ev for ev in _shot_evs if ev["primary_player_id"]==_mp["pid"]]
+                        elif _team_filt != "Both Teams":
+                            _tf = t1id if _team_filt==t1nm else t2id
+                            _shot_evs = [ev for ev in _shot_evs if player_team_id.get(ev["primary_player_id"])==_tf]
+
+                        render_hot_zones(_shot_evs)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  MATCHUP SIMULATOR
@@ -651,6 +1103,24 @@ with tab_mu:
             add("OREB%", f"{adv_a2['oreb_p']*100:.1f}%",f"{adv_b2['oreb_p']*100:.1f}%")
             add("Pace",  f"{adv_a2['pace']:.1f}", f"{adv_b2['pace']:.1f}")
         st.dataframe(pd.DataFrame(comp), use_container_width=True, hide_index=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  NOTES
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_notes:
+    from Database.db import execute as db_execute
+    current_notes = query("SELECT notes FROM teams WHERE id=?", (team_id,))
+    existing = current_notes[0]["notes"] if current_notes else ""
+    new_notes = st.text_area(
+        f"Notes — {sel_name}",
+        value=existing,
+        height=400,
+        placeholder="Scouting notes, tendencies, player observations, game plans…",
+        key=f"team_notes_{team_id}",
+    )
+    if st.button("💾 Save Notes", type="primary", key="save_notes_analytics"):
+        db_execute("UPDATE teams SET notes=? WHERE id=?", (new_notes, team_id))
+        st.success("Notes saved.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  AI INSIGHTS

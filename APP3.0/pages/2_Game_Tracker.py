@@ -146,18 +146,26 @@ def compute_box(game_id: int, game_info: dict):
                      "FTM":s["ftm"],"FTA":s["fta"],"SC":s["sc"],"+/-":plus,"MIN":mins,"GS":gs})
     return rows, t1_pts, t2_pts
 
-def compute_off_box(game_id: int, game: dict):
-    pt   = {r["player_id"]: r["team_id"] for r in query("SELECT player_id,team_id FROM game_lineup_players WHERE game_id=?", (game_id,))}
-    offs = query("SELECT o.id AS oid, o.name AS oname FROM game_lineup_officials glo JOIN officials o ON o.id=glo.official_id WHERE glo.game_id=?", (game_id,))
-    fouls= query("SELECT official_id, secondary_player_id FROM game_events WHERE game_id=? AND event_type='foul'", (game_id,))
-    t1id = game["team1_id"]
-    stats = {o["oid"]: {"name":o["oname"],"t1":0,"t2":0} for o in offs}
-    for f in fouls:
-        oid, fp = f["official_id"], f["secondary_player_id"]
-        if oid in stats and fp in pt:
-            if pt[fp]==t1id: stats[oid]["t1"]+=1
-            else: stats[oid]["t2"]+=1
-    return [{"Official":s["name"],"T1 Calls":s["t1"],"T2 Calls":s["t2"],"Total":s["t1"]+s["t2"]} for s in stats.values()]
+def compute_quarter_scores(game_id: int, t1id: int, t2id: int):
+    """Returns a dict of {quarter: {t1id: pts, t2id: pts}} for all quarters played."""
+    rows = query("""
+        SELECT ge.quarter, ge.event_type, ge.shot_result, ge.shot_type, p.team_id AS tid
+        FROM game_events ge
+        JOIN players p ON p.id = ge.primary_player_id
+        WHERE ge.game_id = ? AND ge.primary_player_id IS NOT NULL
+          AND ge.event_type IN ('shot','free_throw') AND ge.shot_result = 'make'
+        ORDER BY ge.quarter, ge.id
+    """, (game_id,))
+    quarters = {}
+    for r in rows:
+        q = r["quarter"]
+        if q not in quarters:
+            quarters[q] = {t1id: 0, t2id: 0}
+        pts = r["shot_type"] if r["event_type"] == "shot" else 1
+        if r["tid"] in quarters[q]:
+            quarters[q][r["tid"]] += pts
+    return quarters
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  GAME SELECTOR
@@ -166,8 +174,9 @@ def compute_off_box(game_id: int, game: dict):
 all_games = query("""
     SELECT g.id, t1.name AS t1, t2.name AS t2, g.date
     FROM games g JOIN teams t1 ON t1.id=g.team1_id JOIN teams t2 ON t2.id=g.team2_id
-    ORDER BY g.date DESC
 """)
+# Sort by real date (stored as text so ORDER BY is lexicographic)
+all_games = sorted(all_games, key=lambda g: pd.to_datetime(g["date"], errors="coerce"), reverse=True)
 if not all_games:
     st.warning("No games found. Add games in the Input Hub first.")
     st.stop()
@@ -187,8 +196,32 @@ if is_tracked:
     gc2.success("✓ Game Final")
 else:
     if gc2.button("End Game", type="primary", use_container_width=True):
-        execute("UPDATE games SET tracked=1 WHERE id=?", (game_id,))
+        _, t1_final, t2_final = compute_box(game_id, game_info)
+        execute("UPDATE games SET tracked=1, home_score=?, away_score=? WHERE id=?",
+                (t1_final, t2_final, game_id))
+        st.cache_data.clear()
         st.rerun()
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TEAM NOTES
+# ══════════════════════════════════════════════════════════════════════════════
+
+with st.expander("📋 Team Notes", expanded=False):
+    notes_col1, notes_col2 = st.columns(2)
+    for col, tid, tname in [(notes_col1, t1id, t1name), (notes_col2, t2id, t2name)]:
+        with col:
+            st.markdown(f"**{tname}**")
+            cur = query("SELECT notes FROM teams WHERE id=?", (tid,))
+            existing_note = cur[0]["notes"] if cur else ""
+            new_note = st.text_area(
+                "Notes", value=existing_note, height=180,
+                placeholder="Scouting notes, tendencies, game plan…",
+                key=f"gt_notes_{game_id}_{tid}",
+                label_visibility="collapsed",
+            )
+            if st.button("💾 Save", key=f"gt_save_notes_{game_id}_{tid}", type="primary"):
+                execute("UPDATE teams SET notes=? WHERE id=?", (new_note, tid))
+                st.success("Saved.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  QUICK ADD — spreadsheet style
@@ -199,9 +232,8 @@ with st.expander("＋ Quick Add Player / Official"):
 
     with qa_l:
         st.markdown("**Add Players**")
-        all_teams  = query("SELECT id, name FROM teams ORDER BY name")
-        qa_tm_map  = {t["name"]: t["id"] for t in all_teams}
-        qa_tnames  = list(qa_tm_map.keys())
+        qa_tm_map  = {t1name: t1id, t2name: t2id}
+        qa_tnames  = [t1name, t2name]
 
         qa_p_orig = st.session_state.get("_qa_players_orig",
                         pd.DataFrame(columns=["team","name","number","height","wingspan","weight"]))
@@ -257,6 +289,7 @@ with st.expander("＋ Quick Add Player / Official"):
                 st.session_state.pop("_players_orig", None)
                 st.session_state.pop("_qa_players_orig", None)
                 st.session_state.pop("qa_players_editor", None)
+                st.cache_data.clear()
                 st.rerun()
             else:
                 st.warning("Fill in at least one player row.")
@@ -289,6 +322,7 @@ with st.expander("＋ Quick Add Player / Official"):
                 st.success(f"Added {saved} official(s).")
                 st.session_state.pop("_qa_officials_orig", None)
                 st.session_state.pop("qa_officials_editor", None)
+                st.cache_data.clear()
                 st.rerun()
             else:
                 st.warning("Fill in at least one official row.")
@@ -363,10 +397,20 @@ if not on_court:
 else:
     event_type = st.selectbox("Event Type", ["Shot", "Free Throw", "Foul", "Turnover"], key="ev_type")
 
+    _last_time = st.session_state.get(f"last_time_{game_id}", "8:00")
+    _last_q    = st.session_state.get(f"last_q_{game_id}", 1)
+    try:
+        _lm, _ls = _last_time.split(":")
+        _last_mins = int(_lm)
+        _last_secs = int(_ls)
+    except Exception:
+        _last_mins, _last_secs = 8, 0
+
     with st.form("event_form", clear_on_submit=True):
-        tc, qc = st.columns(2)
-        time_input = tc.text_input("Time (MM:SS)", value="8:00")
-        quarter    = qc.number_input("Quarter", min_value=1, max_value=10, step=1, value=1)
+        mc, sc, qc = st.columns(3)
+        mins_input = mc.number_input("Minutes", min_value=0, max_value=99, step=1, value=_last_mins)
+        secs_input = sc.number_input("Seconds", min_value=0, max_value=59, step=1, value=_last_secs)
+        quarter    = qc.number_input("Quarter", min_value=1, max_value=10, step=1, value=int(_last_q))
 
         st.markdown("---")
 
@@ -404,8 +448,11 @@ else:
         submitted = st.form_submit_button("Log Event", type="primary", use_container_width=True)
 
     if submitted:
-        q     = int(quarter)
-        t     = time_input
+        q = int(quarter)
+        t = f"{int(mins_input)}:{int(secs_input):02d}"
+        # Persist so the form re-opens with the same time/quarter
+        st.session_state[f"last_time_{game_id}"] = t
+        st.session_state[f"last_q_{game_id}"]    = q
         prev  = query("SELECT time FROM game_events WHERE game_id=? AND quarter=? ORDER BY id DESC LIMIT 1", (game_id, q))
         start = time_to_secs(prev[0]["time"]) if prev else (8*60 if q<=4 else 4*60)
         poss  = max(0.0, start - time_to_secs(t))
@@ -474,6 +521,9 @@ else:
                  plookup(tov_p,all_id), plookup(stolen,all_id)))
             snapshot_and_apply_pm(eid)
 
+        st.session_state[f"last_time_{game_id}"] = t
+        st.session_state[f"last_q_{game_id}"]    = q
+        st.cache_data.clear()
         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -492,6 +542,24 @@ sc1, sc2, sc3 = st.columns([2,1,2])
 sc1.metric(t1name, t1_live)
 sc2.markdown("<div style='text-align:center;font-size:1.4em;padding-top:8px'>vs</div>", unsafe_allow_html=True)
 sc3.metric(t2name, t2_live)
+
+# Quarter-by-quarter breakdown
+q_scores = compute_quarter_scores(game_id, t1id, t2id)
+if q_scores:
+    all_quarters = sorted(q_scores.keys())
+    def q_label(q): return f"Q{q}" if q <= 4 else f"OT{q-4}"
+    q_row_t1 = {"Team": t1name}
+    q_row_t2 = {"Team": t2name}
+    t1_tot = t2_tot = 0
+    for q in all_quarters:
+        lbl = q_label(q)
+        q_row_t1[lbl] = q_scores[q].get(t1id, 0)
+        q_row_t2[lbl] = q_scores[q].get(t2id, 0)
+        t1_tot += q_scores[q].get(t1id, 0)
+        t2_tot += q_scores[q].get(t2id, 0)
+    q_row_t1["Total"] = t1_tot
+    q_row_t2["Total"] = t2_tot
+    st.dataframe(pd.DataFrame([q_row_t1, q_row_t2]), hide_index=True, use_container_width=True)
 
 st.markdown("#### Play-by-Play")
 recent = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC", (game_id,))
@@ -518,7 +586,10 @@ else:
             desc = et
         log_rows.append({"Q":ev["quarter"],"Time":ev["time"],"Poss(s)":round(ev["possession_secs"],1),"Play":desc})
 
-    st.dataframe(pd.DataFrame(log_rows), use_container_width=True, hide_index=True)
+    pbp_df = pd.DataFrame(log_rows)
+    st.dataframe(pbp_df, use_container_width=True, hide_index=True)
+    st.download_button("⬇ Export Play-by-Play (CSV)", pbp_df.to_csv(index=False),
+                       file_name=f"pbp_{game_id}.csv", mime="text/csv", key="dl_pbp")
 
     if st.button("🗑 Delete Last Event", type="secondary"):
         last = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC LIMIT 1", (game_id,))
@@ -541,61 +612,6 @@ else:
                             "WHERE game_id=? AND player_id=?",
                             (reverse_delta, game_id, pid))
             execute("DELETE FROM game_events WHERE id=?", (eid,))
+            st.cache_data.clear()
             st.rerun()
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  STATS TABS
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.divider()
-tab_box, tab_off, tab_zones = st.tabs(["Box Score", "Officials", "Hot Zones"])
-
-with tab_box:
-    rows, t1_pts, t2_pts = compute_box(game_id, game_info)
-    cols = ["Player","PTS","AST","OREB","DREB","REB","STL","BLK","TOV",
-            "FGM","FGA","3PM","3PA","FTM","FTA","SC","+/-","MIN","GS"]
-    for tid, tname, pts in [(t1id,t1name,t1_pts),(t2id,t2name,t2_pts)]:
-        st.markdown(f"### {tname} — {pts}")
-        team_rows = [r for r in rows if r["_tid"]==tid]
-        if team_rows:
-            st.dataframe(pd.DataFrame(team_rows)[cols], use_container_width=True, hide_index=True)
-
-with tab_off:
-    off_rows = compute_off_box(game_id, game_info)
-    if not off_rows:
-        st.info("No officials or foul events yet.")
-    else:
-        df = pd.DataFrame(off_rows)
-        df.columns = ["Official", f"Calls vs {t1name}", f"Calls vs {t2name}", "Total"]
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-with tab_zones:
-    shots = query("SELECT zone, shot_type, shot_result FROM game_events WHERE game_id=? AND event_type='shot' AND zone IS NOT NULL", (game_id,))
-    zd = {z: {2:[0,0], 3:[0,0]} for z in ZONES}
-    for s in shots:
-        z, t = s["zone"], s["shot_type"]
-        if z and t:
-            zd[z][t][1] += 1
-            if s["shot_result"]=="make": zd[z][t][0] += 1
-
-    def zcolor(m, a):
-        if not a: return "#2d2d2d","#555555"
-        p = m/a
-        if p>=0.50: return "#1a5c38","#ffffff"
-        if p>=0.35: return "#7a5200","#ffffff"
-        return "#6b1515","#ffffff"
-
-    for stype, label in [(2,"2-Point Zones"),(3,"3-Point Zones")]:
-        st.markdown(f"**{label}**")
-        cols = st.columns(5)
-        for i, zone in enumerate(ZONES):
-            m, a = zd[zone][stype]
-            pct  = m/a*100 if a else 0
-            bg, fg = zcolor(m, a)
-            cols[i].markdown(
-                f"""<div style="background:{bg};color:{fg};padding:16px 4px;border-radius:10px;text-align:center">
-                <div style="font-weight:bold">{zone}</div>
-                <div style="font-size:1.5em;font-weight:bold">{m}/{a}</div>
-                <div style="font-size:0.85em">{pct:.0f}%</div></div>""",
-                unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)

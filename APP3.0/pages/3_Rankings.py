@@ -16,6 +16,16 @@ from helpers.charts import (show_shot_chart, show_scoring_pie,
 
 initialize_database()
 
+# ── Arrow-safe st.dataframe wrapper ──────────────────────────────────────────
+_st_df_orig = st.dataframe
+def _safe_df(data=None, *args, **kwargs):
+    if data is not None and not isinstance(data, pd.io.formats.style.Styler):
+        data = data.copy()
+        for _c in data.select_dtypes(include="object").columns:
+            data[_c] = data[_c].astype(str)
+    return _st_df_orig(data, *args, **kwargs)
+st.dataframe = _safe_df
+
 st.title("Rankings")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -85,7 +95,7 @@ def show_power_chart(df: pd.DataFrame, title: str = "Power Rankings", n: int = 2
         margin=dict(l=10,r=70,t=50,b=20),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(size=12),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def show_four_quadrant(df: pd.DataFrame):
@@ -127,7 +137,7 @@ def show_four_quadrant(df: pd.DataFrame):
         xaxis=dict(gridcolor="rgba(128,128,128,0.12)",autorange="reversed"),
         yaxis=dict(gridcolor="rgba(128,128,128,0.12)"), font=dict(size=11),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
     st.caption("Bubble size = games played.  Quadrant dividers = league averages.  X-axis is reversed: teams further left have better defense.")
 
 
@@ -232,7 +242,7 @@ def show_four_factors_chart(df: pd.DataFrame):
         legend=dict(orientation="h", y=-0.15, font=dict(size=9)),
         margin=dict(l=50, r=50, t=70, b=100),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
     st.caption(
         "Each axis normalised 0–100 **within the selected teams** — "
         "100 = best, 0 = worst among those shown. "
@@ -262,7 +272,7 @@ def show_net_rtg_chart(df: pd.DataFrame):
         margin=dict(l=10,r=70,t=50,b=20),
         xaxis=dict(gridcolor="rgba(128,128,128,0.15)"), font=dict(size=11),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def show_scoring_dist_chart(df: pd.DataFrame):
@@ -288,7 +298,7 @@ def show_scoring_dist_chart(df: pd.DataFrame):
         xaxis=dict(tickangle=-40,gridcolor="rgba(128,128,128,0.12)"),
         yaxis=dict(gridcolor="rgba(128,128,128,0.15)"), font=dict(size=11),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def show_stat_leaders(df: pd.DataFrame, stats: list):
@@ -362,7 +372,7 @@ def show_team_radar(df: pd.DataFrame, radar_stats: list, key: str = "radar"):
         title="Team Comparison — normalized vs current filter set (100 = best)",
         font=dict(size=11), legend=dict(orientation="h",y=-0.08),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -420,9 +430,9 @@ def show_table(df, display_cols, sort_default, use_gradients=True):
         grad_targets = [c for c in display_cols if c in _GRADIENT_COLS]
         styler = out.style.set_properties(**{"font-size":"13px"})
         styler = _apply_grads(styler, grad_targets)
-        st.dataframe(styler, width='stretch')
+        st.dataframe(styler, use_container_width=True)
     else:
-        st.dataframe(out, width='stretch')
+        st.dataframe(out, use_container_width=True)
 
 
 def show_class_breakdown(df, display_cols):
@@ -437,7 +447,7 @@ def show_class_breakdown(df, display_cols):
             grad_targets = [c for c in display_cols if c in _GRADIENT_COLS]
             styler = out.style.set_properties(**{"font-size":"13px"})
             styler = _apply_grads(styler, grad_targets)
-            st.dataframe(styler, width='stretch')
+            st.dataframe(styler, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -795,7 +805,7 @@ with tab_tracked:
                     plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                     margin=dict(l=10,r=70,t=50,b=20), font=dict(size=12),
                 )
-                st.plotly_chart(fig_d, width='stretch')
+                st.plotly_chart(fig_d, use_container_width=True)
         with d_ld_col:
             st.markdown("#### Defensive Leaders")
             show_stat_leaders(df_tr,[

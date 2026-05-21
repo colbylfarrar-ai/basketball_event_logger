@@ -203,7 +203,7 @@ def show_shot_chart(shots: list, title: str = "Shot Chart"):
         plot_bgcolor="rgba(18,20,30,1)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
     st.caption("Bubble size = attempts · 🟢 ≥45% · 🟡 30–44% · 🔴 <30% FG%"
                " · Zone C 2PT = paint area proxy · HS 3-pt line: 19′9″")
 
@@ -227,7 +227,7 @@ def show_scoring_pie(pts_2: int, pts_3: int, pts_ft: int, title: str = "Scoring 
         showlegend=False,
         font=dict(size=12),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def show_four_factors_bars(adv: dict, league_avgs: dict = None):
@@ -283,7 +283,7 @@ def show_four_factors_bars(adv: dict, league_avgs: dict = None):
         legend=dict(orientation="h", y=1.06),
         font=dict(size=11),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def show_trend_chart(game_log: list, team_name: str = "Team"):
@@ -325,7 +325,7 @@ def show_trend_chart(game_log: list, team_name: str = "Team"):
         margin=dict(l=20,r=40,t=60,b=100), legend=dict(orientation="h",y=1.06),
         font=dict(size=11),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def show_player_radar(df_pl: pd.DataFrame, key: str = "player_radar"):
@@ -398,4 +398,4 @@ def show_player_radar(df_pl: pd.DataFrame, key: str = "player_radar"):
         title="Player Comparison (normalized vs team, 100 = best on roster)",
         legend=dict(orientation="h",y=-0.1),font=dict(size=11),
     )
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)

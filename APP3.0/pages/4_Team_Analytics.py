@@ -19,6 +19,19 @@ from helpers.stats_team import (compute_player_game_log, compute_player_career,
 
 initialize_database()
 
+# ── Arrow-safe st.dataframe wrapper ──────────────────────────────────────────
+# PyArrow (used by Streamlit) rejects object-dtype columns that contain a mix
+# of numeric and string values.  This patch casts every object column to str
+# before handing the DataFrame to Arrow, while leaving Styler objects alone.
+_st_df_orig = st.dataframe
+def _safe_df(data=None, *args, **kwargs):
+    if data is not None and not isinstance(data, pd.io.formats.style.Styler):
+        data = data.copy()
+        for _c in data.select_dtypes(include="object").columns:
+            data[_c] = data[_c].astype(str)
+    return _st_df_orig(data, *args, **kwargs)
+st.dataframe = _safe_df
+
 st.title("Team Analytics")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -162,7 +175,7 @@ with tab_ts:
             {"Stat": "Avg Poss. Length",     "Value": a["avg_poss_len"]},
             {"Stat": "Points Per Possession","Value": f"{a['ppp']:.3f}"},
         ]
-        st.dataframe(pd.DataFrame(poss_rows), hide_index=True, width='stretch')
+        st.dataframe(pd.DataFrame(poss_rows), hide_index=True, use_container_width=True)
 
         st.divider()
 
@@ -183,7 +196,7 @@ with tab_ts:
                 {"Stat": "eFG%", "Total": f"{a['efg']*100:.1f}%", "Per Game": "—"},
                 {"Stat": "TS%",  "Total": f"{a['ts']*100:.1f}%",  "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(fg_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(fg_rows), hide_index=True, use_container_width=True)
 
         with sh2:
             st.markdown("**3-Pointers**")
@@ -193,7 +206,7 @@ with tab_ts:
                 {"Stat": "3P%",  "Total": f"{a['tpp']*100:.1f}%",           "Per Game": "—"},
                 {"Stat": "3PAr", "Total": f"{a['tpar']*100:.1f}%",          "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(tp_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(tp_rows), hide_index=True, use_container_width=True)
 
         with sh3:
             st.markdown("**Free Throws**")
@@ -203,7 +216,7 @@ with tab_ts:
                 {"Stat": "FT%",     "Total": f"{a['ftp']*100:.1f}%",        "Per Game": "—"},
                 {"Stat": "FT Rate", "Total": f"{a['ft_r']:.2f}",            "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(ft_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(ft_rows), hide_index=True, use_container_width=True)
 
         st.divider()
 
@@ -218,7 +231,7 @@ with tab_ts:
             {"Stat": "Blocks",        "Total": a["blk"],  "Per Game": round(a["blk_pg"], 1)},
             {"Stat": "Turnovers",     "Total": a["tov"],  "Per Game": round(a["tov_pg"], 1)},
         ]
-        st.dataframe(pd.DataFrame(other_rows), hide_index=True, width='stretch')
+        st.dataframe(pd.DataFrame(other_rows), hide_index=True, use_container_width=True)
 
         st.divider()
 
@@ -241,7 +254,7 @@ with tab_ts:
                 {"Stat": "Paint Pts/G",           "Value": f"{a.get('paint_pts_pg',0):.1f}",   "Note": "pts from paint/g"},
             ]
             st.markdown("**Offense**")
-            st.dataframe(pd.DataFrame(adv_off), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(adv_off), hide_index=True, use_container_width=True)
         with adv2:
             adv_def = [
                 {"Stat": "Def. Rating (DRtg)",   "Value": f"{a['drtg']:.1f}",                      "Note": "pts/100 poss"},
@@ -255,7 +268,7 @@ with tab_ts:
                 {"Stat": "Opp TOV/G",             "Value": f"{a['opp_tov']/gp_ts:.1f}",             "Note": "opp turnovers/g"},
             ]
             st.markdown("**Defense**")
-            st.dataframe(pd.DataFrame(adv_def), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(adv_def), hide_index=True, use_container_width=True)
 
         st.divider()
 
@@ -306,7 +319,7 @@ with tab_ts:
                 {"Source": "TOTAL",           "Points": _pts2+_pts3+_ptft,
                  "Pct": "100%", "Per Game": f"{a['pts_pg']:.1f}"},
             ]
-            st.dataframe(pd.DataFrame(pct_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(pct_rows), hide_index=True, use_container_width=True)
             st.markdown(f"**Ast%**: {a.get('ast_pct',0):.1f}% of FGM were assisted")
             st.markdown(f"**Unast%**: {a.get('unast_pct',0):.1f}% of FGM were unassisted")
 
@@ -591,7 +604,7 @@ with tab_pl:
                             "Contested rating": f"{SHOT_RATING.get((stype,zone,True),0):+.1f}",
                         })
                     if _sq_table:
-                        st.dataframe(pd.DataFrame(_sq_table), hide_index=True, width='stretch')
+                        st.dataframe(pd.DataFrame(_sq_table), hide_index=True, use_container_width=True)
 
                 # ── Per-32 Stats (HS equivalent of per-36) ──────────────────
                 _mins32 = c["poss_secs"]/60
@@ -683,7 +696,7 @@ with tab_pl:
                          "Net": round(net_off_,1) if net_off_ is not None else "—",
                          "Pts For": off_pf_, "Pts Against": off_pa_},
                     ])
-                    st.dataframe(oo_table, hide_index=True, width='stretch')
+                    st.dataframe(oo_table, hide_index=True, use_container_width=True)
                 else:
                     st.caption("On/Off data requires games with lineup snapshots logged in Game Tracker.")
 
@@ -855,7 +868,7 @@ with tab_gm:
                             tot1g += q_sc[qq].get(t1id, 0)
                             tot2g += q_sc[qq].get(t2id, 0)
                         r1g["Total"] = tot1g; r2g["Total"] = tot2g
-                        st.dataframe(pd.DataFrame([r1g, r2g]), hide_index=True, width='stretch')
+                        st.dataframe(pd.DataFrame([r1g, r2g]), hide_index=True, use_container_width=True)
 
                     # ── Quarter PPP (above tabs) ─────────────────────────────
                     qp_g = {}
@@ -891,7 +904,7 @@ with tab_gm:
                         qp_r2["Total Poss"] = t2_tp
                         qp_r2["Total PPP"]  = round(t2_tpts/t2_tp,3) if t2_tp else "—"
                         st.caption("Possessions per Quarter · PPP = points per possession")
-                        st.dataframe(pd.DataFrame([qp_r1, qp_r2]), hide_index=True, width='stretch')
+                        st.dataframe(pd.DataFrame([qp_r1, qp_r2]), hide_index=True, use_container_width=True)
 
                     # ── Four tabs ────────────────────────────────────────────
                     gtab_box, gtab_ts, gtab_off, gtab_hz = st.tabs(

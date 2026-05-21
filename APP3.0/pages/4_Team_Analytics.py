@@ -705,7 +705,7 @@ with tab_pl:
                         return "color:#2ecc71;font-weight:bold" if val=="W" else "color:#e74c3c;font-weight:bold"
 
                     st.dataframe(
-                        gl_df.style.applymap(_wl_style, subset=["W/L"]),
+                        gl_df.style.map(_wl_style, subset=["W/L"]),
                         width='stretch', hide_index=True,
                         column_config={
                             "MIN":  st.column_config.NumberColumn("MIN",  format="%.1f"),

@@ -1,5 +1,4 @@
 import sys
-import os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -2847,198 +2846,321 @@ with tab_notes:
         st.success("Notes saved.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  🏀 BASKETBALL ANALYST AGENT
+#  📊 SMART INSIGHTS  (rule-based — no API key required)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_ai:
-    # ── Resolve API key (secrets → env → None) ────────────────────────────────
-    _api_key = ""
-    try:
-        _api_key = st.secrets.get("ANTHROPIC_API_KEY", "") or ""
-    except Exception:
-        pass
-    if not _api_key:
-        _api_key = os.environ.get("ANTHROPIC_API_KEY", "") or ""
-
-    try:
-        import anthropic as _ant
-        _HAS_ANT = True
-    except ImportError:
-        _HAS_ANT = False
-
-    # ── Build live team context (runs once per team selection) ────────────────
-    def _build_team_context(tid: int, tname: str, tinfo: dict) -> str:
-        all_gs  = games_for_team(tid)
-        adv     = compute_team_tracked(tid)
-        w, l, pf, pa = record_from_games(all_gs, tid) if all_gs else (0,0,0,0)
-        gp      = len(all_gs) or 1
-
-        ctx = (
-            f"TEAM: {tname}\n"
-            f"Classification: {tinfo.get('class','?')}  |  "
-            f"Gender: {'Men' if tinfo.get('gender')=='M' else 'Women'}\n"
-            f"Overall record: {w}-{l}  ({w/gp*100:.1f}% win rate, {gp} games)\n"
-            f"Scoring: {pf/gp:.1f} PPG scored, {pa/gp:.1f} PPG allowed, "
-            f"{(pf-pa)/gp:+.1f} avg margin\n"
-        )
-
-        if adv and adv.get("gp", 0) > 0:
-            ctx += (
-                f"\nADVANCED STATS ({adv['gp']} fully-tracked games):\n"
-                f"  ORtg {adv['ortg']:.1f}  |  DRtg {adv['drtg']:.1f}  "
-                f"|  Net Rtg {adv['net']:+.1f}  |  Pace {adv['pace']:.1f} poss/g\n"
-                f"  eFG% {adv['efg']*100:.1f}%  |  Opp eFG% {adv['oefg']*100:.1f}%  "
-                f"|  TS% {adv['ts']*100:.1f}%  |  TOV% {adv['tov_r']*100:.1f}%\n"
-                f"  OREB% {adv['oreb_p']*100:.1f}%  |  FT Rate {adv['ft_r']:.2f}  "
-                f"|  FG% {adv['fgp']*100:.1f}%  |  3P% {adv['tpp']*100:.1f}%  "
-                f"|  FT% {adv['ftp']*100:.1f}%\n"
-                f"  AST/G {adv['ast_pg']:.1f}  |  STL/G {adv['stl_pg']:.1f}  "
-                f"|  BLK/G {adv['blk_pg']:.1f}  |  TOV/G {adv['tov_pg']:.1f}\n"
-            )
-
-        # Roster + per-game averages (top 8 by scoring)
-        roster = query(
-            "SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY name",
-            (tid,)
-        )
-        player_lines = []
-        for p in roster:
-            c = compute_player_career(p["id"])
-            if c and c.get("gp", 0) > 0:
-                pgp  = c["gp"]
-                fgp  = f"{c['fgm']/c['fga']*100:.0f}%" if c.get("fga") else "—"
-                line = (
-                    f"  #{p['number']} {p['name']}: "
-                    f"{c['pts']/pgp:.1f}pts  {(c['oreb']+c['dreb'])/pgp:.1f}reb  "
-                    f"{c['ast']/pgp:.1f}ast  {c['stl']/pgp:.1f}stl  "
-                    f"{c['blk']/pgp:.1f}blk  FG%:{fgp}  ({pgp}g)"
-                )
-                player_lines.append((c["pts"] / pgp, line))
-
-        if player_lines:
-            player_lines.sort(reverse=True)
-            ctx += "\nROSTER (per-game averages, sorted by scoring):\n"
-            ctx += "\n".join(l for _, l in player_lines[:8]) + "\n"
-
-        return ctx
-
-    _ctx_key = f"_ai_ctx_{team_id}"
-    if _ctx_key not in st.session_state:
-        st.session_state[_ctx_key] = _build_team_context(team_id, sel_name, team_info)
-
-    team_ctx = st.session_state[_ctx_key]
-
-    SYSTEM_PROMPT = f"""You are an expert basketball analyst and coaching assistant embedded in a live analytics platform.
-
-You have access to real, current data for the team the coach is viewing. Use it precisely — cite actual numbers when making points, and give concrete, actionable recommendations a real coach can use.
-
-{team_ctx}
-
-Guidelines:
-- Be direct and specific. Reference actual stats, not vague generalities.
-- When a coach asks about a player, pull from the roster data above.
-- Offer multiple angles: what the numbers say, what it likely means on the floor, and what to do about it.
-- Keep responses focused and well-structured. Use bullet points for recommendations.
-- You can discuss opponents, game planning, in-season adjustments, player development, and anything else basketball-related.
-- If asked something outside the data (e.g. specific play diagrams), use your general basketball knowledge."""
-
-    # ── Chat history per team ─────────────────────────────────────────────────
-    hist_key = f"_ai_chat_{team_id}"
-    if hist_key not in st.session_state:
-        st.session_state[hist_key] = []
-
-    # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='margin-bottom:6px'>"
-        f"<span style='font-size:20px;font-weight:800;color:#f0f6fc'>🏀 Basketball Analyst</span>"
+        f"<div style='margin-bottom:10px'>"
+        f"<span style='font-size:20px;font-weight:800;color:#f0f6fc'>📊 Smart Insights</span>"
         f"&nbsp;&nbsp;<span style='font-size:12px;color:#8b949e'>"
-        f"Analyzing: <b style='color:#f0a500'>{sel_name}</b></span>"
+        f"Auto-generated from live data — <b style='color:#f0a500'>{sel_name}</b></span>"
         f"</div>",
         unsafe_allow_html=True,
     )
 
-    if not _HAS_ANT or not _api_key:
-        # ── Setup instructions ────────────────────────────────────────────────
-        st.warning(
-            "**Basketball Analyst not configured.**\n\n"
-            "To enable it, add your Anthropic API key to Streamlit secrets:\n\n"
-            "1. Go to your app on **share.streamlit.io**\n"
-            "2. Click **⋮ → Settings → Secrets**\n"
-            "3. Add this line:\n"
-            "```toml\n"
-            "ANTHROPIC_API_KEY = \"sk-ant-your-key-here\"\n"
-            "```\n"
-            "4. Save — the app will restart automatically.\n\n"
-            "For local use, add the same line to `.streamlit/secrets.toml`."
+    # ── Pull all the data we need ─────────────────────────────────────────────
+    _ai_games  = games_for_team(team_id)
+    _ai_adv    = compute_team_tracked(team_id)
+    _ai_w, _ai_l, _ai_pf, _ai_pa = (
+        record_from_games(_ai_games, team_id) if _ai_games else (0, 0, 0, 0)
+    )
+    _ai_gp = max(len(_ai_games), 1)
+    _ai_ppg  = _ai_pf / _ai_gp
+    _ai_papg = _ai_pa / _ai_gp
+    _ai_margin = _ai_ppg - _ai_papg
+    _ai_win_pct = _ai_w / _ai_gp
+
+    # Roster stats
+    _ai_roster = query(
+        "SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY name",
+        (team_id,),
+    )
+    _ai_player_stats: list[dict] = []
+    for _p in _ai_roster:
+        _c = compute_player_career(_p["id"])
+        if _c and _c.get("gp", 0) > 0:
+            _pgp = _c["gp"]
+            _ai_player_stats.append({
+                "name":   _p["name"],
+                "number": _p["number"],
+                "gp":     _pgp,
+                "ppg":    _c["pts"]  / _pgp,
+                "rpg":    (_c.get("oreb", 0) + _c.get("dreb", 0)) / _pgp,
+                "apg":    _c.get("ast", 0) / _pgp,
+                "spg":    _c.get("stl", 0) / _pgp,
+                "bpg":    _c.get("blk", 0) / _pgp,
+                "topg":   _c.get("tov", 0) / _pgp,
+                "fgp":    (_c["fgm"] / _c["fga"]) if _c.get("fga") else None,
+                "tpp":    (_c["tpm"] / _c["tpa"]) if _c.get("tpa") else None,
+                "ftp":    (_c["ftm"] / _c["fta"]) if _c.get("fta") else None,
+                "pts":    _c["pts"],
+            })
+    _ai_player_stats.sort(key=lambda x: x["ppg"], reverse=True)
+
+    # ── Helper: coloured badge ────────────────────────────────────────────────
+    def _badge(label: str, good: bool | None = None) -> str:
+        if good is None:
+            colour = "#555"
+        elif good:
+            colour = "#2ea043"
+        else:
+            colour = "#da3633"
+        return (
+            f"<span style='background:{colour};color:#fff;"
+            f"padding:2px 8px;border-radius:12px;font-size:12px;"
+            f"font-weight:600;margin-left:6px'>{label}</span>"
         )
-        if not _HAS_ANT:
-            st.info("Also run: `pip install anthropic>=0.25.0`")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  SNAPSHOT ROW
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("#### Season Snapshot")
+    _sc1, _sc2, _sc3, _sc4, _sc5 = st.columns(5)
+    _sc1.metric("Record",   f"{_ai_w}–{_ai_l}")
+    _sc2.metric("Win %",    f"{_ai_win_pct*100:.1f}%")
+    _sc3.metric("PPG",      f"{_ai_ppg:.1f}")
+    _sc4.metric("Opp PPG",  f"{_ai_papg:.1f}")
+    _sc5.metric("Margin",   f"{_ai_margin:+.1f}")
+
+    if _ai_adv and _ai_adv.get("gp", 0) > 0:
+        _adv = _ai_adv
+        _ac1, _ac2, _ac3, _ac4, _ac5 = st.columns(5)
+        _ac1.metric("ORtg",   f"{_adv['ortg']:.1f}")
+        _ac2.metric("DRtg",   f"{_adv['drtg']:.1f}")
+        _ac3.metric("Net Rtg", f"{_adv['net']:+.1f}")
+        _ac4.metric("Pace",   f"{_adv['pace']:.1f}")
+        _ac5.metric("TS%",    f"{_adv['ts']*100:.1f}%")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  STRENGTHS & WEAKNESSES
+    # ══════════════════════════════════════════════════════════════════════════
+    _strengths:   list[str] = []
+    _weaknesses:  list[str] = []
+    _notes:       list[str] = []
+
+    # Win/loss record
+    if _ai_win_pct >= 0.65:
+        _strengths.append(f"**Winning culture** — {_ai_win_pct*100:.0f}% win rate ({_ai_w}–{_ai_l}). Team is consistently closing out games.")
+    elif _ai_win_pct <= 0.35:
+        _weaknesses.append(f"**Win rate** — {_ai_win_pct*100:.0f}% ({_ai_w}–{_ai_l}). Execution in close games or late-game situations may need attention.")
     else:
-        # ── Render existing chat history ──────────────────────────────────────
-        for msg in st.session_state[hist_key]:
-            with st.chat_message(msg["role"],
-                                  avatar="🏀" if msg["role"] == "assistant" else "👤"):
-                st.markdown(msg["content"])
+        _notes.append(f"**Competitive** — {_ai_win_pct*100:.0f}% win rate ({_ai_w}–{_ai_l}). Games appear close; margins matter.")
 
-        # ── Suggested prompts (shown only when chat is empty) ─────────────────
-        if not st.session_state[hist_key]:
-            st.caption("💡 Try asking:")
-            col_s1, col_s2, col_s3 = st.columns(3)
-            suggestions = [
-                "What are this team's biggest strengths and weaknesses?",
-                "Which players should get more minutes and why?",
-                "How can we improve our defensive rating?",
-                "Break down our shooting efficiency.",
-                "What's our biggest area to improve before playoffs?",
-                "Give me a scouting report on this team.",
-            ]
-            for i, sug in enumerate(suggestions):
-                col = [col_s1, col_s2, col_s3][i % 3]
-                if col.button(sug, key=f"ai_sug_{i}", use_container_width=True):
-                    st.session_state[hist_key].append({"role": "user", "content": sug})
-                    st.rerun()
+    # Scoring margin
+    if _ai_margin >= 8:
+        _strengths.append(f"**Dominant margin** — +{_ai_margin:.1f} pts/game. Consistent pressure on opponents suggests depth or execution advantage.")
+    elif _ai_margin <= -6:
+        _weaknesses.append(f"**Negative margin** — {_ai_margin:.1f} pts/game. Either scoring droughts or late defensive breakdowns are costing games.")
 
-        # ── Chat input ────────────────────────────────────────────────────────
-        user_input = st.chat_input(
-            f"Ask anything about {sel_name}…",
-            key=f"ai_input_{team_id}",
+    if _ai_adv and _ai_adv.get("gp", 0) > 0:
+        _adv = _ai_adv
+
+        # Offensive rating
+        if _adv["ortg"] >= 105:
+            _strengths.append(f"**Efficient offense** — ORtg {_adv['ortg']:.1f}. Attack patterns are generating quality looks consistently.")
+        elif _adv["ortg"] <= 90:
+            _weaknesses.append(f"**Offensive efficiency** — ORtg {_adv['ortg']:.1f}. Low rating suggests poor shot selection, turnover issues, or lack of pace.")
+
+        # Defensive rating (lower = better)
+        if _adv["drtg"] <= 95:
+            _strengths.append(f"**Elite defense** — DRtg {_adv['drtg']:.1f}. Opponents struggle to score, indicating solid rotations and contest rates.")
+        elif _adv["drtg"] >= 110:
+            _weaknesses.append(f"**Defensive leaks** — DRtg {_adv['drtg']:.1f}. Opponents are scoring efficiently; check help-defense and transition defense.")
+
+        # Shooting
+        if _adv["efg"] >= 0.54:
+            _strengths.append(f"**Shooting efficiency** — eFG% {_adv['efg']*100:.1f}%. Strong shot quality or spacing is creating open looks.")
+        elif _adv["efg"] <= 0.44:
+            _weaknesses.append(f"**Shooting struggles** — eFG% {_adv['efg']*100:.1f}%. Consider shot-quality drills or revisiting offensive sets.")
+
+        # Turnovers
+        if _adv["tov_r"] <= 0.14:
+            _strengths.append(f"**Ball security** — TOV% {_adv['tov_r']*100:.1f}%. Team is disciplined with possessions.")
+        elif _adv["tov_r"] >= 0.21:
+            _weaknesses.append(f"**Ball security** — TOV% {_adv['tov_r']*100:.1f}%. Too many possessions lost to turnovers. Emphasise decision-making under pressure.")
+
+        # Offensive rebounding
+        if _adv["oreb_p"] >= 0.32:
+            _strengths.append(f"**Offensive rebounding** — OREB% {_adv['oreb_p']*100:.1f}%. Second-chance points are a real weapon.")
+        elif _adv["oreb_p"] <= 0.20:
+            _notes.append(f"**Offensive rebounding** — OREB% {_adv['oreb_p']*100:.1f}%. Team may be prioritising transition defence over crashing the glass.")
+
+        # Pace
+        if _adv["pace"] >= 75:
+            _notes.append(f"**Up-tempo** — Pace {_adv['pace']:.1f} poss/game. High pace favours athleticism; monitor fatigue depth.")
+        elif _adv["pace"] <= 60:
+            _notes.append(f"**Half-court focused** — Pace {_adv['pace']:.1f} poss/game. Half-court execution and set plays are critical.")
+
+        # FT rate
+        if _adv["ft_r"] >= 0.35:
+            _strengths.append(f"**Getting to the line** — FT Rate {_adv['ft_r']:.2f}. Aggressive drives are drawing fouls and generating free possessions.")
+        elif _adv["ft_r"] <= 0.18:
+            _weaknesses.append(f"**Free-throw generation** — FT Rate {_adv['ft_r']:.2f}. Team is not attacking the paint enough or getting whistles.")
+
+    # Fall-back if no tracked games
+    if not _strengths and not _weaknesses and not (_ai_adv and _ai_adv.get("gp", 0) > 0):
+        _notes.append("Track a full game via the Game Tracker to unlock advanced shooting, pace, and efficiency insights.")
+
+    # ── Render strengths / weaknesses ─────────────────────────────────────────
+    _sw_c1, _sw_c2 = st.columns(2)
+
+    with _sw_c1:
+        st.markdown("#### ✅ Strengths")
+        if _strengths:
+            for _s in _strengths:
+                st.markdown(f"- {_s}")
+        else:
+            st.caption("No clear statistical strengths detected yet — keep logging games.")
+
+    with _sw_c2:
+        st.markdown("#### ⚠️ Areas to Improve")
+        if _weaknesses:
+            for _w in _weaknesses:
+                st.markdown(f"- {_w}")
+        else:
+            st.caption("No glaring weaknesses detected. Keep it up!")
+
+    if _notes:
+        st.markdown("#### 📌 Context Notes")
+        for _n in _notes:
+            st.markdown(f"- {_n}")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  PLAYER SPOTLIGHT
+    # ══════════════════════════════════════════════════════════════════════════
+    if _ai_player_stats:
+        st.markdown("#### 🌟 Player Spotlight")
+
+        _top_scorer   = max(_ai_player_stats, key=lambda x: x["ppg"])
+        _top_rebounder = max(_ai_player_stats, key=lambda x: x["rpg"])
+        _top_assists  = max(_ai_player_stats, key=lambda x: x["apg"])
+        _top_stocks   = max(_ai_player_stats, key=lambda x: x["spg"] + x["bpg"])
+
+        _sp1, _sp2, _sp3, _sp4 = st.columns(4)
+
+        def _player_card(col, emoji: str, role: str, p: dict):
+            fgp_str = f"{p['fgp']*100:.1f}%" if p["fgp"] is not None else "—"
+            col.markdown(
+                f"<div style='background:#161b22;border:1px solid #30363d;"
+                f"border-radius:10px;padding:12px;text-align:center'>"
+                f"<div style='font-size:22px'>{emoji}</div>"
+                f"<div style='font-size:11px;color:#8b949e;text-transform:uppercase;"
+                f"letter-spacing:1px'>{role}</div>"
+                f"<div style='font-size:15px;font-weight:700;color:#f0f6fc;margin:4px 0'>"
+                f"#{p['number']} {p['name']}</div>"
+                f"<div style='font-size:13px;color:#f0a500;font-weight:600'>"
+                f"{p['ppg']:.1f} PPG · {p['rpg']:.1f} RPG · {p['apg']:.1f} APG</div>"
+                f"<div style='font-size:11px;color:#8b949e;margin-top:4px'>"
+                f"FG% {fgp_str} · {p['gp']}G</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        _player_card(_sp1, "🔥", "Top Scorer",    _top_scorer)
+        _player_card(_sp2, "💪", "Top Rebounder", _top_rebounder)
+        _player_card(_sp3, "🎯", "Playmaker",     _top_assists)
+        _player_card(_sp4, "🛡️", "Defensive Ace", _top_stocks)
+
+        st.markdown("---")
+
+        # ── Full roster table ─────────────────────────────────────────────────
+        with st.expander("📋 Full Roster Averages", expanded=False):
+            import pandas as _pd_ai
+            _roster_df = _pd_ai.DataFrame([
+                {
+                    "#":      p["number"],
+                    "Player": p["name"],
+                    "GP":     p["gp"],
+                    "PPG":    round(p["ppg"], 1),
+                    "RPG":    round(p["rpg"], 1),
+                    "APG":    round(p["apg"], 1),
+                    "SPG":    round(p["spg"], 1),
+                    "BPG":    round(p["bpg"], 1),
+                    "TO/G":   round(p["topg"], 1),
+                    "FG%":    f"{p['fgp']*100:.1f}%" if p["fgp"] is not None else "—",
+                    "3P%":    f"{p['tpp']*100:.1f}%" if p["tpp"] is not None else "—",
+                    "FT%":    f"{p['ftp']*100:.1f}%" if p["ftp"] is not None else "—",
+                }
+                for p in _ai_player_stats
+            ])
+            st.dataframe(_roster_df, use_container_width=True, hide_index=True)
+
+    else:
+        st.info("No player data yet. Add players and log games to see individual breakdowns.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  COACHING PRIORITIES  (rule-based recommendations)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("#### 🏋️ Coaching Priorities")
+
+    _priorities: list[tuple[str, str]] = []  # (priority text, rationale)
+
+    if _ai_adv and _ai_adv.get("gp", 0) > 0:
+        _adv = _ai_adv
+        if _adv["tov_r"] >= 0.20:
+            _priorities.append((
+                "Reduce turnovers in transition",
+                f"TOV% is {_adv['tov_r']*100:.1f}% — work on catch-and-attack drills and limit dribble-hand-offs under pressure.",
+            ))
+        if _adv["drtg"] >= 108:
+            _priorities.append((
+                "Tighten defensive rotations",
+                f"DRtg {_adv['drtg']:.1f} indicates opponents are finding open looks. Focus on help-side positioning and closeouts.",
+            ))
+        if _adv["efg"] <= 0.46:
+            _priorities.append((
+                "Improve shot selection",
+                f"eFG% {_adv['efg']*100:.1f}% is below average. Prioritise corner 3s and lay-ups; reduce mid-range pull-ups.",
+            ))
+        if _adv["oreb_p"] <= 0.22:
+            _priorities.append((
+                "Crash the offensive glass harder",
+                f"OREB% {_adv['oreb_p']*100:.1f}%. Second-chance points are being left on the table.",
+            ))
+        if _adv["ft_r"] <= 0.20:
+            _priorities.append((
+                "Attack the paint more aggressively",
+                f"FT Rate {_adv['ft_r']:.2f} — driving lanes and post touches generate fouls and easy points.",
+            ))
+        if _adv["oefg"] >= 0.54:
+            _priorities.append((
+                "Contest shots harder on defence",
+                f"Opponents are shooting eFG% {_adv['oefg']*100:.1f}%. Improve on-ball pressure and tag on cutters.",
+            ))
+
+    # Generic priorities from overall numbers
+    if _ai_win_pct < 0.40 and _ai_margin < -5:
+        _priorities.append((
+            "Focus on late-game execution",
+            f"Negative margin ({_ai_margin:.1f} pts) with a losing record suggests close games slip away late. Run late-game scenarios in practice.",
+        ))
+
+    if _ai_player_stats:
+        _scorer = _ai_player_stats[0]
+        _rest   = _ai_player_stats[1:]
+        if _rest and _scorer["ppg"] > 2.5 * (_rest[0]["ppg"] if _rest else 1):
+            _priorities.append((
+                f"Distribute the load beyond #{_scorer['number']} {_scorer['name']}",
+                f"Scoring is concentrated: {_scorer['ppg']:.1f} PPG vs next best {_rest[0]['ppg']:.1f} PPG. "
+                "Develop secondary scoring options so opponents can't key in on one player.",
+            ))
+
+    if not _priorities:
+        _priorities.append((
+            "Keep logging games",
+            "More game-tracking data will unlock targeted, specific coaching recommendations here.",
+        ))
+
+    for _idx, (_pri, _rat) in enumerate(_priorities, 1):
+        st.markdown(
+            f"<div style='background:#161b22;border-left:3px solid #f0a500;"
+            f"border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px'>"
+            f"<span style='font-weight:700;color:#f0f6fc'>{_idx}. {_pri}</span><br>"
+            f"<span style='font-size:13px;color:#8b949e'>{_rat}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
         )
-
-        if user_input:
-            st.session_state[hist_key].append({"role": "user", "content": user_input})
-            with st.chat_message("user", avatar="👤"):
-                st.markdown(user_input)
-
-            # Build messages list for the API
-            api_messages = [
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state[hist_key]
-            ]
-
-            with st.chat_message("assistant", avatar="🏀"):
-                try:
-                    client   = _ant.Anthropic(api_key=_api_key)
-                    full_txt = ""
-                    placeholder = st.empty()
-                    with client.messages.stream(
-                        model="claude-opus-4-5",
-                        max_tokens=1024,
-                        system=SYSTEM_PROMPT,
-                        messages=api_messages,
-                    ) as stream:
-                        for chunk in stream.text_stream:
-                            full_txt += chunk
-                            placeholder.markdown(full_txt + "▌")
-                    placeholder.markdown(full_txt)
-                    st.session_state[hist_key].append(
-                        {"role": "assistant", "content": full_txt}
-                    )
-                except Exception as exc:
-                    err_msg = str(exc)
-                    st.error(f"Agent error: {err_msg}")
-
-        # ── Clear chat button ─────────────────────────────────────────────────
-        if st.session_state[hist_key]:
-            if st.button("🗑 Clear conversation", key=f"ai_clear_{team_id}"):
-                st.session_state[hist_key] = []
-                st.session_state.pop(_ctx_key, None)
-                st.rerun()

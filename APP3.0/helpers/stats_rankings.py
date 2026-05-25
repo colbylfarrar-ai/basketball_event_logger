@@ -101,7 +101,7 @@ def game_team_stats(game_id, t1id, t2id):
     return s1, s2
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_all_rankings() -> pd.DataFrame:
     teams = query("SELECT id, name, class, gender FROM teams")
     games = query("""
@@ -183,7 +183,7 @@ def compute_all_rankings() -> pd.DataFrame:
     return df.sort_values("Rank").reset_index(drop=True)
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_tracked_rankings() -> pd.DataFrame:
     teams = query("SELECT id, name, class, gender FROM teams")
     tracked = query("""

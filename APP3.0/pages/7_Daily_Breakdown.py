@@ -82,7 +82,7 @@ st.markdown("""
 st.title("📅 Daily Breakdown")
 
 # ── Load all dates ────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _get_dates():
     rows = query("SELECT DISTINCT date FROM games WHERE date IS NOT NULL ORDER BY date DESC")
     return [r["date"] for r in rows] if rows else []
@@ -117,7 +117,7 @@ sel_date = st.selectbox(
 st.markdown(f"### {date_display.get(sel_date, sel_date)}")
 
 # ── Load games for selected date ──────────────────────────────────────────────
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _get_games_on_date(date_str):
     rows = query("""
         SELECT g.id, g.date, g.home_score, g.away_score, g.tracked,

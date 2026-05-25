@@ -12,7 +12,7 @@ from helpers.game_utils import games_for_team, win_loss, record_from_games
 from helpers.constants import SHOT_RATING, EST_FGP
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_player_game_log(player_id: int, team_id: int) -> list:
     """Returns one dict per tracked game for this player, newest first.
     Batches all DB queries upfront — 5 queries total regardless of game count."""
@@ -148,7 +148,7 @@ def compute_player_game_log(player_id: int, team_id: int) -> list:
     return sorted(log, key=lambda r: pd.to_datetime(r["Date"], format="mixed", errors="coerce"), reverse=True)
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_player_career(player_id: int):
     rows = query("""
         SELECT glp.game_id, glp.team_id
@@ -306,7 +306,7 @@ def compute_player_career(player_id: int):
     return tot
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_team_tracked(tid):
     tracked = games_for_team(tid, tracked_only=True)
     if not tracked:
@@ -561,7 +561,7 @@ def compute_team_tracked(tid):
                 **agg)
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_on_off(team_id):
     """
     For each player on team_id, computes on-court vs off-court statistics
@@ -678,7 +678,7 @@ def compute_on_off(team_id):
     return result
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_league_drtg() -> float:
     """Average defensive rating across all teams that have tracked game data.
     Zero DB queries on cache hit; at most N dict-lookups into cached compute_team_tracked."""
@@ -691,7 +691,7 @@ def compute_league_drtg() -> float:
     return float(np.mean(vals)) if vals else 100.0
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_league_four_factors() -> dict:
     """Mean of each Four Factor across all teams with tracked game data."""
     teams = query("SELECT id FROM teams")
@@ -711,7 +711,7 @@ def compute_league_four_factors() -> dict:
     return {k: float(np.mean(v)) if v else 0.0 for k, v in buckets.items()}
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_matchup(a_id, b_id):
     gs_a = games_for_team(a_id)
     gs_b = games_for_team(b_id)

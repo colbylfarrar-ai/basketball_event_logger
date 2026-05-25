@@ -18,7 +18,7 @@ from helpers.constants import SHOT_RATING
 #  PLAYER RANKINGS (all tracked games)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_player_rankings() -> pd.DataFrame:
     """Per-player per-game averages across all tracked games."""
     players = query("""
@@ -366,7 +366,7 @@ def compute_player_rankings() -> pd.DataFrame:
 #  PER-GAME BOX SCORE (single game)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def compute_game_box_score(game_id: int):
     """
     Player-level box score for one game.
@@ -602,7 +602,7 @@ def compute_game_box_score(game_id: int):
 #  QUARTER SCORES (single game)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def compute_game_quarter_scores(game_id: int):
     """Returns {quarter: {team_id: pts}} for a single game."""
     game_rows = query(
@@ -637,7 +637,7 @@ def compute_game_quarter_scores(game_id: int):
 #  OFFICIAL STATS
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_official_stats() -> pd.DataFrame:
     """Games worked and foul rates per official."""
     officials = query("SELECT id, name, official_id FROM officials ORDER BY name")
@@ -709,6 +709,7 @@ def compute_official_stats() -> pd.DataFrame:
 #  POSITION RATINGS
 # ══════════════════════════════════════════════════════════════════════════════
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_player_ratings() -> pd.DataFrame:
     """
     Four composite ratings for every qualified player (min 1 GP), all scaled 0–100
@@ -735,7 +736,7 @@ def compute_player_ratings() -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    df = df[df["GP"] >= 1].copy()
+    df = df[df["GP"] >= 2].copy()   # min 2 GP to appear in OVRL — avoids single-game outliers
     if df.empty:
         return pd.DataFrame()
 

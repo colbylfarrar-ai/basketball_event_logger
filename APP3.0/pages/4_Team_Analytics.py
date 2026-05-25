@@ -127,7 +127,12 @@ _team_names    = list(team_map.keys())
 _default_team  = _cfg.get("default_team", "")
 _default_idx   = (_team_names.index(_default_team)
                   if _default_team in _team_names else 0)
-sel_name   = st.selectbox("Select Team", _team_names, index=_default_idx)
+# Persist selection across page navigations via session_state
+if "ta_team_sel" not in st.session_state:
+    st.session_state["ta_team_sel"] = _team_names[_default_idx]
+elif st.session_state["ta_team_sel"] not in _team_names:
+    st.session_state["ta_team_sel"] = _team_names[_default_idx]
+sel_name   = st.selectbox("Select Team", _team_names, key="ta_team_sel")
 team_id    = team_map[sel_name]
 team_info  = team_meta[team_id]
 

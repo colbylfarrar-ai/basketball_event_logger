@@ -53,11 +53,11 @@ st.markdown("""
 
 
 # ── Load official stats ───────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_official_stats():
     return compute_official_stats()
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_officials_list():
     rows = query("SELECT id, name, official_id FROM officials ORDER BY name")
     return rows or []

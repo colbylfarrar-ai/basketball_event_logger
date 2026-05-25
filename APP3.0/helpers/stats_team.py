@@ -324,15 +324,28 @@ def compute_team_tracked(tid):
              opp_q1_poss=0,opp_q2_poss=0,opp_q3_poss=0,opp_q4_poss=0)
     game_log = []
 
-    for g in tracked:
-        t1id=g["team1_id"]; t2id=g["team2_id"]
-        lp=query("SELECT player_id,team_id FROM game_lineup_players WHERE game_id=?", (g["id"],))
-        if not lp: continue
-        pt={r["player_id"]:r["team_id"] for r in lp}
-        events=query("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (g["id"],))
+    # ── Batch-load all lineup + event data upfront (eliminates N+1 queries) ──
+    game_ids = [g["id"] for g in tracked]
+    _ph = ",".join("?" * len(game_ids))
+    _lp_rows = query(
+        f"SELECT game_id, player_id, team_id FROM game_lineup_players WHERE game_id IN ({_ph})",
+        tuple(game_ids))
+    _pt_by_game: dict = {}
+    for _r in _lp_rows:
+        _pt_by_game.setdefault(_r["game_id"], {})[_r["player_id"]] = _r["team_id"]
 
-        def ts_(team): return agg if team==tid else None
-        def op_(team): return None  # we track opp separately below
+    _ev_rows = query(
+        f"SELECT * FROM game_events WHERE game_id IN ({_ph}) ORDER BY game_id, id",
+        tuple(game_ids))
+    _events_by_game: dict = {}
+    for _ev in _ev_rows:
+        _events_by_game.setdefault(_ev["game_id"], []).append(_ev)
+
+    for g in tracked:
+        pt = _pt_by_game.get(g["id"], {})
+        if not pt:
+            continue
+        events = _events_by_game.get(g["id"], [])
 
         my_s  = dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,tov=0,stl=0,blk=0,ast=0,poss_secs=0.0,pts=0,sc=0,
                      poss_count=0,real_poss_secs=0.0,
@@ -698,6 +711,7 @@ def compute_league_four_factors() -> dict:
     return {k: float(np.mean(v)) if v else 0.0 for k, v in buckets.items()}
 
 
+@st.cache_data(ttl=300)
 def compute_matchup(a_id, b_id):
     gs_a = games_for_team(a_id)
     gs_b = games_for_team(b_id)

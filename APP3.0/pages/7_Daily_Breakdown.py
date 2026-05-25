@@ -3,34 +3,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
-import warnings
-warnings.filterwarnings('ignore', message='.*select_dtypes.*', category=FutureWarning)
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from pandas.io.formats.style import Styler as _PdStyler
 from Database.db import query, initialize_database
 from helpers.settings_utils import get_all_settings, apply_theme_css
 from helpers.stats_players import (compute_player_rankings, compute_player_ratings,
                                    compute_game_box_score, compute_game_quarter_scores)
 from helpers.box_score_render import show_game_box_score, _show_linescore
 from helpers.charts import show_score_flow_chart
+from helpers.ui_utils import PLOT_LAYOUT, patch_dataframe
 
 initialize_database()
 _cfg = get_all_settings()
 apply_theme_css(_cfg)
-
-# ── Arrow-safe wrapper ────────────────────────────────────────────────────────
-_st_df_orig = st.dataframe
-def _safe_df(data=None, *args, **kwargs):
-    if data is not None and not isinstance(data, _PdStyler):
-        data = data.copy()
-        for _c in data.columns:
-            if data[_c].dtype.kind == 'O' or isinstance(data[_c].dtype, pd.StringDtype):
-                data[_c] = data[_c].astype(str)
-    return _st_df_orig(data, *args, **kwargs)
-st.dataframe = _safe_df
+patch_dataframe()
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -89,13 +77,6 @@ st.markdown("""
 .upset-body  { font-size:13px; color:#c9d1d9; }
 </style>
 """, unsafe_allow_html=True)
-
-PLOT_LAYOUT = dict(
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)",
-    font_color="#c9d1d9",
-    margin=dict(l=10, r=10, t=30, b=10),
-)
 
 # ── Page title ────────────────────────────────────────────────────────────────
 st.title("📅 Daily Breakdown")

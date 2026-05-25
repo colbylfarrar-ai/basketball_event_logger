@@ -1,53 +1,31 @@
+"""
+APP.py — Streamlit multipage entry point.
+Uses Streamlit's native file-based multipage routing (pages/ directory).
+This file only sets global config and loads shared CSS.
+"""
 import streamlit as st
 from pathlib import Path
 
-# ============================================================
-#  APP.PY — STREAMLIT MULTIPAGE ENTRY POINT
-#  - Loads global styles
-#  - Registers pages in clean order
-#  - No business logic
-# ============================================================
-
-# ------------------------------------------------------------
-# Apply global CSS
-# ------------------------------------------------------------
-def load_styles():
-    css_path = Path(__file__).resolve().parent / "assets" / "styles.css"
-    if css_path.exists():
-        with open(css_path, "r", encoding="utf-8") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-
-# ------------------------------------------------------------
-# Configure Streamlit
-# ------------------------------------------------------------
+# ── Page config (set once, applies to all pages) ──────────────────────────────
 st.set_page_config(
     page_title="Analytics Hub",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-load_styles()
+# ── Global CSS (loaded from assets/styles.css) ────────────────────────────────
+_css_path = Path(__file__).resolve().parent / "assets" / "styles.css"
+if _css_path.exists():
+    st.markdown(
+        f"<style>{_css_path.read_text(encoding='utf-8')}</style>",
+        unsafe_allow_html=True,
+    )
 
-# ------------------------------------------------------------
-# Sidebar Navigation
-# ------------------------------------------------------------
-st.sidebar.title("Navigation")
-
-pages = {
-    "1. Input Hub": "pages/1_Input_Hub.py",
-    "2. Game Tracker": "pages/2_Game_Tracker.py",
-    "3. Rankings": "pages/3_Rankings.py",
-    "4. Team Analytics": "pages/4_Team_Analytics.py",
-}
-
-choice = st.sidebar.radio("Go to:", list(pages.keys()))
-
-# ------------------------------------------------------------
-# Load Selected Page
-# ------------------------------------------------------------
-page_path = Path(__file__).resolve().parent / pages[choice]
-with open(page_path, "r", encoding="utf-8") as f:
-    code = f.read()
-    exec(code, globals())
+# ── Landing content ────────────────────────────────────────────────────────────
+st.title("📊 Analytics Hub")
+st.markdown(
+    "Use the **sidebar** to navigate between pages: "
+    "Input Hub · Game Tracker · Rankings · Team Analytics · "
+    "Players Hub · Officials Hub · Daily Breakdown · Settings."
+)

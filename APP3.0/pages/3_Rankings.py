@@ -3,11 +3,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
-from pandas.io.formats.style import Styler as _PdStyler
 import numpy as np
 import streamlit as st
-import warnings
-warnings.filterwarnings('ignore', message='.*select_dtypes.*', category=FutureWarning)
 import plotly.express as px
 import plotly.graph_objects as go
 from Database.db import query, initialize_database
@@ -22,23 +19,12 @@ from helpers.charts import (show_shot_chart, show_scoring_pie,
                              show_four_factors_bars, show_efficiency_scatter,
                              show_matchup_bars, show_player_leaderboard_chart,
                              show_trend_chart, show_score_flow_chart)
+from helpers.ui_utils import patch_dataframe
 
 initialize_database()
-
-# ── Load user settings ────────────────────────────────────────────────────────
 _cfg = get_all_settings()
 apply_theme_css(_cfg)
-
-# ── Arrow-safe st.dataframe wrapper ──────────────────────────────────────────
-_st_df_orig = st.dataframe
-def _safe_df(data=None, *args, **kwargs):
-    if data is not None and not isinstance(data, _PdStyler):
-        data = data.copy()
-        for _c in data.columns:
-            if data[_c].dtype.kind == 'O' or isinstance(data[_c].dtype, pd.StringDtype):
-                data[_c] = data[_c].astype(str)
-    return _st_df_orig(data, *args, **kwargs)
-st.dataframe = _safe_df
+patch_dataframe()
 
 # ── Card / badge CSS ──────────────────────────────────────────────────────────
 st.markdown("""

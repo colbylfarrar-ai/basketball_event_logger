@@ -1,0 +1,208 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   APP3.0 — Global shared stylesheet
+   Injected once by APP.py via load_styles().
+   Per-page <style> blocks should only contain page-specific rules.
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dashboard stat card ─────────────────────────────────────────────────── */
+.dash-card {
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+    border: 1px solid #30363d;
+    border-radius: 14px;
+    padding: 20px 22px;
+    margin-bottom: 14px;
+}
+.dash-card-title {
+    font-size: 10px;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 6px;
+}
+.dash-card-value {
+    font-size: 34px;
+    font-weight: 800;
+    color: #f0a500;
+    line-height: 1.1;
+}
+.dash-card-sub  { font-size: 13px; color: #c9d1d9; margin-top: 6px; }
+.dash-card-meta { font-size: 11px; color: #8b949e;  margin-top: 2px; }
+
+/* ── KPI hero tile ────────────────────────────────────────────────────────── */
+.kpi-tile {
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+    border: 1px solid #30363d;
+    border-radius: 14px;
+    padding: 16px 20px;
+    text-align: center;
+    margin-bottom: 10px;
+}
+.kpi-label {
+    font-size: 10px;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.kpi-value { font-size: 32px; font-weight: 900; color: #f0a500; line-height: 1.1; }
+.kpi-sub   { font-size: 12px; color: #c9d1d9; margin-top: 5px; }
+
+/* ── Advanced metric tile ─────────────────────────────────────────────────── */
+.adv-tile {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 12px 16px;
+    text-align: center;
+}
+.adv-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.adv-value { font-size: 22px; font-weight: 800; color: #58a6ff; }
+
+/* ── Score card ────────────────────────────────────────────────────────────── */
+.score-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+}
+.score-card-date { font-size: 10px; color: #8b949e; margin-bottom: 5px; }
+.score-card-team { font-size: 13px; font-weight: 600; color: #c9d1d9; }
+.score-card-pts  { font-size: 20px; font-weight: 800; }
+.score-winner    { color: #f0a500; }
+.score-loser     { color: #555d68; }
+.score-final     { font-size: 10px; color: #2ecc71; margin-top: 4px; }
+
+/* ── Ranking card ─────────────────────────────────────────────────────────── */
+.rank-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 11px 14px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.rank-badge {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 13px; flex-shrink: 0;
+}
+.rank-1 { background: #f0a500; color: #000; }
+.rank-2 { background: #adb5bd; color: #000; }
+.rank-3 { background: #cd7f32; color: #fff; }
+.rank-n { background: #2d333b; color: #c9d1d9; }
+.rank-team { font-size: 14px; font-weight: 700; color: #f0f6fc; }
+.rank-rec  { font-size: 12px; color: #8b949e; }
+.rank-ps   { font-size: 13px; font-weight: 700; color: #58a6ff; margin-left: auto; }
+
+/* ── Player leader card ───────────────────────────────────────────────────── */
+.pl-card {
+    background: linear-gradient(135deg, #0f3460 0%, #16213e 100%);
+    border: 1px solid #1f4d8a;
+    border-radius: 12px;
+    padding: 18px;
+    text-align: center;
+    margin-bottom: 8px;
+}
+.pl-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+.pl-value { font-size: 30px; font-weight: 800; color: #f0a500; }
+.pl-name  { font-size: 14px; font-weight: 700; color: #f0f6fc; margin-top: 4px; }
+.pl-meta  { font-size: 11px; color: #8b949e; }
+
+/* ── Section header ───────────────────────────────────────────────────────── */
+.section-hdr {
+    font-size: 17px;
+    font-weight: 700;
+    color: #f0f6fc;
+    border-left: 4px solid #f0a500;
+    padding-left: 10px;
+    margin: 16px 0 10px;
+}
+
+/* ── Four-factors bar labels ─────────────────────────────────────────────── */
+.ff-label  { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+.ff-team   { font-size: 20px; font-weight: 800; color: #f0a500; }
+.ff-opp    { font-size: 20px; font-weight: 800; color: #e74c3c; }
+.ff-bar-wrap { background: #21262d; border-radius: 4px; height: 8px; overflow: hidden; margin: 4px 0; }
+.ff-bar-t  { background: #f0a500; height: 100%; border-radius: 4px; }
+.ff-bar-o  { background: #e74c3c; height: 100%; border-radius: 4px; }
+
+/* ── Rating / player-rating cards ────────────────────────────────────────── */
+.rat-card {
+    background: linear-gradient(135deg, #0d1117, #161b22);
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 10px;
+}
+.rat-title { font-size: 13px; font-weight: 700; color: #58a6ff; margin-bottom: 6px; }
+.rat-desc  { font-size: 11px; color: #8b949e; line-height: 1.5; margin-bottom: 6px; }
+.rat-comp  { font-size: 10px; color: #6e7681; font-style: italic; }
+
+.rpl-card {
+    background: linear-gradient(160deg, #0d1117, #161b22);
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 14px 12px;
+    margin-bottom: 10px;
+}
+.rpl-name { font-size: 13px; font-weight: 800; color: #f0f6fc; }
+.rpl-meta { font-size: 10px; color: #8b949e; margin-bottom: 8px; }
+.rpl-bar-wrap { background: #21262d; border-radius: 3px; height: 5px; overflow: hidden; margin-top: 2px; }
+.rpl-bar-fill { height: 100%; border-radius: 3px; }
+
+/* ── Lineup card ──────────────────────────────────────────────────────────── */
+.lu-card {
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+    border: 1px solid #30363d;
+    border-radius: 14px;
+    padding: 18px 12px;
+    text-align: center;
+    height: 230px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+}
+.lu-slot { font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-bottom: 4px; flex-shrink: 0; }
+.lu-num  { font-size: 12px; color: #8b949e; margin-bottom: 1px; flex-shrink: 0; }
+.lu-name { font-size: 14px; font-weight: 800; color: #f0f6fc; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+.lu-tm   { font-size: 10px; color: #8b949e; margin-bottom: 6px; flex-shrink: 0; }
+.lu-val  { font-size: 28px; font-weight: 900; line-height: 1; flex-shrink: 0; }
+.lu-lbl  { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; flex-shrink: 0; }
+.lu-ovrl { font-size: 10px; color: #8b949e; margin-bottom: 3px; flex-shrink: 0; }
+.lu-line { font-size: 10px; color: #8b949e; border-top: 1px solid #30363d; padding-top: 6px; margin-top: auto; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Percentile bar rows (Players Hub) ────────────────────────────────────── */
+.pctile-row       { margin-bottom: 10px; }
+.pctile-label-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.pctile-stat      { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.8px; }
+.pctile-val       { font-size: 13px; font-weight: 700; color: #f0f6fc; }
+.pctile-rank      { font-size: 11px; font-weight: 700; }
+.pctile-track     { background: #21262d; border-radius: 3px; height: 5px; overflow: hidden; }
+.pctile-fill      { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+
+/* ── Officials hub ref card ──────────────────────────────────────────────── */
+.ref-card {
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 8px;
+}
+.ref-name  { font-size: 16px; font-weight: 800; color: #f0f6fc; }
+.ref-games { font-size: 12px; color: #8b949e; margin-top: 3px; }
+
+/* ── Daily breakdown game hero ───────────────────────────────────────────── */
+.game-hero {
+    background: linear-gradient(135deg, #0d1117 0%, #1c2b4a 100%);
+    border: 1px solid #30363d;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+    text-align: center;
+}

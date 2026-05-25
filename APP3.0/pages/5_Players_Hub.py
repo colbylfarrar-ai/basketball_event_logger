@@ -3,32 +3,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
-import warnings
-warnings.filterwarnings('ignore', message='.*select_dtypes.*', category=FutureWarning)
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from pandas.io.formats.style import Styler as _PdStyler
 from Database.db import query, initialize_database
 from helpers.settings_utils import get_all_settings, apply_theme_css
 from helpers.stats_players import compute_player_rankings, compute_player_ratings, compute_official_stats
 from helpers.stats_team import compute_player_game_log
+from helpers.ui_utils import (PLOT_LAYOUT, patch_dataframe,
+                               bar_h as _bar_h,
+                               normalize_col as _normalize_col,
+                               percentile_of as _percentile_of,
+                               pctile_bar_html as _pctile_bar_html)
 
 initialize_database()
 _cfg = get_all_settings()
 apply_theme_css(_cfg)
-
-# ── Arrow-safe wrapper ────────────────────────────────────────────────────────
-_st_df_orig = st.dataframe
-def _safe_df(data=None, *args, **kwargs):
-    if data is not None and not isinstance(data, _PdStyler):
-        data = data.copy()
-        for _c in data.columns:
-            if data[_c].dtype.kind == 'O' or isinstance(data[_c].dtype, pd.StringDtype):
-                data[_c] = data[_c].astype(str)
-    return _st_df_orig(data, *args, **kwargs)
-st.dataframe = _safe_df
+patch_dataframe()
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CSS
@@ -134,60 +126,8 @@ st.markdown("""
 # ══════════════════════════════════════════════════════════════════════════════
 #  HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-PLOT_LAYOUT = dict(
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)",
-    font_color="#c9d1d9",
-    margin=dict(l=10, r=10, t=30, b=10),
-)
-
-def _bar_h(df, x_col, y_col, color="#f0a500", title=""):
-    fig = go.Figure(go.Bar(
-        x=df[x_col], y=df[y_col], orientation="h",
-        marker_color=color,
-        text=[f"{v:.1f}" if isinstance(v, float) else str(v) for v in df[x_col]],
-        textposition="outside",
-    ))
-    fig.update_layout(**PLOT_LAYOUT, title=title,
-                      yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-                      xaxis=dict(showgrid=False),
-                      height=max(300, len(df) * 40))
-    return fig
-
-def _normalize_col(series: pd.Series) -> pd.Series:
-    mn, mx = series.min(), series.max()
-    if mx == mn:
-        return pd.Series([50.0] * len(series), index=series.index)
-    return (series - mn) / (mx - mn) * 100
-
-def _percentile_of(val, series: pd.Series) -> float:
-    """What percentile is val within series (0–100)."""
-    vals = series.dropna().values
-    if len(vals) == 0:
-        return 50.0
-    return float((vals < val).sum() / len(vals) * 100)
-
-def _pctile_bar_html(label: str, val, pct: float, higher_better: bool = True) -> str:
-    """Returns HTML for one percentile bar row."""
-    effective_pct = pct if higher_better else (100 - pct)
-    color = ("#2ecc71" if effective_pct >= 75
-             else "#f0a500" if effective_pct >= 50
-             else "#e74c3c")
-    val_str = f"{val:.1f}" if isinstance(val, float) else str(val)
-    pct_str = f"{effective_pct:.0f}th"
-    return f"""
-<div class="pctile-row">
-  <div class="pctile-label-row">
-    <span class="pctile-stat">{label}</span>
-    <div style="display:flex;gap:10px;align-items:center">
-      <span class="pctile-val">{val_str}</span>
-      <span class="pctile-rank" style="color:{color}">{pct_str}</span>
-    </div>
-  </div>
-  <div class="pctile-track">
-    <div class="pctile-fill" style="width:{min(100,effective_pct):.1f}%;background:{color}"></div>
-  </div>
-</div>"""
+# PLOT_LAYOUT, _bar_h, _normalize_col, _percentile_of, _pctile_bar_html
+# are all imported from helpers.ui_utils above.
 
 def _stat_grid_html(stats: dict) -> str:
     cells = "".join(

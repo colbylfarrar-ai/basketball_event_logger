@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -24,7 +24,7 @@ _st_df_orig = st.dataframe
 def _safe_df(data=None, *args, **kwargs):
     if data is not None and not isinstance(data, _PdStyler):
         data = data.copy()
-        for _c in data.select_dtypes(include="object").columns:
+        for _c in data.select_dtypes(include=["object","str"]).columns:
             data[_c] = data[_c].astype(str)
     return _st_df_orig(data, *args, **kwargs)
 st.dataframe = _safe_df

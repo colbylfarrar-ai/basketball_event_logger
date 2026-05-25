@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -21,7 +21,7 @@ _st_df_orig = st.dataframe
 def _safe_df(data=None, *args, **kwargs):
     if data is not None and not isinstance(data, _PdStyler):
         data = data.copy()
-        for _c in data.select_dtypes(include="object").columns:
+        for _c in data.select_dtypes(include=["object","str"]).columns:
             data[_c] = data[_c].astype(str)
     return _st_df_orig(data, *args, **kwargs)
 st.dataframe = _safe_df
@@ -120,7 +120,7 @@ with tab1:
         show_cols = [c for c in ["Official","Ref ID","Games","Total Fouls","Fouls/Game",
                                   "Home Fouls","Away Fouls","H/A Diff"] if c in off_df.columns]
         st.dataframe(off_df[show_cols].sort_values("Games", ascending=False),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
 
         st.markdown("---")
         ch1, ch2 = st.columns(2)
@@ -139,7 +139,7 @@ with tab1:
                 fig_fpg.update_layout(**PLOT_LAYOUT, title="Fouls per Game (ascending)",
                                       height=max(300, len(off_df)*40),
                                       yaxis=dict(tickfont=dict(size=11)))
-                st.plotly_chart(fig_fpg, use_container_width=True)
+                st.plotly_chart(fig_fpg, width='stretch')
 
         with ch2:
             if "H/A Diff" in off_df.columns and "Official" in off_df.columns:
@@ -159,7 +159,7 @@ with tab1:
                     height=max(300, len(off_df)*40),
                     yaxis=dict(tickfont=dict(size=11)),
                 )
-                st.plotly_chart(fig_ha, use_container_width=True)
+                st.plotly_chart(fig_ha, width='stretch')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,7 +242,7 @@ with tab2:
                     foul_series.append({"date": g["date"], "fouls": foul_cnt})
 
                 gw_df = pd.DataFrame(rows_out)
-                st.dataframe(gw_df, use_container_width=True, hide_index=True)
+                st.dataframe(gw_df, width='stretch', hide_index=True)
 
                 # Foul rate trend
                 if len(foul_series) >= 2:
@@ -260,7 +260,7 @@ with tab2:
                                             height=320,
                                             xaxis=dict(showgrid=False),
                                             yaxis=dict(title="Fouls Called"))
-                    st.plotly_chart(fig_trend, use_container_width=True)
+                    st.plotly_chart(fig_trend, width='stretch')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -317,10 +317,10 @@ with tab3:
                     height=max(300, len(tf_df)*40),
                     yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
                 )
-                st.plotly_chart(fig_tf, use_container_width=True)
+                st.plotly_chart(fig_tf, width='stretch')
 
                 st.dataframe(tf_df.rename(columns={"team_name":"Team","fouls_against":"Fouls Against"}),
-                             use_container_width=True, hide_index=True)
+                             width='stretch', hide_index=True)
 
             # Also show which teams this official has worked games for
             st.markdown("---")
@@ -351,6 +351,6 @@ with tab3:
                                        title="Games Involving Each Team",
                                        height=max(300, len(tgc_df)*40),
                                        yaxis=dict(autorange="reversed"))
-                st.plotly_chart(fig_tgc, use_container_width=True)
+                st.plotly_chart(fig_tgc, width='stretch')
             else:
                 st.info("No team game data available for this official.")

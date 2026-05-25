@@ -1,4 +1,4 @@
-"""
+﻿"""
 Native Streamlit box score renderer.
 Uses st.dataframe + pandas Styler — no raw HTML tables.
 Call show_game_box_score() from any page.
@@ -84,7 +84,7 @@ def _style_box(df: pd.DataFrame) -> object:
     display = df.drop(columns=["_totals"], errors="ignore").copy()
 
     # Arrow safety: cast all object columns to str
-    for c in display.select_dtypes(include="object").columns:
+    for c in display.select_dtypes(include=["object","str"]).columns:
         if c != "+/-":
             display[c] = display[c].astype(str)
 
@@ -134,7 +134,7 @@ def _show_linescore(q_data: dict, t1name: str, t2name: str,
     st.dataframe(
         df_ls.style.apply(_ls_style, axis=1),
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
     )
 
 
@@ -205,7 +205,7 @@ def show_game_box_score(rows_t1: list, rows_t2: list,
             with _tt:
                 st.dataframe(
                     _style_box(_build_traditional_df(_rows)),
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                 )
                 st.caption(
@@ -217,7 +217,7 @@ def show_game_box_score(rows_t1: list, rows_t2: list,
             with _ta:
                 st.dataframe(
                     _style_box(_build_advanced_df(_rows)),
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                 )
                 st.caption(

@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -39,7 +39,7 @@ with col_team:
         label_visibility="collapsed",
     )
 with col_team_btn:
-    if st.button("Save", key="save_team", type="primary", use_container_width=True):
+    if st.button("Save", key="save_team", type="primary", width='stretch'):
         val = "" if sel_default_team == "(None)" else sel_default_team
         set_setting("default_team", val)
         st.success("Saved!" if val else "Cleared.")

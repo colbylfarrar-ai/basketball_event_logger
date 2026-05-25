@@ -1,4 +1,4 @@
-import sys, os
+﻿import sys, os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -39,7 +39,7 @@ _st_df_orig = st.dataframe
 def _safe_df(data=None, *args, **kwargs):
     if data is not None and not isinstance(data, _PdStyler):
         data = data.copy()
-        for _c in data.select_dtypes(include="object").columns:
+        for _c in data.select_dtypes(include=["object","str"]).columns:
             data[_c] = data[_c].astype(str)
     return _st_df_orig(data, *args, **kwargs)
 st.dataframe = _safe_df
@@ -333,7 +333,7 @@ with tab_ov:
                 hovermode="x unified",
                 height=380,
             )
-            st.plotly_chart(fig_trend, use_container_width=True, key="ov_rtg_trend")
+            st.plotly_chart(fig_trend, width='stretch', key="ov_rtg_trend")
 
         st.divider()
 
@@ -439,7 +439,7 @@ with tab_ts:
                         fig_td.update_layout(
                             **PLOT_LAYOUT, title="Shot Attempt Distribution",
                             showlegend=False, height=290)
-                        st.plotly_chart(fig_td, use_container_width=True, key="ts_shot_dist")
+                        st.plotly_chart(fig_td, width='stretch', key="ts_shot_dist")
 
                 with _dist_r:
                     # Shooting % by type
@@ -461,7 +461,7 @@ with tab_ts:
                         **PLOT_LAYOUT, title="Shooting Percentages by Type",
                         yaxis=dict(range=[0,115], showgrid=False),
                         height=290)
-                    st.plotly_chart(fig_pcts, use_container_width=True, key="ts_shoot_pcts")
+                    st.plotly_chart(fig_pcts, width='stretch', key="ts_shoot_pcts")
 
         st.divider()
 
@@ -483,7 +483,7 @@ with tab_ts:
             {"Stat": "Avg Poss. Length",     "Value": a["avg_poss_len"]},
             {"Stat": "Points Per Possession","Value": f"{a['ppp']:.3f}"},
         ]
-        st.dataframe(pd.DataFrame(poss_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(poss_rows), hide_index=True, width='stretch')
 
         # ── Possession Length Breakdown ───────────────────────────────────────
         st.markdown("#### Possession Length Breakdown")
@@ -645,13 +645,13 @@ with tab_ts:
                 font=dict(color="#c9d1d9", size=11),
                 margin=dict(l=20, r=20, t=50, b=20),
             )
-            st.plotly_chart(_fig_pb, use_container_width=True, key="pb_ppp_bar")
+            st.plotly_chart(_fig_pb, width='stretch', key="pb_ppp_bar")
 
             # Detailed breakdown table
             st.dataframe(
                 pd.DataFrame(_pb_table),
                 hide_index=True,
-                use_container_width=True,
+                width='stretch',
             )
             st.caption(
                 "Quick < 12s · Medium 12–27s · Long 27+s  ·  "
@@ -679,7 +679,7 @@ with tab_ts:
                 {"Stat": "eFG%", "Total": f"{a['efg']*100:.1f}%", "Per Game": "—"},
                 {"Stat": "TS%",  "Total": f"{a['ts']*100:.1f}%",  "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(fg_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(fg_rows), hide_index=True, width='stretch')
 
         with sh2:
             st.markdown("**3-Pointers**")
@@ -689,7 +689,7 @@ with tab_ts:
                 {"Stat": "3P%",  "Total": f"{a['tpp']*100:.1f}%",           "Per Game": "—"},
                 {"Stat": "3PAr", "Total": f"{a['tpar']*100:.1f}%",          "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(tp_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(tp_rows), hide_index=True, width='stretch')
 
         with sh3:
             st.markdown("**Free Throws**")
@@ -699,7 +699,7 @@ with tab_ts:
                 {"Stat": "FT%",     "Total": f"{a['ftp']*100:.1f}%",        "Per Game": "—"},
                 {"Stat": "FT Rate", "Total": f"{a['ft_r']:.2f}",            "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(ft_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(ft_rows), hide_index=True, width='stretch')
 
         st.divider()
 
@@ -714,7 +714,7 @@ with tab_ts:
             {"Stat": "Blocks",        "Total": a["blk"],  "Per Game": round(a["blk_pg"], 1)},
             {"Stat": "Turnovers",     "Total": a["tov"],  "Per Game": round(a["tov_pg"], 1)},
         ]
-        st.dataframe(pd.DataFrame(other_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(other_rows), hide_index=True, width='stretch')
 
         st.divider()
 
@@ -737,7 +737,7 @@ with tab_ts:
                 {"Stat": "Paint Pts/G",           "Value": f"{a.get('paint_pts_pg',0):.1f}",   "Note": "pts from paint/g"},
             ]
             st.markdown("**Offense**")
-            st.dataframe(pd.DataFrame(adv_off), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(adv_off), hide_index=True, width='stretch')
         with adv2:
             adv_def = [
                 {"Stat": "Def. Rating (DRtg)",   "Value": f"{a['drtg']:.1f}",                      "Note": "pts/100 poss"},
@@ -751,7 +751,7 @@ with tab_ts:
                 {"Stat": "Opp TOV/G",             "Value": f"{a['opp_tov']/gp_ts:.1f}",             "Note": "opp turnovers/g"},
             ]
             st.markdown("**Defense**")
-            st.dataframe(pd.DataFrame(adv_def), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(adv_def), hide_index=True, width='stretch')
 
         st.divider()
 
@@ -802,7 +802,7 @@ with tab_ts:
                 {"Source": "TOTAL",           "Points": _pts2+_pts3+_ptft,
                  "Pct": "100%", "Per Game": f"{a['pts_pg']:.1f}"},
             ]
-            st.dataframe(pd.DataFrame(pct_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(pct_rows), hide_index=True, width='stretch')
             st.markdown(f"**Ast%**: {a.get('ast_pct',0):.1f}% of FGM were assisted")
             st.markdown(f"**Unast%**: {a.get('unast_pct',0):.1f}% of FGM were unassisted")
 
@@ -892,7 +892,7 @@ with tab_ts:
                     ),
                     title="Shot Outcome Mix by Player (% of FGA)",
                 )
-                st.plotly_chart(fig_scm, use_container_width=True, key="scm_chart_ta")
+                st.plotly_chart(fig_scm, width='stretch', key="scm_chart_ta")
                 st.caption(
                     f"Minimum 3 FGA · sorted by W/O% ascending (biggest creators on top) · "
                     f"{len(_scm_df)} player{'s' if len(_scm_df) != 1 else ''} shown"
@@ -999,7 +999,7 @@ with tab_ts:
             _qdf.style
                 .apply(_quarter_row_style, axis=1)
                 .map(_ppp_cell_style, subset=["PPP", "Opp PPP"]),
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
         st.caption(
@@ -1250,7 +1250,7 @@ with tab_pl:
                             "Contested rating": f"{SHOT_RATING.get((stype,zone,True),0):+.1f}",
                         })
                     if _sq_table:
-                        st.dataframe(pd.DataFrame(_sq_table), hide_index=True, use_container_width=True)
+                        st.dataframe(pd.DataFrame(_sq_table), hide_index=True, width='stretch')
                         st.caption(
                             "Baselines are zone/contest averages before creation context. "
                             "**Shot Rating** and **Est FG%** shown above already include the "
@@ -1351,7 +1351,7 @@ with tab_pl:
                          "Net": round(net_off_,1) if net_off_ is not None else "—",
                          "Pts For": off_pf_, "Pts Against": off_pa_},
                     ])
-                    st.dataframe(oo_table, hide_index=True, use_container_width=True)
+                    st.dataframe(oo_table, hide_index=True, width='stretch')
                 else:
                     st.caption("On/Off data requires games with lineup snapshots logged in Game Tracker.")
 
@@ -1532,7 +1532,7 @@ letter-spacing:1px;margin-bottom:4px;}
                     all_sorted[["Player", "Team", "League Rank"]],
                     on=["Player"], how="left"
                 )
-                st.dataframe(out, use_container_width=True)
+                st.dataframe(out, width='stretch')
 
                 # Bar chart
                 fig = go.Figure(go.Bar(
@@ -1552,7 +1552,7 @@ letter-spacing:1px;margin-bottom:4px;}
                     margin=dict(l=10, r=80, t=20, b=20),
                     font=dict(size=11),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             with role_tab_off:
                 st.caption("Higher OFF = better offensive player. "
@@ -1620,7 +1620,7 @@ letter-spacing:1px;margin-bottom:4px;}
                     margin=dict(l=20, r=20, t=50, b=30),
                     font=dict(size=11),
                 )
-                st.plotly_chart(fig_rad, use_container_width=True)
+                st.plotly_chart(fig_rad, width='stretch')
             else:
                 st.info("Need at least 2 qualified players for the scatter chart.")
 
@@ -1654,7 +1654,7 @@ letter-spacing:1px;margin-bottom:4px;}
                           .background_gradient(subset=_pct_subset,
                                                cmap="RdYlGn", axis=None, vmin=0, vmax=100)
                           .format({c: "{:.1f}%" for c in _pct_subset}))
-                st.dataframe(styler, use_container_width=True, hide_index=True)
+                st.dataframe(styler, width='stretch', hide_index=True)
                 st.caption("Percentile = % of all tracked players with a lower score. "
                            "90th pctile = top 10% in the league.")
 
@@ -1893,7 +1893,7 @@ with tab_lu:
                         yaxis=dict(tickfont=dict(size=11)),
                         height=max(260, len(_ov_team)*40),
                     )
-                    st.plotly_chart(fig_ov_t, use_container_width=True, key="lu_ovrl_bar")
+                    st.plotly_chart(fig_ov_t, width='stretch', key="lu_ovrl_bar")
 
             # ─── Offense ──────────────────────────────────────────────────────
             with lu_off:
@@ -1926,7 +1926,7 @@ with tab_lu:
                     font_color="#c9d1d9", margin=dict(l=10,r=10,t=20,b=10),
                     xaxis=dict(showgrid=False), height=max(260, len(_pts_t)*40),
                 )
-                st.plotly_chart(fig_pts, use_container_width=True, key="lu_pts_bar")
+                st.plotly_chart(fig_pts, width='stretch', key="lu_pts_bar")
 
             # ─── Defense ──────────────────────────────────────────────────────
             with lu_def:
@@ -1952,7 +1952,7 @@ with tab_lu:
                              if c in _def_t.columns]
                 st.dataframe(
                     _def_t[_def_cols].rename(columns={"_lbl":"Player"}),
-                    use_container_width=True, hide_index=True,
+                    width='stretch', hide_index=True,
                 )
 
             # ─── Free Throw ───────────────────────────────────────────────────
@@ -1994,7 +1994,7 @@ with tab_lu:
                         xaxis=dict(range=[0,115], showgrid=False),
                         height=max(260, len(_ft_t)*40),
                     )
-                    st.plotly_chart(fig_ft, use_container_width=True, key="lu_ft_bar")
+                    st.plotly_chart(fig_ft, width='stretch', key="lu_ft_bar")
 
             # ─── 3-Point ──────────────────────────────────────────────────────
             with lu_3pt:
@@ -2034,7 +2034,7 @@ with tab_lu:
                         xaxis=dict(range=[0,115], showgrid=False),
                         height=max(260, len(_tp_t)*40),
                     )
-                    st.plotly_chart(fig_3p, use_container_width=True, key="lu_3pt_bar")
+                    st.plotly_chart(fig_3p, width='stretch', key="lu_3pt_bar")
 
             # ─── Clutch ───────────────────────────────────────────────────────
             with lu_clutch:
@@ -2067,7 +2067,7 @@ with tab_lu:
                         xaxis=dict(showgrid=False),
                         height=max(260, len(_q4_t)*40),
                     )
-                    st.plotly_chart(fig_q4, use_container_width=True, key="lu_q4_bar")
+                    st.plotly_chart(fig_q4, width='stretch', key="lu_q4_bar")
 
             # ─── Custom Lineup ────────────────────────────────────────────────
             with lu_custom:
@@ -2182,7 +2182,7 @@ with tab_lu:
                         "eFG%":   f"{_clu_efg:.1f}%",
                         "Avg OVRL": round(float(_clu_pool["OVRL"].mean()), 1),
                     }])
-                    st.dataframe(_clu_box_df, hide_index=True, use_container_width=True)
+                    st.dataframe(_clu_box_df, hide_index=True, width='stretch')
 
                     # ── Individual breakdown table ─────────────────────────────
                     st.markdown("**Individual Player Breakdown**")
@@ -2192,7 +2192,7 @@ with tab_lu:
                         if c in _clu_pool.columns]
                     st.dataframe(
                         _clu_pool[_show_cols].reset_index(drop=True),
-                        hide_index=True, use_container_width=True,
+                        hide_index=True, width='stretch',
                     )
 
 
@@ -2315,7 +2315,7 @@ with tab_gm:
                     legend=dict(orientation="h", y=1.06),
                     font=dict(size=11, color="#c9d1d9"),
                 )
-                st.plotly_chart(_fig_sc_trend, use_container_width=True,
+                st.plotly_chart(_fig_sc_trend, width='stretch',
                                 key="sc_trend_games")
                 st.caption(
                     "🟡 Self-Created = attempts with no pass credited  ·  "
@@ -2423,7 +2423,7 @@ with tab_gm:
                             tot1g += q_sc[qq].get(t1id, 0)
                             tot2g += q_sc[qq].get(t2id, 0)
                         r1g["Total"] = tot1g; r2g["Total"] = tot2g
-                        st.dataframe(pd.DataFrame([r1g, r2g]), hide_index=True, use_container_width=True)
+                        st.dataframe(pd.DataFrame([r1g, r2g]), hide_index=True, width='stretch')
 
                     # ── Quarter PPP (above tabs) ─────────────────────────────
                     qp_g = {}
@@ -2459,7 +2459,7 @@ with tab_gm:
                         qp_r2["Total Poss"] = t2_tp
                         qp_r2["Total PPP"]  = round(t2_tpts/t2_tp,3) if t2_tp else "—"
                         st.caption("Possessions per Quarter · PPP = points per possession")
-                        st.dataframe(pd.DataFrame([qp_r1, qp_r2]), hide_index=True, use_container_width=True)
+                        st.dataframe(pd.DataFrame([qp_r1, qp_r2]), hide_index=True, width='stretch')
 
                     # ── Score flow chart ─────────────────────────────────────
                     show_score_flow_chart(g["id"], t1nm, t2nm, t1id, t2id,

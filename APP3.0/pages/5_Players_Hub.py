@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -22,7 +22,7 @@ _st_df_orig = st.dataframe
 def _safe_df(data=None, *args, **kwargs):
     if data is not None and not isinstance(data, _PdStyler):
         data = data.copy()
-        for _c in data.select_dtypes(include="object").columns:
+        for _c in data.select_dtypes(include=["object","str"]).columns:
             data[_c] = data[_c].astype(str)
     return _st_df_orig(data, *args, **kwargs)
 st.dataframe = _safe_df
@@ -323,11 +323,11 @@ with tab1:
                               yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
                               xaxis=dict(showgrid=False),
                               height=max(340, top_n * 40))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             dcols = display_cols or DISPLAY_COLS
             show_cols = [c for c in dcols if c in rnk.columns]
             st.dataframe(rnk.nlargest(len(rnk), col)[show_cols],
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
 
     _leaderboard_tab(sub1, "PTS", "Points per Game",
                      display_cols=["Player","#","Team","GP","PTS","FGM","FGA","FG%","eFG%","TS%","PPSA","Q4 PPG"])
@@ -348,11 +348,11 @@ with tab1:
                                   name="BLK", marker_color="#f0a500"))
             fig4.update_layout(**PLOT_LAYOUT, barmode="stack", title="Top 12 — Stocks (STL+BLK)",
                                yaxis=dict(autorange="reversed"), height=max(340, 12*40))
-            st.plotly_chart(fig4, use_container_width=True)
+            st.plotly_chart(fig4, width='stretch')
             dcols4 = ["Player","#","Team","GP","STL","BLK","Stocks","DREB","DSh%","TOV"]
             show4  = [c for c in dcols4 if c in df4.columns]
             st.dataframe(df4.nlargest(len(df4), "Stocks")[show4],
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
 
     with sub5:
         shoot_cols = ["Player","#","Team","GP","FGM","FGA","FG%",
@@ -379,16 +379,16 @@ with tab1:
                 title="Shot Attempt Distribution — Top 10 Scorers",
                 xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
                 height=380, legend=dict(orientation="h", yanchor="bottom", y=1.02))
-            st.plotly_chart(fig_dist, use_container_width=True)
+            st.plotly_chart(fig_dist, width='stretch')
 
         if "eFG%" in rnk_s.columns:
             top_s = rnk_s.nlargest(12, "eFG%")[["_label","eFG%"]].copy()
             top_s["_label"] = top_s["_label"].astype(str)
             fig_s = _bar_h(top_s, "eFG%", "_label", color="#2ecc71",
                            title="Top 12 — eFG% (min 1 FGA)")
-            st.plotly_chart(fig_s, use_container_width=True)
+            st.plotly_chart(fig_s, width='stretch')
         st.dataframe(rnk_s.sort_values("eFG%", ascending=False)[show_s],
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
 
     with sub6:
         adv_cols = ["Player","#","Team","GP","GS","SC","ShotRat","Stocks",
@@ -399,9 +399,9 @@ with tab1:
             top_a["_label"] = top_a["_label"].astype(str)
             fig_a = _bar_h(top_a, "GS", "_label", color="#9b59b6",
                            title="Top 12 — Game Score (Hollinger)")
-            st.plotly_chart(fig_a, use_container_width=True)
+            st.plotly_chart(fig_a, width='stretch')
         st.dataframe(rnk.sort_values("GS", ascending=False)[show_a] if "GS" in rnk.columns
-                     else rnk[show_a], use_container_width=True, hide_index=True)
+                     else rnk[show_a], width='stretch', hide_index=True)
 
     # ── Deep Analytics tab ───────────────────────────────────────────────────
     with sub_adv:
@@ -450,14 +450,14 @@ with tab1:
                 yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
                 xaxis=dict(showgrid=False),
                 height=max(380, 15 * 40))
-            st.plotly_chart(_adv_fig, use_container_width=True)
+            st.plotly_chart(_adv_fig, width='stretch')
 
         # Full advanced stats table
         _full_adv = ["Player","#","Team","GP","EFF","FIC","PRF","PPSA","PPS",
                      "FTr","TOV%","USG","GS","SC","ShotRat","AST/TOV"]
         _full_adv_show = [c for c in _full_adv if c in rnk.columns]
         st.dataframe(rnk.sort_values("EFF", ascending=False)[_full_adv_show] if "EFF" in rnk.columns
-                     else rnk[_full_adv_show], use_container_width=True, hide_index=True)
+                     else rnk[_full_adv_show], width='stretch', hide_index=True)
 
         # EFF vs PRF scatter (size = Stocks)
         if all(c in rnk.columns for c in ["EFF","PRF"]):
@@ -474,7 +474,7 @@ with tab1:
                 labels={"EFF":"Efficiency (EFF)","PRF":"Points Responsible For (PRF)"},
             )
             fig_ev.update_layout(**PLOT_LAYOUT, height=440)
-            st.plotly_chart(fig_ev, use_container_width=True, key="adv_scatter")
+            st.plotly_chart(fig_ev, width='stretch', key="adv_scatter")
             st.caption("Bubble size = Stocks (STL+BLK). Top-right = high efficiency AND high impact.")
 
     # ── Overall tab ──────────────────────────────────────────────────────────
@@ -500,7 +500,7 @@ with tab1:
                 yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
                 height=max(360, len(top_ov) * 42),
             )
-            st.plotly_chart(fig_ov, use_container_width=True, key="ovrl_leaderboard")
+            st.plotly_chart(fig_ov, width='stretch', key="ovrl_leaderboard")
 
             # Component breakdown for top players
             if all(c in _ov.columns for c in ["OFF","DEF","PLY","REB_R"]):
@@ -519,14 +519,14 @@ with tab1:
                     yaxis=dict(range=[0,105], title="Score (0–100)"),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     height=400)
-                st.plotly_chart(fig_comp, use_container_width=True, key="ovrl_comp")
+                st.plotly_chart(fig_comp, width='stretch', key="ovrl_comp")
 
             # Full table
             _ov_cols = ["Player","#","Team","GP","OVRL","OFF","DEF","PLY","REB_R",
                         "PTS","AST","REB","STL","BLK","TOV","TS%"]
             _show_ov = [c for c in _ov_cols if c in _ov.columns]
             st.dataframe(_ov.nlargest(len(_ov), "OVRL")[_show_ov],
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
             st.caption("OVRL weights: OFF 30% · PLY 25% · DEF 25% · REB_R 20%. Min 1 GP.")
 
 
@@ -599,7 +599,7 @@ with tab2:
                     st.markdown("<br>", unsafe_allow_html=True)
                     dcols = ["Player","#","Team","GP","PTS","AST","REB","STL","BLK","eFG%","TS%",col]
                     show_c = [c for c in dcols if c in sorted_r.columns]
-                    st.dataframe(sorted_r[show_c], use_container_width=True, hide_index=True)
+                    st.dataframe(sorted_r[show_c], width='stretch', hide_index=True)
 
                     # OFF vs DEF scatter, bubble = REB_R
                     if all(c in rat_f.columns for c in ["OFF","DEF","REB_R"]):
@@ -612,7 +612,7 @@ with tab2:
                             labels={"OFF":"Offensive Rating","DEF":"Defensive Rating","REB_R":"Rebounding Rating"},
                         )
                         fig_sc.update_layout(**PLOT_LAYOUT, height=420)
-                        st.plotly_chart(fig_sc, use_container_width=True, key=f"scatter_rating_{col}")
+                        st.plotly_chart(fig_sc, width='stretch', key=f"scatter_rating_{col}")
 
             # OVRL sub-tab
             with sub_ovrl_r:
@@ -638,7 +638,7 @@ with tab2:
                     _ov_r_cols = ["Player","#","Team","GP","OVRL","OFF","DEF","PLY","REB_R",
                                   "PTS","AST","REB","STL","BLK","TOV","TS%"]
                     _ov_r_show = [c for c in _ov_r_cols if c in _ov_r.columns]
-                    st.dataframe(_ov_r[_ov_r_show], use_container_width=True, hide_index=True)
+                    st.dataframe(_ov_r[_ov_r_show], width='stretch', hide_index=True)
 
                     if all(c in rat_f.columns for c in ["OVRL","OFF","REB_R"]):
                         st.markdown("---")
@@ -652,7 +652,7 @@ with tab2:
                             title="OVRL vs OFF — size=REB_R, color=DEF",
                         )
                         fig_ov_sc.update_layout(**PLOT_LAYOUT, height=440)
-                        st.plotly_chart(fig_ov_sc, use_container_width=True, key="scatter_ovrl_off")
+                        st.plotly_chart(fig_ov_sc, width='stretch', key="scatter_ovrl_off")
 
                     st.caption("OVRL = OFF 30% + PLY 25% + DEF 25% + REB_R 20%, normalised 0–100.")
 
@@ -793,7 +793,7 @@ with tab4:
             legend=dict(font=dict(color="#c9d1d9")),
             title="Player Radar (normalized 0–100 within league)", height=460,
         )
-        st.plotly_chart(fig_radar, use_container_width=True)
+        st.plotly_chart(fig_radar, width='stretch')
 
         # ── Shooting distribution donut ──────────────────────────────────────
         if all(c in eligible.columns for c in ["2PA","3PA","FTA"]):
@@ -819,7 +819,7 @@ with tab4:
                             **PLOT_LAYOUT,
                             title=f"{row['Player']} — Shot Profile",
                             showlegend=False, height=300, margin=dict(l=5,r=5,t=40,b=5))
-                        st.plotly_chart(fig_d, use_container_width=True,
+                        st.plotly_chart(fig_d, width='stretch',
                                         key=f"donut_{sel[:8]}")
 
         # ── Percentile bars side-by-side ─────────────────────────────────────
@@ -875,7 +875,7 @@ with tab4:
 
         out_df = cmp_df[["Stat","Player A","Player B"]].copy()
         out_df.columns = ["Stat", row_a["Player"], row_b["Player"]]
-        st.dataframe(out_df, use_container_width=True, hide_index=True)
+        st.dataframe(out_df, width='stretch', hide_index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -949,7 +949,7 @@ with tab5:
             avg_cols  = ["GP","MIN","PTS","REB","AST","STL","BLK","TOV","PF","+/-","GS"]
             avg_avail = [c for c in avg_cols if c in prof_row.index]
             st.dataframe(pd.DataFrame([{c: prof_row[c] for c in avg_avail}]),
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
 
             # Shooting breakdown
             st.markdown('<div class="section-hdr">Shooting Breakdown</div>',
@@ -960,7 +960,7 @@ with tab5:
             shoot_avail = [c for c in shoot_cols_p if c in prof_row.index]
             if shoot_avail:
                 st.dataframe(pd.DataFrame([{c: prof_row[c] for c in shoot_avail}]),
-                             use_container_width=True, hide_index=True)
+                             width='stretch', hide_index=True)
 
             # Shot distribution donut + efficiency bars
             _col_l, _col_r = st.columns([1, 1])
@@ -979,7 +979,7 @@ with tab5:
                     fig_donut.update_layout(
                         **PLOT_LAYOUT, title="Shot Attempt Distribution",
                         showlegend=False, height=280, margin=dict(l=5,r=5,t=40,b=5))
-                    st.plotly_chart(fig_donut, use_container_width=True, key=f"prof_donut_{pid}")
+                    st.plotly_chart(fig_donut, width='stretch', key=f"prof_donut_{pid}")
 
             with _col_r:
                 pct_cols = [c for c in ["FG%","2P%","3P%","FT%","eFG%","TS%"]
@@ -994,7 +994,7 @@ with tab5:
                     ))
                     fig_sh.update_layout(**PLOT_LAYOUT, title="Shooting Percentages",
                                          yaxis=dict(range=[0,115]), height=280)
-                    st.plotly_chart(fig_sh, use_container_width=True, key=f"prof_shoot_{pid}")
+                    st.plotly_chart(fig_sh, width='stretch', key=f"prof_shoot_{pid}")
 
         # ── Advanced ──────────────────────────────────────────────────────────
         with p_tab_adv:
@@ -1005,7 +1005,7 @@ with tab5:
             adv_avail = [c for c in adv_stat_cols if c in prof_row.index]
             if adv_avail:
                 st.dataframe(pd.DataFrame([{c: prof_row[c] for c in adv_avail}]),
-                             use_container_width=True, hide_index=True)
+                             width='stretch', hide_index=True)
 
             # Percentile bars for advanced stats
             st.markdown('<div class="section-hdr">League Percentiles — Advanced</div>',
@@ -1056,7 +1056,7 @@ with tab5:
                     title="Advanced Metrics Radar (percentile vs. league)",
                     height=400,
                 )
-                st.plotly_chart(fig_adv_r, use_container_width=True, key=f"prof_adv_radar_{pid}")
+                st.plotly_chart(fig_adv_r, width='stretch', key=f"prof_adv_radar_{pid}")
 
         # ── Per-36 ────────────────────────────────────────────────────────────
         with p_tab_per36:
@@ -1072,7 +1072,7 @@ with tab5:
                     p36_data = {c.replace("32",""):prof_row[c] for c in p36_avail
                                 if prof_row[c] is not None}
                     st.dataframe(pd.DataFrame([p36_data]),
-                                 use_container_width=True, hide_index=True)
+                                 width='stretch', hide_index=True)
                     # Bar chart
                     p36_labels = list(p36_data.keys())
                     p36_vals   = [float(v) if v is not None else 0.0 for v in p36_data.values()]
@@ -1086,7 +1086,7 @@ with tab5:
                         fig_p36.update_layout(**PLOT_LAYOUT, title="Per-36 Min Projections",
                                               yaxis=dict(range=[0, max(p36_vals)*1.25+1]),
                                               height=320)
-                        st.plotly_chart(fig_p36, use_container_width=True, key=f"prof_p36_{pid}")
+                        st.plotly_chart(fig_p36, width='stretch', key=f"prof_p36_{pid}")
                     st.caption("Per-36 = actual totals × 36 ÷ total tracked minutes. Requires ≥5 MIN/G.")
             else:
                 st.info("Per-36 data not available for this player.")
@@ -1110,7 +1110,7 @@ with tab5:
                         ))
                         fig_rat.update_layout(**PLOT_LAYOUT, yaxis=dict(range=[0,115]),
                                               title="Player Ratings (0–100 scale)", height=320)
-                        st.plotly_chart(fig_rat, use_container_width=True, key=f"prof_rat_{pid}")
+                        st.plotly_chart(fig_rat, width='stretch', key=f"prof_rat_{pid}")
 
                         # Ratings table with descriptions
                         r_labels = {"OVRL":"Overall Rating","OFF":"Offensive Rating",
@@ -1119,7 +1119,7 @@ with tab5:
                         r_rows = [{"Rating":r_labels.get(c,c),"Code":c,
                                    "Score":f"{float(pr[c]):.1f}"}
                                   for c in rating_cols]
-                        st.dataframe(pd.DataFrame(r_rows), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(r_rows), width='stretch', hide_index=True)
 
                         # Percentile bars for ratings vs league
                         if not rat.empty:
@@ -1202,7 +1202,7 @@ with tab5:
                                            "Rank":f"#{sr} of {total_players}","Percentile":f"{sp}th"})
                     if _rank_rows:
                         st.dataframe(pd.DataFrame(_rank_rows),
-                                     use_container_width=True, hide_index=True)
+                                     width='stretch', hide_index=True)
 
                     # League bar chart
                     st.markdown("---")
@@ -1224,7 +1224,7 @@ with tab5:
                         yaxis=dict(tickfont=dict(size=10)),
                         height=max(380, total_players*26),
                     )
-                    st.plotly_chart(fig_rank, use_container_width=True,
+                    st.plotly_chart(fig_rank, width='stretch',
                                     key=f"prof_ovrl_rank_{pid}")
 
         # ── Game Log ──────────────────────────────────────────────────────────
@@ -1293,7 +1293,7 @@ with tab5:
                             legend=dict(orientation="h", yanchor="bottom", y=1.02),
                             height=360,
                         )
-                        st.plotly_chart(fig_trend, use_container_width=True,
+                        st.plotly_chart(fig_trend, width='stretch',
                                         key=f"prof_trend_{pid}")
 
                     # W/L coloring in log
@@ -1304,7 +1304,7 @@ with tab5:
                         if c in gl_df.columns]
                     st.markdown('<div class="section-hdr">Game Log</div>',
                                 unsafe_allow_html=True)
-                    st.dataframe(gl_df[show_log_cols], use_container_width=True, hide_index=True)
+                    st.dataframe(gl_df[show_log_cols], width='stretch', hide_index=True)
                 else:
                     # Fallback: simple log from DB
                     game_log = query("""
@@ -1323,7 +1323,7 @@ with tab5:
                         gl2["Score"]   = gl2["home_score"].astype(str) + "–" + gl2["away_score"].astype(str)
                         gl2["Tracked"] = gl2["tracked"].apply(lambda x: "✓" if x else "")
                         st.dataframe(gl2[["date","Matchup","Score","Tracked"]].rename(columns={"date":"Date"}),
-                                     use_container_width=True, hide_index=True)
+                                     width='stretch', hide_index=True)
                     else:
                         st.info("No game appearances found for this player.")
 

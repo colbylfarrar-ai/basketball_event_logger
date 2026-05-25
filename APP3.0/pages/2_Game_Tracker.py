@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -214,7 +214,7 @@ gc1, gc2 = st.columns([4, 1])
 if is_tracked:
     gc2.success("✓ Game Final")
 else:
-    if gc2.button("End Game", type="primary", use_container_width=True):
+    if gc2.button("End Game", type="primary", width='stretch'):
         t1_final, t2_final = live_score(game_id, t1id, t2id)
         execute("UPDATE games SET tracked=1, home_score=?, away_score=? WHERE id=?",
                 (t1_final, t2_final, game_id))
@@ -471,7 +471,7 @@ else:
             tov_p  = c1.selectbox("Turnover By", all_opts[1:])
             stolen = c2.selectbox("Stolen By", all_opts)
 
-        submitted = st.form_submit_button("Log Event", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Log Event", type="primary", width='stretch')
 
     if submitted:
         q = int(quarter)
@@ -584,7 +584,7 @@ if q_scores:
         t2_tot += q_scores[q].get(t2id, 0)
     q_row_t1["Total"] = t1_tot
     q_row_t2["Total"] = t2_tot
-    st.dataframe(pd.DataFrame([q_row_t1, q_row_t2]), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame([q_row_t1, q_row_t2]), hide_index=True, width='stretch')
 
 st.markdown("#### Play-by-Play")
 recent = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC", (game_id,))

@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS game_lineup_players (
 CREATE TABLE IF NOT EXISTS game_lineup_officials (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id     INTEGER NOT NULL REFERENCES games(id)    ON DELETE CASCADE,
-    official_id INTEGER NOT NULL REFERENCES officials(id) ON DELETE CASCADE
+    official_id INTEGER NOT NULL REFERENCES officials(id) ON DELETE CASCADE,
+    UNIQUE(game_id, official_id)
 );
 
 CREATE TABLE IF NOT EXISTS game_event_lineup (

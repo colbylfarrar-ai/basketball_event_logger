@@ -51,6 +51,14 @@ def initialize_database():
         "CREATE INDEX IF NOT EXISTS idx_games_team1        ON games(team1_id)",
         "CREATE INDEX IF NOT EXISTS idx_games_team2        ON games(team2_id)",
         "CREATE INDEX IF NOT EXISTS idx_players_team_arch  ON players(team_id, archived)",
+        # Unique constraint on game_lineup_officials — prevents duplicate inserts
+        # (INSERT OR IGNORE now correctly deduplicates on rerun)
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo ON game_lineup_officials(game_id, official_id)",
+        # Settings table (key/value store for user preferences)
+        """CREATE TABLE IF NOT EXISTS app_settings (
+               key   TEXT PRIMARY KEY,
+               value TEXT NOT NULL DEFAULT ''
+           )""",
     ]:
         try:
             conn.execute(stmt)

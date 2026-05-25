@@ -18,7 +18,7 @@ def games_for_team(tid, tracked_only=False):
         WHERE (g.team1_id=? OR g.team2_id=?) {cond}
           AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
     """, (tid, tid))
-    return sorted(rows, key=lambda g: pd.to_datetime(g["date"], errors="coerce"))
+    return sorted(rows, key=lambda g: pd.to_datetime(g["date"], errors="coerce"), reverse=True)
 
 
 def win_loss(game, tid):

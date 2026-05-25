@@ -50,6 +50,7 @@ def compute_player_game_log(player_id: int, team_id: int) -> list:
         FROM game_event_lineup gel
         JOIN game_events ge ON ge.id = gel.event_id
         WHERE ge.game_id IN ({ph}) AND gel.player_id = ?
+          AND ge.possession_secs > 0
         GROUP BY ge.game_id
     """, (*game_ids, player_id))
     mins_by_game = {r["game_id"]: (r["secs"] or 0.0) for r in mins_rows}
@@ -186,6 +187,7 @@ def compute_player_career(player_id: int):
         FROM game_event_lineup gel
         JOIN game_events ge ON ge.id = gel.event_id
         WHERE ge.game_id IN ({ph}) AND gel.player_id = ?
+          AND ge.possession_secs > 0
         GROUP BY ge.game_id
     """, (*game_ids, player_id))
     mins_by_game = {r["game_id"]: (r["secs"] or 0.0) for r in mins_rows}
@@ -231,10 +233,27 @@ def compute_player_career(player_id: int):
                     if ev["zone"] and ev["shot_type"]:
                         _con = bool(ev["guarded_by_id"])
                         _key = (ev["shot_type"], ev["zone"], _con)
-                        tot["shot_rating"] += SHOT_RATING.get(_key, 0.0)
+
+                        # Creation-context modifier:
+                        # pass_from + shot_created_by → designed play, major boost
+                        # pass_from only → assisted / catch-and-shoot boost
+                        # shot_created_by only → screen/drive created the look
+                        # neither → fully self-created, harder shot, small penalty
+                        _has_pass    = bool(ev["pass_from_id"])
+                        _has_created = bool(ev["shot_created_by_id"])
+                        if _has_pass and _has_created:
+                            _r_mod, _e_mod = +0.30, +0.07   # both: designed play
+                        elif _has_pass:
+                            _r_mod, _e_mod = +0.15, +0.04   # assisted shot
+                        elif _has_created:
+                            _r_mod, _e_mod = +0.08, +0.02   # creation w/o explicit pass
+                        else:
+                            _r_mod, _e_mod = -0.10, -0.02   # self-created
+
+                        tot["shot_rating"] += SHOT_RATING.get(_key, 0.0) + _r_mod
                         _efg = EST_FGP.get(_key)
                         if _efg is not None:
-                            tot["est_fg_sum"]   += _efg
+                            tot["est_fg_sum"]   += max(0.0, min(1.0, _efg + _e_mod))
                             tot["est_fg_shots"] += 1
                 if ev["pass_from_id"] == pid:
                     tot["sc"] += 1
@@ -296,9 +315,13 @@ def compute_team_tracked(tid):
     agg=dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,
              tov=0,stl=0,blk=0,ast=0,poss_secs=0.0,pts=0,sc=0,
              poss_count=0,real_poss_secs=0.0,
-             ast_fgm=0,paint_fga=0,paint_fgm=0,q4_pts=0,
+             ast_fgm=0,paint_fga=0,paint_fgm=0,
+             q1_pts=0,q2_pts=0,q3_pts=0,q4_pts=0,
+             q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0,
              opp_fga=0,opp_fgm=0,opp_tpa=0,opp_tpm=0,opp_fta=0,opp_ftm=0,
-             opp_oreb=0,opp_dreb=0,opp_tov=0,opp_pts=0,opp_q4_pts=0)
+             opp_oreb=0,opp_dreb=0,opp_tov=0,opp_pts=0,
+             opp_q1_pts=0,opp_q2_pts=0,opp_q3_pts=0,opp_q4_pts=0,
+             opp_q1_poss=0,opp_q2_poss=0,opp_q3_poss=0,opp_q4_poss=0)
     game_log = []
 
     for g in tracked:
@@ -313,8 +336,12 @@ def compute_team_tracked(tid):
 
         my_s  = dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,tov=0,stl=0,blk=0,ast=0,poss_secs=0.0,pts=0,sc=0,
                      poss_count=0,real_poss_secs=0.0,
-                     ast_fgm=0,paint_fga=0,paint_fgm=0,q4_pts=0)
-        opp_s = dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,tov=0,pts=0,q4_pts=0)
+                     ast_fgm=0,paint_fga=0,paint_fgm=0,
+                     q1_pts=0,q2_pts=0,q3_pts=0,q4_pts=0,
+                     q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0)
+        opp_s = dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,tov=0,pts=0,
+                     q1_pts=0,q2_pts=0,q3_pts=0,q4_pts=0,
+                     q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0)
 
         for ev in events:
             prim=ev["primary_player_id"]
@@ -322,12 +349,20 @@ def compute_team_tracked(tid):
             psec=ev["possession_secs"] or 0.0
             is_mine = ptm==tid
 
+            _ev_quarter = ev["quarter"]
             if is_mine:
                 my_s["poss_secs"] += psec
-                # Count possession (exclude free throws, matching Game Tracker logic)
-                if ev["event_type"] != "free_throw":
+                # Count possession (exclude free throws, fouls, and 0-sec events)
+                if ev["event_type"] not in ("free_throw", "foul") and psec > 0:
                     my_s["poss_count"]    += 1
                     my_s["real_poss_secs"] += psec
+                # Per-quarter possession count: shots + turnovers, no psec requirement
+                # (psec may be null on events where quarter IS populated)
+                if ev["event_type"] in ("shot", "turnover") and _ev_quarter in (1, 2, 3, 4):
+                    my_s[f"q{_ev_quarter}_poss"] += 1
+            elif ptm is not None and ev["event_type"] in ("shot", "turnover") and _ev_quarter in (1, 2, 3, 4):
+                # Track opponent per-quarter possessions (same shot/turnover approach)
+                opp_s[f"q{_ev_quarter}_poss"] += 1
 
             et=ev["event_type"]
             if et=="shot":
@@ -350,10 +385,11 @@ def compute_team_tracked(tid):
                 if ev["shot_result"]=="make" and ptm==tid:
                     _pf=ev["pass_from_id"]
                     if _pf and pt.get(_pf)==tid: my_s["ast_fgm"]+=1
-                # Q4 points from shots
-                if ev["quarter"]==4 and ev["shot_result"]=="make" and ptm:
-                    if ptm==tid: my_s["q4_pts"]+=ev["shot_type"]
-                    else:        opp_s["q4_pts"]+=ev["shot_type"]
+                # Quarter points from shots (Q1-Q4)
+                if ev["shot_result"]=="make" and ptm and ev["quarter"] in (1,2,3,4):
+                    _qk = f"q{ev['quarter']}_pts"
+                    if ptm==tid: my_s[_qk]+=ev["shot_type"]
+                    else:        opp_s[_qk]+=ev["shot_type"]
                 # SC: shooter
                 if ptm==tid: my_s["sc"]+=1
                 # SC: passer
@@ -378,10 +414,11 @@ def compute_team_tracked(tid):
                     bucket["fta"]+=1
                     if ev["shot_result"]=="make":
                         bucket["ftm"]+=1; bucket["pts"]+=1
-                        # Q4 FT points
-                        if ev["quarter"]==4:
-                            if ptm==tid: my_s["q4_pts"]+=1
-                            else:        opp_s["q4_pts"]+=1
+                        # Quarter FT points (Q1-Q4)
+                        if ev["quarter"] in (1,2,3,4):
+                            _qk = f"q{ev['quarter']}_pts"
+                            if ptm==tid: my_s[_qk]+=1
+                            else:        opp_s[_qk]+=1
             elif et=="turnover":
                 if ptm:
                     (my_s if ptm==tid else opp_s)["tov"]+=1
@@ -448,8 +485,36 @@ def compute_team_tracked(tid):
     opp_tov_r    = agg["opp_tov"]/_otov_denom         if _otov_denom      else 0.0
     opp_ft_r2    = agg["opp_fta"]/agg["opp_fga"]      if agg["opp_fga"]   else 0.0
     dreb_p       = agg["dreb"]/(agg["dreb"]+agg["opp_oreb"]) if (agg["dreb"]+agg["opp_oreb"]) else 0.0
-    q4_pts_pg    = agg["q4_pts"]/gp     if gp else 0.0
-    opp_q4_pts_pg= agg["opp_q4_pts"]/gp if gp else 0.0
+    opp_oreb_p   = agg["opp_oreb"]/(agg["opp_oreb"]+agg["dreb"]) if (agg["opp_oreb"]+agg["dreb"]) else 0.0
+    q1_pts_pg    = agg["q1_pts"]/gp      if gp else 0.0
+    q2_pts_pg    = agg["q2_pts"]/gp      if gp else 0.0
+    q3_pts_pg    = agg["q3_pts"]/gp      if gp else 0.0
+    q4_pts_pg    = agg["q4_pts"]/gp      if gp else 0.0
+    opp_q1_pts_pg= agg["opp_q1_pts"]/gp  if gp else 0.0
+    opp_q2_pts_pg= agg["opp_q2_pts"]/gp  if gp else 0.0
+    opp_q3_pts_pg= agg["opp_q3_pts"]/gp  if gp else 0.0
+    opp_q4_pts_pg= agg["opp_q4_pts"]/gp  if gp else 0.0
+    h1_pts_pg    = q1_pts_pg + q2_pts_pg
+    h2_pts_pg    = q3_pts_pg + q4_pts_pg
+    opp_h1_pts_pg= opp_q1_pts_pg + opp_q2_pts_pg
+    opp_h2_pts_pg= opp_q3_pts_pg + opp_q4_pts_pg
+    # Per-quarter PPP (our offense, opponent offense)
+    q1_ppp  = agg["q1_pts"]/agg["q1_poss"]         if agg["q1_poss"]                               else 0.0
+    q2_ppp  = agg["q2_pts"]/agg["q2_poss"]         if agg["q2_poss"]                               else 0.0
+    q3_ppp  = agg["q3_pts"]/agg["q3_poss"]         if agg["q3_poss"]                               else 0.0
+    q4_ppp  = agg["q4_pts"]/agg["q4_poss"]         if agg["q4_poss"]                               else 0.0
+    h1_poss = agg["q1_poss"]+agg["q2_poss"]
+    h2_poss = agg["q3_poss"]+agg["q4_poss"]
+    h1_ppp  = (agg["q1_pts"]+agg["q2_pts"])/h1_poss if h1_poss                                     else 0.0
+    h2_ppp  = (agg["q3_pts"]+agg["q4_pts"])/h2_poss if h2_poss                                     else 0.0
+    opp_q1_ppp  = agg["opp_q1_pts"]/agg["opp_q1_poss"] if agg["opp_q1_poss"]                       else 0.0
+    opp_q2_ppp  = agg["opp_q2_pts"]/agg["opp_q2_poss"] if agg["opp_q2_poss"]                       else 0.0
+    opp_q3_ppp  = agg["opp_q3_pts"]/agg["opp_q3_poss"] if agg["opp_q3_poss"]                       else 0.0
+    opp_q4_ppp  = agg["opp_q4_pts"]/agg["opp_q4_poss"] if agg["opp_q4_poss"]                       else 0.0
+    opp_h1_poss = agg["opp_q1_poss"]+agg["opp_q2_poss"]
+    opp_h2_poss = agg["opp_q3_poss"]+agg["opp_q4_poss"]
+    opp_h1_ppp  = (agg["opp_q1_pts"]+agg["opp_q2_pts"])/opp_h1_poss if opp_h1_poss               else 0.0
+    opp_h2_ppp  = (agg["opp_q3_pts"]+agg["opp_q4_pts"])/opp_h2_poss if opp_h2_poss               else 0.0
     _tot_pts     = agg["pts"]
     pct_from_2   = two_pm*2/_tot_pts*100  if _tot_pts else 0.0
     pct_from_3   = agg["tpm"]*3/_tot_pts*100 if _tot_pts else 0.0
@@ -467,8 +532,17 @@ def compute_team_tracked(tid):
                 ast_pct=ast_pct, unast_pct=unast_pct,
                 paint_fg_p=paint_fg_p, paint_pts_pg=paint_pts_pg,
                 blk_rate=blk_rate, stl_rate=stl_rate, ast_tov_r=ast_tov_r,
-                opp_tov_r=opp_tov_r, opp_ft_r=opp_ft_r2, dreb_p=dreb_p,
-                q4_pts_pg=q4_pts_pg, opp_q4_pts_pg=opp_q4_pts_pg,
+                opp_tov_r=opp_tov_r, opp_ft_r=opp_ft_r2, dreb_p=dreb_p, opp_oreb_p=opp_oreb_p,
+                q1_pts_pg=q1_pts_pg, q2_pts_pg=q2_pts_pg, q3_pts_pg=q3_pts_pg, q4_pts_pg=q4_pts_pg,
+                opp_q1_pts_pg=opp_q1_pts_pg, opp_q2_pts_pg=opp_q2_pts_pg,
+                opp_q3_pts_pg=opp_q3_pts_pg, opp_q4_pts_pg=opp_q4_pts_pg,
+                h1_pts_pg=h1_pts_pg, h2_pts_pg=h2_pts_pg,
+                opp_h1_pts_pg=opp_h1_pts_pg, opp_h2_pts_pg=opp_h2_pts_pg,
+                q1_ppp=q1_ppp, q2_ppp=q2_ppp, q3_ppp=q3_ppp, q4_ppp=q4_ppp,
+                h1_ppp=h1_ppp, h2_ppp=h2_ppp,
+                opp_q1_ppp=opp_q1_ppp, opp_q2_ppp=opp_q2_ppp,
+                opp_q3_ppp=opp_q3_ppp, opp_q4_ppp=opp_q4_ppp,
+                opp_h1_ppp=opp_h1_ppp, opp_h2_ppp=opp_h2_ppp,
                 pct_from_2=pct_from_2, pct_from_3=pct_from_3, pct_from_ft=pct_from_ft,
                 game_log=game_log,
                 **agg)

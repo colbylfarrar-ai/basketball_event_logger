@@ -399,3 +399,366 @@ def show_player_radar(df_pl: pd.DataFrame, key: str = "player_radar"):
         legend=dict(orientation="h",y=-0.1),font=dict(size=11),
     )
     st.plotly_chart(fig, use_container_width=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  EFFICIENCY SCATTER  (KenPom-style quadrant)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def show_efficiency_scatter(df: pd.DataFrame, label_col: str = "Team",
+                             title: str = "Offensive vs Defensive Rating"):
+    """KenPom quadrant: ORtg (X) vs DRtg (Y, reversed so top = better D)."""
+    needed = {label_col, "ORtg", "DRtg"}
+    if df.empty or not needed.issubset(df.columns):
+        st.info("Need tracked game data (ORtg / DRtg) for this chart.")
+        return
+
+    df = df.copy()
+    avg_o = df["ORtg"].mean()
+    avg_d = df["DRtg"].mean()
+    pad   = 4
+    x0, x1 = df["ORtg"].min()-pad, df["ORtg"].max()+pad
+    y0, y1 = df["DRtg"].min()-pad, df["DRtg"].max()+pad
+
+    fig = go.Figure()
+
+    # Quadrant shading (bottom-right = elite: high O, low D shown at top due to Y reversal)
+    # Each tuple: (rect_x0,rect_x1,rect_y0,rect_y1, fill, label, lx,ly, xa,ya, text_color)
+    quads = [
+        (avg_o, x1,   y0, avg_d, "rgba(46,204,113,0.06)",  "ELITE",
+         x1-0.5, y0+0.5, "right","bottom","rgba(46,204,113,0.5)"),
+        (x0,   avg_o, y0, avg_d, "rgba(52,152,219,0.06)",  "GOOD DEFENSE",
+         x0+0.5, y0+0.5, "left", "bottom","rgba(52,152,219,0.5)"),
+        (avg_o, x1,   avg_d, y1, "rgba(230,126,34,0.06)",  "GOOD OFFENSE",
+         x1-0.5, y1-0.5, "right","top",   "rgba(230,126,34,0.5)"),
+        (x0,   avg_o, avg_d, y1, "rgba(231,76,60,0.06)",   "REBUILDING",
+         x0+0.5, y1-0.5, "left", "top",   "rgba(231,76,60,0.5)"),
+    ]
+    for qx0,qx1,qy0,qy1,fill,lbl,lx,ly,xa,ya,fc in quads:
+        fig.add_shape(type="rect", x0=qx0, x1=qx1, y0=qy0, y1=qy1,
+                      fillcolor=fill, line_width=0, layer="below")
+        fig.add_annotation(x=lx, y=ly, text=lbl,
+                           font=dict(color=fc, size=9, family="Arial Black"),
+                           showarrow=False, xanchor=xa, yanchor=ya)
+
+    # Average crosshairs
+    fig.add_hline(y=avg_d, line_dash="dot", line_color="rgba(200,200,200,0.25)", line_width=1)
+    fig.add_vline(x=avg_o, line_dash="dot", line_color="rgba(200,200,200,0.25)", line_width=1)
+
+    # Net rating for color
+    net = df["Net Rtg"].values if "Net Rtg" in df.columns else (df["ORtg"] - df["DRtg"]).values
+    n_lo, n_hi = net.min(), net.max()
+
+    for i, row in df.iterrows():
+        nv   = net[df.index.get_loc(i)] if hasattr(df.index, "get_loc") else 0
+        norm = (nv - n_lo) / (n_hi - n_lo + 1e-9)
+        r_   = int(220 * (1-norm))
+        g_   = int(200 * norm)
+        col  = f"rgb({r_},{g_},60)"
+        lbl  = row[label_col]
+        ov   = row["ORtg"]
+        dv   = row["DRtg"]
+        extra = f"Net: {ov-dv:+.1f}" if "Net Rtg" not in df.columns else f"Net: {row['Net Rtg']:+.1f}"
+        fig.add_trace(go.Scatter(
+            x=[ov], y=[dv],
+            mode="markers+text",
+            text=[lbl],
+            textposition="top center",
+            textfont=dict(size=9, color="rgba(220,220,220,0.9)"),
+            marker=dict(size=13, color=col,
+                        line=dict(color="rgba(255,255,255,0.7)", width=1.2),
+                        opacity=0.92),
+            showlegend=False,
+            hovertemplate=(f"<b>{lbl}</b><br>ORtg: {ov:.1f}<br>"
+                           f"DRtg: {dv:.1f}<br>{extra}<extra></extra>"),
+        ))
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14), x=0.02, xanchor="left"),
+        xaxis=dict(title="Offensive Rating →", range=[x0, x1],
+                   gridcolor="rgba(255,255,255,0.05)", showline=False),
+        yaxis=dict(title="Defensive Rating (lower = better)",
+                   autorange="reversed", range=[y1, y0],
+                   gridcolor="rgba(255,255,255,0.05)", showline=False),
+        height=500,
+        margin=dict(l=60, r=20, t=60, b=60),
+        plot_bgcolor="rgba(14,17,23,1)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="rgba(220,220,220,0.9)", size=11),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("Top-right = best offense · Top axis = lower DRtg = better defense · "
+               "Color: green = positive net rating · Crosshairs = league average")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  QUARTER SCORE CHART
+# ─────────────────────────────────────────────────────────────────────────────
+
+def show_quarter_chart(q_data: dict, t1name: str, t2name: str,
+                       t1id: int, t2id: int):
+    """Grouped bar chart showing points per quarter for two teams."""
+    if not q_data:
+        st.info("No quarter-by-quarter data available.")
+        return
+
+    qs = sorted(q_data.keys())
+    labels = [f"Q{q}" if q <= 4 else f"OT{q-4}" for q in qs]
+    t1_pts = [q_data[q].get(t1id, 0) for q in qs]
+    t2_pts = [q_data[q].get(t2id, 0) for q in qs]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name=t1name, x=labels, y=t1_pts,
+                         marker_color="#3498db", text=t1_pts,
+                         textposition="outside", textfont_size=12))
+    fig.add_trace(go.Bar(name=t2name, x=labels, y=t2_pts,
+                         marker_color="#e74c3c", text=t2_pts,
+                         textposition="outside", textfont_size=12))
+    fig.update_layout(
+        barmode="group", title="Quarter-by-Quarter Scoring",
+        yaxis_title="Points", xaxis_title="",
+        height=320, plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=20, r=20, t=50, b=30),
+        legend=dict(orientation="h", y=1.08),
+        xaxis=dict(gridcolor="rgba(128,128,128,0.1)"),
+        yaxis=dict(gridcolor="rgba(128,128,128,0.15)"),
+        font=dict(size=12),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SCORE FLOW CHART  (ESPN-style cumulative score over game time)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def show_score_flow_chart(game_id: int, t1name: str, t2name: str,
+                          t1id: int, t2id: int, key: str | None = None) -> None:
+    """
+    Cumulative score-over-time line chart for a single tracked game.
+    X-axis = approximate game minute (0-40 for regulation, +5 per OT).
+    Shows both teams' running score, quarter dividers, lead-change count.
+    """
+    from Database.db import query as _dq
+    from collections import defaultdict
+
+    lp = _dq("SELECT player_id, team_id FROM game_lineup_players WHERE game_id=?",
+             (game_id,))
+    pt = {r["player_id"]: r["team_id"] for r in lp}
+
+    events = _dq("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (game_id,))
+    if not events:
+        st.info("No event data for this game.")
+        return
+
+    QMIN, OT_MIN = 10, 5  # minutes per regulation quarter / OT
+
+    def q_start(q):
+        return (q - 1) * QMIN if q <= 4 else 4 * QMIN + (q - 5) * OT_MIN
+
+    def q_dur(q):
+        return QMIN if q <= 4 else OT_MIN
+
+    # Count events per quarter so we can compute fractional position
+    q_total = defaultdict(int)
+    q_idx   = defaultdict(int)
+    for ev in events:
+        q_total[ev["quarter"]] += 1
+
+    # Build timeline: one point per scoring event
+    t1_score, t2_score = 0, 0
+    xs  = [0.0]
+    t1s = [0]
+    t2s = [0]
+
+    for ev in events:
+        q = ev["quarter"]
+        q_idx[q] += 1
+        frac = q_idx[q] / max(q_total[q], 1)
+        x = round(q_start(q) + frac * q_dur(q), 2)
+
+        pts  = 0
+        team = pt.get(ev["primary_player_id"])
+        et   = ev["event_type"]
+
+        if et == "shot" and ev["shot_result"] == "make":
+            pts = ev["shot_type"]
+        elif et == "free_throw" and ev["shot_result"] == "make":
+            pts = 1
+
+        if pts > 0 and team in (t1id, t2id):
+            if team == t1id:
+                t1_score += pts
+            else:
+                t2_score += pts
+            xs.append(x)
+            t1s.append(t1_score)
+            t2s.append(t2_score)
+
+    if len(xs) <= 1:
+        st.info("No scoring data to display.")
+        return
+
+    # Count lead changes (sign flip in differential)
+    lead_changes = 0
+    ties = 0
+    for i in range(1, len(t1s)):
+        diff_now  = t1s[i]  - t2s[i]
+        diff_prev = t1s[i-1] - t2s[i-1]
+        if diff_now == 0 and (t1s[i] > 0 or t2s[i] > 0):
+            ties += 1
+        elif diff_prev != 0 and diff_now != 0 and (diff_now > 0) != (diff_prev > 0):
+            lead_changes += 1
+
+    # Quarter divider x-positions
+    all_qs = sorted({ev["quarter"] for ev in events})
+    max_q  = max(all_qs)
+    x_end  = q_start(max_q) + q_dur(max_q)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=xs, y=t1s,
+        mode="lines",
+        name=t1name,
+        line=dict(color="#3498db", width=2.5, shape="hv"),
+        hovertemplate=f"<b>{t1name}</b>: %{{y}} pts<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=xs, y=t2s,
+        mode="lines",
+        name=t2name,
+        line=dict(color="#e74c3c", width=2.5, shape="hv"),
+        hovertemplate=f"<b>{t2name}</b>: %{{y}} pts<extra></extra>",
+    ))
+
+    # Quarter boundary dividers (skip Q1 start = 0)
+    for q in all_qs:
+        if q > 1:
+            xd  = q_start(q)
+            lbl = f"Q{q}" if q <= 4 else f"OT{q - 4}"
+            fig.add_vline(
+                x=xd, line_dash="dot",
+                line_color="rgba(180,180,180,0.25)",
+                annotation_text=lbl,
+                annotation_position="top",
+                annotation_font_size=11,
+                annotation_font_color="rgba(180,180,180,0.6)",
+            )
+
+    subtitle = (
+        f"{lead_changes} lead change{'s' if lead_changes != 1 else ''}"
+        f"  ·  {ties} tie{'s' if ties != 1 else ''}"
+    )
+    fig.update_layout(
+        title=dict(text=f"Score Progression  ·  {subtitle}", font=dict(size=13)),
+        xaxis=dict(
+            title="Game Minute",
+            range=[0, x_end],
+            tickvals=[q_start(q) for q in range(1, max_q + 1)],
+            ticktext=[f"Q{q}" if q <= 4 else f"OT{q-4}" for q in range(1, max_q + 1)],
+            gridcolor="rgba(128,128,128,0.1)",
+        ),
+        yaxis=dict(title="Score", gridcolor="rgba(128,128,128,0.15)", rangemode="tozero"),
+        height=320,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=30, r=20, t=50, b=30),
+        legend=dict(orientation="h", y=1.12),
+        font=dict(size=12),
+    )
+    chart_key = key if key is not None else f"score_flow_{game_id}"
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MATCHUP COMPARISON BARS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def show_matchup_bars(stats1: dict, stats2: dict, t1name: str, t2name: str):
+    """
+    Horizontal diverging bars for a head-to-head key-stat comparison.
+    stats1 / stats2: dicts with keys matching `metrics` list below.
+    """
+    metrics = [
+        ("pts",      "Points",       True),
+        ("efg",      "eFG%",         True),
+        ("ts",       "TS%",          True),
+        ("ast",      "Assists",      True),
+        ("tov",      "Turnovers",    False),
+        ("oreb",     "Off Rebounds", True),
+        ("dreb",     "Def Rebounds", True),
+        ("stl",      "Steals",       True),
+        ("blk",      "Blocks",       True),
+    ]
+    labels, v1s, v2s = [], [], []
+    for key, lbl, higher_better in metrics:
+        if key not in stats1 or key not in stats2:
+            continue
+        labels.append(lbl)
+        v1s.append(round(stats1[key], 1))
+        v2s.append(round(stats2[key], 1))
+
+    if not labels:
+        return
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name=t1name, y=labels, x=v1s, orientation="h",
+        marker_color="rgba(52,152,219,0.85)",
+        text=[str(v) for v in v1s], textposition="auto",
+    ))
+    fig.add_trace(go.Bar(
+        name=t2name, y=labels, x=[-v for v in v2s], orientation="h",
+        marker_color="rgba(231,76,60,0.85)",
+        text=[str(v) for v in v2s], textposition="auto",
+        hovertemplate="%{y}: %{text}<extra>" + t2name + "</extra>",
+    ))
+    fig.add_vline(x=0, line_color="rgba(200,200,200,0.5)", line_width=1.5)
+    fig.update_layout(
+        barmode="overlay",
+        title="Key Stat Comparison",
+        height=max(300, len(labels)*38+80),
+        xaxis=dict(title="← Away | Home →", tickvals=[], showticklabels=False,
+                   gridcolor="rgba(128,128,128,0.1)"),
+        yaxis=dict(gridcolor="rgba(128,128,128,0.1)"),
+        legend=dict(orientation="h", y=1.06),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=60, b=20), font=dict(size=11),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PLAYER LEADERBOARD BARS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def show_player_leaderboard_chart(df: pd.DataFrame, stat: str,
+                                   label: str, n: int = 20,
+                                   higher_better: bool = True):
+    """Horizontal bar chart for player stat leaders."""
+    if df.empty or stat not in df.columns:
+        st.info(f"No data for {label}.")
+        return
+    sub = df[["Player", "Team", stat]].dropna(subset=[stat])
+    sub = sub.nlargest(n, stat) if higher_better else sub.nsmallest(n, stat)
+    sub = sub.sort_values(stat, ascending=True)
+
+    colors = [f"rgba(52,152,219,{0.5 + 0.5*i/(len(sub)-1 or 1)})" for i in range(len(sub))]
+    labels_y = [f"{row['Player']} · {row['Team']}" for _, row in sub.iterrows()]
+
+    fig = go.Figure(go.Bar(
+        x=sub[stat], y=labels_y, orientation="h",
+        marker_color=colors,
+        text=sub[stat].apply(lambda v: f"{v:.1f}"),
+        textposition="outside",
+        hovertemplate="%{y}<br>" + label + ": %{x:.1f}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=f"{label} Leaders (Top {n})",
+        height=max(360, len(sub)*28+80),
+        xaxis=dict(gridcolor="rgba(128,128,128,0.15)"),
+        yaxis=dict(tickfont=dict(size=10)),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=60, t=50, b=20), font=dict(size=11),
+    )
+    st.plotly_chart(fig, use_container_width=True)

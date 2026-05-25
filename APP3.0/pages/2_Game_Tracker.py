@@ -69,11 +69,12 @@ def compute_box(game_id: int, game_info: dict):
     player_team = {pid: s["team_id"] for pid, s in stats.items()}
 
     # Minutes: sum possession_secs for events where each player was in the lineup snapshot
+    # Exclude 0-sec events (first event of a quarter at full clock has no elapsed time)
     mins_rows = query("""
         SELECT gel.player_id, SUM(ge.possession_secs) AS secs
         FROM game_event_lineup gel
         JOIN game_events ge ON ge.id = gel.event_id
-        WHERE ge.game_id = ?
+        WHERE ge.game_id = ? AND ge.possession_secs > 0
         GROUP BY gel.player_id
     """, (game_id,))
     player_mins = {r["player_id"]: r["secs"] or 0.0 for r in mins_rows}
@@ -146,6 +147,24 @@ def compute_box(game_id: int, game_info: dict):
                      "FTM":s["ftm"],"FTA":s["fta"],"SC":s["sc"],"+/-":plus,"MIN":mins,"GS":gs})
     return rows, t1_pts, t2_pts
 
+def live_score(game_id: int, t1id: int, t2id: int) -> tuple:
+    """Single aggregating query — only what's needed to show the scoreboard."""
+    rows = query("""
+        SELECT p.team_id,
+               SUM(CASE WHEN ge.event_type='shot'       AND ge.shot_result='make' THEN ge.shot_type
+                        WHEN ge.event_type='free_throw'  AND ge.shot_result='make' THEN 1
+                        ELSE 0 END) AS pts
+        FROM game_events ge
+        JOIN players p ON p.id = ge.primary_player_id
+        WHERE ge.game_id = ?
+          AND ge.event_type IN ('shot','free_throw')
+          AND ge.shot_result = 'make'
+        GROUP BY p.team_id
+    """, (game_id,))
+    pts = {r["team_id"]: (r["pts"] or 0) for r in rows}
+    return pts.get(t1id, 0), pts.get(t2id, 0)
+
+
 def compute_quarter_scores(game_id: int, t1id: int, t2id: int):
     """Returns a dict of {quarter: {t1id: pts, t2id: pts}} for all quarters played."""
     rows = query("""
@@ -196,10 +215,10 @@ if is_tracked:
     gc2.success("✓ Game Final")
 else:
     if gc2.button("End Game", type="primary", use_container_width=True):
-        _, t1_final, t2_final = compute_box(game_id, game_info)
+        t1_final, t2_final = live_score(game_id, t1id, t2id)
         execute("UPDATE games SET tracked=1, home_score=?, away_score=? WHERE id=?",
                 (t1_final, t2_final, game_id))
-        st.cache_data.clear()
+        st.cache_data.clear()   # clear rankings / analytics caches at game end
         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -372,12 +391,16 @@ all_player_rows = query(
 pid_to_row = {p["pid"]: p for p in all_player_rows}
 pid_to_team = {p["pid"]: p["team_id"] for p in all_player_rows}
 
+def _abbr(name: str) -> str:
+    """'Adair Girls' → 'AG', 'North Valley' → 'NV'"""
+    return "".join(w[0].upper() for w in name.split() if w)
+
 on_court_labels = []
 for pid, tid in on_court:
     p = pid_to_row.get(pid)
     if p:
-        tname_label = t1name if tid == t1id else t2name
-        on_court_labels.append((f"{tname_label}: #{p['number']} {p['pname']}", pid))
+        abbr = _abbr(t1name if tid == t1id else t2name)
+        on_court_labels.append((f"{abbr} #{p['number']} {p['pname']}", pid))
 
 all_opts = ["—"] + [lbl for lbl, _ in on_court_labels]
 all_id   = {lbl: pid for lbl, pid in on_court_labels}
@@ -415,27 +438,30 @@ else:
         st.markdown("---")
 
         if event_type == "Shot":
-            r1a, r1b, r1c = st.columns(3)
+            # Shooter gets more space; Type & Result are short lists
+            r1a, r1b, r1c = st.columns([3, 1, 1])
             shooter   = r1a.selectbox("Shooter", all_opts[1:])
             shot_type = r1b.selectbox("Type", ["2", "3"])
             result    = r1c.selectbox("Result", ["make", "miss"])
-            r2a, r2b, r2c = st.columns(3)
+            # Zone is short; Pass From & Created By need more room
+            r2a, r2b, r2c = st.columns([1, 2, 2])
             zone      = r2a.selectbox("Zone", ZONES)
             pass_from = r2b.selectbox("Pass From", all_opts)
             created   = r2c.selectbox("Shot Created By", all_opts)
+            # All three are player pickers — equal width
             r3a, r3b, r3c = st.columns(3)
             guarded   = r3a.selectbox("Guarded By", all_opts)
             rebound   = r3b.selectbox("Rebound By", all_opts)
             blocked   = r3c.selectbox("Blocked By", all_opts)
 
         elif event_type == "Free Throw":
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3 = st.columns([3, 1, 2])
             shooter = c1.selectbox("Shooter", all_opts[1:])
             result  = c2.selectbox("Result", ["make", "miss"])
             rebound = c3.selectbox("Rebound By", all_opts)
 
         elif event_type == "Foul":
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3 = st.columns([2, 2, 1])
             fouled   = c1.selectbox("Player Fouled", all_opts[1:])
             fouler   = c2.selectbox("Player Who Fouled", all_opts[1:])
             official = c3.selectbox("Official", off_opts)
@@ -523,7 +549,6 @@ else:
 
         st.session_state[f"last_time_{game_id}"] = t
         st.session_state[f"last_q_{game_id}"]    = q
-        st.cache_data.clear()
         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -537,7 +562,7 @@ oid_name = {o["id"]: o["name"] for o in all_offs}
 def pn(pid): return pid_name.get(pid, f"ID:{pid}") if pid else "—"
 def on_(oid): return oid_name.get(oid, "?") if oid else "—"
 
-_, t1_live, t2_live = compute_box(game_id, game_info)
+t1_live, t2_live = live_score(game_id, t1id, t2id)
 sc1, sc2, sc3 = st.columns([2,1,2])
 sc1.metric(t1name, t1_live)
 sc2.markdown("<div style='text-align:center;font-size:1.4em;padding-top:8px'>vs</div>", unsafe_allow_html=True)

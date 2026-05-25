@@ -83,10 +83,11 @@ def _style_box(df: pd.DataFrame) -> object:
     is_tot = df["_totals"].tolist() if "_totals" in df.columns else [False] * len(df)
     display = df.drop(columns=["_totals"], errors="ignore").copy()
 
-    # Arrow safety: cast all object columns to str
-    for c in display.select_dtypes(include=["object","str"]).columns:
-        if c != "+/-":
-            display[c] = display[c].astype(str)
+    # Arrow safety: cast all object/string columns to str
+    for c in display.columns:
+        if display[c].dtype == object or str(display[c].dtype).startswith('string'):
+            if c != "+/-":
+                display[c] = display[c].astype(str)
 
     def _row_style(row):
         if is_tot[row.name]:

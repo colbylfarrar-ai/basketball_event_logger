@@ -290,7 +290,7 @@ def show_trend_chart(game_log: list, team_name: str = "Team"):
     """Plotly line chart of per-game ORtg, DRtg, and point margin."""
     if not game_log: return
     df = pd.DataFrame(game_log)
-    df["Date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["Date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
     df = df.dropna(subset=["Date"]).sort_values("Date")
     df["Label"] = df.apply(lambda r: f"{r['date']} vs {r['opp']}", axis=1)
 

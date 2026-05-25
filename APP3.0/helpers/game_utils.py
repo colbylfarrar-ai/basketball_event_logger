@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -18,7 +18,7 @@ def games_for_team(tid, tracked_only=False):
         WHERE (g.team1_id=? OR g.team2_id=?) {cond}
           AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
     """, (tid, tid))
-    return sorted(rows, key=lambda g: pd.to_datetime(g["date"], errors="coerce"), reverse=True)
+    return sorted(rows, key=lambda g: pd.to_datetime(g["date"], format="mixed", errors="coerce"), reverse=True)
 
 
 def win_loss(game, tid):

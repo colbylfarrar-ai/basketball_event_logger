@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -145,7 +145,7 @@ def compute_player_game_log(player_id: int, team_id: int) -> list:
             "+/-": pm, "MIN": mins, "GS": gs,
         })
 
-    return sorted(log, key=lambda r: pd.to_datetime(r["Date"], errors="coerce"), reverse=True)
+    return sorted(log, key=lambda r: pd.to_datetime(r["Date"], format="mixed", errors="coerce"), reverse=True)
 
 
 @st.cache_data
@@ -733,7 +733,7 @@ def compute_matchup(a_id, b_id):
         WHERE ((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))
           AND home_score IS NOT NULL AND away_score IS NOT NULL
     """, (a_id, b_id, b_id, a_id))
-    h2h = sorted(h2h_raw, key=lambda g: pd.to_datetime(g["date"], errors="coerce"), reverse=True)
+    h2h = sorted(h2h_raw, key=lambda g: pd.to_datetime(g["date"], format="mixed", errors="coerce"), reverse=True)
 
     return dict(proj_a=proj_a, proj_b=proj_b, prob_a=prob_a,
                 method=method, h2h=h2h,

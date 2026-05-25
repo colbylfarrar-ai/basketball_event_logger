@@ -195,7 +195,7 @@ all_games = query("""
     FROM games g JOIN teams t1 ON t1.id=g.team1_id JOIN teams t2 ON t2.id=g.team2_id
 """)
 # Sort by real date (stored as text so ORDER BY is lexicographic)
-all_games = sorted(all_games, key=lambda g: pd.to_datetime(g["date"], errors="coerce"), reverse=True)
+all_games = sorted(all_games, key=lambda g: pd.to_datetime(g["date"], format="mixed", errors="coerce"), reverse=True)
 if not all_games:
     st.warning("No games found. Add games in the Input Hub first.")
     st.stop()

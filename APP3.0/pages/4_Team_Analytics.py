@@ -39,8 +39,9 @@ _st_df_orig = st.dataframe
 def _safe_df(data=None, *args, **kwargs):
     if data is not None and not isinstance(data, _PdStyler):
         data = data.copy()
-        for _c in data.select_dtypes(include=["object","str"]).columns:
-            data[_c] = data[_c].astype(str)
+        for _c in data.columns:
+            if data[_c].dtype == object or str(data[_c].dtype).startswith('string'):
+                data[_c] = data[_c].astype(str)
     return _st_df_orig(data, *args, **kwargs)
 st.dataframe = _safe_df
 
@@ -287,7 +288,7 @@ with tab_ov:
         if _gl:
             st.markdown('<div class="section-hdr">📈 ORtg · DRtg · Margin Trend</div>',
                         unsafe_allow_html=True)
-            _gl_sorted = sorted(_gl, key=lambda g: pd.to_datetime(g["date"], errors="coerce"))
+            _gl_sorted = sorted(_gl, key=lambda g: pd.to_datetime(g["date"], format="mixed", errors="coerce"))
             _trend_df  = pd.DataFrame([
                 {"Game": i+1, "Date": g["date"],
                  "ORtg": g["ortg"], "DRtg": g["drtg"], "Margin": g["margin"],
@@ -2223,7 +2224,7 @@ with tab_gm:
         else:
             # Fallback — simple score chart for untracked games
             trend_df = pd.DataFrame(log)[["Date","Tm","Opp"]].copy()
-            trend_df["Date"] = pd.to_datetime(trend_df["Date"], errors="coerce")
+            trend_df["Date"] = pd.to_datetime(trend_df["Date"], format="mixed", errors="coerce")
             trend_df = trend_df.dropna(subset=["Date"]).sort_values("Date").set_index("Date")
             st.line_chart(trend_df, color=["#2ecc71","#e74c3c"])
 
@@ -2248,7 +2249,7 @@ with tab_gm:
             if _sc_rows:
                 _sc_df = pd.DataFrame(_sc_rows)
                 # Sort chronologically — date stored as text so SQL ORDER BY is wrong
-                _sc_df["_dt"] = pd.to_datetime(_sc_df["date"], errors="coerce")
+                _sc_df["_dt"] = pd.to_datetime(_sc_df["date"], format="mixed", errors="coerce")
                 _sc_df = _sc_df.sort_values("_dt").drop(columns=["_dt"])
 
                 # Score margin per game (green = win, red = loss)

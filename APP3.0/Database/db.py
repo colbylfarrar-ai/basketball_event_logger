@@ -1,212 +1,132 @@
 """
-db.py — PostgreSQL via Supabase Edge Function (sql-proxy).
+db.py — SQLite connection factory with season-aware path resolution.
 
-All reads and writes are routed through the deployed 'sql-proxy' Edge Function,
-which runs inside Supabase's infrastructure and connects to the database using
-the injected SUPABASE_DB_URL — no local database password required.
-
-Credential resolution (first match wins):
-  1. st.secrets["SUPABASE_URL"] + ["SUPABASE_KEY"]
-  2. Database/seasons.json active season supabase_url + supabase_key
+The active season's DB path is read from Database/seasons.json on every
+connection.  If seasons.json doesn't exist, falls back to analytics.db.
 """
-
-import json
 import re
-import urllib.request
-import urllib.error
+import sqlite3
 from pathlib import Path
 
-_ROOT    = Path(__file__).resolve().parent
-_SEASONS = _ROOT / "seasons.json"
+_ROOT      = Path(__file__).resolve().parent
+_SCHEMA    = _ROOT / "schema.sql"
+_SEASONS   = _ROOT / "seasons.json"
 
-# Per-table primary keys used for INSERT OR REPLACE → upsert translation
-_TABLE_PK: dict = {
-    "teams":                 "id",
-    "players":               "id",
-    "officials":             "id",
-    "games":                 "id",
-    "schedule":              "id",
-    "game_lineup_players":   "id",
-    "game_lineup_officials": ["game_id", "official_id"],
-    "game_events":           "id",
-    "game_event_lineup":     ["event_id", "player_id"],
-    "app_settings":          "key",
-}
+# Track which DB files have already been initialised this process
+_INIT_DONE: set[str] = set()
 
 
-# ── Credential resolution ─────────────────────────────────────────────────────
-
-def _get_edge_config() -> tuple[str, str]:
-    """Return (supabase_url, anon_key) from secrets or seasons.json."""
-    try:
-        import streamlit as _st
-        url = (_st.secrets.get("SUPABASE_URL", "") or "").strip()
-        key = (_st.secrets.get("SUPABASE_KEY", "") or "").strip()
-        if url and key:
-            return url, key
-    except Exception:
-        pass
-
-    try:
-        if _SEASONS.exists():
+# ── Active DB path ─────────────────────────────────────────────────────────────
+def get_db_path() -> Path:
+    """Return the SQLite path for the active season (reads seasons.json)."""
+    if _SEASONS.exists():
+        import json
+        try:
             with open(_SEASONS, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             active = cfg.get("active_season")
             if active:
-                info = cfg.get("seasons", {}).get(active, {})
-                url  = info.get("supabase_url", "").strip()
-                key  = info.get("supabase_key", "").strip()
-                if url and key:
-                    return url, key
-    except Exception:
-        pass
+                season = cfg.get("seasons", {}).get(active, {})
+                db_file = season.get("db_file", "analytics.db")
+                p = _ROOT / db_file
+                p.parent.mkdir(parents=True, exist_ok=True)
+                return p
+        except Exception:
+            pass
+    return _ROOT / "analytics.db"
 
-    return "", ""
+
+# ── Connection factory ────────────────────────────────────────────────────────
+def get_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
 
 
-# ── Edge Function HTTP call ───────────────────────────────────────────────────
+# ── Database initialisation ───────────────────────────────────────────────────
+def initialize_database():
+    """Idempotent — safe to call on every page load."""
+    db_path = get_db_path()
+    key = str(db_path)
+    if key in _INIT_DONE:
+        return
+    _INIT_DONE.add(key)
 
-def _call_proxy(sql: str, params=(), mode: str = "query") -> dict:
-    """POST to the sql-proxy Edge Function and return the parsed JSON."""
-    base_url, anon_key = _get_edge_config()
-    if not base_url or not anon_key:
-        raise RuntimeError(
-            "Supabase credentials not configured.\n\n"
-            "Add to Streamlit Secrets or Database/seasons.json:\n"
-            "  SUPABASE_URL  = \"https://<project>.supabase.co\"\n"
-            "  SUPABASE_KEY  = \"<anon-key>\""
-        )
-
-    payload = json.dumps({
-        "sql":    sql,
-        "params": list(params) if params else [],
-        "mode":   mode,
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        f"{base_url}/functions/v1/sql-proxy",
-        data=payload,
-        headers={
-            "Content-Type":  "application/json",
-            "Authorization": f"Bearer {anon_key}",
-        },
-    )
-
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"sql-proxy HTTP {exc.code}: {body}") from exc
-    except Exception as exc:
-        raise RuntimeError(f"Could not reach sql-proxy: {exc}") from exc
+        if _SCHEMA.exists():
+            with open(_SCHEMA, "r", encoding="utf-8") as f:
+                conn.executescript(f.read())
 
-    if "error" in data:
-        raise RuntimeError(f"SQL error: {data['error']}")
+        migrations = [
+            "ALTER TABLE players        ADD COLUMN archived    INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE players        ADD COLUMN season      TEXT    NOT NULL DEFAULT 'Current'",
+            "ALTER TABLE schedule       ADD COLUMN season      TEXT    NOT NULL DEFAULT 'Current'",
+            "ALTER TABLE game_lineup_players ADD COLUMN plus_minus INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE teams          ADD COLUMN notes       TEXT    NOT NULL DEFAULT ''",
+            "CREATE INDEX IF NOT EXISTS idx_glp_game_id       ON game_lineup_players(game_id)",
+            "CREATE INDEX IF NOT EXISTS idx_glp_game_player   ON game_lineup_players(game_id, player_id)",
+            "CREATE INDEX IF NOT EXISTS idx_glp_player_id     ON game_lineup_players(player_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ge_game_id         ON game_events(game_id)",
+            "CREATE INDEX IF NOT EXISTS idx_gel_event_id       ON game_event_lineup(event_id)",
+            "CREATE INDEX IF NOT EXISTS idx_gel_player_id      ON game_event_lineup(player_id)",
+            "CREATE INDEX IF NOT EXISTS idx_games_tracked      ON games(tracked)",
+            "CREATE INDEX IF NOT EXISTS idx_games_team1        ON games(team1_id)",
+            "CREATE INDEX IF NOT EXISTS idx_games_team2        ON games(team2_id)",
+            "CREATE INDEX IF NOT EXISTS idx_players_team_arch  ON players(team_id, archived)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo ON game_lineup_officials(game_id, official_id)",
+            """CREATE TABLE IF NOT EXISTS app_settings (
+                   key   TEXT PRIMARY KEY,
+                   value TEXT NOT NULL DEFAULT ''
+               )""",
+        ]
 
-    return data
+        for stmt in migrations:
+            try:
+                conn.execute(stmt)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
-
-# ── SQL translation: SQLite → PostgreSQL ─────────────────────────────────────
-
-def _translate_sql(sql: str) -> str:
-    """Translate SQLite SQL to PostgreSQL with $1/$2/… positional placeholders."""
-    # ? → $1, $2, … (counter-based, left-to-right)
-    counter = [0]
-    def _next(m):  # noqa: E306
-        counter[0] += 1
-        return f"${counter[0]}"
-    sql = re.sub(r"\?", _next, sql)
-    # INSERT OR REPLACE → INSERT … ON CONFLICT DO UPDATE
-    sql = _translate_upsert(sql)
-    # Strip SQLite PRAGMAs
-    sql = re.sub(r"PRAGMA\s+\w+[^\n;]*", "", sql, flags=re.IGNORECASE)
-    return sql.strip()
-
-
-def _translate_upsert(sql: str) -> str:
-    """Convert INSERT OR REPLACE INTO tbl (cols) VALUES (…)
-       to       INSERT INTO tbl (cols) VALUES (…) ON CONFLICT (pk) DO UPDATE SET …"""
-    m = re.match(
-        r"INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)\s+VALUES\s*(.+)",
-        sql.strip(), re.IGNORECASE | re.DOTALL,
-    )
-    if not m:
-        return sql
-
-    table    = m.group(1)
-    cols_str = m.group(2)
-    values   = m.group(3).rstrip(";")
-    cols     = [c.strip() for c in cols_str.split(",")]
-
-    pk     = _TABLE_PK.get(table, "id")
-    pk_set = set(pk) if isinstance(pk, list) else {pk}
-    conflict_clause = ", ".join(pk) if isinstance(pk, list) else pk
-
-    non_pk = [c for c in cols if c not in pk_set]
-    if non_pk:
-        update = ", ".join(f"{c}=EXCLUDED.{c}" for c in non_pk)
-        suffix = f"ON CONFLICT ({conflict_clause}) DO UPDATE SET {update}"
-    else:
-        suffix = f"ON CONFLICT ({conflict_clause}) DO NOTHING"
-
-    return f"INSERT INTO {table} ({cols_str}) VALUES {values} {suffix}"
+        conn.commit()
+    finally:
+        conn.close()
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
-
+# ── SELECT ─────────────────────────────────────────────────────────────────────
 def query(sql: str, params: tuple = ()) -> list:
-    """Execute a SELECT and return a list of dicts."""
-    result = _call_proxy(_translate_sql(sql), params, mode="query")
-    return result.get("rows", [])
-
-
-def execute(sql: str, params: tuple = ()):
-    """
-    Execute an INSERT / UPDATE / DELETE.
-    For INSERT on tables with a plain integer 'id' PK, returns the new row id.
-    Returns None otherwise.
-    """
-    translated = _translate_sql(sql)
-
-    is_insert = bool(re.match(r"\s*INSERT", translated, re.IGNORECASE))
-    if is_insert:
-        table_m = re.search(r"INTO\s+(\w+)", translated, re.IGNORECASE)
-        table   = table_m.group(1) if table_m else ""
-        if _TABLE_PK.get(table, "id") == "id" and "RETURNING" not in translated.upper():
-            translated += " RETURNING id"
-
-    result = _call_proxy(translated, params, mode="execute")
-    return result.get("id")
-
-
-def executemany(sql: str, seq_of_params: list) -> int:
-    """Execute a batch INSERT / UPDATE / DELETE efficiently."""
-    if not seq_of_params:
-        return 0
-    translated = _translate_sql(sql)
-    result = _call_proxy(translated, seq_of_params, mode="executemany")
-    return result.get("rowCount", len(seq_of_params))
-
-
-# ── Compatibility stubs ───────────────────────────────────────────────────────
-
-def initialize_database() -> None:
-    """Test the Edge Function connection. Called by every page at startup."""
+    conn = get_connection()
     try:
-        _call_proxy("SELECT 1 AS ok", mode="query")
-    except RuntimeError:
-        raise
-    except Exception as exc:
-        raise RuntimeError(f"Could not connect to Supabase: {exc}") from exc
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
-def get_connection():
-    """Compatibility stub — tests connectivity via the Edge Function."""
-    initialize_database()
-    return True
+# ── INSERT / UPDATE / DELETE ───────────────────────────────────────────────────
+def execute(sql: str, params: tuple = ()):
+    conn = get_connection()
+    try:
+        cur = conn.execute(sql, params)
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
-def get_db_path():
-    """Compatibility stub — no local DB file in PostgreSQL mode."""
-    return None
+# ── Batch INSERT / UPDATE / DELETE ─────────────────────────────────────────────
+def executemany(sql: str, seq_of_params: list) -> int:
+    conn = get_connection()
+    try:
+        cur = conn.executemany(sql, seq_of_params)
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+# ── Auto-init ──────────────────────────────────────────────────────────────────
+initialize_database()

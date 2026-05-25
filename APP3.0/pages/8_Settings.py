@@ -223,17 +223,23 @@ if not _db_ok:
     if not _has_seasons_file:
         st.warning(
             "**Database not configured.**\n\n"
-            "Add your Supabase database password to **Streamlit Secrets**:\n\n"
+            "Add your Supabase credentials to **Streamlit Secrets**:\n\n"
             "1. Go to your app on **share.streamlit.io**\n"
             "2. Click **⋮ → Settings → Secrets**\n"
-            "3. Add:\n"
+            "3. Add **both** of these keys:\n"
             "```toml\n"
             "SUPABASE_URL = \"https://your-project.supabase.co\"\n"
             "SUPABASE_DB_PASSWORD = \"your-database-password\"\n"
             "```\n"
             "Find your password at: "
             "Supabase dashboard → Project Settings → Database → Database Password\n\n"
-            "4. Save — the app will restart and connect automatically."
+            "4. Save — the app restarts and connects via the Transaction Pooler automatically.\n\n"
+            "**Advanced:** supply a full pooler URL instead:\n"
+            "```toml\n"
+            "SUPABASE_DB_URL = \"postgresql://postgres.<project-id>:<password>"
+            "@aws-0-<region>.pooler.supabase.com:6543/postgres\"\n"
+            "```\n"
+            "(Get it from: Supabase dashboard → Project Settings → Database → Connection string → Transaction pooler)"
         )
     else:
         st.info(

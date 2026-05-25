@@ -12,10 +12,17 @@ Credential resolution (first match wins):
 
 How to get your SUPABASE_DB_PASSWORD:
   Supabase dashboard → Project Settings → Database → Database Password
+
+NOTE: Streamlit Cloud blocks port 5432.  When auto-building the URL from
+SUPABASE_URL + SUPABASE_DB_PASSWORD this code uses the Supabase Transaction
+Pooler (port 6543) and the required username format  postgres.<project-id>.
+If you supply a full SUPABASE_DB_URL make sure it also points at the pooler:
+  postgresql://postgres.<project-id>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
 """
 
 import json
 import re
+import urllib.parse
 from pathlib import Path
 
 _ROOT    = Path(__file__).resolve().parent
@@ -38,35 +45,59 @@ _TABLE_PK: dict = {
 # ── Module-level connection singleton ─────────────────────────────────────────
 # Reused across Streamlit reruns (module cached in sys.modules).
 _conn = None
-_conn_url = ""
+_conn_kwargs: dict = {}
 
 
-# ── Credential resolution ─────────────────────────────────────────────────────
+# ── Credential resolution → psycopg2 kwargs ───────────────────────────────────
 
-def _get_db_url() -> str:
-    """Return the PostgreSQL connection URL, or '' if not configured."""
-    # 1 — Streamlit secrets: explicit full URL
+def _parse_url_to_kwargs(url: str) -> dict:
+    """
+    Parse a postgresql:// URL into psycopg2 connect kwargs.
+    Uses urllib.parse so passwords with @, #, % etc. are handled correctly.
+    """
+    p = urllib.parse.urlparse(url)
+    qs = dict(urllib.parse.parse_qsl(p.query))
+    return {
+        "host":    p.hostname or "",
+        "port":    p.port or 5432,
+        "dbname":  (p.path or "/postgres").lstrip("/") or "postgres",
+        "user":    urllib.parse.unquote(p.username or ""),
+        "password": urllib.parse.unquote(p.password or ""),
+        "sslmode": qs.get("sslmode", "require"),
+    }
+
+
+def _get_connection_kwargs() -> dict:
+    """
+    Return psycopg2 connect kwargs by checking credentials in order:
+      1. st.secrets["SUPABASE_DB_URL"]  (full URL → parsed safely)
+      2. st.secrets["SUPABASE_URL"] + ["SUPABASE_DB_PASSWORD"]
+         → Transaction Pooler URL (port 6543, user postgres.<pid>)
+      3. seasons.json active season "db_url"
+      4. seasons.json supabase_url + supabase_db_password
+         → Transaction Pooler URL
+    Returns {} if no credentials are found.
+    """
+    # ── 1 & 2: Streamlit secrets ──────────────────────────────────────────────
     try:
         import streamlit as _st
-        url = _st.secrets.get("SUPABASE_DB_URL", "") or ""
-        if url:
-            return url.strip()
 
-        # 2 — build from SUPABASE_URL + SUPABASE_DB_PASSWORD
-        supa_url = _st.secrets.get("SUPABASE_URL", "") or ""
-        password = _st.secrets.get("SUPABASE_DB_PASSWORD", "") or ""
+        # 1 — explicit full URL (user supplies the exact PostgreSQL URL)
+        db_url = (_st.secrets.get("SUPABASE_DB_URL", "") or "").strip()
+        if db_url:
+            return _parse_url_to_kwargs(db_url)
+
+        # 2 — build Transaction Pooler URL from SUPABASE_URL + SUPABASE_DB_PASSWORD
+        supa_url = (_st.secrets.get("SUPABASE_URL", "") or "").strip()
+        password = (_st.secrets.get("SUPABASE_DB_PASSWORD", "") or "").strip()
         if supa_url and password:
-            m = re.search(r"https://([^.]+)\.supabase\.co", supa_url)
-            if m:
-                pid = m.group(1)
-                return (
-                    f"postgresql://postgres:{password}"
-                    f"@db.{pid}.supabase.co:5432/postgres?sslmode=require"
-                )
+            kw = _build_pooler_kwargs(supa_url, password)
+            if kw:
+                return kw
     except Exception:
         pass
 
-    # 3 — seasons.json
+    # ── 3 & 4: seasons.json ───────────────────────────────────────────────────
     try:
         if _SEASONS.exists():
             with open(_SEASONS, "r", encoding="utf-8") as f:
@@ -74,23 +105,60 @@ def _get_db_url() -> str:
             active = cfg.get("active_season")
             if active:
                 info = cfg.get("seasons", {}).get(active, {})
-                url = info.get("db_url", "").strip()
-                if url:
-                    return url
-                supa_url = info.get("supabase_url", "")
-                password = info.get("supabase_db_password", "")
+
+                # 3 — explicit full URL stored in seasons.json
+                db_url = info.get("db_url", "").strip()
+                if db_url:
+                    return _parse_url_to_kwargs(db_url)
+
+                # 4 — build from supabase_url + supabase_db_password
+                supa_url = info.get("supabase_url", "").strip()
+                password = info.get("supabase_db_password", "").strip()
                 if supa_url and password:
-                    m = re.search(r"https://([^.]+)\.supabase\.co", supa_url)
-                    if m:
-                        pid = m.group(1)
-                        return (
-                            f"postgresql://postgres:{password}"
-                            f"@db.{pid}.supabase.co:5432/postgres?sslmode=require"
-                        )
+                    kw = _build_pooler_kwargs(supa_url, password)
+                    if kw:
+                        return kw
     except Exception:
         pass
 
-    return ""
+    return {}
+
+
+def _build_pooler_kwargs(supabase_url: str, password: str) -> dict:
+    """
+    Given a Supabase project URL (https://<pid>.supabase.co) and a DB password,
+    return psycopg2 kwargs targeting the Transaction Pooler on port 6543.
+
+    Transaction Pooler is required on Streamlit Cloud because port 5432 is
+    blocked.  The username MUST be  postgres.<project-id>  (not just postgres).
+    """
+    m = re.search(r"https://([^.]+)\.supabase\.co", supabase_url)
+    if not m:
+        return {}
+    pid = m.group(1)
+    # Derive region from project info if available; default to us-east-1.
+    # Users who need a different region should supply SUPABASE_DB_URL directly.
+    region = _guess_region(pid)
+    return {
+        "host":     f"aws-0-{region}.pooler.supabase.com",
+        "port":     6543,
+        "dbname":   "postgres",
+        "user":     f"postgres.{pid}",
+        "password": password,
+        "sslmode":  "require",
+    }
+
+
+def _guess_region(project_id: str) -> str:
+    """
+    Return the AWS region for a known project ID.
+    Falls back to 'us-east-1' (most common Supabase default).
+    Add entries here if you use projects in other regions.
+    """
+    _KNOWN = {
+        "llqmwczvribudrrsxzzj": "us-east-1",
+    }
+    return _KNOWN.get(project_id, "us-east-1")
 
 
 # ── Connection factory ────────────────────────────────────────────────────────
@@ -101,25 +169,32 @@ def get_connection():
     autocommit=True so each statement is its own transaction — no explicit
     commit/rollback needed.
     """
-    global _conn, _conn_url
+    global _conn, _conn_kwargs
 
-    url = _get_db_url()
-    if not url:
+    kwargs = _get_connection_kwargs()
+    if not kwargs:
         raise RuntimeError(
             "Supabase database password not configured.\n\n"
-            "Add SUPABASE_DB_PASSWORD to Streamlit Secrets:\n"
-            "  share.streamlit.io → your app → ⋮ → Settings → Secrets\n\n"
+            "Add these to Streamlit Secrets  (Settings → Secrets on share.streamlit.io):\n\n"
+            "  SUPABASE_URL = \"https://your-project.supabase.co\"\n"
+            "  SUPABASE_DB_PASSWORD = \"your-database-password\"\n\n"
             "Find your password at:\n"
-            "  Supabase dashboard → Project Settings → Database → Database Password"
+            "  Supabase dashboard → Project Settings → Database → Database Password\n\n"
+            "Or supply a full Transaction Pooler URL:\n"
+            "  SUPABASE_DB_URL = \"postgresql://postgres.<project-id>:<password>"
+            "@aws-0-<region>.pooler.supabase.com:6543/postgres\""
         )
 
-    # Reuse existing live connection
-    if _conn is not None and _conn_url == url:
+    # Reuse existing live connection if kwargs haven't changed
+    if _conn is not None and _conn_kwargs == kwargs:
         try:
             if not _conn.closed:
+                # Lightweight ping
+                with _conn.cursor() as _cur:
+                    _cur.execute("SELECT 1")
                 return _conn
         except Exception:
-            pass
+            pass  # fall through to reconnect
 
     # (Re)connect
     try:
@@ -131,10 +206,13 @@ def get_connection():
     import psycopg2
     import psycopg2.extras
 
-    new_conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+    new_conn = psycopg2.connect(
+        cursor_factory=psycopg2.extras.RealDictCursor,
+        **kwargs,
+    )
     new_conn.autocommit = True
     _conn = new_conn
-    _conn_url = url
+    _conn_kwargs = kwargs
     return _conn
 
 
@@ -147,7 +225,8 @@ def _translate_sql(sql: str) -> str:
     # INSERT OR REPLACE → INSERT … ON CONFLICT DO UPDATE
     sql = _translate_upsert(sql)
     # Strip SQLite PRAGMAs (harmless no-ops otherwise)
-    sql = re.sub(r"PRAGMA\s+\w+[^\n;]*", "", sql, flags=re.IGNORECASE)
+    import re as _re
+    sql = _re.sub(r"PRAGMA\s+\w+[^\n;]*", "", sql, flags=_re.IGNORECASE)
     return sql.strip()
 
 

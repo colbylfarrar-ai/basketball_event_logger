@@ -184,7 +184,6 @@ if scored_games:
         <div class="game-hero-teams">{gotd['t1']} vs {gotd['t2']}</div>
         <div class="game-hero-score">{hs} – {as_}</div>
         {tracked_badge}
-        <div class="game-hero-meta">Combined: {hs+as_} pts &middot; Margin: {abs(hs-as_)} pts</div>
     </div>
     """, unsafe_allow_html=True)
 

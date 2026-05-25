@@ -454,7 +454,7 @@ with tab1:
                          ("PLY","🎯 Playmaking","#2ecc71"),("REB_R","📦 Rebounding","#e67e22")]
                 for col, name, clr in comps:
                     fig_comp.add_trace(go.Bar(
-                        name=name, x=_top10["Player"], y=_top10[col],
+                        name=name, x=_top10["_label"], y=_top10[col],
                         marker_color=clr))
                 fig_comp.update_layout(
                     **PLOT_LAYOUT, barmode="group",

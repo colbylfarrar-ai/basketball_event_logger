@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:

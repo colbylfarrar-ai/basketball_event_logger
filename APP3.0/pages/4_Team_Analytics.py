@@ -1,4 +1,5 @@
-﻿import sys
+import sys
+import os
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -2846,97 +2847,198 @@ with tab_notes:
         st.success("Notes saved.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  AI INSIGHTS
+#  🏀 BASKETBALL ANALYST AGENT
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_ai:
-    st.subheader("AI-Generated Insights")
+    # ── Resolve API key (secrets → env → None) ────────────────────────────────
+    _api_key = ""
+    try:
+        _api_key = st.secrets.get("ANTHROPIC_API_KEY", "") or ""
+    except Exception:
+        pass
+    if not _api_key:
+        _api_key = os.environ.get("ANTHROPIC_API_KEY", "") or ""
 
     try:
         import anthropic as _ant
-        HAS_ANT = True
+        _HAS_ANT = True
     except ImportError:
-        HAS_ANT = False
+        _HAS_ANT = False
 
-    try:
-        api_key = st.secrets.get("ANTHROPIC_API_KEY") or ""
-    except Exception:
-        api_key = ""
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY") or ""
-    if not api_key:
-        api_key = st.text_input("Anthropic API Key", type="password",
-                                 placeholder="sk-ant-…  (stored only for this session)")
+    # ── Build live team context (runs once per team selection) ────────────────
+    def _build_team_context(tid: int, tname: str, tinfo: dict) -> str:
+        all_gs  = games_for_team(tid)
+        adv     = compute_team_tracked(tid)
+        w, l, pf, pa = record_from_games(all_gs, tid) if all_gs else (0,0,0,0)
+        gp      = len(all_gs) or 1
 
-    focus = st.multiselect("Focus Areas", ["Strengths","Weaknesses","Shooting","Defense",
-                                            "Player Highlights","Game Trends","Coaching Tips"],
-                           default=["Strengths","Weaknesses","Player Highlights"])
+        ctx = (
+            f"TEAM: {tname}\n"
+            f"Classification: {tinfo.get('class','?')}  |  "
+            f"Gender: {'Men' if tinfo.get('gender')=='M' else 'Women'}\n"
+            f"Overall record: {w}-{l}  ({w/gp*100:.1f}% win rate, {gp} games)\n"
+            f"Scoring: {pf/gp:.1f} PPG scored, {pa/gp:.1f} PPG allowed, "
+            f"{(pf-pa)/gp:+.1f} avg margin\n"
+        )
 
-    if st.button("Generate Insights", type="primary", disabled=not (HAS_ANT and api_key)):
-        if not HAS_ANT:
-            st.error("anthropic package not installed.")
-        elif not api_key:
-            st.warning("Enter an API key above.")
-        else:
-            # Build context string
-            all_gs2  = games_for_team(team_id)
-            adv2     = compute_team_tracked(team_id)
-            w2,l2,pf2,pa2 = record_from_games(all_gs2, team_id)
-            gp2=len(all_gs2)
+        if adv and adv.get("gp", 0) > 0:
+            ctx += (
+                f"\nADVANCED STATS ({adv['gp']} fully-tracked games):\n"
+                f"  ORtg {adv['ortg']:.1f}  |  DRtg {adv['drtg']:.1f}  "
+                f"|  Net Rtg {adv['net']:+.1f}  |  Pace {adv['pace']:.1f} poss/g\n"
+                f"  eFG% {adv['efg']*100:.1f}%  |  Opp eFG% {adv['oefg']*100:.1f}%  "
+                f"|  TS% {adv['ts']*100:.1f}%  |  TOV% {adv['tov_r']*100:.1f}%\n"
+                f"  OREB% {adv['oreb_p']*100:.1f}%  |  FT Rate {adv['ft_r']:.2f}  "
+                f"|  FG% {adv['fgp']*100:.1f}%  |  3P% {adv['tpp']*100:.1f}%  "
+                f"|  FT% {adv['ftp']*100:.1f}%\n"
+                f"  AST/G {adv['ast_pg']:.1f}  |  STL/G {adv['stl_pg']:.1f}  "
+                f"|  BLK/G {adv['blk_pg']:.1f}  |  TOV/G {adv['tov_pg']:.1f}\n"
+            )
 
-            ctx = f"""Team: {sel_name}
-Class: {team_info['class']} | Gender: {'Men' if team_info['gender']=='M' else 'Women'}
-Overall Record: {w2}-{l2}  ({w2/gp2*100:.1f}% win rate, {gp2} games)
-PPG: {pf2/gp2:.1f} | PA/G: {pa2/gp2:.1f} | Avg Margin: {(pf2-pa2)/gp2:+.1f}
-"""
-            if adv2:
-                ctx += f"""
---- Advanced Stats ({adv2['gp']} tracked games) ---
-ORtg: {adv2['ortg']:.1f} | DRtg: {adv2['drtg']:.1f} | Net Rating: {adv2['net']:+.1f}
-Pace: {adv2['pace']:.1f} poss/game
-eFG%: {adv2['efg']*100:.1f}% | Opp eFG%: {adv2['oefg']*100:.1f}%
-TS%: {adv2['ts']*100:.1f}% | TOV%: {adv2['tov_r']*100:.1f}%
-OREB%: {adv2['oreb_p']*100:.1f}% | FT Rate: {adv2['ft_r']:.2f}
-FG%: {adv2['fgp']*100:.1f}% | 3P%: {adv2['tpp']*100:.1f}% | FT%: {adv2['ftp']*100:.1f}%
-AST/G: {adv2['ast_pg']:.1f} | STL/G: {adv2['stl_pg']:.1f} | BLK/G: {adv2['blk_pg']:.1f} | TOV/G: {adv2['tov_pg']:.1f}
-"""
-            # Top players
-            players2 = query("SELECT id, name, number FROM players WHERE team_id=? ORDER BY name", (team_id,))
-            top_players=[]
-            for p in players2:
-                c=compute_player_career(p["id"])
-                if c and c["gp"]>0:
-                    top_players.append((p["name"], c["pts"]/c["gp"], c))
-            top_players.sort(key=lambda x: x[1], reverse=True)
-            if top_players:
-                ctx+="\n--- Top Players (per game averages) ---\n"
-                for name,_,c in top_players[:5]:
-                    gp3=c["gp"]
-                    ctx+=(f"{name}: {c['pts']/gp3:.1f}pts {(c['oreb']+c['dreb'])/gp3:.1f}reb "
-                          f"{c['ast']/gp3:.1f}ast {c['stl']/gp3:.1f}stl {c['blk']/gp3:.1f}blk "
-                          f"| FG%: {c['fgm']/c['fga']*100:.1f}%" if c['fga'] else f"{name}: limited data")
-                    ctx+="\n"
+        # Roster + per-game averages (top 8 by scoring)
+        roster = query(
+            "SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY name",
+            (tid,)
+        )
+        player_lines = []
+        for p in roster:
+            c = compute_player_career(p["id"])
+            if c and c.get("gp", 0) > 0:
+                pgp  = c["gp"]
+                fgp  = f"{c['fgm']/c['fga']*100:.0f}%" if c.get("fga") else "—"
+                line = (
+                    f"  #{p['number']} {p['name']}: "
+                    f"{c['pts']/pgp:.1f}pts  {(c['oreb']+c['dreb'])/pgp:.1f}reb  "
+                    f"{c['ast']/pgp:.1f}ast  {c['stl']/pgp:.1f}stl  "
+                    f"{c['blk']/pgp:.1f}blk  FG%:{fgp}  ({pgp}g)"
+                )
+                player_lines.append((c["pts"] / pgp, line))
 
-            focus_str = ", ".join(focus) if focus else "general analysis"
-            prompt = f"""You are an expert basketball analyst. Analyze this team and provide actionable insights.
+        if player_lines:
+            player_lines.sort(reverse=True)
+            ctx += "\nROSTER (per-game averages, sorted by scoring):\n"
+            ctx += "\n".join(l for _, l in player_lines[:8]) + "\n"
 
-{ctx}
+        return ctx
 
-Focus your analysis on: {focus_str}
+    _ctx_key = f"_ai_ctx_{team_id}"
+    if _ctx_key not in st.session_state:
+        st.session_state[_ctx_key] = _build_team_context(team_id, sel_name, team_info)
 
-Structure your response with clear sections. Be specific, reference the actual numbers, and provide concrete recommendations. Keep it concise but insightful."""
+    team_ctx = st.session_state[_ctx_key]
 
-            with st.spinner("Generating insights…"):
+    SYSTEM_PROMPT = f"""You are an expert basketball analyst and coaching assistant embedded in a live analytics platform.
+
+You have access to real, current data for the team the coach is viewing. Use it precisely — cite actual numbers when making points, and give concrete, actionable recommendations a real coach can use.
+
+{team_ctx}
+
+Guidelines:
+- Be direct and specific. Reference actual stats, not vague generalities.
+- When a coach asks about a player, pull from the roster data above.
+- Offer multiple angles: what the numbers say, what it likely means on the floor, and what to do about it.
+- Keep responses focused and well-structured. Use bullet points for recommendations.
+- You can discuss opponents, game planning, in-season adjustments, player development, and anything else basketball-related.
+- If asked something outside the data (e.g. specific play diagrams), use your general basketball knowledge."""
+
+    # ── Chat history per team ─────────────────────────────────────────────────
+    hist_key = f"_ai_chat_{team_id}"
+    if hist_key not in st.session_state:
+        st.session_state[hist_key] = []
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown(
+        f"<div style='margin-bottom:6px'>"
+        f"<span style='font-size:20px;font-weight:800;color:#f0f6fc'>🏀 Basketball Analyst</span>"
+        f"&nbsp;&nbsp;<span style='font-size:12px;color:#8b949e'>"
+        f"Analyzing: <b style='color:#f0a500'>{sel_name}</b></span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not _HAS_ANT or not _api_key:
+        # ── Setup instructions ────────────────────────────────────────────────
+        st.warning(
+            "**Basketball Analyst not configured.**\n\n"
+            "To enable it, add your Anthropic API key to Streamlit secrets:\n\n"
+            "1. Go to your app on **share.streamlit.io**\n"
+            "2. Click **⋮ → Settings → Secrets**\n"
+            "3. Add this line:\n"
+            "```toml\n"
+            "ANTHROPIC_API_KEY = \"sk-ant-your-key-here\"\n"
+            "```\n"
+            "4. Save — the app will restart automatically.\n\n"
+            "For local use, add the same line to `.streamlit/secrets.toml`."
+        )
+        if not _HAS_ANT:
+            st.info("Also run: `pip install anthropic>=0.25.0`")
+    else:
+        # ── Render existing chat history ──────────────────────────────────────
+        for msg in st.session_state[hist_key]:
+            with st.chat_message(msg["role"],
+                                  avatar="🏀" if msg["role"] == "assistant" else "👤"):
+                st.markdown(msg["content"])
+
+        # ── Suggested prompts (shown only when chat is empty) ─────────────────
+        if not st.session_state[hist_key]:
+            st.caption("💡 Try asking:")
+            col_s1, col_s2, col_s3 = st.columns(3)
+            suggestions = [
+                "What are this team's biggest strengths and weaknesses?",
+                "Which players should get more minutes and why?",
+                "How can we improve our defensive rating?",
+                "Break down our shooting efficiency.",
+                "What's our biggest area to improve before playoffs?",
+                "Give me a scouting report on this team.",
+            ]
+            for i, sug in enumerate(suggestions):
+                col = [col_s1, col_s2, col_s3][i % 3]
+                if col.button(sug, key=f"ai_sug_{i}", use_container_width=True):
+                    st.session_state[hist_key].append({"role": "user", "content": sug})
+                    st.rerun()
+
+        # ── Chat input ────────────────────────────────────────────────────────
+        user_input = st.chat_input(
+            f"Ask anything about {sel_name}…",
+            key=f"ai_input_{team_id}",
+        )
+
+        if user_input:
+            st.session_state[hist_key].append({"role": "user", "content": user_input})
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(user_input)
+
+            # Build messages list for the API
+            api_messages = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state[hist_key]
+            ]
+
+            with st.chat_message("assistant", avatar="🏀"):
                 try:
-                    client = _ant.Anthropic(api_key=api_key)
+                    client   = _ant.Anthropic(api_key=_api_key)
+                    full_txt = ""
+                    placeholder = st.empty()
                     with client.messages.stream(
-                        model="claude-sonnet-4-6",
+                        model="claude-opus-4-5",
                         max_tokens=1024,
-                        messages=[{"role":"user","content":prompt}]
+                        system=SYSTEM_PROMPT,
+                        messages=api_messages,
                     ) as stream:
-                        st.write_stream(stream.text_stream)
-                except Exception as e:
-                    st.error(f"API error: {e}")
+                        for chunk in stream.text_stream:
+                            full_txt += chunk
+                            placeholder.markdown(full_txt + "▌")
+                    placeholder.markdown(full_txt)
+                    st.session_state[hist_key].append(
+                        {"role": "assistant", "content": full_txt}
+                    )
+                except Exception as exc:
+                    err_msg = str(exc)
+                    st.error(f"Agent error: {err_msg}")
 
-    if not HAS_ANT:
-        st.info("Run `pip install anthropic` to enable AI insights.")
-    elif not api_key:
-        st.info("Enter your Anthropic API key above to generate insights.")
+        # ── Clear chat button ─────────────────────────────────────────────────
+        if st.session_state[hist_key]:
+            if st.button("🗑 Clear conversation", key=f"ai_clear_{team_id}"):
+                st.session_state[hist_key] = []
+                st.session_state.pop(_ctx_key, None)
+                st.rerun()

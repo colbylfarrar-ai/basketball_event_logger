@@ -1,4 +1,4 @@
-﻿"""
+"""
 Native Streamlit box score renderer.
 Uses st.dataframe + pandas Styler — no raw HTML tables.
 Call show_game_box_score() from any page.

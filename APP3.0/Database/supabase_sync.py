@@ -201,20 +201,55 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             pass
 
 
+# ── Credential resolution ─────────────────────────────────────────────────────
+# Priority: st.secrets → seasons.json → empty string
+# This means the deployed (Streamlit Cloud) version needs only secrets;
+# the local version uses seasons.json.  Both work transparently.
+
+def _resolve_credentials() -> tuple[str, str]:
+    """
+    Return (supabase_url, supabase_key) by checking in order:
+      1. st.secrets  (Streamlit Cloud / local secrets.toml)
+      2. seasons.json active season
+    Returns ("", "") if neither is configured.
+    """
+    # 1 — Streamlit secrets (available in deployed app and local secrets.toml)
+    try:
+        import streamlit as _st
+        url = _st.secrets.get("SUPABASE_URL", "") or ""
+        key = _st.secrets.get("SUPABASE_KEY", "") or ""
+        if url and key:
+            return url.strip(), key.strip()
+    except Exception:
+        pass
+
+    # 2 — seasons.json (local fallback)
+    info = get_active_season_info()
+    if info:
+        url = info.get("supabase_url", "").strip()
+        key = info.get("supabase_key", "").strip()
+        if url and key:
+            return url, key
+
+    return "", ""
+
+
 # ── Supabase client ───────────────────────────────────────────────────────────
 
 def get_supabase_client(season_info: Optional[dict] = None) -> Optional["SupabaseClient"]:
     """
-    Return a Supabase client for the given (or active) season.
+    Return a Supabase client.
+    Credentials are resolved from st.secrets first, then seasons.json.
     Returns None if: package missing, no credentials, or offline.
     """
     if not _SUPABASE_AVAILABLE:
         return None
-    info = season_info or get_active_season_info()
-    if not info:
-        return None
-    url = info.get("supabase_url", "").strip()
-    key = info.get("supabase_key", "").strip()
+    if season_info:
+        # Explicit override (e.g. when switching seasons)
+        url = season_info.get("supabase_url", "").strip()
+        key = season_info.get("supabase_key", "").strip()
+    else:
+        url, key = _resolve_credentials()
     if not url or not key:
         return None
     if not is_online():
@@ -228,11 +263,12 @@ def get_supabase_client(season_info: Optional[dict] = None) -> Optional["Supabas
 def get_sync_status() -> dict:
     """Return a dict with online status and whether Supabase is configured."""
     online = is_online()
-    info = get_active_season_info()
-    configured = bool(info and info.get("supabase_url") and info.get("supabase_key"))
+    url, key = _resolve_credentials()
+    configured = bool(url and key)
     client_ok = False
     if online and configured:
         client_ok = get_supabase_client() is not None
+    info = get_active_season_info()
     return {
         "online": online,
         "configured": configured,

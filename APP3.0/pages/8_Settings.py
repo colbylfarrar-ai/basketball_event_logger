@@ -203,10 +203,32 @@ with col_s3:
 st.markdown("---")
 
 if not sync_status["configured"]:
-    st.info(
-        "No Supabase credentials for this season. "
-        "Add them below to enable cloud sync."
-    )
+    # Check whether this is a deployed (no seasons.json) or local context
+    _has_seasons_file = (
+        Path(__file__).resolve().parent.parent / "Database" / "seasons.json"
+    ).exists()
+
+    if not _has_seasons_file:
+        # Deployed on Streamlit Cloud — guide them to use secrets
+        st.warning(
+            "**Supabase not configured for this deployment.**\n\n"
+            "Add your credentials to **Streamlit secrets** (not here — the Settings "
+            "UI is for local use only):\n\n"
+            "1. Go to your app on **share.streamlit.io**\n"
+            "2. Click **⋮ → Settings → Secrets**\n"
+            "3. Add these two lines:\n"
+            "```toml\n"
+            "SUPABASE_URL = \"https://your-project.supabase.co\"\n"
+            "SUPABASE_KEY = \"eyJhbGci…your-anon-key\"\n"
+            "```\n"
+            "4. Save — the app restarts and sync activates automatically."
+        )
+    else:
+        # Local — guide them to use the expander below
+        st.info(
+            "No Supabase credentials for this season. "
+            "Expand **Edit Supabase Credentials** below to add them."
+        )
 else:
     col_push, col_pull = st.columns(2)
 

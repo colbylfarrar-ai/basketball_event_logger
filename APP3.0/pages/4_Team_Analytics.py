@@ -109,6 +109,18 @@ st.markdown("""
 .lu-line  { font-size:10px; color:#8b949e; border-top:1px solid #30363d;
             padding-top:6px; margin-top:auto; flex-shrink:0;
             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* ── Top-5 rating row cards ── */
+.lu-row-card {
+    background:#161b22; border:1px solid #30363d; border-radius:10px;
+    padding:10px 14px; margin-bottom:6px;
+    display:flex; align-items:center; gap:12px;
+}
+.lu-rank  { font-size:16px; font-weight:800; color:#8b949e; min-width:22px; }
+.lu-body  { flex:1; min-width:0; }
+.lu-name  { font-size:13px; font-weight:700; color:#f0f6fc;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lu-meta  { font-size:10px; color:#8b949e; margin-top:2px; }
+.lu-score { font-size:22px; font-weight:900; min-width:44px; text-align:right; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1126,6 +1138,63 @@ with tab_pl:
 
         # Keep only columns that exist
         disp_cols = [c for c in disp_cols if c in df_pl.columns]
+
+        # ── Top 5 Offense / Defense Lineup ───────────────────────────────────
+        _rated = df_pl[
+            df_pl["GP"].apply(lambda v: isinstance(v, (int, float)) and v > 0)
+        ].copy()
+        for _rc in ["OFF", "DEF"]:
+            if _rc in _rated.columns:
+                _rated[_rc] = pd.to_numeric(_rated[_rc], errors="coerce")
+
+        _has_off = "OFF" in _rated.columns and _rated["OFF"].notna().any()
+        _has_def = "DEF" in _rated.columns and _rated["DEF"].notna().any()
+
+        if _has_off or _has_def:
+            st.subheader("Lineup Ratings")
+            _lu_col1, _lu_col2 = st.columns(2)
+
+            _rank_labels = ["🥇", "🥈", "🥉", "4.", "5."]
+
+            if _has_off:
+                _top_off = (_rated.dropna(subset=["OFF"])
+                                  .nlargest(5, "OFF")[["Player", "#", "GP", "OFF", "PTS", "TS%"]]
+                                  .reset_index(drop=True))
+                with _lu_col1:
+                    st.markdown("**⚡ Top 5 — Offense Rating**")
+                    for _i, _row in _top_off.iterrows():
+                        _pts_val = f"{_row['PTS']}" if isinstance(_row['PTS'], (int, float)) else "—"
+                        _ts_val  = f"{_row['TS%']}"  if isinstance(_row['TS%'],  (int, float)) else "—"
+                        st.markdown(f"""
+<div class="lu-row-card">
+  <div class="lu-rank">{_rank_labels[_i]}</div>
+  <div class="lu-body">
+    <div class="lu-name">#{int(_row['#']) if isinstance(_row['#'], (int,float)) else _row['#']} &nbsp;{_row['Player']}</div>
+    <div class="lu-meta">GP {int(_row['GP'])} &middot; PTS/G {_pts_val} &middot; TS% {_ts_val}</div>
+  </div>
+  <div class="lu-score" style="color:#f0a500">{_row['OFF']:.1f}</div>
+</div>""", unsafe_allow_html=True)
+
+            if _has_def:
+                _top_def = (_rated.dropna(subset=["DEF"])
+                                  .nlargest(5, "DEF")[["Player", "#", "GP", "DEF", "STL", "BLK"]]
+                                  .reset_index(drop=True))
+                with _lu_col2:
+                    st.markdown("**🛡 Top 5 — Defense Rating**")
+                    for _i, _row in _top_def.iterrows():
+                        _stl_val = f"{_row['STL']}" if isinstance(_row['STL'], (int, float)) else "—"
+                        _blk_val = f"{_row['BLK']}" if isinstance(_row['BLK'], (int, float)) else "—"
+                        st.markdown(f"""
+<div class="lu-row-card">
+  <div class="lu-rank">{_rank_labels[_i]}</div>
+  <div class="lu-body">
+    <div class="lu-name">#{int(_row['#']) if isinstance(_row['#'], (int,float)) else _row['#']} &nbsp;{_row['Player']}</div>
+    <div class="lu-meta">GP {int(_row['GP'])} &middot; STL/G {_stl_val} &middot; BLK/G {_blk_val}</div>
+  </div>
+  <div class="lu-score" style="color:#3498db">{_row['DEF']:.1f}</div>
+</div>""", unsafe_allow_html=True)
+
+            st.divider()
 
         st.subheader("Per Game Averages (Tracked Games)")
         if not df_pl.empty:

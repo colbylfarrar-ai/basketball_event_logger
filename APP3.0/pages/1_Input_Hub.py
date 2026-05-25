@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -168,7 +168,7 @@ with tab_teams:
         display,
         key="teams_editor",
         num_rows="dynamic",
-        width='stretch',
+        use_container_width=True,
         column_config={
             "name":   st.column_config.TextColumn("Team Name", required=True),
             "class":  st.column_config.SelectboxColumn("Class",  options=CLASS_OPTIONS,  required=True),
@@ -224,7 +224,7 @@ with tab_players:
             display,
             key="players_editor",
             num_rows="dynamic",
-            width='stretch',
+            use_container_width=True,
             column_config={
                 "name":     st.column_config.TextColumn("Player Name", required=True),
                 "number":   st.column_config.NumberColumn("Number",      min_value=0, max_value=999, step=1),
@@ -279,7 +279,7 @@ with tab_games:
             display,
             key="games_editor",
             num_rows="dynamic",
-            width='stretch',
+            use_container_width=True,
             column_config={
                 "team1":      st.column_config.SelectboxColumn("Home Team",    options=tnames, required=True),
                 "team2":      st.column_config.SelectboxColumn("Away Team",    options=tnames, required=True),
@@ -350,7 +350,7 @@ with tab_schedule:
             display,
             key="sched_editor",
             num_rows="dynamic",
-            width='stretch',
+            use_container_width=True,
             column_config={
                 "opponent":   st.column_config.SelectboxColumn("Opponent",       options=opp_options, required=True),
                 "date":       st.column_config.TextColumn("Date (MM/DD/YY)",     required=True),
@@ -427,7 +427,7 @@ with tab_officials:
         display,
         key="officials_editor",
         num_rows="dynamic",
-        width='stretch',
+        use_container_width=True,
         column_config={
             "name":        st.column_config.TextColumn("Official Name", required=True),
             "official_id": st.column_config.NumberColumn("Official ID", required=True, step=1),
@@ -500,7 +500,7 @@ with tab_archive:
                             WHERE team_id=? AND archived=1 AND season=?
                             ORDER BY name
                         """, (team["id"], sel_season))
-                        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         with arc_tab_schedule:
             st.subheader(f"Schedules — {sel_season}")
@@ -527,4 +527,4 @@ with tab_archive:
                         df = pd.DataFrame(rows) if rows else pd.DataFrame()
                         if not df.empty:
                             df["tracked"] = df["tracked"].astype(bool)
-                        st.dataframe(df, width='stretch', hide_index=True)
+                        st.dataframe(df, use_container_width=True, hide_index=True)

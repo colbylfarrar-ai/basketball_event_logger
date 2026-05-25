@@ -1,4 +1,4 @@
-﻿import sys, os
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -7,12 +7,13 @@ import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import datetime
 from Database.db import query, initialize_database
 from helpers.constants import ZONES, SHOT_RATING, EST_FGP
 from helpers.game_utils import games_for_team, win_loss, opponent_name, home_away, record_from_games
 from helpers.charts import (zone_color, render_hot_zones, show_shot_chart, show_scoring_pie,
                             show_four_factors_bars, show_trend_chart, show_player_radar,
-                            show_score_flow_chart)
+                            show_score_flow_chart, show_matchup_bars)
 from helpers.stats_team import (compute_player_game_log, compute_player_career,
                                 compute_team_tracked, compute_on_off,
                                 compute_league_drtg, compute_league_four_factors,
@@ -328,7 +329,7 @@ with tab_ov:
                 hovermode="x unified",
                 height=380,
             )
-            st.plotly_chart(fig_trend, width='stretch', key="ov_rtg_trend")
+            st.plotly_chart(fig_trend, use_container_width=True, key="ov_rtg_trend")
 
         st.divider()
 
@@ -343,7 +344,7 @@ with tab_ov:
             "Score":f"{my}-{opp}","Tracked":"✓" if g["tracked"] else ""
         })
     if sched_rows:
-        st.dataframe(pd.DataFrame(sched_rows), width='stretch', hide_index=True)
+        st.dataframe(pd.DataFrame(sched_rows), use_container_width=True, hide_index=True)
 
     # ── Hot zones aggregate ──
     if tr_gs:
@@ -434,7 +435,7 @@ with tab_ts:
                         fig_td.update_layout(
                             **PLOT_LAYOUT, title="Shot Attempt Distribution",
                             showlegend=False, height=290)
-                        st.plotly_chart(fig_td, width='stretch', key="ts_shot_dist")
+                        st.plotly_chart(fig_td, use_container_width=True, key="ts_shot_dist")
 
                 with _dist_r:
                     # Shooting % by type
@@ -456,7 +457,7 @@ with tab_ts:
                         **PLOT_LAYOUT, title="Shooting Percentages by Type",
                         yaxis=dict(range=[0,115], showgrid=False),
                         height=290)
-                    st.plotly_chart(fig_pcts, width='stretch', key="ts_shoot_pcts")
+                    st.plotly_chart(fig_pcts, use_container_width=True, key="ts_shoot_pcts")
 
         st.divider()
 
@@ -478,7 +479,7 @@ with tab_ts:
             {"Stat": "Avg Poss. Length",     "Value": a["avg_poss_len"]},
             {"Stat": "Points Per Possession","Value": f"{a['ppp']:.3f}"},
         ]
-        st.dataframe(pd.DataFrame(poss_rows), hide_index=True, width='stretch')
+        st.dataframe(pd.DataFrame(poss_rows), hide_index=True, use_container_width=True)
 
         # ── Possession Length Breakdown ───────────────────────────────────────
         st.markdown("#### Possession Length Breakdown")
@@ -640,13 +641,13 @@ with tab_ts:
                 font=dict(color="#c9d1d9", size=11),
                 margin=dict(l=20, r=20, t=50, b=20),
             )
-            st.plotly_chart(_fig_pb, width='stretch', key="pb_ppp_bar")
+            st.plotly_chart(_fig_pb, use_container_width=True, key="pb_ppp_bar")
 
             # Detailed breakdown table
             st.dataframe(
                 pd.DataFrame(_pb_table),
                 hide_index=True,
-                width='stretch',
+                use_container_width=True,
             )
             st.caption(
                 "Quick < 12s · Medium 12–27s · Long 27+s  ·  "
@@ -674,7 +675,7 @@ with tab_ts:
                 {"Stat": "eFG%", "Total": f"{a['efg']*100:.1f}%", "Per Game": "—"},
                 {"Stat": "TS%",  "Total": f"{a['ts']*100:.1f}%",  "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(fg_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(fg_rows), hide_index=True, use_container_width=True)
 
         with sh2:
             st.markdown("**3-Pointers**")
@@ -684,7 +685,7 @@ with tab_ts:
                 {"Stat": "3P%",  "Total": f"{a['tpp']*100:.1f}%",           "Per Game": "—"},
                 {"Stat": "3PAr", "Total": f"{a['tpar']*100:.1f}%",          "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(tp_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(tp_rows), hide_index=True, use_container_width=True)
 
         with sh3:
             st.markdown("**Free Throws**")
@@ -694,7 +695,7 @@ with tab_ts:
                 {"Stat": "FT%",     "Total": f"{a['ftp']*100:.1f}%",        "Per Game": "—"},
                 {"Stat": "FT Rate", "Total": f"{a['ft_r']:.2f}",            "Per Game": "—"},
             ]
-            st.dataframe(pd.DataFrame(ft_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(ft_rows), hide_index=True, use_container_width=True)
 
         st.divider()
 
@@ -709,7 +710,7 @@ with tab_ts:
             {"Stat": "Blocks",        "Total": a["blk"],  "Per Game": round(a["blk_pg"], 1)},
             {"Stat": "Turnovers",     "Total": a["tov"],  "Per Game": round(a["tov_pg"], 1)},
         ]
-        st.dataframe(pd.DataFrame(other_rows), hide_index=True, width='stretch')
+        st.dataframe(pd.DataFrame(other_rows), hide_index=True, use_container_width=True)
 
         st.divider()
 
@@ -732,7 +733,7 @@ with tab_ts:
                 {"Stat": "Paint Pts/G",           "Value": f"{a.get('paint_pts_pg',0):.1f}",   "Note": "pts from paint/g"},
             ]
             st.markdown("**Offense**")
-            st.dataframe(pd.DataFrame(adv_off), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(adv_off), hide_index=True, use_container_width=True)
         with adv2:
             adv_def = [
                 {"Stat": "Def. Rating (DRtg)",   "Value": f"{a['drtg']:.1f}",                      "Note": "pts/100 poss"},
@@ -746,7 +747,7 @@ with tab_ts:
                 {"Stat": "Opp TOV/G",             "Value": f"{a['opp_tov']/gp_ts:.1f}",             "Note": "opp turnovers/g"},
             ]
             st.markdown("**Defense**")
-            st.dataframe(pd.DataFrame(adv_def), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(adv_def), hide_index=True, use_container_width=True)
 
         st.divider()
 
@@ -797,7 +798,7 @@ with tab_ts:
                 {"Source": "TOTAL",           "Points": _pts2+_pts3+_ptft,
                  "Pct": "100%", "Per Game": f"{a['pts_pg']:.1f}"},
             ]
-            st.dataframe(pd.DataFrame(pct_rows), hide_index=True, width='stretch')
+            st.dataframe(pd.DataFrame(pct_rows), hide_index=True, use_container_width=True)
             st.markdown(f"**Ast%**: {a.get('ast_pct',0):.1f}% of FGM were assisted")
             st.markdown(f"**Unast%**: {a.get('unast_pct',0):.1f}% of FGM were unassisted")
 
@@ -887,7 +888,7 @@ with tab_ts:
                     ),
                     title="Shot Outcome Mix by Player (% of FGA)",
                 )
-                st.plotly_chart(fig_scm, width='stretch', key="scm_chart_ta")
+                st.plotly_chart(fig_scm, use_container_width=True, key="scm_chart_ta")
                 st.caption(
                     f"Minimum 3 FGA · sorted by W/O% ascending (biggest creators on top) · "
                     f"{len(_scm_df)} player{'s' if len(_scm_df) != 1 else ''} shown"
@@ -994,7 +995,7 @@ with tab_ts:
             _qdf.style
                 .apply(_quarter_row_style, axis=1)
                 .map(_ppp_cell_style, subset=["PPP", "Opp PPP"]),
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
         )
         st.caption(
@@ -1198,7 +1199,7 @@ with tab_pl:
 
         st.subheader("Per Game Averages (Tracked Games)")
         if not df_pl.empty:
-            st.dataframe(df_pl[disp_cols], width='stretch', hide_index=True)
+            st.dataframe(df_pl[disp_cols], use_container_width=True, hide_index=True)
             st.download_button("⬇ Export Player Stats (CSV)",
                                df_pl[disp_cols].to_csv(index=False),
                                file_name=f"{sel_name}_player_stats.csv",
@@ -1302,7 +1303,7 @@ with tab_pl:
                             "Contested rating": f"{SHOT_RATING.get((stype,zone,True),0):+.1f}",
                         })
                     if _sq_table:
-                        st.dataframe(pd.DataFrame(_sq_table), hide_index=True, width='stretch')
+                        st.dataframe(pd.DataFrame(_sq_table), hide_index=True, use_container_width=True)
                         st.caption(
                             "Baselines are zone/contest averages before creation context. "
                             "**Shot Rating** and **Est FG%** shown above already include the "
@@ -1403,7 +1404,7 @@ with tab_pl:
                          "Net": round(net_off_,1) if net_off_ is not None else "—",
                          "Pts For": off_pf_, "Pts Against": off_pa_},
                     ])
-                    st.dataframe(oo_table, hide_index=True, width='stretch')
+                    st.dataframe(oo_table, hide_index=True, use_container_width=True)
                 else:
                     st.caption("On/Off data requires games with lineup snapshots logged in Game Tracker.")
 
@@ -1426,7 +1427,7 @@ with tab_pl:
 
                     st.dataframe(
                         gl_df.style.map(_wl_style, subset=["W/L"]),
-                        width='stretch', hide_index=True,
+                        use_container_width=True, hide_index=True,
                         column_config={
                             "MIN":  st.column_config.NumberColumn("MIN",  format="%.1f"),
                             "SC%":  st.column_config.NumberColumn("SC%",  format="%.1f"),
@@ -1584,7 +1585,7 @@ letter-spacing:1px;margin-bottom:4px;}
                     all_sorted[["Player", "Team", "League Rank"]],
                     on=["Player"], how="left"
                 )
-                st.dataframe(out, width='stretch')
+                st.dataframe(out, use_container_width=True)
 
                 # Bar chart
                 fig = go.Figure(go.Bar(
@@ -1604,7 +1605,7 @@ letter-spacing:1px;margin-bottom:4px;}
                     margin=dict(l=10, r=80, t=20, b=20),
                     font=dict(size=11),
                 )
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig, use_container_width=True)
 
             with role_tab_off:
                 st.caption("Higher OFF = better offensive player. "
@@ -1672,7 +1673,7 @@ letter-spacing:1px;margin-bottom:4px;}
                     margin=dict(l=20, r=20, t=50, b=30),
                     font=dict(size=11),
                 )
-                st.plotly_chart(fig_rad, width='stretch')
+                st.plotly_chart(fig_rad, use_container_width=True)
             else:
                 st.info("Need at least 2 qualified players for the scatter chart.")
 
@@ -1706,7 +1707,7 @@ letter-spacing:1px;margin-bottom:4px;}
                           .background_gradient(subset=_pct_subset,
                                                cmap="RdYlGn", axis=None, vmin=0, vmax=100)
                           .format({c: "{:.1f}%" for c in _pct_subset}))
-                st.dataframe(styler, width='stretch', hide_index=True)
+                st.dataframe(styler, use_container_width=True, hide_index=True)
                 st.caption("Percentile = % of all tracked players with a lower score. "
                            "90th pctile = top 10% in the league.")
 
@@ -1945,7 +1946,7 @@ with tab_lu:
                         yaxis=dict(tickfont=dict(size=11)),
                         height=max(260, len(_ov_team)*40),
                     )
-                    st.plotly_chart(fig_ov_t, width='stretch', key="lu_ovrl_bar")
+                    st.plotly_chart(fig_ov_t, use_container_width=True, key="lu_ovrl_bar")
 
             # ─── Offense ──────────────────────────────────────────────────────
             with lu_off:
@@ -1978,7 +1979,7 @@ with tab_lu:
                     font_color="#c9d1d9", margin=dict(l=10,r=10,t=20,b=10),
                     xaxis=dict(showgrid=False), height=max(260, len(_pts_t)*40),
                 )
-                st.plotly_chart(fig_pts, width='stretch', key="lu_pts_bar")
+                st.plotly_chart(fig_pts, use_container_width=True, key="lu_pts_bar")
 
             # ─── Defense ──────────────────────────────────────────────────────
             with lu_def:
@@ -2004,7 +2005,7 @@ with tab_lu:
                              if c in _def_t.columns]
                 st.dataframe(
                     _def_t[_def_cols].rename(columns={"_lbl":"Player"}),
-                    width='stretch', hide_index=True,
+                    use_container_width=True, hide_index=True,
                 )
 
             # ─── Free Throw ───────────────────────────────────────────────────
@@ -2046,7 +2047,7 @@ with tab_lu:
                         xaxis=dict(range=[0,115], showgrid=False),
                         height=max(260, len(_ft_t)*40),
                     )
-                    st.plotly_chart(fig_ft, width='stretch', key="lu_ft_bar")
+                    st.plotly_chart(fig_ft, use_container_width=True, key="lu_ft_bar")
 
             # ─── 3-Point ──────────────────────────────────────────────────────
             with lu_3pt:
@@ -2086,7 +2087,7 @@ with tab_lu:
                         xaxis=dict(range=[0,115], showgrid=False),
                         height=max(260, len(_tp_t)*40),
                     )
-                    st.plotly_chart(fig_3p, width='stretch', key="lu_3pt_bar")
+                    st.plotly_chart(fig_3p, use_container_width=True, key="lu_3pt_bar")
 
             # ─── Clutch ───────────────────────────────────────────────────────
             with lu_clutch:
@@ -2119,7 +2120,7 @@ with tab_lu:
                         xaxis=dict(showgrid=False),
                         height=max(260, len(_q4_t)*40),
                     )
-                    st.plotly_chart(fig_q4, width='stretch', key="lu_q4_bar")
+                    st.plotly_chart(fig_q4, use_container_width=True, key="lu_q4_bar")
 
             # ─── Custom Lineup ────────────────────────────────────────────────
             with lu_custom:
@@ -2234,7 +2235,7 @@ with tab_lu:
                         "eFG%":   f"{_clu_efg:.1f}%",
                         "Avg OVRL": round(float(_clu_pool["OVRL"].mean()), 1),
                     }])
-                    st.dataframe(_clu_box_df, hide_index=True, width='stretch')
+                    st.dataframe(_clu_box_df, hide_index=True, use_container_width=True)
 
                     # ── Individual breakdown table ─────────────────────────────
                     st.markdown("**Individual Player Breakdown**")
@@ -2244,7 +2245,7 @@ with tab_lu:
                         if c in _clu_pool.columns]
                     st.dataframe(
                         _clu_pool[_show_cols].reset_index(drop=True),
-                        hide_index=True, width='stretch',
+                        hide_index=True, use_container_width=True,
                     )
 
 
@@ -2265,7 +2266,7 @@ with tab_gm:
                         "Tm":my,"Opp":opp,"Margin":my-opp,"Tracked":"✓" if g["tracked"] else ""})
 
         # Table: newest first
-        st.dataframe(pd.DataFrame(log), width='stretch', hide_index=True)
+        st.dataframe(pd.DataFrame(log), use_container_width=True, hide_index=True)
 
         # Scoring trend: sort ascending for chart x-axis
         st.subheader("Scoring Trend")
@@ -2367,7 +2368,7 @@ with tab_gm:
                     legend=dict(orientation="h", y=1.06),
                     font=dict(size=11, color="#c9d1d9"),
                 )
-                st.plotly_chart(_fig_sc_trend, width='stretch',
+                st.plotly_chart(_fig_sc_trend, use_container_width=True,
                                 key="sc_trend_games")
                 st.caption(
                     "🟡 Self-Created = attempts with no pass credited  ·  "
@@ -2475,7 +2476,7 @@ with tab_gm:
                             tot1g += q_sc[qq].get(t1id, 0)
                             tot2g += q_sc[qq].get(t2id, 0)
                         r1g["Total"] = tot1g; r2g["Total"] = tot2g
-                        st.dataframe(pd.DataFrame([r1g, r2g]), hide_index=True, width='stretch')
+                        st.dataframe(pd.DataFrame([r1g, r2g]), hide_index=True, use_container_width=True)
 
                     # ── Quarter PPP (above tabs) ─────────────────────────────
                     qp_g = {}
@@ -2511,7 +2512,7 @@ with tab_gm:
                         qp_r2["Total Poss"] = t2_tp
                         qp_r2["Total PPP"]  = round(t2_tpts/t2_tp,3) if t2_tp else "—"
                         st.caption("Possessions per Quarter · PPP = points per possession")
-                        st.dataframe(pd.DataFrame([qp_r1, qp_r2]), hide_index=True, width='stretch')
+                        st.dataframe(pd.DataFrame([qp_r1, qp_r2]), hide_index=True, use_container_width=True)
 
                     # ── Score flow chart ─────────────────────────────────────
                     show_score_flow_chart(g["id"], t1nm, t2nm, t1id, t2id,
@@ -2621,7 +2622,7 @@ with tab_gm:
                             ]
                             _ts_rows = [{"Stat":lbl, t1nm:t1_tot_g.get(k,0), t2nm:t2_tot_g.get(k,0)}
                                         for k,lbl in _stat_order]
-                            st.dataframe(pd.DataFrame(_ts_rows), width='stretch', hide_index=True)
+                            st.dataframe(pd.DataFrame(_ts_rows), use_container_width=True, hide_index=True)
                         else:
                             st.info("No events logged yet.")
 
@@ -2648,7 +2649,7 @@ with tab_gm:
                                           f"Calls vs {t2nm}":s["t2"],
                                           "Total":s["t1"]+s["t2"]}
                                          for s in _off_stats.values()]
-                            st.dataframe(pd.DataFrame(_off_rows), width='stretch', hide_index=True)
+                            st.dataframe(pd.DataFrame(_off_rows), use_container_width=True, hide_index=True)
 
                     # ── Hot Zones ────────────────────────────────────────────
                     with gtab_hz:
@@ -2680,66 +2681,151 @@ with tab_gm:
 #  MATCHUP SIMULATOR
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_mu:
-    other_teams = [t for t in all_teams if t["id"]!=team_id]
+    other_teams = [t for t in all_teams if t["id"] != team_id]
     if not other_teams:
         st.info("Need at least two teams.")
     else:
-        opp_map={t["name"]:t["id"] for t in other_teams}
-        opp_name=st.selectbox("Select Opponent", list(opp_map.keys()))
-        opp_id=opp_map[opp_name]
+        opp_map  = {t["name"]: t["id"] for t in other_teams}
+        opp_name = st.selectbox("Select Opponent", list(opp_map.keys()), key="mu_opp_sel")
+        opp_id   = opp_map[opp_name]
 
-        with st.spinner("Projecting…"):
-            mu=compute_matchup(team_id, opp_id)
+        mu = compute_matchup(team_id, opp_id)
 
-        st.subheader(f"{sel_name}  vs  {opp_name}")
+        adv_a2 = mu["adv_a"]
+        adv_b2 = mu["adv_b"]
+        prob_a = mu["prob_a"]
+        prob_b = 1 - prob_a
+        proj_a = mu["proj_a"]
+        proj_b = mu["proj_b"]
 
-        c1,c2,c3=st.columns(3)
-        c1.metric(sel_name,    f"{mu['proj_a']:.1f} pts")
-        c2.metric("Win Prob",  f"{mu['prob_a']*100:.0f}% / {(1-mu['prob_a'])*100:.0f}%")
-        c3.metric(opp_name,    f"{mu['proj_b']:.1f} pts")
+        # ── Summary header ────────────────────────────────────────────────────
+        st.divider()
+        hm1, hm2, hm3, hm4, hm5, hm6 = st.columns(6)
+        hm1.metric(f"{sel_name} Record",  f"{mu['wa']}-{mu['la']}")
+        hm2.metric("Proj Score",          f"{proj_a:.1f} pts")
+        hm3.metric(f"{sel_name} Win Prob", f"{prob_a*100:.0f}%")
+        hm4.metric(f"{opp_name} Win Prob", f"{prob_b*100:.0f}%")
+        hm5.metric("Proj Score",          f"{proj_b:.1f} pts")
+        hm6.metric(f"{opp_name} Record",  f"{mu['wb']}-{mu['lb']}")
 
-        method_lbl = "efficiency-based (tracked game data)" if mu["method"]=="efficiency" else "score-based"
+        # Win probability bar
+        bar_html = (
+            f"<div style='background:#2d333b;border-radius:6px;height:18px;overflow:hidden'>"
+            f"<div style='background:#3498db;width:{prob_a*100:.0f}%;height:100%;float:left;"
+            f"border-radius:6px 0 0 6px'></div>"
+            f"<div style='background:#e74c3c;width:{prob_b*100:.0f}%;height:100%;float:left;"
+            f"border-radius:0 6px 6px 0'></div></div>"
+            f"<div style='display:flex;justify-content:space-between;font-size:11px;"
+            f"color:#8b949e;margin-top:4px'>"
+            f"<span style='color:#3498db;font-weight:700'>{sel_name}</span>"
+            f"<span style='color:#e74c3c;font-weight:700'>{opp_name}</span></div>"
+        )
+        st.markdown(bar_html, unsafe_allow_html=True)
+        method_lbl = "efficiency-based (ORtg · DRtg · Pace)" if mu["method"] == "efficiency" else "score-based"
         st.caption(f"Projection method: {method_lbl}")
 
-        # Head-to-head history
-        if mu["h2h"]:
-            st.subheader("Head-to-Head History")
-            h2h_rows=[]
-            for g in mu["h2h"]:
-                if g["team1_id"]==team_id:
-                    me,them=g["home_score"],g["away_score"]
-                else:
-                    me,them=g["away_score"],g["home_score"]
-                res="W" if me>them else "L"
-                h2h_rows.append({"Date":g["date"],"Result":res,f"{sel_name}":me,f"{opp_name}":them})
-            st.dataframe(pd.DataFrame(h2h_rows), width='stretch', hide_index=True)
-
-        # Side-by-side stat comparison
-        st.subheader("Team Comparison")
-        comp={"Stat":[],sel_name:[],opp_name:[]}
-        basic_a=games_for_team(team_id); basic_b=games_for_team(opp_id)
-        wa2,la2,pfa2,paa2=record_from_games(basic_a,team_id)
-        wb2,lb2,pfb2,pab2=record_from_games(basic_b,opp_id)
-        gpa2=len(basic_a); gpb2=len(basic_b)
-
-        def add(label, va, vb): comp["Stat"].append(label); comp[sel_name].append(va); comp[opp_name].append(vb)
-        add("Record", f"{wa2}-{la2}", f"{wb2}-{lb2}")
-        add("Win %", f"{wa2/gpa2*100:.1f}%" if gpa2 else "—", f"{wb2/gpb2*100:.1f}%" if gpb2 else "—")
-        add("PPG", f"{pfa2/gpa2:.1f}" if gpa2 else "—", f"{pfb2/gpb2:.1f}" if gpb2 else "—")
-        add("PA/G", f"{paa2/gpa2:.1f}" if gpa2 else "—", f"{pab2/gpb2:.1f}" if gpb2 else "—")
-
-        adv_a2=mu["adv_a"]; adv_b2=mu["adv_b"]
+        # ── Visual stat comparison bars ───────────────────────────────────────
+        st.divider()
         if adv_a2 and adv_b2:
-            add("ORtg",  f"{adv_a2['ortg']:.1f}",  f"{adv_b2['ortg']:.1f}")
-            add("DRtg",  f"{adv_a2['drtg']:.1f}",  f"{adv_b2['drtg']:.1f}")
-            add("Net Rtg",f"{adv_a2['net']:+.1f}", f"{adv_b2['net']:+.1f}")
-            add("eFG%",  f"{adv_a2['efg']*100:.1f}%",  f"{adv_b2['efg']*100:.1f}%")
-            add("Opp eFG%",f"{adv_a2['oefg']*100:.1f}%",f"{adv_b2['oefg']*100:.1f}%")
-            add("TS%",   f"{adv_a2['ts']*100:.1f}%",  f"{adv_b2['ts']*100:.1f}%")
-            add("TOV%",  f"{adv_a2['tov_r']*100:.1f}%",f"{adv_b2['tov_r']*100:.1f}%")
-            add("OREB%", f"{adv_a2['oreb_p']*100:.1f}%",f"{adv_b2['oreb_p']*100:.1f}%")
-            add("Pace",  f"{adv_a2['pace']:.1f}", f"{adv_b2['pace']:.1f}")
-        st.dataframe(pd.DataFrame(comp), width='stretch', hide_index=True)
+            _bars_a = dict(pts=adv_a2["pts_pg"], efg=adv_a2["efg"]*100,
+                           ts=adv_a2["ts"]*100,  ast=adv_a2["ast_pg"],
+                           tov=adv_a2["tov_pg"], oreb=adv_a2["oreb_pg"],
+                           dreb=adv_a2["dreb_pg"],stl=adv_a2["stl_pg"],
+                           blk=adv_a2["blk_pg"])
+            _bars_b = dict(pts=adv_b2["pts_pg"], efg=adv_b2["efg"]*100,
+                           ts=adv_b2["ts"]*100,  ast=adv_b2["ast_pg"],
+                           tov=adv_b2["tov_pg"], oreb=adv_b2["oreb_pg"],
+                           dreb=adv_b2["dreb_pg"],stl=adv_b2["stl_pg"],
+                           blk=adv_b2["blk_pg"])
+            show_matchup_bars(_bars_a, _bars_b, sel_name, opp_name)
+
+        # ── Side-by-side stat table with ✅ markers ───────────────────────────
+        st.divider()
+        st.markdown("#### Side-by-Side Stats")
+
+        _cmp_stats = [
+            ("PPG",      mu["ppg_a"],               mu["ppg_b"],               True),
+            ("PA/G",     mu["papg_a"],              mu["papg_b"],              False),
+        ]
+        if adv_a2 and adv_b2:
+            _cmp_stats += [
+                ("ORtg",     adv_a2["ortg"],            adv_b2["ortg"],            True),
+                ("DRtg",     adv_a2["drtg"],            adv_b2["drtg"],            False),
+                ("Net Rtg",  adv_a2["net"],             adv_b2["net"],             True),
+                ("eFG%",     adv_a2["efg"]*100,         adv_b2["efg"]*100,         True),
+                ("Opp eFG%", adv_a2["oefg"]*100,        adv_b2["oefg"]*100,        False),
+                ("TS%",      adv_a2["ts"]*100,          adv_b2["ts"]*100,          True),
+                ("TOV%",     adv_a2["tov_r"]*100,       adv_b2["tov_r"]*100,       False),
+                ("OREB%",    adv_a2["oreb_p"]*100,      adv_b2["oreb_p"]*100,      True),
+                ("DREB%",    adv_a2["dreb_p"]*100,      adv_b2["dreb_p"]*100,      True),
+                ("FT Rate",  adv_a2["ft_r"],            adv_b2["ft_r"],            True),
+                ("Pace",     adv_a2["pace"],            adv_b2["pace"],            True),
+            ]
+
+        _cmp_rows = []
+        for label, va, vb, hib in _cmp_stats:
+            try:
+                va_f, vb_f = float(va), float(vb)
+            except (TypeError, ValueError):
+                continue
+            better_a = va_f >= vb_f if hib else va_f <= vb_f
+            _cmp_rows.append({
+                sel_name: f"{'✅ ' if better_a else ''}{va_f:.1f}",
+                "Stat":   label,
+                opp_name: f"{'✅ ' if not better_a else ''}{vb_f:.1f}",
+            })
+        if _cmp_rows:
+            st.dataframe(pd.DataFrame(_cmp_rows).set_index("Stat"), use_container_width=True)
+
+        # ── Head-to-head history ──────────────────────────────────────────────
+        st.divider()
+        st.markdown("#### 📜 Head-to-Head History")
+        if not mu["h2h"]:
+            st.info("These two teams have not played each other yet.")
+        else:
+            h2h_games = mu["h2h"]
+            # Count wins
+            h2h_w_me  = sum(1 for g in h2h_games
+                            if (g["team1_id"] == team_id and g["home_score"] > g["away_score"])
+                            or (g["team1_id"] != team_id and g["away_score"] > g["home_score"]))
+            h2h_w_opp = len(h2h_games) - h2h_w_me
+            hh1, hh2 = st.columns(2)
+            hh1.metric(f"{sel_name} wins",  h2h_w_me)
+            hh2.metric(f"{opp_name} wins",  h2h_w_opp)
+
+            for g in h2h_games:
+                if g["team1_id"] == team_id:
+                    me_sc, opp_sc = g["home_score"], g["away_score"]
+                else:
+                    me_sc, opp_sc = g["away_score"], g["home_score"]
+                i_won = me_sc > opp_sc
+                winner_name = sel_name  if i_won else opp_name
+                w_sc = me_sc  if i_won else opp_sc
+                l_sc = opp_sc if i_won else me_sc
+                loser_name  = opp_name  if i_won else sel_name
+                try:
+                    dl = _dth.strptime(g["date"], "%Y-%m-%d").strftime("%B %d, %Y")
+                except Exception:
+                    dl = g["date"] or "—"
+                st.markdown(
+                    f"<div class='score-card'>"
+                    f"<span style='color:#8b949e;font-size:11px'>{dl}</span><br>"
+                    f"<span style='color:#2ecc71;font-weight:700'>{winner_name}</span> "
+                    f"<span style='color:#f0a500;font-weight:800'>{w_sc}</span>  –  "
+                    f"<span style='color:#8b949e;font-weight:700'>{loser_name}</span> "
+                    f"<span style='color:#555d68;font-weight:800'>{l_sc}</span>"
+                    f"</div>", unsafe_allow_html=True)
+
+                # Check if tracked for box score
+                _g_tracked = query(
+                    "SELECT id, tracked FROM games WHERE team1_id IN (?,?) AND team2_id IN (?,?) "
+                    "AND date=? AND tracked=1 LIMIT 1",
+                    (team_id, opp_id, team_id, opp_id, g["date"]))
+                if _g_tracked:
+                    with st.expander("View Box Score"):
+                        _bsr1, _bsr2, _gi = compute_game_box_score(_g_tracked[0]["id"])
+                        if any(not r.get("_totals") for r in _bsr1 + _bsr2):
+                            show_game_box_score(_bsr1, _bsr2, {}, _gi, _cfg)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  NOTES

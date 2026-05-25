@@ -213,7 +213,7 @@ gc1, gc2 = st.columns([4, 1])
 if is_tracked:
     gc2.success("✓ Game Final")
 else:
-    if gc2.button("End Game", type="primary", width='stretch'):
+    if gc2.button("End Game", type="primary", use_container_width=True):
         t1_final, t2_final = live_score(game_id, t1id, t2id)
         execute("UPDATE games SET tracked=1, home_score=?, away_score=? WHERE id=?",
                 (t1_final, t2_final, game_id))
@@ -260,7 +260,7 @@ with st.expander("＋ Quick Add Player / Official"):
             qa_p_orig,
             key="qa_players_editor",
             num_rows="dynamic",
-            width='stretch',
+            use_container_width=True,
             column_config={
                 "team":     st.column_config.SelectboxColumn("Team",         options=qa_tnames, required=True),
                 "name":     st.column_config.TextColumn("Player Name",        required=True),
@@ -321,7 +321,7 @@ with st.expander("＋ Quick Add Player / Official"):
             qa_o_orig,
             key="qa_officials_editor",
             num_rows="dynamic",
-            width='stretch',
+            use_container_width=True,
             column_config={
                 "name":        st.column_config.TextColumn("Official Name", required=True),
                 "official_id": st.column_config.NumberColumn("Official ID", required=True, step=1),
@@ -470,7 +470,7 @@ else:
             tov_p  = c1.selectbox("Turnover By", all_opts[1:])
             stolen = c2.selectbox("Stolen By", all_opts)
 
-        submitted = st.form_submit_button("Log Event", type="primary", width='stretch')
+        submitted = st.form_submit_button("Log Event", type="primary", use_container_width=True)
 
     if submitted:
         q = int(quarter)
@@ -583,7 +583,7 @@ if q_scores:
         t2_tot += q_scores[q].get(t2id, 0)
     q_row_t1["Total"] = t1_tot
     q_row_t2["Total"] = t2_tot
-    st.dataframe(pd.DataFrame([q_row_t1, q_row_t2]), hide_index=True, width='stretch')
+    st.dataframe(pd.DataFrame([q_row_t1, q_row_t2]), hide_index=True, use_container_width=True)
 
 st.markdown("#### Play-by-Play")
 recent = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC", (game_id,))
@@ -611,7 +611,7 @@ else:
         log_rows.append({"Q":ev["quarter"],"Time":ev["time"],"Poss(s)":round(ev["possession_secs"],1),"Play":desc})
 
     pbp_df = pd.DataFrame(log_rows)
-    st.dataframe(pbp_df, width='stretch', hide_index=True)
+    st.dataframe(pbp_df, use_container_width=True, hide_index=True)
     st.download_button("⬇ Export Play-by-Play (CSV)", pbp_df.to_csv(index=False),
                        file_name=f"pbp_{game_id}.csv", mime="text/csv", key="dl_pbp")
 

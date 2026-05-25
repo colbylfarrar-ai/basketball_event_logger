@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from datetime import datetime
 from Database.db import query, initialize_database
 from helpers.settings_utils import get_all_settings, apply_theme_css
 from helpers.stats_players import (compute_player_rankings, compute_player_ratings,
@@ -97,11 +98,9 @@ if not all_dates:
 # Format for display
 def _fmt_date(d):
     try:
-        from datetime import datetime
         return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %-d, %Y")
     except Exception:
         try:
-            from datetime import datetime
             return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %d, %Y")
         except Exception:
             return str(d)

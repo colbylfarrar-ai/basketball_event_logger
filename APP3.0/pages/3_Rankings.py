@@ -7,10 +7,12 @@ import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import datetime
 from Database.db import query, initialize_database
 from helpers.constants import CLASS_ORDER, _RYG, _RYG_R
 from helpers.game_utils import streak, record_str, normalize
 from helpers.stats_rankings import game_team_stats, compute_all_rankings, compute_tracked_rankings
+from helpers.stats_team import compute_matchup
 from helpers.stats_players import (compute_game_box_score,
                                     compute_game_quarter_scores)
 from helpers.settings_utils import get_all_settings, apply_theme_css
@@ -136,8 +138,6 @@ _GRADIENT_COLS = {
     "PPP","Opp PPP","TOV/Poss",
 }
 
-_TABLE_COUNTER = 0
-
 def _apply_grads(styler, cols):
     for c in cols:
         if c not in styler.data.columns: continue
@@ -151,9 +151,10 @@ def _apply_grads(styler, cols):
     return styler
 
 def show_table(df, display_cols, sort_default, use_gradients=True):
-    global _TABLE_COUNTER
-    _TABLE_COUNTER += 1
-    uid = _TABLE_COUNTER
+    # Use a session-state counter so widget keys are stable across reruns
+    _k = "_tbl_counter"
+    st.session_state[_k] = st.session_state.get(_k, 0) + 1
+    uid = st.session_state[_k]
     if df.empty: st.info("No data available."); return
     filtered = apply_filters(df)
     if filtered.empty: st.info("No teams match the filters."); return
@@ -168,9 +169,9 @@ def show_table(df, display_cols, sort_default, use_gradients=True):
         grad_targets = [c for c in display_cols if c in _GRADIENT_COLS]
         styler = out.style.set_properties(**{"font-size":"13px"})
         styler = _apply_grads(styler, grad_targets)
-        st.dataframe(styler, width='stretch')
+        st.dataframe(styler, use_container_width=True)
     else:
-        st.dataframe(out, width='stretch')
+        st.dataframe(out, use_container_width=True)
 
 def show_class_breakdown(df, display_cols):
     if df.empty: return
@@ -184,7 +185,7 @@ def show_class_breakdown(df, display_cols):
             grad_targets = [c for c in display_cols if c in _GRADIENT_COLS]
             styler = out.style.set_properties(**{"font-size":"13px"})
             styler = _apply_grads(styler, grad_targets)
-            st.dataframe(styler, width='stretch')
+            st.dataframe(styler, use_container_width=True)
 
 def show_power_chart(df, title, n=20):
     fdf = _f(df)
@@ -203,7 +204,7 @@ def show_power_chart(df, title, n=20):
                       margin=dict(l=10,r=70,t=50,b=20),
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                       font=dict(size=12))
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 def show_net_rtg_chart(df):
     fdf = _f(df)
@@ -221,7 +222,7 @@ def show_net_rtg_chart(df):
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                       margin=dict(l=10,r=70,t=50,b=20),
                       xaxis=dict(gridcolor="rgba(128,128,128,0.15)"), font=dict(size=11))
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 def show_stat_leaders(df, stats):
     fdf = _f(df)
@@ -258,7 +259,7 @@ def show_scoring_dist_chart(df):
                       margin=dict(l=20,r=20,t=50,b=80),
                       legend=dict(orientation="h",y=1.08),
                       xaxis=dict(tickangle=-40), font=dict(size=11))
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 def show_team_radar(df, radar_stats, key="radar"):
     fdf = _f(df)
@@ -300,7 +301,7 @@ def show_team_radar(df, radar_stats, key="radar"):
         margin=dict(l=50,r=50,t=60,b=50), paper_bgcolor="rgba(0,0,0,0)",
         title="Team Comparison — normalized vs filter set (100 = best)",
         font=dict(size=11), legend=dict(orientation="h",y=-0.08))
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
 
 def show_four_factors_chart(df):
     fdf = _f(df)
@@ -348,7 +349,7 @@ def show_four_factors_chart(df):
         title=f"Four Factors Radar — {n_teams} team{'s' if n_teams!=1 else ''} (normalized within selection)",
         legend=dict(orientation="h",y=-0.15,font=dict(size=9)),
         margin=dict(l=50,r=50,t=70,b=100))
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, use_container_width=True)
     st.caption("100 = best among shown teams · inverted axes: lower raw = higher score for TOV, Opp eFG%, Opp FT Rate")
 
 
@@ -446,7 +447,6 @@ with tab_dash:
             s2_cls = "score-winner" if not t1_win else "score-loser"
             tracked_lbl = "📊 TRACKED" if g["tracked"] else "FINAL"
             try:
-                from datetime import datetime
                 d = datetime.strptime(g["date"],"%Y-%m-%d").strftime("%b %d")
             except Exception:
                 d = g["date"] or "—"
@@ -796,7 +796,7 @@ with tab_rank:
                                     plot_bgcolor="rgba(0,0,0,0)",
                                     paper_bgcolor="rgba(0,0,0,0)",
                                     margin=dict(l=10,r=70,t=50,b=20), font=dict(size=12))
-                st.plotly_chart(fig_d, width='stretch')
+                st.plotly_chart(fig_d, use_container_width=True)
         with d_ld:
             st.markdown("#### Defensive Leaders")
             show_stat_leaders(df_tr,[
@@ -862,7 +862,6 @@ def _render_teams_tab():
 </style>
 """, unsafe_allow_html=True)
 
-    from datetime import datetime as _dt_ts
     from collections import defaultdict as _dd_ts
 
     # ── Load all games once ───────────────────────────────────────────────────
@@ -1204,24 +1203,46 @@ with tab_matchup:
                 })
             if cmp_rows:
                 st.dataframe(pd.DataFrame(cmp_rows).set_index("Stat"),
-                             width='stretch')
+                             use_container_width=True)
 
             # ── Projected outcome ──────────────────────────────────────────────
             st.divider()
             st.markdown("#### 🔮 Projected Outcome")
-            ps1 = r1["Power Score"]
-            ps2 = r2["Power Score"]
-            total = ps1 + ps2
-            win_pct1 = ps1 / total * 100 if total else 50.0
-            win_pct2 = 100 - win_pct1
-            fav  = match_t1 if ps1 >= ps2 else match_t2
-            fav_pct = max(win_pct1, win_pct2)
-            proj_margin = abs(r1["PPG"] - r1["PA/G"]) * abs(ps1 - ps2) / 100
 
-            pr1, pr2, pr3 = st.columns(3)
-            pr1.metric(f"{match_t1} Win Prob", f"{win_pct1:.0f}%")
-            pr2.metric("Projected Margin", f"{proj_margin:.1f} pts", f"Favor: {fav}")
-            pr3.metric(f"{match_t2} Win Prob", f"{win_pct2:.0f}%")
+            # Try efficiency-based projection first; fall back to Power Score
+            _tid_map = {t["name"]: t["id"]
+                        for t in query("SELECT id, name FROM teams")}
+            _t1_id = _tid_map.get(match_t1)
+            _t2_id = _tid_map.get(match_t2)
+            _mu = compute_matchup(_t1_id, _t2_id) if (_t1_id and _t2_id) else None
+
+            if _mu and _mu["method"] == "efficiency":
+                win_pct1  = _mu["prob_a"] * 100
+                win_pct2  = 100 - win_pct1
+                proj_sc1  = _mu["proj_a"]
+                proj_sc2  = _mu["proj_b"]
+                proj_margin = abs(proj_sc1 - proj_sc2)
+                fav = match_t1 if proj_sc1 >= proj_sc2 else match_t2
+                method_note = "ORtg · DRtg · Pace (tracked data)"
+                pr1, pr2, pr3, pr4, pr5 = st.columns(5)
+                pr1.metric(f"{match_t1} Win Prob", f"{win_pct1:.0f}%")
+                pr2.metric(f"{match_t1} Proj Score", f"{proj_sc1:.1f}")
+                pr3.metric("Margin",  f"{proj_margin:.1f} pts", f"Favor: {fav}")
+                pr4.metric(f"{match_t2} Proj Score", f"{proj_sc2:.1f}")
+                pr5.metric(f"{match_t2} Win Prob", f"{win_pct2:.0f}%")
+            else:
+                ps1 = r1["Power Score"]
+                ps2 = r2["Power Score"]
+                total = ps1 + ps2
+                win_pct1 = ps1 / total * 100 if total else 50.0
+                win_pct2 = 100 - win_pct1
+                fav = match_t1 if ps1 >= ps2 else match_t2
+                proj_margin = abs(r1["PPG"] - r1["PA/G"]) * abs(ps1 - ps2) / 100
+                method_note = "Power Score ratio"
+                pr1, pr2, pr3 = st.columns(3)
+                pr1.metric(f"{match_t1} Win Prob", f"{win_pct1:.0f}%")
+                pr2.metric("Projected Margin", f"{proj_margin:.1f} pts", f"Favor: {fav}")
+                pr3.metric(f"{match_t2} Win Prob", f"{win_pct2:.0f}%")
 
             # Win prob bar
             bar_html = (
@@ -1236,8 +1257,7 @@ with tab_matchup:
                 f"<span style='color:#e74c3c;font-weight:700'>{match_t2}</span></div>"
             )
             st.markdown(bar_html, unsafe_allow_html=True)
-            st.caption("Win probability based on Power Score ratio. "
-                       "Margin estimate uses offensive/defensive differentials.")
+            st.caption(f"Projection method: {method_note}.")
 
             # ── History vs each other ──────────────────────────────────────────
             st.divider()
@@ -1273,7 +1293,6 @@ with tab_matchup:
                     loser  = g["t2"] if t1_win else g["t1"]
                     tracked_lbl = " 📊" if g["tracked"] else ""
                     try:
-                        from datetime import datetime as _dth
                         dl = _dth.strptime(g["date"], "%Y-%m-%d").strftime("%B %d, %Y")
                     except Exception:
                         dl = g["date"] or "—"
@@ -1330,7 +1349,6 @@ with tab_games:
 
         # ── Match Header ────────────────────────────────────────────────────
         try:
-            from datetime import datetime as _dt
             date_fmt = _dt.strptime(sel_game["date"],"%Y-%m-%d").strftime("%B %d, %Y")
         except Exception:
             date_fmt = sel_game["date"] or "—"

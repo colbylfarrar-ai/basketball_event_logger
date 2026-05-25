@@ -135,7 +135,7 @@ def _show_linescore(q_data: dict, t1name: str, t2name: str,
     st.dataframe(
         df_ls.style.apply(_ls_style, axis=1),
         hide_index=True,
-        width='stretch',
+        use_container_width=True,
     )
 
 
@@ -206,7 +206,7 @@ def show_game_box_score(rows_t1: list, rows_t2: list,
             with _tt:
                 st.dataframe(
                     _style_box(_build_traditional_df(_rows)),
-                    width='stretch',
+                    use_container_width=True,
                     hide_index=True,
                 )
                 st.caption(
@@ -218,7 +218,7 @@ def show_game_box_score(rows_t1: list, rows_t2: list,
             with _ta:
                 st.dataframe(
                     _style_box(_build_advanced_df(_rows)),
-                    width='stretch',
+                    use_container_width=True,
                     hide_index=True,
                 )
                 st.caption(

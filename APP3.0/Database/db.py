@@ -1,15 +1,46 @@
+"""
+db.py — SQLite connection factory with season-aware path resolution.
+
+The active season's DB path is read from Database/seasons.json on every
+connection.  If seasons.json doesn't exist, falls back to analytics.db.
+
+All reads/writes use SQLite exclusively — Supabase sync is handled
+separately via supabase_sync.py.
+"""
 import sqlite3
 from pathlib import Path
 
-DB_PATH    = Path(__file__).resolve().parent / "analytics.db"
-SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+_ROOT      = Path(__file__).resolve().parent
+_SCHEMA    = _ROOT / "schema.sql"
+_SEASONS   = _ROOT / "seasons.json"
 
-_INITIALIZED = False   # module-level guard — only run migrations once per process
+# Track which DB files have already been initialised this process
+_INIT_DONE: set[str] = set()
+
+
+# ── Active DB path ─────────────────────────────────────────────────────────────
+def get_db_path() -> Path:
+    """Return the SQLite path for the active season (reads seasons.json)."""
+    if _SEASONS.exists():
+        import json
+        try:
+            with open(_SEASONS, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            active = cfg.get("active_season")
+            if active:
+                season = cfg.get("seasons", {}).get(active, {})
+                db_file = season.get("db_file", "analytics.db")
+                p = _ROOT / db_file
+                p.parent.mkdir(parents=True, exist_ok=True)
+                return p
+        except Exception:
+            pass
+    return _ROOT / "analytics.db"
 
 
 # ── Connection factory ────────────────────────────────────────────────────────
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
@@ -17,27 +48,29 @@ def get_connection() -> sqlite3.Connection:
 
 # ── Database initialisation ───────────────────────────────────────────────────
 def initialize_database():
-    global _INITIALIZED
-    if _INITIALIZED:
+    """Idempotent — safe to call on every page load."""
+    db_path = get_db_path()
+    key = str(db_path)
+    if key in _INIT_DONE:
         return
-    _INITIALIZED = True
+    _INIT_DONE.add(key)
 
-    if not DB_PATH.exists():
-        print("Creating new analytics.db…")
+    if not db_path.exists():
+        print(f"Creating new database: {db_path.name}…")
 
-    conn = get_connection()
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
     try:
-        with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
-            conn.executescript(f.read())
+        if _SCHEMA.exists():
+            with open(_SCHEMA, "r", encoding="utf-8") as f:
+                conn.executescript(f.read())
 
         migrations = [
-            # Schema additions (idempotent via try/except OperationalError)
             "ALTER TABLE players        ADD COLUMN archived    INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE players        ADD COLUMN season      TEXT    NOT NULL DEFAULT 'Current'",
             "ALTER TABLE schedule       ADD COLUMN season      TEXT    NOT NULL DEFAULT 'Current'",
             "ALTER TABLE game_lineup_players ADD COLUMN plus_minus INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE teams          ADD COLUMN notes       TEXT    NOT NULL DEFAULT ''",
-            # Indexes — safe to run every startup (CREATE IF NOT EXISTS)
             "CREATE INDEX IF NOT EXISTS idx_glp_game_id       ON game_lineup_players(game_id)",
             "CREATE INDEX IF NOT EXISTS idx_glp_game_player   ON game_lineup_players(game_id, player_id)",
             "CREATE INDEX IF NOT EXISTS idx_glp_player_id     ON game_lineup_players(player_id)",
@@ -49,7 +82,6 @@ def initialize_database():
             "CREATE INDEX IF NOT EXISTS idx_games_team2        ON games(team2_id)",
             "CREATE INDEX IF NOT EXISTS idx_players_team_arch  ON players(team_id, archived)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo ON game_lineup_officials(game_id, official_id)",
-            # Settings table
             """CREATE TABLE IF NOT EXISTS app_settings (
                    key   TEXT PRIMARY KEY,
                    value TEXT NOT NULL DEFAULT ''
@@ -61,16 +93,16 @@ def initialize_database():
                 conn.execute(stmt)
                 conn.commit()
             except sqlite3.OperationalError:
-                pass   # column/index already exists — expected on re-runs
+                pass
             except Exception as exc:
-                print(f"[db] Unexpected migration error: {exc}\nSQL: {stmt[:80]}")
+                print(f"[db] Migration warning: {exc}")
 
         conn.commit()
     finally:
         conn.close()
 
 
-# ── SELECT helper ─────────────────────────────────────────────────────────────
+# ── SELECT ─────────────────────────────────────────────────────────────────────
 def query(sql: str, params: tuple = ()) -> list:
     conn = get_connection()
     try:
@@ -81,7 +113,7 @@ def query(sql: str, params: tuple = ()) -> list:
         conn.close()
 
 
-# ── INSERT / UPDATE / DELETE helper ──────────────────────────────────────────
+# ── INSERT / UPDATE / DELETE ───────────────────────────────────────────────────
 def execute(sql: str, params: tuple = ()):
     conn = get_connection()
     try:
@@ -92,7 +124,7 @@ def execute(sql: str, params: tuple = ()):
         conn.close()
 
 
-# ── Batch INSERT / UPDATE / DELETE helper ────────────────────────────────────
+# ── Batch INSERT / UPDATE / DELETE ─────────────────────────────────────────────
 def executemany(sql: str, seq_of_params: list) -> int:
     conn = get_connection()
     try:
@@ -103,5 +135,5 @@ def executemany(sql: str, seq_of_params: list) -> int:
         conn.close()
 
 
-# ── Auto-init on first import ─────────────────────────────────────────────────
+# ── Auto-init ──────────────────────────────────────────────────────────────────
 initialize_database()

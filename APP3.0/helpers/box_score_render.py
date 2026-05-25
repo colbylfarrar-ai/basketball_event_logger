@@ -85,7 +85,7 @@ def _style_box(df: pd.DataFrame) -> object:
 
     # Arrow safety: cast all object/string columns to str
     for c in display.columns:
-        if display[c].dtype == object or str(display[c].dtype).startswith('string'):
+        if display[c].dtype.kind == 'O' or isinstance(display[c].dtype, pd.StringDtype):
             if c != "+/-":
                 display[c] = display[c].astype(str)
 

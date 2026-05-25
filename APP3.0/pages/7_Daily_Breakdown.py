@@ -3,6 +3,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
+import warnings
+warnings.filterwarnings('ignore', message='.*select_dtypes.*', category=FutureWarning)
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -25,7 +27,7 @@ def _safe_df(data=None, *args, **kwargs):
     if data is not None and not isinstance(data, _PdStyler):
         data = data.copy()
         for _c in data.columns:
-            if data[_c].dtype == object or str(data[_c].dtype).startswith('string'):
+            if data[_c].dtype.kind == 'O' or isinstance(data[_c].dtype, pd.StringDtype):
                 data[_c] = data[_c].astype(str)
     return _st_df_orig(data, *args, **kwargs)
 st.dataframe = _safe_df

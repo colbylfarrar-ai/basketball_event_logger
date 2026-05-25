@@ -8,7 +8,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from Database.db import query, initialize_database
-from helpers.settings_utils import get_all_settings, apply_theme_css
+from helpers.settings_utils import get_all_settings, apply_page_config, apply_theme_css
 from helpers.stats_players import compute_player_rankings, compute_player_ratings, compute_official_stats
 from helpers.stats_team import compute_player_game_log
 from helpers.ui_utils import (PLOT_LAYOUT, patch_dataframe,
@@ -19,6 +19,7 @@ from helpers.ui_utils import (PLOT_LAYOUT, patch_dataframe,
 
 initialize_database()
 _cfg = get_all_settings()
+apply_page_config(_cfg)
 apply_theme_css(_cfg)
 patch_dataframe()
 

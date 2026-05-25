@@ -1,18 +1,28 @@
 """
 APP.py — Streamlit multipage entry point.
 
-On startup, if connected to the internet and Supabase is configured,
-pulls the latest data from Supabase into the local SQLite DB.
-After that the app runs entirely on SQLite (offline-safe).
+All data lives in Supabase PostgreSQL — no local database, no sync required.
 """
+import sys
 import streamlit as st
 from pathlib import Path
 
-# ── Page config ────────────────────────────────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# ── Page config (respects wide_mode setting) ───────────────────────────────────
+_layout = "wide"
+try:
+    from Database.db import query as _q
+    _rows = _q("SELECT value FROM app_settings WHERE key='wide_mode'")
+    if _rows and _rows[0]["value"] == "0":
+        _layout = "centered"
+except Exception:
+    pass
+
 st.set_page_config(
     page_title="Analytics Hub",
     page_icon="📊",
-    layout="wide",
+    layout=_layout,
     initial_sidebar_state="expanded",
 )
 
@@ -24,24 +34,7 @@ if _css_path.exists():
         unsafe_allow_html=True,
     )
 
-# ── Startup cloud sync (pull once per session) ─────────────────────────────────
-if "startup_sync_done" not in st.session_state:
-    st.session_state["startup_sync_done"] = True
-    try:
-        from Database.supabase_sync import auto_sync_on_startup, get_sync_status
-
-        status = get_sync_status()
-        if status["online"] and status["configured"]:
-            with st.spinner("☁️ Syncing from cloud…"):
-                result = auto_sync_on_startup()
-            # Only show if sync actually ran (not just "offline" message)
-            if "✅" in result:
-                st.toast("☁️ Cloud sync complete", icon="✅")
-        # If offline or not configured — silent, just use local DB
-    except Exception:
-        pass  # Never block startup due to sync errors
-
-# ── Landing content ─────────────────────────────────────────────────────────────
+# ── Landing content ────────────────────────────────────────────────────────────
 st.title("📊 Analytics Hub")
 st.markdown(
     "Use the **sidebar** to navigate: "
@@ -49,12 +42,10 @@ st.markdown(
     "Players Hub · Officials Hub · Daily Breakdown · Settings."
 )
 
-# ── Connection status badge ────────────────────────────────────────────────────
+# ── Supabase connection badge ──────────────────────────────────────────────────
 try:
-    from Database.supabase_sync import get_sync_status
-    s = get_sync_status()
-    if s["configured"]:
-        badge = "🟢 Online — cloud sync active" if s["online"] else "🔴 Offline — local database only"
-        st.caption(badge)
-except Exception:
-    pass
+    from Database.db import get_connection as _gc
+    _gc()
+    st.caption("🟢 Connected to Supabase")
+except Exception as _e:
+    st.warning(f"⚠️ Database not connected — {_e}")

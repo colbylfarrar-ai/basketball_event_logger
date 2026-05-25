@@ -117,38 +117,23 @@ def switch_season(season_name: str) -> bool:
 
 
 def add_season(name: str, supabase_url: str = "", supabase_key: str = "",
-               supabase_project_id: str = "") -> bool:
+               supabase_project_id: str = "",
+               supabase_db_password: str = "") -> bool:
     """
-    Register a new season. Creates a new SQLite DB file named
-    'seasons/<name>.db' and initialises its schema.
+    Register a new season (Supabase project credentials).
+    No local SQLite file is created — all data lives in Supabase.
     Returns True on success.
     """
     cfg = load_seasons_config()
     if name in cfg.get("seasons", {}):
         return False  # already exists
 
-    safe_name = re.sub(r"[^\w\-.]", "_", name)
-    db_file = f"seasons/{safe_name}.db"
-    db_path = Path(_CONFIG_PATH).resolve().parent / db_file
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Initialise schema on the new DB
-    schema_path = Path(_CONFIG_PATH).resolve().parent / "schema.sql"
-    if schema_path.exists():
-        conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA foreign_keys = ON")
-        with open(schema_path, "r", encoding="utf-8") as f:
-            conn.executescript(f.read())
-        # Apply same migrations as db.py
-        _apply_migrations(conn)
-        conn.close()
-
     cfg.setdefault("seasons", {})[name] = {
         "name": name,
-        "db_file": db_file,
         "supabase_url": supabase_url.strip(),
         "supabase_key": supabase_key.strip(),
         "supabase_project_id": supabase_project_id.strip(),
+        "supabase_db_password": supabase_db_password.strip(),
         "created": str(date.today()),
     }
     save_seasons_config(cfg)

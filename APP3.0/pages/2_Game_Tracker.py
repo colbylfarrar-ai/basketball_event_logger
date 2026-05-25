@@ -6,8 +6,11 @@ import pandas as pd
 import streamlit as st
 from Database.db import query, execute, initialize_database
 from helpers.constants import ZONES
+from helpers.settings_utils import get_all_settings, apply_page_config
 
 initialize_database()
+_cfg = get_all_settings()
+apply_page_config(_cfg)
 
 st.title("Game Tracker")
 

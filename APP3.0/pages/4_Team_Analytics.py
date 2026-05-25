@@ -22,12 +22,13 @@ from helpers.stats_players import (compute_player_ratings,
                                    compute_player_rankings,
                                    compute_game_box_score,
                                    compute_game_quarter_scores)
-from helpers.settings_utils import get_all_settings, apply_theme_css
+from helpers.settings_utils import get_all_settings, apply_page_config, apply_theme_css
 from helpers.box_score_render import show_game_box_score
 from helpers.ui_utils import PLOT_LAYOUT, patch_dataframe
 
 initialize_database()
 _cfg = get_all_settings()
+apply_page_config(_cfg)
 apply_theme_css(_cfg)
 patch_dataframe()
 

@@ -15,7 +15,7 @@ from helpers.stats_rankings import game_team_stats, compute_all_rankings, comput
 from helpers.stats_team import compute_matchup
 from helpers.stats_players import (compute_game_box_score,
                                     compute_game_quarter_scores)
-from helpers.settings_utils import get_all_settings, apply_theme_css
+from helpers.settings_utils import get_all_settings, apply_page_config, apply_theme_css
 from helpers.box_score_render import show_game_box_score, _show_linescore
 from helpers.charts import (show_shot_chart, show_scoring_pie,
                              show_four_factors_bars, show_efficiency_scatter,
@@ -25,6 +25,7 @@ from helpers.ui_utils import patch_dataframe
 
 initialize_database()
 _cfg = get_all_settings()
+apply_page_config(_cfg)
 apply_theme_css(_cfg)
 patch_dataframe()
 

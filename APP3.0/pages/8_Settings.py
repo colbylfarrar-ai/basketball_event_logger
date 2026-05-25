@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 from Database.db import query, initialize_database, get_db_path
-from helpers.settings_utils import get_all_settings, set_setting, apply_theme_css
+from helpers.settings_utils import get_all_settings, set_setting, apply_page_config, apply_theme_css
 from Database.supabase_sync import (
     load_seasons_config,
     save_seasons_config,
@@ -18,14 +18,12 @@ from Database.supabase_sync import (
     switch_season,
     add_season,
     update_season_credentials,
-    get_sync_status,
-    push_to_supabase,
-    pull_from_supabase,
     is_online,
 )
 
 initialize_database()
 cfg = get_all_settings()
+apply_page_config(cfg)
 apply_theme_css(cfg)
 
 st.title("⚙️ Settings")
@@ -78,12 +76,11 @@ all_seasons = list(seasons_cfg.get("seasons", {}).keys())
 
 # ── Current season status ──────────────────────────────────────────────────
 active_info = get_active_season_info()
-db_path     = get_db_path()
 
 col_a, col_b = st.columns(2)
 with col_a:
     st.markdown(f"**Active season:** `{active_name}`")
-    st.markdown(f"**Database file:** `{db_path.name}`")
+    st.markdown("**Database:** Supabase PostgreSQL")
 with col_b:
     rows_total = 0
     for tbl in ["teams", "games", "players", "game_events"]:
@@ -93,9 +90,12 @@ with col_b:
         except Exception:
             pass
     st.markdown(f"**Records (teams+games+players+events):** {rows_total:,}")
-    supabase_url = (active_info or {}).get("supabase_url", "")
-    cloud_icon = "☁️ linked" if supabase_url else "🔌 not linked"
-    st.markdown(f"**Cloud:** {cloud_icon}")
+    try:
+        from Database.db import get_connection as _gc
+        _gc()
+        st.markdown("**Connection:** 🟢 Connected")
+    except Exception:
+        st.markdown("**Connection:** 🔴 Not connected")
 
 st.markdown("---")
 
@@ -121,11 +121,11 @@ else:
 st.markdown("---")
 
 # ── Add New Season ─────────────────────────────────────────────────────────
-with st.expander("➕ Start a New Season", expanded=False):
+with st.expander("➕ Register a New Season", expanded=False):
     st.markdown(
-        "Creates a fresh, empty database for the new season. "
-        "Your current season's data is preserved. "
-        "Optionally link it to a Supabase project for cloud backup."
+        "Each season is a separate **Supabase project**. "
+        "Create a new project on [supabase.com](https://supabase.com), "
+        "apply the schema, then register its credentials here."
     )
     new_name = st.text_input(
         "Season name (e.g. 2025-26)",
@@ -133,24 +133,31 @@ with st.expander("➕ Start a New Season", expanded=False):
         placeholder="2025-26",
     )
     new_url = st.text_input(
-        "Supabase URL (optional — leave blank to add later)",
+        "Supabase URL",
         key="new_season_url",
         placeholder="https://yourproject.supabase.co",
     )
     new_key = st.text_input(
-        "Supabase Anon Key (optional)",
+        "Supabase Anon Key",
         key="new_season_key",
         type="password",
         placeholder="eyJhbGci…",
     )
+    new_dbpw = st.text_input(
+        "Database Password",
+        key="new_season_dbpw",
+        type="password",
+        placeholder="your-supabase-db-password",
+        help="Found at: Supabase dashboard → Project Settings → Database → Database Password",
+    )
     new_proj = st.text_input(
-        "Supabase Project ID (optional)",
+        "Project ID (optional)",
         key="new_season_proj",
         placeholder="abcdefghijklmnop",
     )
     col_ns1, col_ns2 = st.columns(2)
     with col_ns1:
-        if st.button("Create Season", key="btn_create_season", type="primary",
+        if st.button("Register Season", key="btn_create_season", type="primary",
                      use_container_width=True):
             if not new_name.strip():
                 st.error("Enter a season name.")
@@ -162,150 +169,109 @@ with st.expander("➕ Start a New Season", expanded=False):
                     supabase_url=new_url,
                     supabase_key=new_key,
                     supabase_project_id=new_proj,
+                    supabase_db_password=new_dbpw,
                 )
                 if ok:
                     st.success(
-                        f"Season **{new_name.strip()}** created with a fresh database. "
+                        f"Season **{new_name.strip()}** registered. "
                         "Click **Switch** above to activate it."
                     )
                     st.rerun()
                 else:
-                    st.error("Failed to create season. Check the name and try again.")
+                    st.error("Failed to register season. Check the name and try again.")
     with col_ns2:
         st.caption(
-            "💡 To get a Supabase project:\n"
-            "1. Go to [supabase.com](https://supabase.com)\n"
-            "2. Create a new project\n"
-            "3. Copy the URL and anon key from Project Settings → API"
+            "💡 Steps:\n"
+            "1. Create a new project on [supabase.com](https://supabase.com)\n"
+            "2. Run the schema SQL in the Supabase SQL editor\n"
+            "3. Copy the URL from Project Settings → API\n"
+            "4. Copy the DB password from Project Settings → Database"
         )
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CLOUD SYNC
+#  DATABASE CONNECTION
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("### ☁️ Cloud Sync (Supabase)")
+st.markdown("### 🗄️ Database Connection")
+st.caption(
+    "All data reads and writes go directly to Supabase PostgreSQL. "
+    "There is no local database — Supabase is the single source of truth."
+)
 
-sync_status = get_sync_status()
+_online = is_online()
+_db_ok  = False
+_db_err = ""
+try:
+    from Database.db import get_connection as _gc
+    _gc()
+    _db_ok = True
+except Exception as _exc:
+    _db_err = str(_exc)
 
-# Status indicators
-col_s1, col_s2, col_s3 = st.columns(3)
+col_s1, col_s2 = st.columns(2)
 with col_s1:
-    icon = "🟢" if sync_status["online"] else "🔴"
-    st.markdown(f"{icon} **Internet:** {'Online' if sync_status['online'] else 'Offline'}")
+    st.markdown(f"{'🟢' if _online else '🔴'} **Internet:** {'Online' if _online else 'Offline'}")
 with col_s2:
-    icon = "🟢" if sync_status["configured"] else "⚪"
-    st.markdown(f"{icon} **Supabase:** {'Configured' if sync_status['configured'] else 'Not configured'}")
-with col_s3:
-    icon = "🟢" if sync_status["client_ok"] else ("🔴" if sync_status["configured"] else "⚪")
-    st.markdown(f"{icon} **Connection:** {'OK' if sync_status['client_ok'] else ('Failed' if sync_status['configured'] else 'N/A')}")
+    st.markdown(f"{'🟢' if _db_ok else '🔴'} **PostgreSQL:** {'Connected' if _db_ok else 'Not connected'}")
 
-st.markdown("---")
-
-if not sync_status["configured"]:
-    # Check whether this is a deployed (no seasons.json) or local context
+if not _db_ok:
     _has_seasons_file = (
         Path(__file__).resolve().parent.parent / "Database" / "seasons.json"
     ).exists()
 
     if not _has_seasons_file:
-        # Deployed on Streamlit Cloud — guide them to use secrets
         st.warning(
-            "**Supabase not configured for this deployment.**\n\n"
-            "Add your credentials to **Streamlit secrets** (not here — the Settings "
-            "UI is for local use only):\n\n"
+            "**Database not configured.**\n\n"
+            "Add your Supabase database password to **Streamlit Secrets**:\n\n"
             "1. Go to your app on **share.streamlit.io**\n"
             "2. Click **⋮ → Settings → Secrets**\n"
-            "3. Add these two lines:\n"
+            "3. Add:\n"
             "```toml\n"
             "SUPABASE_URL = \"https://your-project.supabase.co\"\n"
-            "SUPABASE_KEY = \"eyJhbGci…your-anon-key\"\n"
+            "SUPABASE_DB_PASSWORD = \"your-database-password\"\n"
             "```\n"
-            "4. Save — the app restarts and sync activates automatically."
+            "Find your password at: "
+            "Supabase dashboard → Project Settings → Database → Database Password\n\n"
+            "4. Save — the app will restart and connect automatically."
         )
     else:
-        # Local — guide them to use the expander below
         st.info(
-            "No Supabase credentials for this season. "
-            "Expand **Edit Supabase Credentials** below to add them."
+            "No database password for this season. "
+            "Expand **Edit Credentials** below and add your Database Password."
         )
-else:
-    col_push, col_pull = st.columns(2)
-
-    with col_push:
-        st.markdown("**⬆ Push — Local → Cloud**")
-        st.caption(
-            "Uploads your local data to Supabase. "
-            "Overwrites any cloud data that differs. "
-            "Use this after working offline."
-        )
-        if st.button("Push to Supabase", key="btn_push", type="primary",
-                     use_container_width=True, disabled=not sync_status["online"]):
-            log_lines: list[str] = []
-
-            def _log(msg: str):
-                log_lines.append(msg)
-
-            with st.spinner("Pushing…"):
-                ok, msg = push_to_supabase(status_cb=_log)
-            if ok:
-                st.success(msg)
-            else:
-                st.error(msg)
-            if log_lines:
-                with st.expander("Push log", expanded=not ok):
-                    st.text("\n".join(log_lines))
-            st.cache_data.clear()
-
-    with col_pull:
-        st.markdown("**⬇ Pull — Cloud → Local**")
-        st.caption(
-            "Downloads Supabase data into your local DB. "
-            "**Replaces all local data.** "
-            "Use this to get changes from another device."
-        )
-        if st.button("Pull from Supabase", key="btn_pull", use_container_width=True,
-                     disabled=not sync_status["online"]):
-            confirm = st.session_state.get("pull_confirm", False)
-            if not confirm:
-                st.session_state["pull_confirm"] = True
-                st.warning(
-                    "⚠ This will overwrite ALL local data with the cloud version. "
-                    "Click **Pull from Supabase** again to confirm."
-                )
-            else:
-                st.session_state["pull_confirm"] = False
-                log_lines: list[str] = []
-
-                def _log2(msg: str):
-                    log_lines.append(msg)
-
-                with st.spinner("Pulling…"):
-                    ok, msg = pull_from_supabase(status_cb=_log2)
-                if ok:
-                    st.success(msg)
-                else:
-                    st.error(msg)
-                if log_lines:
-                    with st.expander("Pull log", expanded=not ok):
-                        st.text("\n".join(log_lines))
-                st.cache_data.clear()
+    if _db_err:
+        with st.expander("Error details"):
+            st.code(_db_err)
 
 st.markdown("---")
 
 # ── Update credentials ──────────────────────────────────────────────────────
-with st.expander("🔑 Edit Supabase Credentials for Current Season", expanded=False):
-    cur_url = (active_info or {}).get("supabase_url", "")
-    cur_key = (active_info or {}).get("supabase_key", "")
+with st.expander("🔑 Edit Credentials for Current Season", expanded=False):
+    cur_url  = (active_info or {}).get("supabase_url", "")
+    cur_key  = (active_info or {}).get("supabase_key", "")
     cur_proj = (active_info or {}).get("supabase_project_id", "")
+    cur_dbpw = (active_info or {}).get("supabase_db_password", "")
 
-    upd_url  = st.text_input("Supabase URL",        value=cur_url,  key="upd_url")
-    upd_key  = st.text_input("Supabase Anon Key",   value=cur_key,  key="upd_key",  type="password")
+    upd_url  = st.text_input("Supabase URL",       value=cur_url,  key="upd_url")
+    upd_key  = st.text_input("Supabase Anon Key",  value=cur_key,  key="upd_key",  type="password")
+    upd_dbpw = st.text_input("Database Password",  value=cur_dbpw, key="upd_dbpw", type="password",
+                              help="Supabase dashboard → Project Settings → Database → Database Password")
     upd_proj = st.text_input("Project ID (optional)", value=cur_proj, key="upd_proj")
 
     if st.button("Save Credentials", key="btn_save_creds", type="primary"):
         ok = update_season_credentials(active_name, upd_url, upd_key, upd_proj)
         if ok:
+            # Also save db password (update_season_credentials doesn't handle it)
+            try:
+                import json as _json
+                from Database.supabase_sync import load_seasons_config, save_seasons_config
+                _scfg = load_seasons_config()
+                if active_name in _scfg.get("seasons", {}):
+                    _scfg["seasons"][active_name]["supabase_db_password"] = upd_dbpw.strip()
+                    save_seasons_config(_scfg)
+            except Exception:
+                pass
             st.success("Credentials saved.")
             st.rerun()
         else:
@@ -357,3 +323,20 @@ with col_c2:
         set_setting("app_style", sel_style)
         st.success(f"Style set to {sel_style}.")
         st.rerun()
+
+st.markdown("---")
+
+# ── Wide mode toggle ────────────────────────────────────────────────────────────
+st.markdown("**Layout**")
+_wide_now = cfg.get("wide_mode", "1") == "1"
+_wide_new = st.toggle(
+    "Wide mode",
+    value=_wide_now,
+    key="toggle_wide_mode",
+    help="Use the full browser width. Turn off for a narrower centred layout.",
+)
+if _wide_new != _wide_now:
+    set_setting("wide_mode", "1" if _wide_new else "0")
+    st.success("Layout updated — reloading…")
+    st.cache_data.clear()
+    st.rerun()

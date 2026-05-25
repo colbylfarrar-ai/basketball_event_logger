@@ -20,6 +20,7 @@ DEFAULTS = {
     "accent_color":  "#f0a500",
     "color_scheme":  "Gold",
     "app_style":     "Dark",
+    "wide_mode":     "1",   # "1" = wide, "0" = centered
 }
 
 # Named accent-color presets  {name: hex}
@@ -113,6 +114,26 @@ def get_all_settings() -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 #  THEME CSS INJECTION
 # ══════════════════════════════════════════════════════════════════════════════
+
+def apply_page_config(settings: dict = None) -> None:
+    """
+    Call st.set_page_config based on stored settings.
+    Must be the first st.* call on the page — call before apply_theme_css.
+    Safe to call even if APP.py already called set_page_config (exception is swallowed).
+    """
+    if settings is None:
+        settings = get_all_settings()
+    wide = settings.get("wide_mode", DEFAULTS["wide_mode"]) == "1"
+    try:
+        st.set_page_config(
+            page_title="Analytics Hub",
+            page_icon="📊",
+            layout="wide" if wide else "centered",
+            initial_sidebar_state="expanded",
+        )
+    except Exception:
+        pass  # Already set by APP.py — ignore
+
 
 def apply_theme_css(settings: dict = None) -> None:
     """

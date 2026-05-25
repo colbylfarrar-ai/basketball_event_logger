@@ -1,247 +1,249 @@
 """
-db.py — SQLite connection factory with season-aware path resolution.
+db.py — PostgreSQL connection via Supabase (psycopg2).
 
-The active season's DB path is read from Database/seasons.json on every
-connection.  If seasons.json doesn't exist, falls back to analytics.db.
+All reads and writes go directly to Supabase's PostgreSQL database.
+Supabase is the single source of truth — no local SQLite fallback.
 
-Write-through Supabase sync: every execute() / executemany() call mirrors
-the change to Supabase immediately after the SQLite commit.  Failures are
-caught silently so the app never blocks on network issues.
+Credential resolution (first match wins):
+  1. st.secrets["SUPABASE_DB_URL"]                       full PostgreSQL URL
+  2. st.secrets["SUPABASE_URL"] + ["SUPABASE_DB_PASSWORD"]  built automatically
+  3. Database/seasons.json active season "db_url"          local override
+  4. Database/seasons.json supabase_url + supabase_db_password
+
+How to get your SUPABASE_DB_PASSWORD:
+  Supabase dashboard → Project Settings → Database → Database Password
 """
+
+import json
 import re
-import sqlite3
 from pathlib import Path
 
-_ROOT      = Path(__file__).resolve().parent
-_SCHEMA    = _ROOT / "schema.sql"
-_SEASONS   = _ROOT / "seasons.json"
+_ROOT    = Path(__file__).resolve().parent
+_SEASONS = _ROOT / "seasons.json"
 
-# Track which DB files have already been initialised this process
-_INIT_DONE: set[str] = set()
+# Per-table primary keys used for INSERT OR REPLACE → upsert translation
+_TABLE_PK: dict = {
+    "teams":                 "id",
+    "players":               "id",
+    "officials":             "id",
+    "games":                 "id",
+    "schedule":              "id",
+    "game_lineup_players":   "id",
+    "game_lineup_officials": ["game_id", "official_id"],
+    "game_events":           "id",
+    "game_event_lineup":     ["event_id", "player_id"],
+    "app_settings":          "key",
+}
+
+# ── Module-level connection singleton ─────────────────────────────────────────
+# Reused across Streamlit reruns (module cached in sys.modules).
+_conn = None
+_conn_url = ""
 
 
-# ── Active DB path ─────────────────────────────────────────────────────────────
-def get_db_path() -> Path:
-    """Return the SQLite path for the active season (reads seasons.json)."""
-    if _SEASONS.exists():
-        import json
-        try:
+# ── Credential resolution ─────────────────────────────────────────────────────
+
+def _get_db_url() -> str:
+    """Return the PostgreSQL connection URL, or '' if not configured."""
+    # 1 — Streamlit secrets: explicit full URL
+    try:
+        import streamlit as _st
+        url = _st.secrets.get("SUPABASE_DB_URL", "") or ""
+        if url:
+            return url.strip()
+
+        # 2 — build from SUPABASE_URL + SUPABASE_DB_PASSWORD
+        supa_url = _st.secrets.get("SUPABASE_URL", "") or ""
+        password = _st.secrets.get("SUPABASE_DB_PASSWORD", "") or ""
+        if supa_url and password:
+            m = re.search(r"https://([^.]+)\.supabase\.co", supa_url)
+            if m:
+                pid = m.group(1)
+                return (
+                    f"postgresql://postgres:{password}"
+                    f"@db.{pid}.supabase.co:5432/postgres?sslmode=require"
+                )
+    except Exception:
+        pass
+
+    # 3 — seasons.json
+    try:
+        if _SEASONS.exists():
             with open(_SEASONS, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             active = cfg.get("active_season")
             if active:
-                season = cfg.get("seasons", {}).get(active, {})
-                db_file = season.get("db_file", "analytics.db")
-                p = _ROOT / db_file
-                p.parent.mkdir(parents=True, exist_ok=True)
-                return p
-        except Exception:
-            pass
-    return _ROOT / "analytics.db"
-
-
-# ── Connection factory ────────────────────────────────────────────────────────
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(get_db_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
-
-
-# ── Database initialisation ───────────────────────────────────────────────────
-def initialize_database():
-    """Idempotent — safe to call on every page load."""
-    db_path = get_db_path()
-    key = str(db_path)
-    if key in _INIT_DONE:
-        return
-    _INIT_DONE.add(key)
-
-    if not db_path.exists():
-        print(f"Creating new database: {db_path.name}…")
-
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    try:
-        if _SCHEMA.exists():
-            with open(_SCHEMA, "r", encoding="utf-8") as f:
-                conn.executescript(f.read())
-
-        migrations = [
-            "ALTER TABLE players        ADD COLUMN archived    INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE players        ADD COLUMN season      TEXT    NOT NULL DEFAULT 'Current'",
-            "ALTER TABLE schedule       ADD COLUMN season      TEXT    NOT NULL DEFAULT 'Current'",
-            "ALTER TABLE game_lineup_players ADD COLUMN plus_minus INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE teams          ADD COLUMN notes       TEXT    NOT NULL DEFAULT ''",
-            "CREATE INDEX IF NOT EXISTS idx_glp_game_id       ON game_lineup_players(game_id)",
-            "CREATE INDEX IF NOT EXISTS idx_glp_game_player   ON game_lineup_players(game_id, player_id)",
-            "CREATE INDEX IF NOT EXISTS idx_glp_player_id     ON game_lineup_players(player_id)",
-            "CREATE INDEX IF NOT EXISTS idx_ge_game_id         ON game_events(game_id)",
-            "CREATE INDEX IF NOT EXISTS idx_gel_event_id       ON game_event_lineup(event_id)",
-            "CREATE INDEX IF NOT EXISTS idx_gel_player_id      ON game_event_lineup(player_id)",
-            "CREATE INDEX IF NOT EXISTS idx_games_tracked      ON games(tracked)",
-            "CREATE INDEX IF NOT EXISTS idx_games_team1        ON games(team1_id)",
-            "CREATE INDEX IF NOT EXISTS idx_games_team2        ON games(team2_id)",
-            "CREATE INDEX IF NOT EXISTS idx_players_team_arch  ON players(team_id, archived)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo ON game_lineup_officials(game_id, official_id)",
-            """CREATE TABLE IF NOT EXISTS app_settings (
-                   key   TEXT PRIMARY KEY,
-                   value TEXT NOT NULL DEFAULT ''
-               )""",
-        ]
-
-        for stmt in migrations:
-            try:
-                conn.execute(stmt)
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass
-            except Exception as exc:
-                print(f"[db] Migration warning: {exc}")
-
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# ── Supabase write-through helpers ────────────────────────────────────────────
-
-def _parse_sql_op(sql: str) -> tuple[str, str]:
-    """Return (operation, table_name) from a DML statement."""
-    s = sql.strip()
-    m_insert = re.match(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)", s, re.IGNORECASE)
-    if m_insert:
-        return "INSERT", m_insert.group(1)
-    m_update = re.match(r"UPDATE\s+(\w+)", s, re.IGNORECASE)
-    if m_update:
-        return "UPDATE", m_update.group(1)
-    m_delete = re.match(r"DELETE\s+FROM\s+(\w+)", s, re.IGNORECASE)
-    if m_delete:
-        return "DELETE", m_delete.group(1)
-    return "", ""
-
-
-def _supabase_write_through(
-    sql: str,
-    params: tuple,
-    lastrowid: int | None,
-    *,
-    batch_rows: list[dict] | None = None,
-) -> None:
-    """
-    Mirror a SQLite write to Supabase.
-    Non-blocking — any exception is swallowed so the app never breaks.
-
-    batch_rows: pre-built list of dicts (used by executemany paths).
-    """
-    try:
-        # Import here to avoid circular dependency at module load time
-        from Database.supabase_sync import get_supabase_client, COMPOSITE_PK_TABLES  # noqa: PLC0415
-        client = get_supabase_client()
-        if client is None:
-            return
-
-        op, table = _parse_sql_op(sql)
-        if not table:
-            return
-
-        pk_cols = COMPOSITE_PK_TABLES.get(table, "id")
-        on_conflict = ",".join(pk_cols) if isinstance(pk_cols, list) else pk_cols
-
-        # ── Batch path (executemany) ──────────────────────────────────────────
-        if batch_rows is not None:
-            if not batch_rows:
-                return
-            for i in range(0, len(batch_rows), 500):
-                client.table(table).upsert(
-                    batch_rows[i : i + 500], on_conflict=on_conflict
-                ).execute()
-            return
-
-        # ── Single-row paths ─────────────────────────────────────────────────
-        db = get_db_path()
-        conn2 = sqlite3.connect(db)
-        conn2.row_factory = sqlite3.Row
-        try:
-            if op == "INSERT" and lastrowid:
-                row = conn2.execute(
-                    f"SELECT * FROM {table} WHERE rowid=?", (lastrowid,)
-                ).fetchone()
-                if row:
-                    client.table(table).upsert(
-                        [dict(row)], on_conflict=on_conflict
-                    ).execute()
-
-            elif op == "UPDATE" and params:
-                # Most UPDATE statements end with WHERE id=? — last param is id.
-                # Try that first; fall back to a full-table re-push for tiny tables.
-                candidate_id = params[-1]
-                rows = conn2.execute(
-                    f"SELECT * FROM {table} WHERE id=?", (candidate_id,)
-                ).fetchall()
-                if rows:
-                    client.table(table).upsert(
-                        [dict(r) for r in rows], on_conflict=on_conflict
-                    ).execute()
-
-            elif op == "DELETE" and params:
-                # WHERE id=? pattern — last param is the id
-                if re.search(r"\bid\s*=\s*\?", sql, re.IGNORECASE):
-                    client.table(table).delete().eq("id", params[-1]).execute()
-        finally:
-            conn2.close()
-
-    except Exception:
-        pass  # Never let sync failure break the app
-
-
-# ── SELECT ─────────────────────────────────────────────────────────────────────
-def query(sql: str, params: tuple = ()) -> list:
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        return [dict(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
-
-
-# ── INSERT / UPDATE / DELETE ───────────────────────────────────────────────────
-def execute(sql: str, params: tuple = ()):
-    conn = get_connection()
-    try:
-        cur = conn.execute(sql, params)
-        conn.commit()
-        lastrowid = cur.lastrowid
-    finally:
-        conn.close()
-    _supabase_write_through(sql, params, lastrowid)
-    return lastrowid
-
-
-# ── Batch INSERT / UPDATE / DELETE ─────────────────────────────────────────────
-def executemany(sql: str, seq_of_params: list) -> int:
-    conn = get_connection()
-    try:
-        cur = conn.executemany(sql, seq_of_params)
-        conn.commit()
-        rowcount = cur.rowcount
-    finally:
-        conn.close()
-
-    # Build dicts from column names parsed out of the INSERT statement
-    # e.g.  INSERT INTO tbl (col1, col2) VALUES (?,?)
-    try:
-        col_match = re.search(r"\(([^)]+)\)\s+VALUES", sql, re.IGNORECASE)
-        if col_match and seq_of_params:
-            cols = [c.strip() for c in col_match.group(1).split(",")]
-            batch = [dict(zip(cols, row)) for row in seq_of_params]
-            _supabase_write_through(sql, (), None, batch_rows=batch)
+                info = cfg.get("seasons", {}).get(active, {})
+                url = info.get("db_url", "").strip()
+                if url:
+                    return url
+                supa_url = info.get("supabase_url", "")
+                password = info.get("supabase_db_password", "")
+                if supa_url and password:
+                    m = re.search(r"https://([^.]+)\.supabase\.co", supa_url)
+                    if m:
+                        pid = m.group(1)
+                        return (
+                            f"postgresql://postgres:{password}"
+                            f"@db.{pid}.supabase.co:5432/postgres?sslmode=require"
+                        )
     except Exception:
         pass
 
-    return rowcount
+    return ""
 
 
-# ── Auto-init ──────────────────────────────────────────────────────────────────
-initialize_database()
+# ── Connection factory ────────────────────────────────────────────────────────
+
+def get_connection():
+    """
+    Return (and cache) a psycopg2 connection to Supabase PostgreSQL.
+    autocommit=True so each statement is its own transaction — no explicit
+    commit/rollback needed.
+    """
+    global _conn, _conn_url
+
+    url = _get_db_url()
+    if not url:
+        raise RuntimeError(
+            "Supabase database password not configured.\n\n"
+            "Add SUPABASE_DB_PASSWORD to Streamlit Secrets:\n"
+            "  share.streamlit.io → your app → ⋮ → Settings → Secrets\n\n"
+            "Find your password at:\n"
+            "  Supabase dashboard → Project Settings → Database → Database Password"
+        )
+
+    # Reuse existing live connection
+    if _conn is not None and _conn_url == url:
+        try:
+            if not _conn.closed:
+                return _conn
+        except Exception:
+            pass
+
+    # (Re)connect
+    try:
+        if _conn is not None:
+            _conn.close()
+    except Exception:
+        pass
+
+    import psycopg2
+    import psycopg2.extras
+
+    new_conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+    new_conn.autocommit = True
+    _conn = new_conn
+    _conn_url = url
+    return _conn
+
+
+# ── SQL translation: SQLite → PostgreSQL ─────────────────────────────────────
+
+def _translate_sql(sql: str) -> str:
+    """Minimal SQLite→PostgreSQL translation applied to every statement."""
+    # ? → %s  (parameter placeholders)
+    sql = sql.replace("?", "%s")
+    # INSERT OR REPLACE → INSERT … ON CONFLICT DO UPDATE
+    sql = _translate_upsert(sql)
+    # Strip SQLite PRAGMAs (harmless no-ops otherwise)
+    sql = re.sub(r"PRAGMA\s+\w+[^\n;]*", "", sql, flags=re.IGNORECASE)
+    return sql.strip()
+
+
+def _translate_upsert(sql: str) -> str:
+    """Convert  INSERT OR REPLACE INTO tbl (cols) VALUES (…)
+       to       INSERT INTO tbl (cols) VALUES (…) ON CONFLICT (pk) DO UPDATE SET …"""
+    m = re.match(
+        r"INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\(([^)]+)\)\s+VALUES\s*(.+)",
+        sql.strip(), re.IGNORECASE | re.DOTALL,
+    )
+    if not m:
+        return sql
+
+    table    = m.group(1)
+    cols_str = m.group(2)
+    values   = m.group(3).rstrip(";")
+    cols     = [c.strip() for c in cols_str.split(",")]
+
+    pk     = _TABLE_PK.get(table, "id")
+    pk_set = set(pk) if isinstance(pk, list) else {pk}
+    conflict_clause = ", ".join(pk) if isinstance(pk, list) else pk
+
+    non_pk = [c for c in cols if c not in pk_set]
+    if non_pk:
+        update = ", ".join(f"{c}=EXCLUDED.{c}" for c in non_pk)
+        suffix = f"ON CONFLICT ({conflict_clause}) DO UPDATE SET {update}"
+    else:
+        suffix = f"ON CONFLICT ({conflict_clause}) DO NOTHING"
+
+    return f"INSERT INTO {table} ({cols_str}) VALUES {values} {suffix}"
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def query(sql: str, params: tuple = ()) -> list:
+    """Execute a SELECT and return a list of dicts."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(_translate_sql(sql), params or None)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def execute(sql: str, params: tuple = ()):
+    """
+    Execute an INSERT / UPDATE / DELETE.
+    For INSERT on tables with a plain integer 'id' PK, returns the new row id.
+    Returns None otherwise.
+    """
+    conn = get_connection()
+    with conn.cursor() as cur:
+        translated = _translate_sql(sql)
+
+        # Append RETURNING id for simple-PK inserts so callers get lastrowid
+        is_insert = bool(re.match(r"\s*INSERT", translated, re.IGNORECASE))
+        if is_insert:
+            table_m = re.search(r"INTO\s+(\w+)", translated, re.IGNORECASE)
+            table   = table_m.group(1) if table_m else ""
+            if _TABLE_PK.get(table, "id") == "id" and "RETURNING" not in translated.upper():
+                translated += " RETURNING id"
+
+        cur.execute(translated, params or None)
+
+        if is_insert and cur.description:
+            row = cur.fetchone()
+            return int(row["id"]) if row and "id" in row else None
+    return None
+
+
+def executemany(sql: str, seq_of_params: list) -> int:
+    """Execute a batch INSERT / UPDATE / DELETE efficiently."""
+    if not seq_of_params:
+        return 0
+    conn = get_connection()
+    with conn.cursor() as cur:
+        import psycopg2.extras
+        psycopg2.extras.execute_batch(
+            cur, _translate_sql(sql), seq_of_params, page_size=500
+        )
+    return len(seq_of_params)
+
+
+# ── Compatibility stubs ───────────────────────────────────────────────────────
+
+def initialize_database() -> None:
+    """
+    In PostgreSQL mode the schema lives in Supabase — nothing to create locally.
+    Called by every page; tests the connection so errors surface immediately.
+    """
+    try:
+        get_connection()
+    except RuntimeError:
+        raise   # Let the "add SUPABASE_DB_PASSWORD" message surface to the user
+    except Exception as exc:
+        raise RuntimeError(f"Could not connect to Supabase PostgreSQL: {exc}") from exc
+
+
+def get_db_path():
+    """Compatibility stub — no local DB file in PostgreSQL mode."""
+    return None

@@ -8,8 +8,12 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from Database.db import query, initialize_database
+from helpers.constants import CLASS_ORDER
 from helpers.settings_utils import get_all_settings, apply_page_config, apply_theme_css
-from helpers.stats_players import compute_player_rankings, compute_player_ratings, compute_official_stats
+from helpers.stats_players import (compute_player_rankings, compute_player_ratings,
+                                   compute_official_stats,
+                                   compute_player_rebound_onoff,
+                                   compute_player_assist_onoff)
 from helpers.stats_team import compute_player_game_log
 from helpers.ui_utils import (PLOT_LAYOUT, patch_dataframe,
                                bar_h as _bar_h,
@@ -158,10 +162,12 @@ if rnk.empty:
 # Numeric coerce
 NUM_COLS = ["PTS","REB","AST","STL","BLK","TOV","FGM","FGA","FG%",
             "2PM","2PA","2P%","3PM","3PA","3P%","FTM","FTA","FT%",
-            "eFG%","TS%","+/-","GS","SC","ShotRat","Stocks","Q4 PPG",
+            "eFG%","TS%","+/-","GS","SC","SCS","SCP","SCO","SCS%","SCP%","SCO%",
+            "ShotRat","Stocks","Q4 PPG",
             "3PAr","PaintFG%","PaintFGA","PaintFGM","DSh%",
             "FTr","PPS","PPSA","TOV%","USG","EFF","FIC","PRF","AST/TOV",
-            "PTS32","REB32","AST32","STL32","BLK32","TOV32","SC32","GP","MIN"]
+            "PTS32","REB32","AST32","STL32","BLK32","TOV32","SC32",
+            "SCS32","SCP32","SCO32","GP","MIN"]
 for c in NUM_COLS:
     if c in rnk.columns:
         rnk[c] = pd.to_numeric(rnk[c], errors="coerce").fillna(0)
@@ -173,7 +179,9 @@ if not rat.empty:
 
 def _label(row):
     num = f"#{row['#']} " if "#" in row and row["#"] else ""
-    return f"{num}{row['Player']} ({row['Team']})"
+    cls = f" · {row['Class']}" if "Class" in row and row.get("Class") else ""
+    pts = f" · {float(row.get('PTS', 0)):.1f}pts" if "PTS" in row else ""
+    return f"{num}{row['Player']} ({row['Team']}{cls}{pts})"
 
 rnk["_label"] = rnk.apply(_label, axis=1)
 if "STL" in rnk.columns and "BLK" in rnk.columns:
@@ -239,239 +247,61 @@ with tab1:
 
     st.markdown("---")
 
-    # ── Sub-tabs ─────────────────────────────────────────────────────────────
-    sub1, sub2, sub3, sub4, sub5, sub6, sub_adv, sub_ovrl = st.tabs([
-        "Scoring", "Rebounds", "Assists", "Defense", "Shooting", "Advanced", "🔬 Deep Analytics", "👑 Overall"
-    ])
+    # ── Charts row ────────────────────────────────────────────────────────────
+    ch1, ch2 = st.columns(2)
 
-    DISPLAY_COLS = ["Player","#","Team","GP","PTS","REB","AST","STL","BLK","FG%","eFG%","TS%"]
-
-    def _leaderboard_tab(parent, col, label, top_n=12, color="#f0a500", display_cols=None):
-        with parent:
-            if col not in rnk.columns:
-                st.info(f"No data for {label}.")
-                return
-            top = rnk.nlargest(top_n, col)[["_label", col]].copy()
-            top["_label"] = top["_label"].astype(str)
-            # Color gradient gold→blue by rank
-            _clrs = [("#f0a500" if i == 0 else "#58a6ff" if i < 3 else "#30363d")
-                     for i in range(len(top))]
-            fig = go.Figure(go.Bar(
-                x=top[col], y=top["_label"], orientation="h",
-                marker_color=list(reversed(_clrs)),
-                text=[f"{v:.2f}" if col in ("PPSA","PPS","FTr") else f"{v:.1f}"
-                      for v in top[col]],
+    with ch1:
+        if "PTS" in rnk.columns:
+            _tp = rnk.nlargest(10, "PTS")[["_label", "PTS"]].copy()
+            _tp["_label"] = _tp["_label"].astype(str)
+            _cp = ["#f0a500" if i == 0 else "#58a6ff" if i < 3 else "#30363d"
+                   for i in range(len(_tp))]
+            fig_lb_pts = go.Figure(go.Bar(
+                x=_tp["PTS"], y=_tp["_label"], orientation="h",
+                marker_color=list(reversed(_cp)),
+                text=[f"{v:.1f}" for v in _tp["PTS"]],
                 textposition="outside",
             ))
-            fig.update_layout(**PLOT_LAYOUT, title=f"Top {top_n} — {label}",
-                              yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-                              xaxis=dict(showgrid=False),
-                              height=max(340, top_n * 40))
-            st.plotly_chart(fig, use_container_width=True)
-            dcols = display_cols or DISPLAY_COLS
-            show_cols = [c for c in dcols if c in rnk.columns]
-            st.dataframe(rnk.nlargest(len(rnk), col)[show_cols],
-                         use_container_width=True, hide_index=True)
-
-    _leaderboard_tab(sub1, "PTS", "Points per Game",
-                     display_cols=["Player","#","Team","GP","PTS","FGM","FGA","FG%","eFG%","TS%","PPSA","Q4 PPG"])
-    _leaderboard_tab(sub2, "REB", "Rebounds per Game",
-                     display_cols=["Player","#","Team","GP","REB","OREB","DREB","+/-"])
-    _leaderboard_tab(sub3, "AST", "Assists per Game",
-                     display_cols=["Player","#","Team","GP","AST","TOV","AST/TOV","SC","PRF"])
-
-    with sub4:
-        if "Stocks" in rnk.columns:
-            df4 = rnk.copy()
-            top4 = df4.nlargest(12, "Stocks")[["_label","STL","BLK","Stocks"]].copy()
-            top4["_label"] = top4["_label"].astype(str)
-            fig4 = go.Figure()
-            fig4.add_trace(go.Bar(x=top4["STL"], y=top4["_label"], orientation="h",
-                                  name="STL", marker_color="#58a6ff"))
-            fig4.add_trace(go.Bar(x=top4["BLK"], y=top4["_label"], orientation="h",
-                                  name="BLK", marker_color="#f0a500"))
-            fig4.update_layout(**PLOT_LAYOUT, barmode="stack", title="Top 12 — Stocks (STL+BLK)",
-                               yaxis=dict(autorange="reversed"), height=max(340, 12*40))
-            st.plotly_chart(fig4, use_container_width=True)
-            dcols4 = ["Player","#","Team","GP","STL","BLK","Stocks","DREB","DSh%","TOV"]
-            show4  = [c for c in dcols4 if c in df4.columns]
-            st.dataframe(df4.nlargest(len(df4), "Stocks")[show4],
-                         use_container_width=True, hide_index=True)
-
-    with sub5:
-        shoot_cols = ["Player","#","Team","GP","FGM","FGA","FG%",
-                      "2PM","2PA","2P%","3PM","3PA","3P%",
-                      "FTM","FTA","FT%","FTr","eFG%","TS%","PPS","PPSA"]
-        show_s = [c for c in shoot_cols if c in rnk.columns]
-        rnk_s  = rnk[rnk["FGA"] >= 1].copy() if "FGA" in rnk.columns else rnk.copy()
-
-        # Shot distribution chart for top scorers
-        if all(c in rnk_s.columns for c in ["2PA","3PA","FTA"]) and not rnk_s.empty:
-            top_sc = rnk_s.nlargest(10, "PTS")
-            fig_dist = go.Figure()
-            fig_dist.add_trace(go.Bar(
-                name="2PT FGA", x=top_sc["_label"], y=top_sc["2PA"],
-                marker_color="#f0a500"))
-            fig_dist.add_trace(go.Bar(
-                name="3PT FGA", x=top_sc["_label"], y=top_sc["3PA"],
-                marker_color="#3498db"))
-            fig_dist.add_trace(go.Bar(
-                name="FTA",     x=top_sc["_label"], y=top_sc["FTA"],
-                marker_color="#2ecc71"))
-            fig_dist.update_layout(
-                **PLOT_LAYOUT, barmode="stack",
-                title="Shot Attempt Distribution — Top 10 Scorers",
-                xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
-                height=380, legend=dict(orientation="h", yanchor="bottom", y=1.02))
-            st.plotly_chart(fig_dist, use_container_width=True)
-
-        if "eFG%" in rnk_s.columns:
-            top_s = rnk_s.nlargest(12, "eFG%")[["_label","eFG%"]].copy()
-            top_s["_label"] = top_s["_label"].astype(str)
-            fig_s = _bar_h(top_s, "eFG%", "_label", color="#2ecc71",
-                           title="Top 12 — eFG% (min 1 FGA)")
-            st.plotly_chart(fig_s, use_container_width=True)
-        st.dataframe(rnk_s.sort_values("eFG%", ascending=False)[show_s],
-                     use_container_width=True, hide_index=True)
-
-    with sub6:
-        adv_cols = ["Player","#","Team","GP","GS","SC","ShotRat","Stocks",
-                    "Q4 PPG","3PAr","PaintFG%","AST/TOV","+/-"]
-        show_a = [c for c in adv_cols if c in rnk.columns]
-        if "GS" in rnk.columns:
-            top_a = rnk.nlargest(12, "GS")[["_label","GS"]].copy()
-            top_a["_label"] = top_a["_label"].astype(str)
-            fig_a = _bar_h(top_a, "GS", "_label", color="#9b59b6",
-                           title="Top 12 — Game Score (Hollinger)")
-            st.plotly_chart(fig_a, use_container_width=True)
-        st.dataframe(rnk.sort_values("GS", ascending=False)[show_a] if "GS" in rnk.columns
-                     else rnk[show_a], use_container_width=True, hide_index=True)
-
-    # ── Deep Analytics tab ───────────────────────────────────────────────────
-    with sub_adv:
-        st.markdown('<div class="section-hdr">🔬 Deep Analytics Leaderboards</div>',
-                    unsafe_allow_html=True)
-
-        adv_metrics = [
-            ("EFF",   "NBA Efficiency (PTS+REB+AST+STL+BLK−missed FG−missed FT−TOV)",   "#f0a500"),
-            ("FIC",   "Floor Impact Counter (weighted composite)",                          "#9b59b6"),
-            ("PRF",   "Points Responsible For (PTS + AST×2)",                             "#3498db"),
-            ("PPSA",  "Points Per Scoring Attempt (PTS÷(FGA+0.44×FTA))",                  "#2ecc71"),
-            ("PPS",   "Points Per Shot (PTS÷FGA)",                                        "#e67e22"),
-            ("FTr",   "Free Throw Rate (FTA÷FGA) — how often you draw fouls",             "#e74c3c"),
-            ("TOV%",  "Turnover Rate % (TOV÷(FGA+0.44×FTA+TOV)×100)",                    "#8b949e"),
-            ("USG",   "Usage Volume per Game (FGA+0.44×FTA+TOV) — ball in hands",        "#58a6ff"),
-        ]
-
-        desc_html = "".join(
-            f'<div style="display:inline-block;background:#161b22;border:1px solid #30363d;'
-            f'border-radius:8px;padding:8px 14px;margin:4px;font-size:11px;color:{clr}">'
-            f'<b>{m}</b> <span style="color:#8b949e">— {desc}</span></div>'
-            for m, desc, clr in adv_metrics
-        )
-        st.markdown(desc_html, unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        _adv_sel = st.selectbox("Select metric to rank",
-                                [m for m, _, _ in adv_metrics],
-                                key="adv_metric_sel")
-        _adv_color = next((c for m, _, c in adv_metrics if m == _adv_sel), "#f0a500")
-
-        if _adv_sel in rnk.columns:
-            _adv_top = rnk.nlargest(15, _adv_sel)[["_label", _adv_sel]].copy()
-            _adv_top["_label"] = _adv_top["_label"].astype(str)
-            _adv_clrs = [("#f0a500" if i == 0 else "#58a6ff" if i < 3 else "#30363d")
-                         for i in range(len(_adv_top))]
-            _adv_fig = go.Figure(go.Bar(
-                x=_adv_top[_adv_sel], y=_adv_top["_label"], orientation="h",
-                marker_color=list(reversed(_adv_clrs)),
-                text=[f"{v:.2f}" if _adv_sel in ("PPSA","PPS","FTr") else f"{v:.1f}"
-                      for v in _adv_top[_adv_sel]],
-                textposition="outside",
-            ))
-            _adv_fig.update_layout(
-                **PLOT_LAYOUT, title=f"Top 15 — {_adv_sel}",
+            fig_lb_pts.update_layout(
+                **PLOT_LAYOUT, title="Top 10 — Points per Game",
                 yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
                 xaxis=dict(showgrid=False),
-                height=max(380, 15 * 40))
-            st.plotly_chart(_adv_fig, use_container_width=True)
+                height=max(300, 10 * 38))
+            st.plotly_chart(fig_lb_pts, use_container_width=True, key="lb_pts_chart")
 
-        # Full advanced stats table
-        _full_adv = ["Player","#","Team","GP","EFF","FIC","PRF","PPSA","PPS",
-                     "FTr","TOV%","USG","GS","SC","ShotRat","AST/TOV"]
-        _full_adv_show = [c for c in _full_adv if c in rnk.columns]
-        st.dataframe(rnk.sort_values("EFF", ascending=False)[_full_adv_show] if "EFF" in rnk.columns
-                     else rnk[_full_adv_show], use_container_width=True, hide_index=True)
-
-        # EFF vs PRF scatter (size = Stocks)
-        if all(c in rnk.columns for c in ["EFF","PRF"]):
-            st.markdown("---")
-            st.markdown("**Efficiency vs. Impact (EFF vs PRF)**")
-            _sc_df = rnk[rnk["GP"] >= 1].copy()
-            _sc_df["_sz"] = (_sc_df["Stocks"] + 0.5) * 8 if "Stocks" in _sc_df.columns else 15
-            fig_ev = px.scatter(
-                _sc_df, x="EFF", y="PRF",
-                size="_sz", color="Team", hover_name="Player",
-                hover_data={"EFF":":.1f","PRF":":.1f","PTS":":.1f","AST":":.1f","_sz":False},
-                size_max=35,
-                color_discrete_sequence=px.colors.qualitative.Plotly,
-                labels={"EFF":"Efficiency (EFF)","PRF":"Points Responsible For (PRF)"},
-            )
-            fig_ev.update_layout(**PLOT_LAYOUT, height=440)
-            st.plotly_chart(fig_ev, use_container_width=True, key="adv_scatter")
-            st.caption("Bubble size = Stocks (STL+BLK). Top-right = high efficiency AND high impact.")
-
-    # ── Overall tab ──────────────────────────────────────────────────────────
-    with sub_ovrl:
-        if rat.empty or "OVRL" not in rat.columns:
-            st.info("No players with tracked games found.")
-        else:
-            _ov = rat.copy()
-            _ov["_label"] = _ov.apply(_label, axis=1).astype(str)
-            top_ov = _ov.nlargest(min(15, len(_ov)), "OVRL")
-
-            _colors = ["#f0a500" if i == 0 else "#58a6ff" if i < 3 else "#30363d"
-                       for i in range(len(top_ov))]
-            fig_ov = go.Figure(go.Bar(
-                x=top_ov["OVRL"], y=top_ov["_label"], orientation="h",
-                marker_color=list(reversed(_colors)),
-                text=[f"{v:.1f}" for v in top_ov["OVRL"]],
+    with ch2:
+        if "EFF" in rnk.columns:
+            _te = rnk.nlargest(10, "EFF")[["_label", "EFF"]].copy()
+            _te["_label"] = _te["_label"].astype(str)
+            _ce = ["#f0a500" if i == 0 else "#9b59b6" if i < 3 else "#30363d"
+                   for i in range(len(_te))]
+            fig_lb_eff = go.Figure(go.Bar(
+                x=_te["EFF"], y=_te["_label"], orientation="h",
+                marker_color=list(reversed(_ce)),
+                text=[f"{v:.1f}" for v in _te["EFF"]],
                 textposition="outside",
             ))
-            fig_ov.update_layout(
-                **PLOT_LAYOUT, title="Overall Rating (OVRL) — Top Players",
-                xaxis=dict(range=[0, 108], showgrid=False),
+            fig_lb_eff.update_layout(
+                **PLOT_LAYOUT, title="Top 10 — Efficiency (EFF)",
                 yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-                height=max(360, len(top_ov) * 42),
-            )
-            st.plotly_chart(fig_ov, use_container_width=True, key="ovrl_leaderboard")
+                xaxis=dict(showgrid=False),
+                height=max(300, 10 * 38))
+            st.plotly_chart(fig_lb_eff, use_container_width=True, key="lb_eff_chart")
 
-            # Component breakdown for top players
-            if all(c in _ov.columns for c in ["OFF","DEF","PLY","REB_R"]):
-                st.markdown("**Rating Component Breakdown — Top 10**")
-                _top10 = _ov.nlargest(10, "OVRL")
-                fig_comp = go.Figure()
-                comps = [("OFF","⚡ Offense","#f0a500"),("DEF","🛡 Defense","#3498db"),
-                         ("PLY","🎯 Playmaking","#2ecc71"),("REB_R","📦 Rebounding","#e67e22")]
-                for col, name, clr in comps:
-                    fig_comp.add_trace(go.Bar(
-                        name=name, x=_top10["_label"], y=_top10[col],
-                        marker_color=clr))
-                fig_comp.update_layout(
-                    **PLOT_LAYOUT, barmode="group",
-                    xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
-                    yaxis=dict(range=[0,105], title="Score (0–100)"),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                    height=400)
-                st.plotly_chart(fig_comp, use_container_width=True, key="ovrl_comp")
+    st.markdown("---")
 
-            # Full table
-            _ov_cols = ["Player","#","Team","GP","OVRL","OFF","DEF","PLY","REB_R",
-                        "PTS","AST","REB","STL","BLK","TOV","TS%"]
-            _show_ov = [c for c in _ov_cols if c in _ov.columns]
-            st.dataframe(_ov.nlargest(len(_ov), "OVRL")[_show_ov],
-                         use_container_width=True, hide_index=True)
-            st.caption("OVRL weights: OFF 30% · PLY 25% · DEF 25% · REB_R 20%. Min 1 GP.")
+    # ── Full stats dashboard table ────────────────────────────────────────────
+    st.markdown('<div class="section-hdr">📋 Full Stats Dashboard</div>',
+                unsafe_allow_html=True)
+    _sort_opts = [c for c in ["PTS","REB","AST","STL","BLK","EFF","eFG%","TS%","+/-","TOV"]
+                  if c in rnk.columns]
+    _lb_sort = st.selectbox("Sort by", _sort_opts, key="lb_sort_col")
+    _lb_asc  = (_lb_sort == "TOV")
+    _dash_cols = ["Player","#","Team","Class","GP","PTS","REB","AST","STL","BLK",
+                  "TOV","FG%","eFG%","TS%","+/-","EFF"]
+    _dash_show = [c for c in _dash_cols if c in rnk.columns]
+    _lb_src = rnk.sort_values(_lb_sort, ascending=_lb_asc) if _lb_sort in rnk.columns else rnk
+    st.dataframe(_lb_src[_dash_show], use_container_width=True, hide_index=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -512,9 +342,18 @@ with tab2:
         if rat_f.empty:
             st.info(f"No players with {_gp_min}+ games played.")
         else:
-            sub_ovrl_r, sub_off, sub_def, sub_ply, sub_reb = st.tabs([
+            # Pre-compute within-class rank for every player (by OVRL)
+            if "Class" in rat_f.columns and "OVRL" in rat_f.columns:
+                rat_f = rat_f.copy()
+                rat_f["Class Rank"] = (
+                    rat_f.groupby("Class")["OVRL"]
+                         .rank(method="min", ascending=False)
+                         .astype(int)
+                )
+
+            sub_ovrl_r, sub_off, sub_def, sub_ply, sub_reb, sub_cls = st.tabs([
                 "👑 Overall (OVRL)", "⚡ Offense (OFF)", "🛡️ Defense (DEF)",
-                "🎯 Playmaking (PLY)", "📦 Rebounding (REB_R)"
+                "🎯 Playmaking (PLY)", "📦 Rebounding (REB_R)", "📚 Class Rankings"
             ])
 
             MEDAL_STYLES = ["medal-gold","medal-silver","medal-bronze"]
@@ -541,7 +380,7 @@ with tab2:
                             """, unsafe_allow_html=True)
 
                     st.markdown("<br>", unsafe_allow_html=True)
-                    dcols = ["Player","#","Team","GP","PTS","AST","REB","STL","BLK","eFG%","TS%",col]
+                    dcols = ["Player","#","Team","Class","Class Rank","GP","OVRL","PTS","AST","REB","STL","BLK","eFG%","TS%",col]
                     show_c = [c for c in dcols if c in sorted_r.columns]
                     st.dataframe(sorted_r[show_c], use_container_width=True, hide_index=True)
 
@@ -579,8 +418,8 @@ with tab2:
                             """, unsafe_allow_html=True)
 
                     st.markdown("<br>", unsafe_allow_html=True)
-                    _ov_r_cols = ["Player","#","Team","GP","OVRL","OFF","DEF","PLY","REB_R",
-                                  "PTS","AST","REB","STL","BLK","TOV","TS%"]
+                    _ov_r_cols = ["Player","#","Team","Class","Class Rank","GP","OVRL",
+                                  "OFF","DEF","PLY","REB_R","PTS","AST","REB","STL","BLK","TOV","TS%"]
                     _ov_r_show = [c for c in _ov_r_cols if c in _ov_r.columns]
                     st.dataframe(_ov_r[_ov_r_show], use_container_width=True, hide_index=True)
 
@@ -605,90 +444,275 @@ with tab2:
             _rating_tab(sub_ply, "PLY",   "Playmaking Rating",  "#2ecc71")
             _rating_tab(sub_reb, "REB_R", "Rebounding Rating",  "#e67e22")
 
+            # ── Class Rankings tab ────────────────────────────────────────────
+            with sub_cls:
+                if "Class" not in rat_f.columns or "OVRL" not in rat_f.columns:
+                    st.info("Class or OVRL data not available.")
+                else:
+                    _cls_order = [c for c in CLASS_ORDER if c in rat_f["Class"].values]
+
+                    # Rating to display picker
+                    _cls_metric = st.selectbox(
+                        "Rank by",
+                        ["OVRL","OFF","DEF","PLY","REB_R"],
+                        key="cls_rank_metric",
+                    )
+
+                    st.markdown("---")
+
+                    for _cls in _cls_order:
+                        _cls_df = (
+                            rat_f[rat_f["Class"] == _cls]
+                            .copy()
+                            .sort_values(_cls_metric, ascending=False)
+                            .reset_index(drop=True)
+                        )
+                        if _cls_df.empty:
+                            continue
+
+                        # Class header
+                        _cls_leader = _cls_df.iloc[0]
+                        st.markdown(
+                            f"<div style='background:linear-gradient(135deg,#0d1117,#161b22);"
+                            f"border:1px solid #30363d;border-radius:12px;"
+                            f"padding:14px 18px;margin-bottom:12px'>"
+                            f"<span style='font-size:18px;font-weight:800;color:#f0a500'>"
+                            f"🏫 {_cls} Classification</span>"
+                            f"<span style='font-size:13px;color:#8b949e;margin-left:12px'>"
+                            f"{len(_cls_df)} players · ranked by {_cls_metric}</span>"
+                            f"<span style='font-size:13px;color:#c9d1d9;margin-left:12px'>"
+                            f"Class leader: <b>{_cls_leader['Player']}</b> "
+                            f"({_cls_leader[_cls_metric]:.1f} {_cls_metric})</span>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        # Top-3 podium for this class
+                        _cls_top3 = _cls_df.head(3)
+                        _pod_cols = st.columns(min(3, len(_cls_top3)))
+                        for _pi, (_, _pr) in enumerate(_cls_top3.iterrows()):
+                            with _pod_cols[_pi]:
+                                st.markdown(
+                                    f"<div class='{MEDAL_STYLES[_pi]}'>"
+                                    f"<div class='medal-icon'>{MEDAL_ICONS[_pi]}</div>"
+                                    f"<div class='medal-name'>{_pr['Player']}</div>"
+                                    f"<div class='medal-sub'>{_pr.get('Team','')}</div>"
+                                    f"<div class='medal-value'>{_pr[_cls_metric]:.1f}</div>"
+                                    f"<div class='medal-sub'>{_cls_metric}</div>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
+
+                        st.markdown("<br>", unsafe_allow_html=True)
+
+                        # Bar chart — top 10 in class
+                        _cls_top10 = _cls_df.head(10).iloc[::-1]   # ascending for h-bar
+                        _bar_clrs = [
+                            "#f0a500" if i == len(_cls_top10) - 1
+                            else "#58a6ff" if i >= len(_cls_top10) - 3
+                            else "#30363d"
+                            for i in range(len(_cls_top10))
+                        ]
+                        _cls_lbl = _cls_top10.apply(
+                            lambda r: f"#{int(_cls_df.index[_cls_df['Player']==r['Player']].min())+1} {r['Player']} ({r.get('Team','')[:12]})",
+                            axis=1,
+                        )
+                        _fig_cls = go.Figure(go.Bar(
+                            x=_cls_top10[_cls_metric],
+                            y=_cls_lbl,
+                            orientation="h",
+                            marker_color=_bar_clrs,
+                            text=[f"{v:.1f}" for v in _cls_top10[_cls_metric]],
+                            textposition="outside",
+                        ))
+                        _fig_cls.update_layout(
+                            **{k: v for k, v in PLOT_LAYOUT.items() if k != "margin"},
+                            height=max(280, len(_cls_top10) * 38),
+                            xaxis=dict(range=[0, 108], showgrid=False),
+                            yaxis=dict(tickfont=dict(size=11)),
+                            margin=dict(l=0, r=60, t=10, b=10),
+                        )
+                        st.plotly_chart(_fig_cls, use_container_width=True,
+                                        key=f"cls_bar_{_cls}_{_cls_metric}")
+
+                        # Full class table with class-internal rank
+                        _cls_df = _cls_df.copy()
+                        if "Class Rank" in _cls_df.columns:
+                            _cls_df.drop(columns=["Class Rank"], inplace=True)
+                        _cls_df.insert(0, "Class Rank", range(1, len(_cls_df) + 1))
+                        _cls_show_cols = [c for c in
+                            ["Class Rank","Player","#","Team","GP",_cls_metric,
+                             "OFF","DEF","PLY","REB_R","OVRL","PTS","AST","REB"]
+                            if c in _cls_df.columns]
+                        # Deduplicate if _cls_metric already in list
+                        seen = set(); _cls_show_cols = [
+                            c for c in _cls_show_cols
+                            if not (c in seen or seen.add(c))
+                        ]
+                        with st.expander(f"Full {_cls} table ({len(_cls_df)} players)", expanded=False):
+                            st.dataframe(_cls_df[_cls_show_cols],
+                                         use_container_width=True, hide_index=True)
+
+                        st.markdown("---")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 3 – BEST FIVE
+# TAB 3 – BEST FIVE  (top 5 per individual category)
 # ─────────────────────────────────────────────────────────────────────────────
 with tab3:
-    def _build_best_five(df_rat, df_rnk):
-        if df_rat.empty:
-            return []
-        needed = ["OFF","DEF","PLY","REB_R","Player","Team"]
-        if not all(c in df_rat.columns for c in needed):
-            return []
-        pool = df_rat.copy()
-        used = set()
+    if rnk.empty and rat.empty:
+        st.info("No player data available.")
+    else:
+        # ── Filters ──────────────────────────────────────────────────────────
+        _b5_c1, _b5_c2, _b5_c3 = st.columns(3)
+        _b5_avail_cls = CLASS_ORDER
+        _b5_sel_cls = _b5_c1.multiselect(
+            "Class Filter", _b5_avail_cls, default=_b5_avail_cls, key="b5_cls_sel"
+        )
+        _b5_gender = _b5_c2.radio("Gender", ["All", "M", "F"], horizontal=True, key="b5_gender")
+        _b5_min_gp = _b5_c3.number_input("Min GP", min_value=0, value=1, step=1, key="b5_min_gp")
 
-        def _pick(metric):
-            src = pool[~pool.index.isin(used)]
-            if src.empty: return None
-            row = src.nlargest(1, metric).iloc[0]
-            used.add(row.name)
-            return row
+        # Apply filters to rnk and rat
+        _b5_rnk = rnk.copy()
+        _b5_rat = rat.copy()
+        if _b5_sel_cls and "Class" in _b5_rnk.columns:
+            _b5_rnk = _b5_rnk[_b5_rnk["Class"].isin(_b5_sel_cls)]
+        if _b5_gender != "All" and "Gender" in _b5_rnk.columns:
+            _b5_rnk = _b5_rnk[_b5_rnk["Gender"] == _b5_gender]
+        if "GP" in _b5_rnk.columns:
+            _b5_rnk = _b5_rnk[_b5_rnk["GP"] >= _b5_min_gp]
+        if _b5_sel_cls and "Class" in _b5_rat.columns:
+            _b5_rat = _b5_rat[_b5_rat["Class"].isin(_b5_sel_cls)]
 
-        roles = [
-            ("OFF",   "#1 Primary Scorer",  "Highest OFF"),
-            ("PLY",   "#2 Playmaker",       "Highest PLY"),
-            ("DEF",   "#3 Defender",        "Highest DEF"),
-            ("REB_R", "#4 Rebounder",       "Highest REB_R"),
+        # Merge OVRL onto rnk pool for display
+        _b5_merged = _b5_rnk.copy()
+        if not _b5_rat.empty and "pid" in _b5_rat.columns and "pid" in _b5_merged.columns:
+            _b5_ovrl = _b5_rat[["pid", "OVRL"]].rename(columns={"OVRL": "_ovrl_merge"})
+            _b5_merged = _b5_merged.merge(_b5_ovrl, on="pid", how="left")
+
+        medals_b5 = ["🥇", "🥈", "🥉", "  4", "  5"]
+        _b5_rank_colors = ["#f0a500", "#adb5bd", "#cd7f32", "#555d68", "#555d68"]
+
+        def _show_top5_category(df, stat_col, label, color, fmt=".1f", hib=True):
+            """Render a top-5 card list for one stat category."""
+            if df.empty or stat_col not in df.columns:
+                st.info(f"No {label} data available.")
+                return
+            sorted_df = df.sort_values(stat_col, ascending=not hib).head(5).reset_index(drop=True)
+            for i, (_, row) in enumerate(sorted_df.iterrows()):
+                val    = row.get(stat_col, 0)
+                name   = row.get("Player", "—")
+                team   = row.get("Team", "—")
+                cls    = row.get("Class", "")
+                num    = f"#{row.get('#', '')}" if row.get("#") else ""
+                ovrl   = row.get("_ovrl_merge", None)
+                ovrl_s = f"  OVRL {ovrl:.0f}" if ovrl and not pd.isna(ovrl) else ""
+                pts    = row.get("PTS", None)
+                reb    = row.get("REB", None)
+                ast    = row.get("AST", None)
+                stat_line = "  ·  ".join(
+                    f"{s:.1f} {l}" for s, l in
+                    [(pts, "PTS"), (reb, "REB"), (ast, "AST")]
+                    if s is not None and l != label
+                )
+                rc = _b5_rank_colors[i]
+                st.markdown(
+                    f"<div class='lu-row-card'>"
+                    f"<div class='lu-rank' style='color:{rc}'>{medals_b5[i]}</div>"
+                    f"<div class='lu-body'>"
+                    f"  <div class='lu-name'>{num} {name}</div>"
+                    f"  <div class='lu-meta'>{team} · {cls}{ovrl_s}</div>"
+                    f"  <div class='lu-meta' style='font-size:10px'>{stat_line}</div>"
+                    f"</div>"
+                    f"<div class='lu-score' style='color:{color}'>{val:{fmt}}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # ── Category grid ─────────────────────────────────────────────────────
+        # Row 1: OVRL · PTS · AST
+        st.markdown('<div class="section-hdr">League Leaders — Top 5 Per Category</div>',
+                    unsafe_allow_html=True)
+
+        # Use merged df for OVRL display, rnk for stat categories
+        _b5_ovrl_df = _b5_merged.copy()
+
+        _cat_cfg = [
+            ("_ovrl_merge", "Overall (OVRL)", "#f0a500", _b5_ovrl_df),
+            ("PTS",         "Points",         "#e74c3c", _b5_merged),
+            ("AST",         "Assists",        "#2ecc71", _b5_merged),
+            ("REB",         "Rebounds",       "#3498db", _b5_merged),
+            ("STL",         "Steals",         "#58a6ff", _b5_merged),
+            ("BLK",         "Blocks",         "#e67e22", _b5_merged),
         ]
-        five = []
-        for metric, role, desc in roles:
-            row = _pick(metric)
-            if row is not None:
-                five.append({"role":role,"desc":desc,"metric":metric,"row":row})
 
-        if "OVRL" in pool.columns:
-            pool["_avg"] = pool["OVRL"]; wc_desc = "Highest OVRL"
-        else:
-            pool["_avg"] = (pool["OFF"]+pool["DEF"]+pool["PLY"]+pool["REB_R"])/4
-            wc_desc = "Best avg OFF+DEF+PLY+REB_R"
-        wc = _pick("_avg")
-        if wc is not None:
-            five.append({"role":"#5 X-Factor","desc":wc_desc,"metric":"_avg","row":wc})
-        return five
+        # 3-column layout, 2 rows
+        for row_idx in range(0, len(_cat_cfg), 3):
+            _row_cats = _cat_cfg[row_idx:row_idx + 3]
+            _row_cols = st.columns(len(_row_cats))
+            for col_obj, (stat, label, color, src_df) in zip(_row_cols, _row_cats):
+                with col_obj:
+                    st.markdown(
+                        f"<div style='font-size:13px;font-weight:700;color:{color};"
+                        f"margin-bottom:8px;border-bottom:2px solid {color};"
+                        f"padding-bottom:4px'>⭐ {label}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    _show_top5_category(src_df, stat, label, color)
+            st.write("")
 
-    def _render_five(five, df_rnk):
-        if not five:
-            st.info("Not enough rating data to build a Best Five.")
-            return
-        cols_5 = st.columns(len(five))
-        for i, entry in enumerate(five):
-            row   = entry["row"]
-            pid   = row.get("pid", None)
-            pts_val = reb_val = ast_val = "—"
-            if pid is not None and not df_rnk.empty and "pid" in df_rnk.columns:
-                pr = df_rnk[df_rnk["pid"] == pid]
-                if not pr.empty:
-                    pts_val = f"{pr.iloc[0].get('PTS',0):.1f}"
-                    reb_val = f"{pr.iloc[0].get('REB',0):.1f}"
-                    ast_val = f"{pr.iloc[0].get('AST',0):.1f}"
-            mv  = row.get(entry["metric"], 0)
-            mlb = entry["metric"] if entry["metric"] != "_avg" else "OVRL"
-            with cols_5[i]:
-                st.markdown(f"""
-                <div class="best5-card">
-                    <div class="best5-role">{entry['role']}</div>
-                    <div class="best5-name">{row['Player']}</div>
-                    <div class="best5-team">{row.get('Team','')} · {row.get('Class','')}</div>
-                    <div class="best5-stat">{mv:.1f}</div>
-                    <div class="best5-stat-lbl">{mlb}</div>
-                    <div style="margin-top:10px;font-size:11px;color:#8b949e">
-                        {pts_val} PTS · {reb_val} REB · {ast_val} AST
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+        # ── Secondary categories ───────────────────────────────────────────────
+        with st.expander("📈 More Categories", expanded=False):
+            _more_cfg = [
+                ("EFF",    "Efficiency (EFF)",  "#9b59b6", _b5_merged),
+                ("eFG%",   "eFG%",              "#1abc9c", _b5_merged),
+                ("TS%",    "True Shooting %",   "#1abc9c", _b5_merged),
+                ("SC",     "Shot Creation",     "#f39c12", _b5_merged),
+                ("+/-",    "Plus/Minus",        "#27ae60", _b5_merged),
+                ("PPSA",   "Pts Per Shot Att.", "#8e44ad", _b5_merged),
+            ]
+            for row_idx2 in range(0, len(_more_cfg), 3):
+                _row2_cats = _more_cfg[row_idx2:row_idx2 + 3]
+                _row2_cols = st.columns(len(_row2_cats))
+                for col_obj2, (stat2, label2, color2, src2) in zip(_row2_cols, _row2_cats):
+                    with col_obj2:
+                        st.markdown(
+                            f"<div style='font-size:13px;font-weight:700;color:{color2};"
+                            f"margin-bottom:8px;border-bottom:2px solid {color2};"
+                            f"padding-bottom:4px'>📊 {label2}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        _show_top5_category(src2, stat2, label2, color2)
+                st.write("")
 
-    st.markdown('<div class="section-hdr">🌟 League Best Five</div>', unsafe_allow_html=True)
-    _render_five(_build_best_five(rat, rnk), rnk)
-    st.markdown("---")
-    st.markdown('<div class="section-hdr">🏀 Best Five by Team</div>', unsafe_allow_html=True)
-    teams_list = sorted(rnk["Team"].dropna().unique().tolist()) if "Team" in rnk.columns else []
-    if teams_list:
-        sel_team = st.selectbox("Select Team", teams_list, key="best5_team")
-        if not rat.empty and "Team" in rat.columns:
-            _render_five(_build_best_five(rat[rat["Team"]==sel_team].copy(),
-                                          rnk[rnk["Team"]==sel_team].copy()), rnk)
+        # ── Class-filtered view ────────────────────────────────────────────────
+        if _b5_avail_cls:
+            st.markdown("---")
+            st.markdown('<div class="section-hdr">🏫 Class View</div>', unsafe_allow_html=True)
+            _cls_sel_b5 = st.selectbox("Select Class", _b5_avail_cls, key="b5_cls_single")
+            _cls_rnk_b5 = _b5_merged[_b5_merged["Class"] == _cls_sel_b5].copy() \
+                          if "Class" in _b5_merged.columns else _b5_merged.copy()
+            _cls_cats = [
+                ("_ovrl_merge", "Overall (OVRL)", "#f0a500"),
+                ("PTS",         "Points",         "#e74c3c"),
+                ("AST",         "Assists",        "#2ecc71"),
+                ("REB",         "Rebounds",       "#3498db"),
+                ("STL",         "Steals",         "#58a6ff"),
+                ("BLK",         "Blocks",         "#e67e22"),
+            ]
+            for _ri3 in range(0, len(_cls_cats), 3):
+                _r3 = _cls_cats[_ri3:_ri3 + 3]
+                _r3c = st.columns(len(_r3))
+                for _co3, (_st3, _lb3, _cl3) in zip(_r3c, _r3):
+                    with _co3:
+                        st.markdown(
+                            f"<div style='font-size:13px;font-weight:700;color:{_cl3};"
+                            f"margin-bottom:8px;border-bottom:2px solid {_cl3};"
+                            f"padding-bottom:4px'>⭐ {_lb3}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        _show_top5_category(_cls_rnk_b5, _st3, _lb3, _cl3)
+                st.write("")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -829,57 +853,184 @@ with tab5:
     if rnk.empty:
         st.info("No player data available.")
     else:
-        player_opts = rnk["_label"].tolist()
-        sel_prof    = st.selectbox("Select Player", player_opts, key="prof_sel")
-        prof_row    = rnk[rnk["_label"] == sel_prof].iloc[0]
-        pid         = prof_row.get("pid", None)
+        # ── Two-step team → player selector ──────────────────────────────────
+        _prof_teams = (sorted(rnk["Team"].dropna().unique().tolist())
+                       if "Team" in rnk.columns else [])
+        _psel_c1, _psel_c2 = st.columns([1, 2])
+        with _psel_c1:
+            _sel_team_prof = st.selectbox("Team", _prof_teams, key="prof_team_sel")
+        with _psel_c2:
+            _team_rnk_pool = (rnk[rnk["Team"] == _sel_team_prof]
+                              if "Team" in rnk.columns and _prof_teams else rnk)
+            _team_player_opts = _team_rnk_pool["_label"].tolist()
+            sel_prof = st.selectbox("Player", _team_player_opts, key="prof_sel")
 
-        # ── Bio hero card ─────────────────────────────────────────────────────
-        _gp_val  = int(prof_row.get("GP",0))
-        _min_val = float(prof_row.get("MIN",0))
-        _pm_val  = float(prof_row.get("+/-",0))
-        _gs_val  = float(prof_row.get("GS",0))
+        prof_row = rnk[rnk["_label"] == sel_prof].iloc[0]
+        pid      = prof_row.get("pid", None)
 
-        st.markdown(f"""
-        <div class="pl-hero">
-            <div class="pl-name">{prof_row['Player']}</div>
-            <div class="pl-meta">
-                #{prof_row.get('#','')} &nbsp;·&nbsp;
-                {prof_row.get('Team','')} &nbsp;·&nbsp;
-                {prof_row.get('Class','')} &nbsp;·&nbsp;
-                {prof_row.get('Gender','')}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # ── Pre-compute values used in hero card ──────────────────────────────
+        _gp_val  = int(prof_row.get("GP", 0))
+        _min_val = float(prof_row.get("MIN", 0))
+        _pm_val  = float(prof_row.get("+/-", 0))
 
-        # Bio (height / wingspan / weight)
-        bio = None
+        # Pull ratings for hero card
+        _prof_rat_vals = {}
+        if not rat.empty and pid is not None and "pid" in rat.columns:
+            _pr_match = rat[rat["pid"] == pid]
+            if not _pr_match.empty:
+                for _rc in ("OVRL", "OFF", "DEF", "PLY", "REB_R"):
+                    _prof_rat_vals[_rc] = float(_pr_match.iloc[0].get(_rc, 0) or 0)
+        _prof_ovrl = _prof_rat_vals.get("OVRL", 0.0)
+
+        _tier_color = ("#f0a500" if _prof_ovrl >= 80 else
+                       "#2ecc71" if _prof_ovrl >= 65 else
+                       "#58a6ff" if _prof_ovrl >= 50 else
+                       "#c9d1d9" if _prof_ovrl >= 35 else "#8b949e")
+        _tier_label = ("ELITE"      if _prof_ovrl >= 80 else
+                       "GREAT"      if _prof_ovrl >= 65 else
+                       "ABOVE AVG"  if _prof_ovrl >= 50 else
+                       "AVERAGE"    if _prof_ovrl >= 35 else "DEVELOPING")
+
+        _p_num  = str(prof_row.get("#", "") or "")
+        _p_name = prof_row["Player"]
+        _p_team = prof_row.get("Team", "")
+        _p_cls  = prof_row.get("Class", "")
+        _p_gnd  = prof_row.get("Gender", "")
+
+        # Stat strip HTML
+        _stat_items_hero = [
+            ("PTS", float(prof_row.get("PTS", 0)), "#f0a500"),
+            ("REB", float(prof_row.get("REB", 0)), "#3498db"),
+            ("AST", float(prof_row.get("AST", 0)), "#2ecc71"),
+            ("STL", float(prof_row.get("STL", 0)), "#58a6ff"),
+            ("BLK", float(prof_row.get("BLK", 0)), "#e67e22"),
+            ("TOV", float(prof_row.get("TOV", 0)), "#e74c3c"),
+            ("+/-", _pm_val,                        "#c9d1d9"),
+            ("EFF", float(prof_row.get("EFF", 0)), "#9b59b6"),
+        ]
+        _hero_stat_html = ""
+        for _slbl, _sval, _sclr in _stat_items_hero:
+            _sfmt = f"{_sval:+.1f}" if _slbl == "+/-" else f"{_sval:.1f}"
+            _hero_stat_html += (
+                f"<div style='text-align:center;padding:0 10px;"
+                f"border-right:1px solid #21262d'>"
+                f"<div style='font-size:24px;font-weight:900;color:{_sclr};"
+                f"line-height:1.1'>{_sfmt}</div>"
+                f"<div style='font-size:9px;color:#8b949e;text-transform:uppercase;"
+                f"letter-spacing:1.2px;margin-top:3px'>{_slbl}</div>"
+                f"</div>"
+            )
+
+        # Rating badges HTML
+        _rat_badge_colors = {"OVRL": "#f0a500", "OFF": "#e74c3c", "DEF": "#3498db",
+                             "PLY": "#2ecc71",  "REB_R": "#e67e22"}
+        _hero_badges_html = ""
+        for _rk, _rv in _prof_rat_vals.items():
+            if _rv > 0:
+                _rbclr = _rat_badge_colors.get(_rk, "#8b949e")
+                _rvint = int(_rv)
+                _hero_badges_html += (
+                    f"<div style='background:#0d1117;border:1px solid {_rbclr}55;"
+                    f"border-radius:8px;padding:8px 16px;text-align:center'>"
+                    f"<div style='font-size:22px;font-weight:900;color:{_rbclr}'>{_rvint}</div>"
+                    f"<div style='font-size:8px;color:#8b949e;text-transform:uppercase;"
+                    f"letter-spacing:1.2px;margin-top:2px'>{_rk}</div>"
+                    f"</div>"
+                )
+
+        _ovrl_badge = ""
+        if _prof_ovrl > 0:
+            _ovrl_badge = (
+                f"<div style='text-align:center;flex-shrink:0'>"
+                f"<div style='font-size:9px;color:{_tier_color};text-transform:uppercase;"
+                f"letter-spacing:2px;font-weight:700;margin-bottom:2px'>OVERALL</div>"
+                f"<div style='font-size:68px;font-weight:900;color:{_tier_color};"
+                f"line-height:1'>{int(_prof_ovrl)}</div>"
+                f"<div style='font-size:10px;font-weight:700;color:{_tier_color};"
+                f"letter-spacing:1.5px;margin-top:2px'>{_tier_label}</div>"
+                f"</div>"
+            )
+
+        _hero_num_disp = _p_num if _p_num else "—"
+
+        _hero_card = f"""
+<div style="background:linear-gradient(135deg,#080c14 0%,#0d1117 55%,#111827 100%);
+            border:1px solid {_tier_color}66;border-radius:18px;
+            padding:28px 32px;margin-bottom:20px;position:relative;overflow:hidden">
+  <!-- Accent bar -->
+  <div style="position:absolute;top:0;left:0;right:0;height:3px;
+              background:linear-gradient(90deg,{_tier_color},{_tier_color}00)"></div>
+  <!-- Watermark number -->
+  <div style="position:absolute;right:-8px;top:50%;transform:translateY(-50%);
+              font-size:180px;font-weight:900;color:rgba(255,255,255,0.02);
+              line-height:1;pointer-events:none;user-select:none">#{_hero_num_disp}</div>
+  <!-- Main row -->
+  <div style="display:flex;align-items:flex-start;gap:24px;position:relative">
+    <!-- Jersey number box -->
+    <div style="background:linear-gradient(135deg,{_tier_color}18,{_tier_color}08);
+                border:2px solid {_tier_color}55;border-radius:14px;
+                padding:14px 18px;text-align:center;min-width:82px;flex-shrink:0">
+      <div style="font-size:9px;color:#8b949e;text-transform:uppercase;
+                  letter-spacing:1.2px;margin-bottom:4px">No.</div>
+      <div style="font-size:52px;font-weight:900;color:{_tier_color};
+                  line-height:1">{_hero_num_disp}</div>
+    </div>
+    <!-- Name / info / stats -->
+    <div style="flex:1;min-width:0">
+      <div style="font-size:40px;font-weight:900;color:#f0f6fc;line-height:1.05;
+                  letter-spacing:-0.5px;overflow:hidden;text-overflow:ellipsis;
+                  white-space:nowrap">{_p_name}</div>
+      <div style="font-size:13px;color:#8b949e;margin-top:5px;display:flex;
+                  align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="color:{_tier_color};font-weight:700;font-size:10px;
+                     text-transform:uppercase;letter-spacing:1.2px">{_tier_label}</span>
+        <span style="color:#30363d">·</span><span>{_p_team}</span>
+        <span style="color:#30363d">·</span><span>{_p_cls}</span>
+        <span style="color:#30363d">·</span><span>{_p_gnd}</span>
+        <span style="color:#30363d">·</span><span>{_gp_val} GP</span>
+      </div>
+      <!-- Core stat row -->
+      <div style="display:flex;margin-top:14px;background:#0a0e1a;
+                  border:1px solid #21262d;border-radius:10px;
+                  padding:12px 6px;overflow-x:auto;gap:0">
+        {_hero_stat_html}
+      </div>
+    </div>
+    <!-- OVRL badge -->
+    {_ovrl_badge}
+  </div>
+  <!-- Rating component badges -->
+  {f'<div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid #21262d;flex-wrap:wrap">{_hero_badges_html}</div>' if _hero_badges_html else ''}
+</div>
+"""
+        st.markdown(_hero_card, unsafe_allow_html=True)
+
+        # Bio (height / wingspan / weight) — kept compact below the card
         if pid is not None:
             bio_rows = query("SELECT height, wingspan, weight FROM players WHERE id=?", (int(pid),))
             bio = bio_rows[0] if bio_rows else None
-
-        if bio:
-            b1, b2, b3 = st.columns(3)
-            b1.metric("Height",   bio.get("height","—")   or "—")
-            b2.metric("Wingspan", bio.get("wingspan","—") or "—")
-            b3.metric("Weight",   bio.get("weight","—")   or "—")
-
-        # ── Quick stat strip ──────────────────────────────────────────────────
-        _qs = {
-            "PTS": f"{prof_row.get('PTS',0):.1f}",
-            "REB": f"{prof_row.get('REB',0):.1f}",
-            "AST": f"{prof_row.get('AST',0):.1f}",
-            "STL": f"{prof_row.get('STL',0):.1f}",
-            "BLK": f"{prof_row.get('BLK',0):.1f}",
-            "TOV": f"{prof_row.get('TOV',0):.1f}",
-            "EFF": f"{prof_row.get('EFF',0):.1f}",
-            "+/-": f"{_pm_val:+.1f}",
-            "MIN": f"{_min_val:.1f}",
-            "GP":  str(_gp_val),
-        }
-        st.markdown(_stat_grid_html(_qs), unsafe_allow_html=True)
+            if bio and any(bio.get(k) for k in ("height", "wingspan", "weight")):
+                b1, b2, b3 = st.columns(3)
+                b1.metric("Height",   bio.get("height",   "—") or "—")
+                b2.metric("Wingspan", bio.get("wingspan", "—") or "—")
+                b3.metric("Weight",   bio.get("weight",   "—") or "—")
 
         st.markdown("---")
+
+        # ── Pre-fetch game log (used in Game Log tab AND Game Score graph) ────
+        from helpers.stats_team import compute_player_game_log as _cpgl
+        _profile_team_id = None
+        if pid is not None and "Team" in prof_row.index:
+            _team_res = query("SELECT id FROM teams WHERE name=?",
+                              (str(prof_row.get("Team", "")),))
+            if _team_res:
+                _profile_team_id = _team_res[0]["id"]
+
+        _game_log_data: list = []
+        if pid is not None and _profile_team_id is not None:
+            _game_log_data = _cpgl(int(pid), int(_profile_team_id))
+
+        _gl_df = pd.DataFrame(_game_log_data) if _game_log_data else pd.DataFrame()
 
         # ── Profile inner tabs ────────────────────────────────────────────────
         p_tab_stats, p_tab_adv, p_tab_per36, p_tab_ratings, p_tab_rank, p_tab_log = st.tabs([
@@ -955,17 +1106,20 @@ with tab5:
             st.markdown('<div class="section-hdr">League Percentiles — Advanced</div>',
                         unsafe_allow_html=True)
             adv_pctile_stats = [
-                ("EFF",  "NBA Efficiency",       True),
-                ("FIC",  "Floor Impact Ctr",     True),
-                ("PRF",  "Pts Responsible For",  True),
-                ("PPSA", "Pts/Scoring Att",       True),
-                ("PPS",  "Pts Per Shot",           True),
-                ("FTr",  "Free Throw Rate",        True),
-                ("TOV%", "Turnover Rate",          False),
-                ("USG",  "Usage Volume",           True),
-                ("SC",   "Shots Created",          True),
-                ("Q4 PPG","Q4 Scoring",           True),
-                ("AST/TOV","AST/TOV Ratio",        True),
+                ("EFF",     "NBA Efficiency",       True),
+                ("FIC",     "Floor Impact Ctr",     True),
+                ("PRF",     "Pts Responsible For",  True),
+                ("PPSA",    "Pts/Scoring Att",      True),
+                ("PPS",     "Pts Per Shot",          True),
+                ("FTr",     "Free Throw Rate",       True),
+                ("TOV%",    "Turnover Rate",         False),
+                ("USG",     "Usage Volume",          True),
+                ("SC",      "Shots Created",         True),
+                ("Q4 PPG",  "Q4 Scoring",            True),
+                ("AST%",    "Adj Assist Rate",       True),
+                ("AST/TOV", "AST/TOV Ratio",         True),
+                ("OREB%",   "Adj Off Reb Rate",      True),
+                ("DREB%",   "Adj Def Reb Rate",      True),
             ]
             bars_html = ""
             for col, lbl, hb in adv_pctile_stats:
@@ -1001,6 +1155,329 @@ with tab5:
                     height=400,
                 )
                 st.plotly_chart(fig_adv_r, use_container_width=True, key=f"prof_adv_radar_{pid}")
+
+            # ── Rebounding Deep Dive ───────────────────────────────────────────
+            st.markdown('<div class="section-hdr">🏀 Rebounding Deep Dive</div>',
+                        unsafe_allow_html=True)
+            st.caption(
+                "Adjusted rates measure what % of available board opportunities "
+                "the player grabbed while on court — a fairer comparison than raw totals. "
+                "On/Off shows how the *team's* rebounding changes with this player in/out."
+            )
+
+            # ── Individual adjusted rates ──────────────────────────────────────
+            _oreb_pct_v = float(prof_row.get("OREB%", 0) or 0)
+            _dreb_pct_v = float(prof_row.get("DREB%", 0) or 0)
+            _trb_pct_v  = float(prof_row.get("TRB%",  0) or 0)
+            _oreb_pg_v  = float(prof_row.get("OREB",  0) or 0)
+            _dreb_pg_v  = float(prof_row.get("DREB",  0) or 0)
+
+            _rdc1, _rdc2, _rdc3 = st.columns(3)
+
+            def _reb_rate_card(col, label, rate, raw_pg, source_col, higher_label=""):
+                """Render a rebound-rate card with percentile bar."""
+                if "OREB%" in rnk.columns and source_col in rnk.columns:
+                    pct = _percentile_of(rate, rnk[source_col])
+                    pct_bar = min(max(pct, 0), 100)
+                    clr = ("#2ea043" if pct >= 75 else "#3fb950" if pct >= 50
+                           else "#f0a500" if pct >= 25 else "#da3633")
+                else:
+                    pct, pct_bar, clr = None, 0, "#8b949e"
+
+                pct_str  = f"{pct}th pct" if pct is not None else "—"
+                col.markdown(
+                    f"<div style='background:#161b22;border:1px solid #30363d;"
+                    f"border-radius:10px;padding:12px;text-align:center'>"
+                    f"<div style='font-size:10px;color:#8b949e;text-transform:uppercase;"
+                    f"letter-spacing:1px;margin-bottom:4px'>{label}</div>"
+                    f"<div style='font-size:30px;font-weight:900;color:{clr};line-height:1.1'>"
+                    f"{rate:.1f}%</div>"
+                    f"<div style='font-size:11px;color:#8b949e;margin-top:2px'>"
+                    f"{raw_pg:.1f}/G · {pct_str}</div>"
+                    f"<div style='background:#21262d;border-radius:4px;height:5px;"
+                    f"overflow:hidden;margin-top:6px'>"
+                    f"<div style='width:{pct_bar:.0f}%;background:{clr};height:100%;"
+                    f"border-radius:4px'></div></div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            _reb_rate_card(_rdc1, "OREB%  (Adj)", _oreb_pct_v, _oreb_pg_v, "OREB%")
+            _reb_rate_card(_rdc2, "DREB%  (Adj)", _dreb_pct_v, _dreb_pg_v, "DREB%")
+            _reb_rate_card(_rdc3, "TRB%   (Adj)", _trb_pct_v,
+                           _oreb_pg_v + _dreb_pg_v, "TRB%")
+
+            st.caption(
+                "OREB% = player's offensive rebounds ÷ own-team missed shots while on court.  "
+                "DREB% = player's defensive rebounds ÷ opponent missed shots while on court.  "
+                "TRB% = total player rebs ÷ avg available rebs per missed shot (on court)."
+            )
+
+            st.markdown("---")
+
+            # ── On / Off team rebounding ───────────────────────────────────────
+            st.markdown("**On/Off Team Rebounding Impact**")
+            st.caption(
+                "Does the team rebound better *with* this player on the floor? "
+                "Covers all games where this player appeared."
+            )
+
+            _prof_team_id_reb = None
+            if pid is not None and "Team" in prof_row.index:
+                _t_res = query("SELECT id FROM teams WHERE name=?",
+                               (str(prof_row.get("Team", "")),))
+                if _t_res:
+                    _prof_team_id_reb = _t_res[0]["id"]
+
+            if pid is not None and _prof_team_id_reb is not None:
+                _onoff = compute_player_rebound_onoff(int(pid), int(_prof_team_id_reb))
+                if _onoff and _onoff.get("on_oreb_opps", 0) >= 5:
+
+                    def _delta_clr(d):
+                        if d is None: return "#8b949e"
+                        return "#2ea043" if d > 1 else "#da3633" if d < -1 else "#f0a500"
+
+                    def _delta_str(on_v, off_v):
+                        if on_v is None or off_v is None:
+                            return "—"
+                        d = on_v - off_v
+                        return f"{d:+.1f}%"
+
+                    _oo_rows = [
+                        ("Team OREB%",
+                         _onoff["on_oreb_pct"], _onoff["off_oreb_pct"],
+                         _onoff["on_oreb_opps"], _onoff["off_oreb_opps"]),
+                        ("Team DREB%",
+                         _onoff["on_dreb_pct"], _onoff["off_dreb_pct"],
+                         _onoff["on_dreb_opps"], _onoff["off_dreb_opps"]),
+                    ]
+
+                    _oo_c1, _oo_c2 = st.columns(2)
+                    for _oo_col, (_oo_lbl, _on_v, _off_v, _on_n, _off_n) in zip(
+                            [_oo_c1, _oo_c2], _oo_rows):
+                        _d = (_on_v - _off_v) if (_on_v is not None and _off_v is not None) else None
+                        _dclr = _delta_clr(_d)
+                        _on_str  = f"{_on_v:.1f}%"  if _on_v  is not None else "—"
+                        _off_str = f"{_off_v:.1f}%" if _off_v is not None else "—"
+                        _delta   = _delta_str(_on_v, _off_v)
+                        _impact  = ("↑ Positive" if _d is not None and _d > 1
+                                    else "↓ Negative" if _d is not None and _d < -1
+                                    else "~ Neutral")
+                        _oo_col.markdown(
+                            f"<div style='background:#161b22;border:1px solid #30363d;"
+                            f"border-radius:10px;padding:14px'>"
+                            f"<div style='font-size:11px;color:#8b949e;text-transform:uppercase;"
+                            f"letter-spacing:1px;margin-bottom:8px'>{_oo_lbl}</div>"
+                            f"<div style='display:flex;justify-content:space-around;"
+                            f"align-items:center;margin-bottom:8px'>"
+                            f"<div style='text-align:center'>"
+                            f"<div style='font-size:9px;color:#8b949e'>ON COURT</div>"
+                            f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{_on_str}</div>"
+                            f"<div style='font-size:10px;color:#484f58'>n={_on_n}</div>"
+                            f"</div>"
+                            f"<div style='font-size:18px;color:#30363d'>vs</div>"
+                            f"<div style='text-align:center'>"
+                            f"<div style='font-size:9px;color:#8b949e'>OFF COURT</div>"
+                            f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{_off_str}</div>"
+                            f"<div style='font-size:10px;color:#484f58'>n={_off_n}</div>"
+                            f"</div>"
+                            f"</div>"
+                            f"<div style='text-align:center;padding:6px;background:#0d1117;"
+                            f"border-radius:6px'>"
+                            f"<span style='font-weight:700;color:{_dclr}'>{_delta}</span>"
+                            f"<span style='font-size:11px;color:{_dclr};margin-left:6px'>{_impact}</span>"
+                            f"</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    # Combined TRB% on/off
+                    _on_trb  = _onoff.get("on_trb_pct")
+                    _off_trb = _onoff.get("off_trb_pct")
+                    if _on_trb is not None and _off_trb is not None:
+                        _td  = _on_trb - _off_trb
+                        _tdc = _delta_clr(_td)
+                        st.markdown(
+                            f"<div style='margin-top:8px;padding:10px 14px;background:#161b22;"
+                            f"border:1px solid #30363d;border-radius:8px;"
+                            f"display:flex;align-items:center;gap:12px'>"
+                            f"<span style='font-size:12px;color:#8b949e'>Team TRB% (combined):</span>"
+                            f"<span style='font-weight:700;color:#f0f6fc'>{_on_trb:.1f}% ON</span>"
+                            f"<span style='color:#484f58'>vs</span>"
+                            f"<span style='font-weight:700;color:#f0f6fc'>{_off_trb:.1f}% OFF</span>"
+                            f"<span style='font-weight:700;color:{_tdc}'>&nbsp;({_td:+.1f}%)</span>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                elif _onoff and _onoff.get("on_oreb_opps", 0) < 5:
+                    st.info("Not enough tracked minutes yet for a reliable on/off split (need ≥5 rebound opportunities on-court).")
+                else:
+                    st.info("No on/off rebounding data — make sure this player is tracked in at least one game lineup.")
+            else:
+                st.info("On/off rebounding requires the player's team to be identified.")
+
+            st.markdown("---")
+
+            # ── Playmaking Deep Dive ───────────────────────────────────────────
+            st.markdown('<div class="section-hdr">🎯 Playmaking Deep Dive</div>',
+                        unsafe_allow_html=True)
+            st.caption(
+                "AST% measures what fraction of teammate made field goals this player "
+                "facilitated while on court — a fairer signal than raw assists per game. "
+                "On/Off shows how team assist rate and turnover rate shift with this player in/out."
+            )
+
+            # ── Individual adjusted AST% card ─────────────────────────────────
+            _ast_pct_v  = float(prof_row.get("AST%",    0) or 0)
+            _ast_pg_v   = float(prof_row.get("AST",     0) or 0)
+            _astov_v    = float(prof_row.get("AST/TOV", 0) or 0)
+            _tov_pg_v   = float(prof_row.get("TOV",     0) or 0)
+            _tov_pct_v  = float(prof_row.get("TOV%",    0) or 0)
+
+            _plc1, _plc2, _plc3 = st.columns(3)
+
+            def _pm_rate_card(col, label, val, sub_str, pct_col):
+                if pct_col in rnk.columns:
+                    _p = _percentile_of(val, rnk[pct_col])
+                    _pb = min(max(_p, 0), 100)
+                    _clr = ("#2ea043" if _p >= 75 else "#3fb950" if _p >= 50
+                            else "#f0a500" if _p >= 25 else "#da3633")
+                    _ps  = f"{_p}th pct"
+                else:
+                    _pb, _clr, _ps = 0, "#8b949e", "—"
+                col.markdown(
+                    f"<div style='background:#161b22;border:1px solid #30363d;"
+                    f"border-radius:10px;padding:12px;text-align:center'>"
+                    f"<div style='font-size:10px;color:#8b949e;text-transform:uppercase;"
+                    f"letter-spacing:1px;margin-bottom:4px'>{label}</div>"
+                    f"<div style='font-size:30px;font-weight:900;color:{_clr};line-height:1.1'>"
+                    f"{val:.1f}</div>"
+                    f"<div style='font-size:11px;color:#8b949e;margin-top:2px'>{sub_str} · {_ps}</div>"
+                    f"<div style='background:#21262d;border-radius:4px;height:5px;"
+                    f"overflow:hidden;margin-top:6px'>"
+                    f"<div style='width:{_pb:.0f}%;background:{_clr};height:100%;"
+                    f"border-radius:4px'></div></div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+            _pm_rate_card(_plc1, "AST%  (Adj)", _ast_pct_v,
+                          f"{_ast_pg_v:.1f} AST/G", "AST%")
+            _pm_rate_card(_plc2, "AST/TOV", _astov_v,
+                          f"{_ast_pg_v:.1f} AST / {_tov_pg_v:.1f} TOV", "AST/TOV")
+            _pm_rate_card(_plc3, "TOV%", _tov_pct_v,
+                          f"{_tov_pg_v:.1f} TOV/G", "TOV%")
+
+            st.caption(
+                "AST% = player assists ÷ teammate FGM while on court. "
+                "TOV% = turnovers ÷ (FGA + 0.44×FTA + TOV). "
+                "Both are league-percentile ranked."
+            )
+
+            st.markdown("---")
+
+            # ── On / Off team playmaking ───────────────────────────────────────
+            st.markdown("**On/Off Team Playmaking Impact**")
+            st.caption(
+                "Does the team share the ball and protect possessions better "
+                "*with* this player on the floor?"
+            )
+
+            _prof_team_id_pm = None
+            if pid is not None and "Team" in prof_row.index:
+                _t_res_pm = query("SELECT id FROM teams WHERE name=?",
+                                  (str(prof_row.get("Team", "")),))
+                if _t_res_pm:
+                    _prof_team_id_pm = _t_res_pm[0]["id"]
+
+            if pid is not None and _prof_team_id_pm is not None:
+                _onoff_pm = compute_player_assist_onoff(int(pid), int(_prof_team_id_pm))
+
+                if _onoff_pm and _onoff_pm.get("on_fgm", 0) >= 5:
+
+                    def _pm_delta_clr(d, higher_better=True):
+                        if d is None: return "#8b949e"
+                        pos = d > 1 if higher_better else d < -1
+                        neg = d < -1 if higher_better else d > 1
+                        return "#2ea043" if pos else "#da3633" if neg else "#f0a500"
+
+                    _pm_oo_rows = [
+                        ("Team AST%",
+                         _onoff_pm["on_ast_pct"], _onoff_pm["off_ast_pct"],
+                         _onoff_pm["on_fgm"],     _onoff_pm["off_fgm"],
+                         True,  "n (FGM)"),
+                        ("Team TOV%",
+                         _onoff_pm["on_tov_pct"], _onoff_pm["off_tov_pct"],
+                         _onoff_pm["on_tov"],     _onoff_pm["off_tov"],
+                         False, "n (TOV)"),
+                    ]
+
+                    _pm_oo_c1, _pm_oo_c2 = st.columns(2)
+                    for _oo_col, (_oo_lbl, _on_v, _off_v, _on_n, _off_n,
+                                  _hb, _n_lbl) in zip([_pm_oo_c1, _pm_oo_c2],
+                                                       _pm_oo_rows):
+                        _d = ((_on_v - _off_v)
+                              if _on_v is not None and _off_v is not None else None)
+                        _dclr   = _pm_delta_clr(_d, _hb)
+                        _on_s   = f"{_on_v:.1f}%"  if _on_v  is not None else "—"
+                        _off_s  = f"{_off_v:.1f}%" if _off_v is not None else "—"
+                        _impact = ("↑ Positive" if _d is not None and ((_d > 1 and _hb) or (_d < -1 and not _hb))
+                                   else "↓ Negative" if _d is not None and ((_d < -1 and _hb) or (_d > 1 and not _hb))
+                                   else "~ Neutral")
+                        _delta_s = f"{_d:+.1f}%" if _d is not None else "—"
+                        _oo_col.markdown(
+                            f"<div style='background:#161b22;border:1px solid #30363d;"
+                            f"border-radius:10px;padding:14px'>"
+                            f"<div style='font-size:11px;color:#8b949e;text-transform:uppercase;"
+                            f"letter-spacing:1px;margin-bottom:8px'>{_oo_lbl}</div>"
+                            f"<div style='display:flex;justify-content:space-around;"
+                            f"align-items:center;margin-bottom:8px'>"
+                            f"<div style='text-align:center'>"
+                            f"<div style='font-size:9px;color:#8b949e'>ON COURT</div>"
+                            f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{_on_s}</div>"
+                            f"<div style='font-size:10px;color:#484f58'>{_n_lbl}={_on_n}</div>"
+                            f"</div>"
+                            f"<div style='font-size:18px;color:#30363d'>vs</div>"
+                            f"<div style='text-align:center'>"
+                            f"<div style='font-size:9px;color:#8b949e'>OFF COURT</div>"
+                            f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{_off_s}</div>"
+                            f"<div style='font-size:10px;color:#484f58'>{_n_lbl}={_off_n}</div>"
+                            f"</div>"
+                            f"</div>"
+                            f"<div style='text-align:center;padding:6px;background:#0d1117;"
+                            f"border-radius:6px'>"
+                            f"<span style='font-weight:700;color:{_dclr}'>{_delta_s}</span>"
+                            f"<span style='font-size:11px;color:{_dclr};margin-left:6px'>{_impact}</span>"
+                            f"</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    # AST/G on vs off — quick context line
+                    _on_apg  = _onoff_pm.get("on_ast_pg",  0)
+                    _off_apg = _onoff_pm.get("off_ast_pg", 0)
+                    _apg_d   = _on_apg - _off_apg
+                    _adc     = _pm_delta_clr(_apg_d, True)
+                    st.markdown(
+                        f"<div style='margin-top:8px;padding:10px 14px;background:#161b22;"
+                        f"border:1px solid #30363d;border-radius:8px'>"
+                        f"<span style='font-size:12px;color:#8b949e'>Team AST/G:&nbsp;</span>"
+                        f"<span style='font-weight:700;color:#f0f6fc'>{_on_apg:.1f} ON</span>"
+                        f"<span style='color:#484f58'>&nbsp;vs&nbsp;</span>"
+                        f"<span style='font-weight:700;color:#f0f6fc'>{_off_apg:.1f} OFF</span>"
+                        f"<span style='font-weight:700;color:{_adc}'>&nbsp;({_apg_d:+.1f}/G)</span>"
+                        f"<span style='font-size:11px;color:#484f58'>"
+                        f"&nbsp;· across {_onoff_pm['n_games']} game(s)</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                elif _onoff_pm and _onoff_pm.get("on_fgm", 0) < 5:
+                    st.info("Not enough tracked possessions yet for a reliable on/off split (need ≥5 team FGM on-court).")
+                else:
+                    st.info("No on/off playmaking data — ensure this player is tracked in at least one game lineup.")
+            else:
+                st.info("On/off playmaking requires the player's team to be identified.")
 
         # ── Per-36 ────────────────────────────────────────────────────────────
         with p_tab_per36:
@@ -1174,19 +1651,8 @@ with tab5:
         # ── Game Log ──────────────────────────────────────────────────────────
         with p_tab_log:
             if pid is not None:
-                # Try to get full game log stats via compute_player_game_log
-                _profile_team_id = None
-                if "Team" in prof_row.index:
-                    _team_res = query("SELECT id FROM teams WHERE name=?",
-                                      (str(prof_row.get("Team","")),))
-                    if _team_res:
-                        _profile_team_id = _team_res[0]["id"]
-
-                if _profile_team_id is not None:
-                    from helpers.stats_team import compute_player_game_log
-                    game_log_data = compute_player_game_log(int(pid), int(_profile_team_id))
-                else:
-                    game_log_data = []
+                # Reuse pre-fetched game log (computed above before the tabs)
+                game_log_data = _game_log_data
 
                 if game_log_data:
                     gl_df = pd.DataFrame(game_log_data)
@@ -1208,34 +1674,43 @@ with tab5:
                     if _trend_sel:
                         # Reverse so oldest is left
                         _trend_df = gl_df.iloc[::-1].reset_index(drop=True)
-                        _trend_df["_game_num"] = range(1, len(_trend_df)+1)
+                        # x-axis label: "MMM DD vs OPP (W/L)"
+                        def _xlbl(r):
+                            try:
+                                _d = pd.to_datetime(r.get("Date",""), errors="coerce")
+                                _d_str = _d.strftime("%b %d") if not pd.isnull(_d) else str(r.get("Date",""))
+                            except Exception:
+                                _d_str = str(r.get("Date",""))
+                            return f"{_d_str} vs {r.get('Opp','?')} ({r.get('W/L','')})"
+                        _trend_df["_xlbl"] = _trend_df.apply(_xlbl, axis=1)
                         fig_trend = go.Figure()
                         _tcols = ["#f0a500","#3498db","#2ecc71","#e74c3c"]
                         for ti, ts in enumerate(_trend_sel):
                             if ts not in _trend_df.columns: continue
                             _y = pd.to_numeric(_trend_df[ts], errors="coerce").fillna(0)
                             fig_trend.add_trace(go.Scatter(
-                                x=_trend_df["_game_num"], y=_y,
+                                x=_trend_df["_xlbl"], y=_y,
                                 mode="lines+markers", name=ts,
                                 line=dict(color=_tcols[ti % len(_tcols)], width=2),
                                 marker=dict(size=7),
-                                hovertemplate=f"<b>Game %{{x}}</b><br>{ts}: %{{y}}<extra></extra>",
+                                hovertemplate=f"<b>%{{x}}</b><br>{ts}: %{{y}}<extra></extra>",
                             ))
                         # Rolling average overlay
                         if "PTS" in _trend_sel and "PTS" in _trend_df.columns:
                             _roll = pd.to_numeric(_trend_df["PTS"], errors="coerce").rolling(3, min_periods=1).mean()
                             fig_trend.add_trace(go.Scatter(
-                                x=_trend_df["_game_num"], y=_roll,
+                                x=_trend_df["_xlbl"], y=_roll,
                                 mode="lines", name="PTS 3-game avg",
                                 line=dict(color="#f0a500", width=1, dash="dot"),
                                 opacity=0.6,
                             ))
                         fig_trend.update_layout(
                             **PLOT_LAYOUT, title="Game-by-Game Performance",
-                            xaxis=dict(title="Game #", dtick=1, showgrid=False),
+                            xaxis=dict(title="", tickangle=-35, showgrid=False,
+                                       automargin=True),
                             yaxis=dict(title="Value", showgrid=True, gridcolor="#21262d"),
                             legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                            height=360,
+                            height=380,
                         )
                         st.plotly_chart(fig_trend, use_container_width=True,
                                         key=f"prof_trend_{pid}")
@@ -1244,7 +1719,7 @@ with tab5:
                     show_log_cols = [c for c in
                         ["Date","Opp","W/L","Score","PTS","AST","REB","STL","BLK",
                          "TOV","FGM","FGA","FG%","3PM","3PA","3P%","FTM","FTA","FT%",
-                         "SC","+/-","MIN","GS"]
+                         "SC","SCS","SCP","SCO","+/-","MIN","GS"]
                         if c in gl_df.columns]
                     st.markdown('<div class="section-hdr">Game Log</div>',
                                 unsafe_allow_html=True)
@@ -1295,3 +1770,361 @@ with tab5:
                     pass
             if bars:
                 st.markdown(bars, unsafe_allow_html=True)
+
+        # ══════════════════════════════════════════════════════════════════════
+        #  GAME SCORE GRAPH  (Hollinger, game-by-game)
+        # ══════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.markdown('<div class="section-hdr">📈 Game Score — Game by Game</div>',
+                    unsafe_allow_html=True)
+
+        if not _gl_df.empty and "GS" in _gl_df.columns:
+            _gs_plot = _gl_df.iloc[::-1].reset_index(drop=True)
+            _gs_plot["GS_num"] = pd.to_numeric(_gs_plot["GS"], errors="coerce").fillna(0)
+            _gs_avg            = _gs_plot["GS_num"].mean()
+
+            # x-axis label: "MMM DD vs OPP"
+            def _gs_xlbl(r):
+                try:
+                    _d = pd.to_datetime(r.get("Date", ""), errors="coerce")
+                    _d_str = _d.strftime("%b %d") if not pd.isnull(_d) else str(r.get("Date", ""))
+                except Exception:
+                    _d_str = str(r.get("Date", ""))
+                return f"{_d_str} vs {r.get('Opp', '?')}"
+            _gs_plot["_xlbl"] = _gs_plot.apply(_gs_xlbl, axis=1)
+
+            # Colour each bar: green if >= average, red if below
+            _bar_colors = [
+                "#2ecc71" if v >= _gs_avg else "#e74c3c"
+                for v in _gs_plot["GS_num"]
+            ]
+
+            # Hover labels
+            _hover_lbl = []
+            for _, _gr in _gs_plot.iterrows():
+                _wl  = _gr.get("W/L", "")
+                _opp = _gr.get("Opp", "")
+                _sc  = _gr.get("Score", "")
+                _pts = _gr.get("PTS", 0)
+                _ast = _gr.get("AST", 0)
+                _reb = _gr.get("REB", 0)
+                _hover_lbl.append(
+                    f"<b>{_gr['_xlbl']}</b> ({_wl})<br>"
+                    f"Score: {_sc}<br>"
+                    f"GS: <b>{_gr['GS_num']:.1f}</b><br>"
+                    f"{_pts} pts · {_reb} reb · {_ast} ast"
+                )
+
+            _fig_gs = go.Figure()
+
+            # Bar trace
+            _fig_gs.add_trace(go.Bar(
+                x=_gs_plot["_xlbl"],
+                y=_gs_plot["GS_num"],
+                marker_color=_bar_colors,
+                hovertemplate="%{customdata}<extra></extra>",
+                customdata=_hover_lbl,
+                name="Game Score",
+            ))
+
+            # Rolling 3-game average line
+            _gs_roll = _gs_plot["GS_num"].rolling(3, min_periods=1).mean()
+            _fig_gs.add_trace(go.Scatter(
+                x=_gs_plot["_xlbl"], y=_gs_roll,
+                mode="lines", name="3-game avg",
+                line=dict(color="#f0a500", width=2, dash="dot"),
+                hoverinfo="skip",
+            ))
+
+            # Season average reference line
+            _fig_gs.add_hline(
+                y=_gs_avg, line_dash="dash", line_color="#8b949e", line_width=1,
+                annotation_text=f"Avg {_gs_avg:.1f}",
+                annotation_position="top right",
+                annotation_font=dict(color="#8b949e", size=11),
+            )
+
+            _fig_gs.update_layout(
+                **PLOT_LAYOUT,
+                height=340,
+                bargap=0.25,
+                xaxis=dict(title="", tickangle=-35, showgrid=False, automargin=True),
+                yaxis=dict(title="Game Score", showgrid=True, gridcolor="#21262d"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                showlegend=True,
+            )
+            st.plotly_chart(_fig_gs, use_container_width=True, key=f"gs_graph_{pid}")
+        else:
+            st.info("Not enough tracked game data to display a Game Score trend.")
+
+        # ══════════════════════════════════════════════════════════════════════
+        #  SCOUTING REPORT  (rule-based, always visible below the tabs)
+        # ══════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.markdown('<div class="section-hdr">🔍 Scouting Report</div>',
+                    unsafe_allow_html=True)
+
+        # ── Pull numeric values with safe defaults ────────────────────────────
+        def _fv(key, default=0.0):
+            try: return float(prof_row.get(key, default) or default)
+            except (TypeError, ValueError): return float(default)
+
+        _s_pts     = _fv("PTS");       _s_reb    = _fv("REB")
+        _s_ast     = _fv("AST");       _s_stl    = _fv("STL")
+        _s_blk     = _fv("BLK");       _s_tov    = _fv("TOV")
+        _s_fgp     = _fv("FG%");       _s_tpp    = _fv("3P%")
+        _s_ftp     = _fv("FT%");       _s_efg    = _fv("eFG%")
+        _s_ts      = _fv("TS%");       _s_oreb   = _fv("OREB")
+        _s_dreb    = _fv("DREB");      _s_pf     = _fv("PF")
+        _s_tpa     = _fv("3PA");       _s_fta    = _fv("FTA")
+        _s_min     = _fv("MIN");       _s_gp     = _fv("GP")
+        _s_pps     = _fv("PPS");       _s_ppsa   = _fv("PPSA")
+        _s_tov_pct = _fv("TOV%");      _s_ftr    = _fv("FTr")
+        _s_ast_tov = _fv("AST/TOV");   _s_sc     = _fv("SC")
+        _s_pm      = _fv("+/-");       _s_q4     = _fv("Q4 PPG")
+        _s_stocks  = _fv("Stocks");    _s_dsh    = _fv("DSh%")
+        _s_ast_pct = _fv("AST%");      _s_oreb_p = _fv("OREB%")
+        _s_dreb_p  = _fv("DREB%");     _s_trb_p  = _fv("TRB%")
+        _s_efg_dec = _s_efg / 100      # percentage → decimal
+
+        # Ratings row (may be absent for players with <2 GP)
+        _s_rat = {}
+        if not rat.empty and pid is not None and "pid" in rat.columns:
+            _rat_match = rat[rat["pid"] == pid]
+            if not _rat_match.empty:
+                _r = _rat_match.iloc[0]
+                for _rc in ("OFF","DEF","PLY","REB_R","OVRL"):
+                    try: _s_rat[_rc] = float(_r.get(_rc, 0) or 0)
+                    except (TypeError, ValueError): _s_rat[_rc] = 0.0
+
+        _off  = _s_rat.get("OFF",   0)
+        _def  = _s_rat.get("DEF",   0)
+        _ply  = _s_rat.get("PLY",   0)
+        _reb  = _s_rat.get("REB_R", 0)
+        _ovrl = _s_rat.get("OVRL",  0)
+
+        # ── Percentile helper (vs full rnk pool) ──────────────────────────────
+        def _pct(col):
+            if col not in rnk.columns: return 50
+            try: return _percentile_of(float(prof_row.get(col, 0) or 0), rnk[col])
+            except Exception: return 50
+
+        # ── Archetype ─────────────────────────────────────────────────────────
+        if _ovrl >= 80 and _def >= 68:
+            _archetype = ("👑", "Elite Two-Way Player",
+                          "Excels on both ends — a rare combination of offensive production and defensive impact.")
+        elif _off >= 80 and _s_pts >= 14:
+            _archetype = ("⚡", "Scoring Machine",
+                          "A primary offensive weapon who creates points consistently and efficiently.")
+        elif _ply >= 75 and _s_ast_pct >= 18:
+            _archetype = ("🎯", "Floor General",
+                          "Controls the offense through vision and distribution. The team runs through this player.")
+        elif _reb >= 75 or (_s_trb_p >= 12 and _s_reb >= 6):
+            _archetype = ("📦", "Glass Cleaner",
+                          "Dominates the rebounding battle on both ends, generating extra possessions for the team.")
+        elif _def >= 75 or (_s_stocks >= 3 and _s_dsh >= 12):
+            _archetype = ("🛡️", "Defensive Anchor",
+                          "High-impact defender whose presence disrupts opponents through steals, blocks, and contests.")
+        elif _s_tpp >= 36 and _s_tpa >= 2 and _s_dsh >= 10:
+            _archetype = ("🏹", "3-and-D Specialist",
+                          "Punishes opponents with the three ball and holds their own defensively — a valuable role player.")
+        elif _s_tpp >= 36 and _s_tpa >= 2.5 and _s_ast <= 2:
+            _archetype = ("🎪", "Spot-Up Shooter",
+                          "An off-ball threat who makes defenses pay for leaving them open beyond the arc.")
+        elif _s_fv("PaintFG%") >= 54 and _s_reb >= 4:
+            _archetype = ("🔨", "Interior Presence",
+                          "Operates close to the basket with efficiency, finishing strong and commanding the paint.")
+        elif _ovrl >= 55:
+            _archetype = ("🧩", "Versatile Contributor",
+                          "A well-rounded player who contributes across multiple areas without a single dominant trait.")
+        elif _s_min >= 20 and _s_pm >= 3:
+            _archetype = ("🔋", "High-Impact Role Player",
+                          "Team plays better with this player on the floor. Wins through effort and smart decisions.")
+        else:
+            _archetype = ("📊", "Developing Player",
+                          "Building their game. Stats are still developing — more tracked games will sharpen the picture.")
+
+        # ── Render archetype banner ───────────────────────────────────────────
+        st.markdown(
+            f"<div style='background:linear-gradient(135deg,#1a1200,#0d1117);"
+            f"border:1px solid #f0a500;border-radius:12px;padding:14px 18px;"
+            f"margin-bottom:14px;display:flex;align-items:center;gap:14px'>"
+            f"<span style='font-size:32px'>{_archetype[0]}</span>"
+            f"<div><div style='font-size:15px;font-weight:800;color:#f0a500'>{_archetype[1]}</div>"
+            f"<div style='font-size:12px;color:#8b949e;margin-top:3px'>{_archetype[2]}</div></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Build strengths list ──────────────────────────────────────────────
+        _strengths_sr: list[tuple[str, str]] = []   # (label, detail)
+
+        # Scoring
+        if _s_pts >= 18:
+            _strengths_sr.append(("Elite scorer",
+                f"{_s_pts:.1f} PPG — top-{100-_pct('PTS')}% of tracked players."))
+        elif _s_pts >= 12:
+            _strengths_sr.append(("Consistent scorer",
+                f"{_s_pts:.1f} PPG with solid production game-to-game."))
+        if _s_efg_dec >= 0.54:
+            _strengths_sr.append(("Efficient shooter",
+                f"eFG% {_s_efg:.1f}% — squeezes high value from each attempt."))
+        if _s_tpp >= 36 and _s_tpa >= 2:
+            _strengths_sr.append(("3-point threat",
+                f"{_s_tpp:.1f}% on {_s_tpa:.1f} attempts/G — a credible stretch option."))
+        if _s_ftp >= 80 and _s_fta >= 2:
+            _strengths_sr.append(("Reliable at the line",
+                f"{_s_ftp:.1f}% FT% converts free chances into points."))
+        if _s_q4 >= _s_pts * 0.30 and _s_q4 >= 4:
+            _strengths_sr.append(("Clutch performer",
+                f"{_s_q4:.1f} Q4 PPG — raises the level when it matters most."))
+        if _s_pps >= 1.05:
+            _strengths_sr.append(("High-quality shot selection",
+                f"{_s_pps:.2f} PPS — generates above-average value per attempt."))
+
+        # Rebounding
+        if _s_oreb_p >= 12:
+            _strengths_sr.append(("Offensive glass presence",
+                f"OREB% {_s_oreb_p:.1f}% — consistently generates second-chance opportunities."))
+        elif _s_oreb >= 2.5:
+            _strengths_sr.append(("Active offensive rebounder",
+                f"{_s_oreb:.1f} OREB/G keeps possessions alive."))
+        if _s_dreb_p >= 22:
+            _strengths_sr.append(("Defensive rebounding anchor",
+                f"DREB% {_s_dreb_p:.1f}% — cleans the glass and ends opponent possessions."))
+        elif _s_reb >= 7:
+            _strengths_sr.append(("Dominant rebounder",
+                f"{_s_reb:.1f} RPG — controls the boards on both ends."))
+
+        # Playmaking
+        if _s_ast_pct >= 22:
+            _strengths_sr.append(("Elite facilitator",
+                f"AST% {_s_ast_pct:.1f}% — facilitates a high share of teammate field goals."))
+        elif _s_ast >= 4:
+            _strengths_sr.append(("Playmaking presence",
+                f"{_s_ast:.1f} APG creates consistent scoring chances for teammates."))
+        if _s_ast_tov >= 3.0 and _s_ast >= 2:
+            _strengths_sr.append(("Excellent ball security",
+                f"AST/TOV {_s_ast_tov:.1f} — makes good decisions under pressure."))
+
+        # Defense
+        if _s_stl >= 2.0:
+            _strengths_sr.append(("Disruptive hands",
+                f"{_s_stl:.1f} SPG — creates turnovers and ignites transition."))
+        elif _s_stl >= 1.3:
+            _strengths_sr.append(("Active on-ball defender",
+                f"{_s_stl:.1f} SPG demonstrates consistent defensive pressure."))
+        if _s_blk >= 1.5:
+            _strengths_sr.append(("Shot-blocking threat",
+                f"{_s_blk:.1f} BPG alters the opponent's interior game."))
+        if _s_dsh >= 14 and _s_stl + _s_blk >= 1.5:
+            _strengths_sr.append(("High contest rate",
+                f"DSh% {_s_dsh:.1f}% — consistently challenges shots on defense."))
+
+        # Impact
+        if _s_pm >= 6:
+            _strengths_sr.append(("Strong net impact",
+                f"+{_s_pm:.1f} +/- per game — team consistently outscores opponents with them on court."))
+
+        # Cap at 4 strongest
+        _strengths_sr = _strengths_sr[:4]
+
+        # ── Build weaknesses list ─────────────────────────────────────────────
+        _weaknesses_sr: list[tuple[str, str]] = []
+
+        # Shooting
+        if _s_efg_dec < 0.42 and _s_fv("FGA") >= 3:
+            _weaknesses_sr.append(("Below-average shooting efficiency",
+                f"eFG% {_s_efg:.1f}% — shot selection or finishing needs work."))
+        elif _s_efg_dec < 0.47 and _s_fv("FGA") >= 4:
+            _weaknesses_sr.append(("Inconsistent shooting",
+                f"eFG% {_s_efg:.1f}% leaves efficiency gains on the table."))
+        if _s_tpp < 27 and _s_tpa >= 2.5:
+            _weaknesses_sr.append(("Poor 3-point selection",
+                f"{_s_tpp:.1f}% on {_s_tpa:.1f} attempts/G — 3-point volume isn't justified by accuracy."))
+        elif _s_tpp < 32 and _s_tpa >= 3:
+            _weaknesses_sr.append(("Streaky from three",
+                f"{_s_tpp:.1f}% 3P% — opponents may be comfortable leaving open."))
+        if _s_ftp < 62 and _s_fta >= 2.5:
+            _weaknesses_sr.append(("Exploitable at the free-throw line",
+                f"{_s_ftp:.1f}% FT% — opponents may intentionally foul in close games."))
+
+        # Turnovers
+        if _s_tov_pct >= 22:
+            _weaknesses_sr.append(("Turnover-prone",
+                f"TOV% {_s_tov_pct:.1f}% — careless with the ball; opponents benefit from extra possessions."))
+        elif _s_ast_tov < 1.0 and _s_ast >= 1.5:
+            _weaknesses_sr.append(("Poor AST/TOV ratio",
+                f"AST/TOV {_s_ast_tov:.1f} — gives back possessions almost as often as creating them."))
+
+        # Rebounding
+        if _s_oreb_p < 4 and _s_min >= 16 and _s_reb < 3:
+            _weaknesses_sr.append(("Limited glass presence",
+                "Doesn't crash the offensive boards — leaves second-chance points behind."))
+        if _s_dreb_p < 10 and _s_min >= 16 and _s_reb < 3:
+            _weaknesses_sr.append(("Soft on the defensive boards",
+                "Opponents get too many second chances with this player on court."))
+
+        # Defense
+        if _s_stl < 0.4 and _s_blk < 0.3 and _s_min >= 18 and _s_dsh < 6:
+            _weaknesses_sr.append(("Low defensive impact",
+                f"Minimal steals, blocks, or contests with {_s_min:.0f} MIN/G — limited defensive presence."))
+
+        # Fouls
+        if _s_pf >= 3.5 and _s_min >= 15:
+            _weaknesses_sr.append(("Foul trouble risk",
+                f"{_s_pf:.1f} PF/G — stays on the floor by staying out of foul trouble."))
+
+        # Production vs minutes
+        if _s_pts < 5 and _s_ast < 2 and _s_reb < 3 and _s_min >= 18:
+            _weaknesses_sr.append(("Needs to contribute more",
+                f"Limited output ({_s_pts:.1f} pts / {_s_reb:.1f} reb / {_s_ast:.1f} ast) for the minutes played."))
+
+        # Cap at 3
+        _weaknesses_sr = _weaknesses_sr[:3]
+
+        # ── Render strengths / weaknesses two-column ──────────────────────────
+        _sr_c1, _sr_c2 = st.columns(2)
+
+        def _scout_bullets(col, header_emoji, header_text, header_clr, items):
+            bullets_html = "".join(
+                f"<div style='margin-bottom:9px'>"
+                f"<div style='font-size:13px;font-weight:700;color:#f0f6fc'>{lbl}</div>"
+                f"<div style='font-size:12px;color:#8b949e;margin-top:1px'>{detail}</div>"
+                f"</div>"
+                for lbl, detail in items
+            )
+            if not items:
+                bullets_html = (
+                    "<div style='font-size:12px;color:#484f58;font-style:italic'>"
+                    "Not enough data to identify clear patterns yet.</div>"
+                )
+            col.markdown(
+                f"<div style='background:#161b22;border:1px solid #30363d;"
+                f"border-radius:10px;padding:14px'>"
+                f"<div style='font-size:13px;font-weight:700;color:{header_clr};"
+                f"margin-bottom:10px'>{header_emoji} {header_text}</div>"
+                f"{bullets_html}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        _scout_bullets(_sr_c1, "✅", "Strengths", "#2ea043", _strengths_sr)
+        _scout_bullets(_sr_c2, "⚠️", "Areas to Watch", "#f0a500", _weaknesses_sr)
+
+        # ── One-line scout summary ────────────────────────────────────────────
+        if _strengths_sr or _weaknesses_sr:
+            _top_str = _strengths_sr[0][0].lower()  if _strengths_sr  else None
+            _top_wk  = _weaknesses_sr[0][0].lower() if _weaknesses_sr else None
+            _summary_parts = []
+            if _top_str:
+                _summary_parts.append(f"Best asset: <b style='color:#f0f6fc'>{_top_str}</b>")
+            if _top_wk:
+                _summary_parts.append(f"key concern: <b style='color:#f0f6fc'>{_top_wk}</b>")
+            if _summary_parts:
+                st.markdown(
+                    f"<div style='margin-top:8px;font-size:12px;color:#8b949e;"
+                    f"padding:8px 12px;background:#0d1117;border-radius:6px'>"
+                    f"📋 Scout note — {' · '.join(_summary_parts)}.</div>",
+                    unsafe_allow_html=True,
+                )

@@ -42,10 +42,13 @@ st.markdown(
     "Players Hub · Officials Hub · Daily Breakdown · Settings."
 )
 
-# ── Supabase connection badge ──────────────────────────────────────────────────
+# ── Database status badge ──────────────────────────────────────────────────────
 try:
-    from Database.db import get_connection as _gc
-    _gc()
-    st.caption("🟢 Connected to Supabase")
+    from Database.db import get_db_path as _gp
+    _p = _gp()
+    if _p.exists():
+        st.caption(f"🟢 Database ready ({_p.name})")
+    else:
+        st.warning("⚠️ Database file not found — run the app once to initialise it.")
 except Exception as _e:
-    st.warning(f"⚠️ Database not connected — {_e}")
+    st.warning(f"⚠️ Database error — {_e}")

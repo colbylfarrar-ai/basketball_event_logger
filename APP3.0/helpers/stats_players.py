@@ -61,7 +61,7 @@ def compute_player_rankings() -> pd.DataFrame:
     def _blank():
         return dict(pts=0, fgm=0, fga=0, tpm=0, tpa=0, ftm=0, fta=0,
                     ast=0, oreb=0, dreb=0, stl=0, blk=0, tov=0, pf=0, q4_pts=0,
-                    sc=0, shot_rating=0.0, shot_rating_n=0)
+                    sc=0, scs=0, scp=0, sco=0, shot_rating=0.0, shot_rating_n=0)
 
     stats: dict = defaultdict(_blank)
 
@@ -74,6 +74,7 @@ def compute_player_rankings() -> pd.DataFrame:
                 s = stats[pid]
                 s["fga"] += 1
                 s["sc"]  += 1   # shooter always gets 1 SC
+                s["scs"] += 1
                 if ev["shot_type"] == 3:
                     s["tpa"] += 1
                 if ev["shot_result"] == "make":
@@ -102,10 +103,12 @@ def compute_player_rankings() -> pd.DataFrame:
             # Passer and shot creator also earn SC
             pf = ev["pass_from_id"]
             if pf and pf in pid_info and pf != pid:
-                stats[pf]["sc"] += 1
+                stats[pf]["sc"]  += 1
+                stats[pf]["scp"] += 1
             scb = ev["shot_created_by_id"]
             if scb and scb in pid_info and scb != pid:
-                stats[scb]["sc"] += 1
+                stats[scb]["sc"]  += 1
+                stats[scb]["sco"] += 1
             blk = ev["blocked_by_id"]
             if blk and blk in pid_info:
                 stats[blk]["blk"] += 1
@@ -191,6 +194,50 @@ def compute_player_rankings() -> pd.DataFrame:
         GROUP BY ge.guarded_by_id
     """)
     def_fga_map = {r["pid"]: r["def_fga"] for r in def_rows}
+
+    # ── Adjusted assist-rate denominator ─────────────────────────────────────
+    # AST% = player's assists / teammate FGM while player is on court
+    # "Teammate FGM" = made shots by same-team players (excluding the player)
+    # while that player had a game_event_lineup entry for that event.
+    ast_denom_rows = query("""
+        SELECT
+            gel.player_id,
+            COUNT(*) AS teammate_fgm
+        FROM game_event_lineup gel
+        JOIN game_events  ge      ON ge.id       = gel.event_id
+        JOIN games        g       ON g.id        = ge.game_id
+        JOIN players      shooter ON shooter.id  = ge.primary_player_id
+        JOIN players      p_on    ON p_on.id     = gel.player_id
+        WHERE g.tracked = 1
+          AND ge.event_type = 'shot'
+          AND ge.shot_result = 'make'
+          AND shooter.team_id = p_on.team_id
+          AND shooter.id     != gel.player_id
+        GROUP BY gel.player_id
+    """)
+    ast_denom_map = {r["player_id"]: max(r["teammate_fgm"] or 0, 1) for r in ast_denom_rows}
+
+    # ── Adjusted rebound-rate denominators ───────────────────────────────────
+    # For each player: while on court, how many OREB / DREB opportunities existed?
+    #   OREB opp = your team's missed shots while you were on court
+    #   DREB opp = opponent's missed shots while you were on court
+    reb_opp_rows = query("""
+        SELECT
+            gel.player_id,
+            SUM(CASE WHEN shooter.team_id  = p_on.team_id THEN 1 ELSE 0 END) AS oreb_opps,
+            SUM(CASE WHEN shooter.team_id != p_on.team_id THEN 1 ELSE 0 END) AS dreb_opps
+        FROM game_event_lineup gel
+        JOIN game_events  ge      ON ge.id       = gel.event_id
+        JOIN games        g       ON g.id        = ge.game_id
+        JOIN players      shooter ON shooter.id  = ge.primary_player_id
+        JOIN players      p_on    ON p_on.id     = gel.player_id
+        WHERE g.tracked = 1
+          AND ge.event_type IN ('shot', 'free_throw')
+          AND ge.shot_result = 'miss'
+        GROUP BY gel.player_id
+    """)
+    oreb_opps_map = {r["player_id"]: max(r["oreb_opps"] or 0, 1) for r in reb_opp_rows}
+    dreb_opps_map = {r["player_id"]: max(r["dreb_opps"] or 0, 1) for r in reb_opp_rows}
 
     # Opponent shots while each player was on court (denominator for DSh%)
     # Uses game_event_lineup snapshots: player_id present → on court for that event
@@ -283,6 +330,22 @@ def compute_player_rankings() -> pd.DataFrame:
         # AST/TOV ratio
         ast_tov_r = round(s["ast"] / s["tov"], 2) if s["tov"] else round(s["ast"] / 0.5, 1)
 
+        # ── Adjusted assist rate (opportunity-based) ─────────────────────────
+        # AST% = what % of teammate made FGs did this player facilitate?
+        _ast_denom = ast_denom_map.get(pid, 1)
+        ast_pct = round(s["ast"] / _ast_denom * 100, 1) if _ast_denom > 0 else 0.0
+
+        # ── Adjusted rebound rates (opportunity-based) ────────────────────────
+        # OREB% = what % of available offensive rebound opportunities did player grab?
+        # DREB% = what % of available defensive rebound opportunities did player grab?
+        # TRB%  = combined (total player rebs / avg available rebs per possession)
+        _oreb_o = oreb_opps_map.get(pid, 1)
+        _dreb_o = dreb_opps_map.get(pid, 1)
+        _trb_o  = _oreb_o + _dreb_o
+        oreb_pct = round(s["oreb"] / _oreb_o * 100, 1) if _oreb_o > 0 else 0.0
+        dreb_pct = round(s["dreb"] / _dreb_o * 100, 1) if _dreb_o > 0 else 0.0
+        trb_pct  = round((s["oreb"] + s["dreb"]) / (_trb_o / 2) * 100, 1) if _trb_o > 0 else 0.0
+
         # Double-doubles & triple-doubles approximated from career totals
         # (can't count per-game instances from aggregates, so skip)
 
@@ -322,6 +385,12 @@ def compute_player_rankings() -> pd.DataFrame:
             "GS":     round(gs_tot / gp, 1),
             "Q4 PPG": round(s["q4_pts"] / gp, 1),
             "SC":     round(s["sc"] / gp, 1),
+            "SCS":    round(s["scs"] / gp, 1),
+            "SCP":    round(s["scp"] / gp, 1),
+            "SCO":    round(s["sco"] / gp, 1),
+            "SCS%":   round(s["scs"] / s["sc"] * 100, 1) if s["sc"] else 0.0,
+            "SCP%":   round(s["scp"] / s["sc"] * 100, 1) if s["sc"] else 0.0,
+            "SCO%":   round(s["sco"] / s["sc"] * 100, 1) if s["sc"] else 0.0,
             "ShotRat": round(s["shot_rating"] / s["shot_rating_n"], 2)
                        if s["shot_rating_n"] else 0.0,
             # per-32 helpers
@@ -332,6 +401,9 @@ def compute_player_rankings() -> pd.DataFrame:
             "BLK32":  round(s["blk"]  / total_min * 32, 1) if p32 and total_min else None,
             "TOV32":  round(s["tov"]  / total_min * 32, 1) if p32 and total_min else None,
             "SC32":   round(s["sc"]   / total_min * 32, 1) if p32 and total_min else None,
+            "SCS32":  round(s["scs"]  / total_min * 32, 1) if p32 and total_min else None,
+            "SCP32":  round(s["scp"]  / total_min * 32, 1) if p32 and total_min else None,
+            "SCO32":  round(s["sco"]  / total_min * 32, 1) if p32 and total_min else None,
             # 2PT splits
             "2PM":   round(_twopm / gp, 1),
             "2PA":   round(_twopa / gp, 1),
@@ -356,6 +428,12 @@ def compute_player_rankings() -> pd.DataFrame:
             "PRF":    prf,          # Points Responsible For (PTS + AST*2)
             "Stocks": stocks_pg,    # Stocks (STL+BLK) per game
             "AST/TOV": ast_tov_r,  # Assist-to-Turnover ratio
+            # ── Adjusted assist rate ──────────────────────────────────────────
+            "AST%":   ast_pct,     # % of teammate FGM player assisted while on court
+            # ── Adjusted rebound rates ────────────────────────────────────────
+            "OREB%": oreb_pct,     # % of team-miss opportunities player grabbed (offensive)
+            "DREB%": dreb_pct,     # % of opp-miss opportunities player grabbed (defensive)
+            "TRB%":  trb_pct,      # combined: player rebs / (avg available per event)
         }
         rows.append(row)
 
@@ -639,65 +717,136 @@ def compute_game_quarter_scores(game_id: int):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def compute_official_stats() -> pd.DataFrame:
-    """Games worked and foul rates per official."""
+    """Games worked and foul rates per official.
+
+    Game membership is sourced from BOTH game_lineup_officials (assignments)
+    and foul events so officials with non-tracked games still appear correctly.
+
+    Pace / PPP are computed by looking up shot+turnover counts per game_id
+    rather than filtering game_events by official_id, because official_id is
+    only populated on foul rows — it is NULL on every shot and turnover.
+    """
     officials = query("SELECT id, name, official_id FROM officials ORDER BY name")
     if not officials:
         return pd.DataFrame()
 
-    # Games per official (via lineup table)
-    game_rows = query("""
-        SELECT glo.official_id, COUNT(DISTINCT glo.game_id) AS gc
-        FROM game_lineup_officials glo
-        JOIN games g ON g.id=glo.game_id
-        GROUP BY glo.official_id
-    """)
-    game_map = {r["official_id"]: r["gc"] for r in game_rows}
+    from collections import defaultdict
 
-    # Fouls called per official
+    # ── Source A: official ↔ game assignments (any game, tracked or not) ──────
+    assign_rows = query(
+        "SELECT official_id, game_id FROM game_lineup_officials"
+    )
+
+    # ── Source B: foul events (official_id is only set here) ─────────────────
     foul_rows = query("""
-        SELECT ge.official_id, COUNT(*) AS fc
+        SELECT
+            ge.official_id,
+            ge.game_id,
+            g.team1_id,
+            p.team_id AS fouler_team
         FROM game_events ge
-        WHERE ge.event_type='foul' AND ge.official_id IS NOT NULL
-        GROUP BY ge.official_id
+        JOIN games   g ON g.id  = ge.game_id
+        JOIN players p ON p.id  = ge.secondary_player_id
+        WHERE ge.event_type             = 'foul'
+          AND ge.official_id            IS NOT NULL
+          AND ge.secondary_player_id    IS NOT NULL
     """)
-    foul_map = {r["official_id"]: r["fc"] for r in foul_rows}
 
-    # Home vs away foul differential
-    ha_rows = query("""
-        SELECT ge.official_id,
-               g.team1_id, g.team2_id,
-               p.team_id AS fouler_team
-        FROM game_events ge
-        JOIN games g ON g.id=ge.game_id
-        JOIN players p ON p.id=ge.secondary_player_id
-        WHERE ge.event_type='foul' AND ge.official_id IS NOT NULL
-          AND ge.secondary_player_id IS NOT NULL
-    """)
+    # Build per-official game sets
+    game_sets_all:     dict = defaultdict(set)   # all games (assignments + foul events)
+    game_sets_tracked: dict = defaultdict(set)   # games that have foul-event data
+
+    for r in assign_rows:
+        game_sets_all[r["official_id"]].add(r["game_id"])
+
+    for r in foul_rows:
+        game_sets_all[r["official_id"]].add(r["game_id"])
+        game_sets_tracked[r["official_id"]].add(r["game_id"])
+
+    # Foul count / home-away split
+    foul_count: dict = defaultdict(int)
     home_fouls: dict = defaultdict(int)
     away_fouls: dict = defaultdict(int)
-    for r in ha_rows:
+
+    for r in foul_rows:
         oid = r["official_id"]
-        if r["fouler_team"] == r["team1_id"]:  # team1 = home
+        foul_count[oid] += 1
+        if r["fouler_team"] == r["team1_id"]:   # team1 is always home
             home_fouls[oid] += 1
         else:
             away_fouls[oid] += 1
 
+    # ── Pace / PPP: fetch per-game possession counts WITHOUT filtering by
+    #    official_id (shot/turnover rows never carry an official_id). ──────────
+    all_game_ids: set = set()
+    for gids in game_sets_all.values():
+        all_game_ids.update(gids)
+
+    game_poss_map:  dict = {}   # game_id → shot+turnover count
+    game_score_map: dict = {}   # game_id → combined score
+
+    if all_game_ids:
+        ph = ",".join("?" * len(all_game_ids))
+
+        poss_rows = query(
+            f"""SELECT game_id, COUNT(*) AS poss_count
+                FROM game_events
+                WHERE game_id IN ({ph})
+                  AND event_type IN ('shot', 'turnover')
+                GROUP BY game_id""",
+            tuple(all_game_ids),
+        )
+        for r in poss_rows:
+            game_poss_map[r["game_id"]] = r["poss_count"]
+
+        score_rows = query(
+            f"SELECT id, home_score, away_score FROM games WHERE id IN ({ph})",
+            tuple(all_game_ids),
+        )
+        for r in score_rows:
+            game_score_map[r["id"]] = (r["home_score"] or 0) + (r["away_score"] or 0)
+
+    # ── Build one row per official ────────────────────────────────────────────
     rows = []
     for o in officials:
-        oid = o["id"]
-        gc  = game_map.get(oid, 0)
-        fc  = foul_map.get(oid, 0)
+        oid       = o["id"]
+        all_games = game_sets_all.get(oid, set())
+        trk_games = game_sets_tracked.get(oid, set())
+
+        gc  = len(all_games)
+        tgc = len(trk_games)          # games with foul-event data (denominator for Fouls/Game)
+        fc  = foul_count.get(oid, 0)
         hf  = home_fouls.get(oid, 0)
         af  = away_fouls.get(oid, 0)
+
+        # Pace = total (shots + turnovers both teams) / games that had event data
+        total_poss  = sum(game_poss_map.get(gid, 0) for gid in all_games)
+        pace_games  = sum(1 for gid in all_games if game_poss_map.get(gid, 0) > 0)
+        pace        = round(total_poss / pace_games, 1) if pace_games else 0.0
+
+        # PPP = combined score / total possessions
+        total_pts   = sum(game_score_map.get(gid, 0) for gid in all_games)
+        ppp         = round(total_pts / total_poss, 3) if total_poss else 0.0
+
+        # Avg total score per game (across all games with a recorded score)
+        scored_games = sum(1 for gid in all_games if game_score_map.get(gid, 0) > 0)
+        avg_score    = round(total_pts / scored_games, 1) if scored_games else 0.0
+
+        # Fouls/Game uses tgc so we don't dilute with untracked game stubs
+        fpg = round(fc / tgc, 1) if tgc else 0.0
+
         rows.append({
-            "Official":    o["name"],
-            "Ref ID":      o["official_id"],
-            "Games":       gc,
-            "Total Fouls": fc,
-            "Fouls/Game":  round(fc / gc, 1) if gc else 0,
-            "Home Fouls":  hf,
-            "Away Fouls":  af,
-            "H/A Diff":    hf - af,
+            "Official":        o["name"],
+            "Ref ID":          o["official_id"],
+            "Games":           gc,
+            "Total Fouls":     fc,
+            "Fouls/Game":      fpg,
+            "Home Fouls":      hf,
+            "Away Fouls":      af,
+            "H/A Diff":        hf - af,
+            "Avg Total Score": avg_score,
+            "Pace":            pace,
+            "PPP":             ppp,
         })
 
     df = pd.DataFrame(rows).sort_values("Games", ascending=False).reset_index(drop=True)
@@ -790,22 +939,27 @@ def compute_player_ratings() -> pd.DataFrame:
                     if c in df.columns).round(1)
 
     # ── PLY — Playmaking Rating ───────────────────────────────────────────────
+    # AST% leads (context-adjusted rate), then volume + quality + ball security
     _ply_cfg = [
-        ("AST",      True,  0.30),
-        ("_ast_tov", True,  0.25),
-        ("TOV",      False, 0.20),
-        ("SC",       True,  0.15),
-        ("PTS",      True,  0.10),
+        ("AST%",     True,  0.28),   # adjusted assist rate (primary context signal)
+        ("AST",      True,  0.22),   # raw assist volume per game
+        ("_ast_tov", True,  0.20),   # AST/TOV ratio (quality of decisions)
+        ("TOV",      False, 0.15),   # fewer turnovers = better
+        ("SC",       True,  0.10),   # shot creation
+        ("PTS",      True,  0.05),   # scoring contribution to playmaking
     ]
     df["PLY"] = sum(_norm(c, h) * w for c, h, w in _ply_cfg
                     if c in df.columns).round(1)
 
     # ── REB — Rebounding Rating ───────────────────────────────────────────────
+    # Adjusted rates (OREB%/DREB%) now lead; raw volume provides supporting signal
     _reb_cfg = [
-        ("OREB",     True, 0.35),
-        ("DREB",     True, 0.35),
-        ("REB",      True, 0.20),
-        ("PaintFGA", True, 0.10),
+        ("OREB%",    True, 0.25),   # adjusted offensive reb rate
+        ("DREB%",    True, 0.25),   # adjusted defensive reb rate
+        ("OREB",     True, 0.20),   # raw offensive reb volume per game
+        ("DREB",     True, 0.15),   # raw defensive reb volume per game
+        ("REB",      True, 0.10),   # total rebs per game
+        ("PaintFGA", True, 0.05),   # glass proximity proxy
     ]
     df["REB_R"] = sum(_norm(c, h) * w for c, h, w in _reb_cfg
                       if c in df.columns).round(1)
@@ -827,11 +981,263 @@ def compute_player_ratings() -> pd.DataFrame:
             "FTM", "FTA", "FT%",
             "eFG%", "TS%",
             "PaintFG%", "PaintFGA", "PaintFGM",
-            "+/-", "GS", "SC", "ShotRat", "Stocks", "Q4 PPG",
+            "+/-", "GS", "SC", "SCS", "SCP", "SCO", "SCS%", "SCP%", "SCO%",
+            "ShotRat", "Stocks", "Q4 PPG",
             "_ast_tov", "AST/TOV",
             "DSh%",
             "FTr", "PPS", "PPSA", "TOV%", "USG", "EFF", "FIC", "PRF",
             "PTS32", "REB32", "AST32", "STL32", "BLK32", "TOV32", "SC32",
+            "SCS32", "SCP32", "SCO32",
+            "AST%",
+            "OREB%", "DREB%", "TRB%",
             "_OFF_shoot", "_OFF_finish",
             "OFF", "DEF", "PLY", "REB_R", "OVRL"]
     return df[[c for c in keep if c in df.columns]]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PLAYER ON/OFF REBOUNDING
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_player_rebound_onoff(player_id: int, team_id: int) -> dict:
+    """
+    Return on-court vs off-court team rebounding rates for a single player.
+
+    For each missed shot in games the player appeared in, we classify whether
+    the player was on court (via game_event_lineup) and whether it was an
+    offensive or defensive rebound opportunity for the player's team.
+
+    Returns a dict with keys:
+        on_oreb_pct  – team OREB% while player is on court
+        off_oreb_pct – team OREB% while player is off court
+        on_dreb_pct  – team DREB% while player is on court
+        off_dreb_pct – team DREB% while player is off court
+        on_trb_pct   – team TRB% (combined) while player is on court
+        off_trb_pct  – team TRB% (combined) while player is off court
+        on_oreb_opps, off_oreb_opps  – sample sizes
+        on_dreb_opps, off_dreb_opps
+        on_oreb, off_oreb, on_dreb, off_dreb  – raw team rebound counts
+    Returns an empty dict if insufficient data.
+    """
+    # Get all games this player appeared in
+    game_rows = query("""
+        SELECT DISTINCT game_id FROM game_lineup_players WHERE player_id=?
+    """, (player_id,))
+    if not game_rows:
+        return {}
+    game_ids   = tuple(r["game_id"] for r in game_rows)
+    if not game_ids:
+        return {}
+
+    placeholders = ",".join("?" * len(game_ids))
+
+    # All missed shots in those games (tracked only)
+    missed_rows = query(f"""
+        SELECT
+            ge.id          AS event_id,
+            shooter.team_id AS shooting_team,
+            reb_p.team_id   AS rebounding_team,
+            ge.rebound_by_id
+        FROM game_events ge
+        JOIN games   g      ON g.id       = ge.game_id
+        JOIN players shooter ON shooter.id = ge.primary_player_id
+        LEFT JOIN players reb_p ON reb_p.id = ge.rebound_by_id
+        WHERE g.tracked = 1
+          AND ge.game_id IN ({placeholders})
+          AND ge.event_type IN ('shot', 'free_throw')
+          AND ge.shot_result = 'miss'
+    """, game_ids)
+
+    if not missed_rows:
+        return {}
+
+    # Which event ids had this player on court
+    on_court_rows = query(f"""
+        SELECT DISTINCT event_id
+        FROM game_event_lineup
+        WHERE player_id = ?
+          AND event_id IN (
+              SELECT ge.id FROM game_events ge
+              WHERE ge.game_id IN ({placeholders})
+          )
+    """, (player_id,) + game_ids)
+    on_court_ids = {r["event_id"] for r in on_court_rows}
+
+    # Tally
+    on_oreb_opps = off_oreb_opps = 0   # our team missed (OREB opportunity)
+    on_dreb_opps = off_dreb_opps = 0   # opp missed     (DREB opportunity)
+    on_oreb = off_oreb = 0              # our team grabbed OREB
+    on_dreb = off_dreb = 0              # our team grabbed DREB
+
+    for r in missed_rows:
+        is_on         = r["event_id"] in on_court_ids
+        shooting_team = r["shooting_team"]
+        reb_team      = r["rebounding_team"]
+
+        if shooting_team == team_id:
+            # Our team missed → offensive rebound opportunity
+            if is_on:
+                on_oreb_opps += 1
+                if reb_team == team_id:
+                    on_oreb += 1
+            else:
+                off_oreb_opps += 1
+                if reb_team == team_id:
+                    off_oreb += 1
+        else:
+            # Opponent missed → defensive rebound opportunity
+            if is_on:
+                on_dreb_opps += 1
+                if reb_team == team_id:
+                    on_dreb += 1
+            else:
+                off_dreb_opps += 1
+                if reb_team == team_id:
+                    off_dreb += 1
+
+    def _pct(num, den):
+        return round(num / den * 100, 1) if den > 0 else None
+
+    on_trb_opps  = on_oreb_opps  + on_dreb_opps
+    off_trb_opps = off_oreb_opps + off_dreb_opps
+
+    return {
+        "on_oreb_pct":   _pct(on_oreb,  on_oreb_opps),
+        "off_oreb_pct":  _pct(off_oreb, off_oreb_opps),
+        "on_dreb_pct":   _pct(on_dreb,  on_dreb_opps),
+        "off_dreb_pct":  _pct(off_dreb, off_dreb_opps),
+        "on_trb_pct":    _pct(on_oreb + on_dreb,   on_trb_opps),
+        "off_trb_pct":   _pct(off_oreb + off_dreb,  off_trb_opps),
+        "on_oreb_opps":  on_oreb_opps,
+        "off_oreb_opps": off_oreb_opps,
+        "on_dreb_opps":  on_dreb_opps,
+        "off_dreb_opps": off_dreb_opps,
+        "on_oreb":       on_oreb,
+        "off_oreb":      off_oreb,
+        "on_dreb":       on_dreb,
+        "off_dreb":      off_dreb,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PLAYER ON/OFF PLAYMAKING
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_player_assist_onoff(player_id: int, team_id: int) -> dict:
+    """
+    Return on-court vs off-court team playmaking metrics for a single player.
+
+    For each team field goal made (and each team possession) in games the player
+    appeared in, we check whether the player was on court via game_event_lineup.
+
+    Metrics computed ON and OFF court:
+        ast_pct    – team AST% (assisted FGM / total team FGM)
+        tov_pct    – team TOV% (turnovers / possessions)
+        ast_pg     – team assists per game
+        tov_pg     – team turnovers per game
+        team_fgm   – total team FGM (denominator for AST%)
+
+    Returns an empty dict if insufficient data.
+    """
+    game_rows = query(
+        "SELECT DISTINCT game_id FROM game_lineup_players WHERE player_id=?",
+        (player_id,))
+    if not game_rows:
+        return {}
+    game_ids     = tuple(r["game_id"] for r in game_rows)
+    placeholders = ",".join("?" * len(game_ids))
+    n_games      = len(game_ids)
+
+    # ── Team made field goals in those games ──────────────────────────────────
+    fgm_rows = query(f"""
+        SELECT
+            ge.id        AS event_id,
+            ge.pass_from_id,
+            shooter.team_id AS shooting_team
+        FROM game_events ge
+        JOIN games   g      ON g.id       = ge.game_id
+        JOIN players shooter ON shooter.id = ge.primary_player_id
+        WHERE g.tracked = 1
+          AND ge.game_id IN ({placeholders})
+          AND ge.event_type = 'shot'
+          AND ge.shot_result = 'make'
+          AND shooter.team_id = ?
+    """, game_ids + (team_id,))
+
+    # ── Team turnovers in those games ─────────────────────────────────────────
+    tov_rows = query(f"""
+        SELECT ge.id AS event_id
+        FROM game_events ge
+        JOIN games   g  ON g.id = ge.game_id
+        JOIN players p  ON p.id = ge.primary_player_id
+        WHERE g.tracked = 1
+          AND ge.game_id IN ({placeholders})
+          AND ge.event_type = 'turnover'
+          AND p.team_id = ?
+    """, game_ids + (team_id,))
+
+    if not fgm_rows:
+        return {}
+
+    # ── Which event_ids had this player on court ──────────────────────────────
+    all_event_ids = tuple({r["event_id"] for r in fgm_rows} |
+                          {r["event_id"] for r in tov_rows})
+    if not all_event_ids:
+        return {}
+
+    oc_ph = ",".join("?" * len(all_event_ids))
+    on_court_rows = query(f"""
+        SELECT DISTINCT event_id
+        FROM game_event_lineup
+        WHERE player_id = ? AND event_id IN ({oc_ph})
+    """, (player_id,) + all_event_ids)
+    on_court_ids = {r["event_id"] for r in on_court_rows}
+
+    # ── Tally FGM with/without player ────────────────────────────────────────
+    on_fgm = on_ast = off_fgm = off_ast = 0
+    for r in fgm_rows:
+        assisted = r["pass_from_id"] is not None
+        if r["event_id"] in on_court_ids:
+            on_fgm  += 1
+            on_ast  += int(assisted)
+        else:
+            off_fgm += 1
+            off_ast += int(assisted)
+
+    # ── Tally TOV with/without player ────────────────────────────────────────
+    on_tov = off_tov = 0
+    for r in tov_rows:
+        if r["event_id"] in on_court_ids:
+            on_tov  += 1
+        else:
+            off_tov += 1
+
+    def _pct(num, den):
+        return round(num / den * 100, 1) if den > 0 else None
+
+    # Approximate possessions for TOV%: FGM is a proxy (no team-possession
+    # tracking beyond event lineup), so we use FGM + TOV as denominator
+    on_pos_proxy  = on_fgm  + on_tov
+    off_pos_proxy = off_fgm + off_tov
+
+    return {
+        # AST%: what fraction of team FGMs were assisted?
+        "on_ast_pct":   _pct(on_ast,  on_fgm),
+        "off_ast_pct":  _pct(off_ast, off_fgm),
+        # TOV%: turnovers per possession (proxy)
+        "on_tov_pct":   _pct(on_tov,  on_pos_proxy),
+        "off_tov_pct":  _pct(off_tov, off_pos_proxy),
+        # Per-game
+        "on_ast_pg":    round(on_ast  / n_games, 1),
+        "off_ast_pg":   round(off_ast / n_games, 1),
+        "on_tov_pg":    round(on_tov  / n_games, 1),
+        "off_tov_pg":   round(off_tov / n_games, 1),
+        # Sample sizes
+        "on_fgm":       on_fgm,
+        "off_fgm":      off_fgm,
+        "on_tov":       on_tov,
+        "off_tov":      off_tov,
+        "n_games":      n_games,
+    }

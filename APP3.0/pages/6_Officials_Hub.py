@@ -84,27 +84,38 @@ with tab1:
         st.info("No officiating data available yet.")
     else:
         # Ensure numeric
-        for col in ["Games","Total Fouls","Fouls/Game","Home Fouls","Away Fouls","H/A Diff"]:
+        for col in ["Games","Total Fouls","Fouls/Game","Home Fouls","Away Fouls","H/A Diff",
+                    "Avg Total Score","Pace","PPP"]:
             if col in off_df.columns:
                 off_df[col] = pd.to_numeric(off_df[col], errors="coerce").fillna(0)
 
         total_officials  = len(off_df)
         total_games_off  = int(off_df["Games"].sum()) if "Games" in off_df.columns else 0
         avg_fouls_game   = float(off_df["Fouls/Game"].mean()) if "Fouls/Game" in off_df.columns else 0.0
+        avg_ppp          = float(off_df["PPP"].mean()) if "PPP" in off_df.columns else 0.0
+        avg_pace         = float(off_df["Pace"].mean()) if "Pace" in off_df.columns else 0.0
+        avg_total_score  = float(off_df["Avg Total Score"].mean()) if "Avg Total Score" in off_df.columns else 0.0
         most_active_name = ""
         if "Games" in off_df.columns and not off_df.empty:
             most_active_name = off_df.nlargest(1,"Games").iloc[0].get("Official","—")
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Officials",       str(total_officials))
-        m2.metric("Total Games Officiated",str(total_games_off))
-        m3.metric("Avg Fouls / Game",      f"{avg_fouls_game:.1f}")
-        m4.metric("Most Active",           most_active_name)
+        m1.metric("Total Officials",        str(total_officials))
+        m2.metric("Total Games Officiated", str(total_games_off))
+        m3.metric("Avg Fouls / Game",       f"{avg_fouls_game:.1f}")
+        m4.metric("Most Active",            most_active_name)
+
+        m5, m6, m7, m8 = st.columns(4)
+        m5.metric("Avg PPP",         f"{avg_ppp:.3f}", help="Points per possession across all officiated games")
+        m6.metric("Avg Pace",        f"{avg_pace:.1f}", help="Avg possessions per game (shots + turnovers combined)")
+        m7.metric("Avg Total Score", f"{avg_total_score:.1f}", help="Average combined score per game")
+        m8.metric("", "")
 
         st.markdown("---")
         st.markdown('<div class="section-hdr">Officials Leaderboard</div>', unsafe_allow_html=True)
         show_cols = [c for c in ["Official","Ref ID","Games","Total Fouls","Fouls/Game",
-                                  "Home Fouls","Away Fouls","H/A Diff"] if c in off_df.columns]
+                                  "Home Fouls","Away Fouls","H/A Diff",
+                                  "Avg Total Score","Pace","PPP"] if c in off_df.columns]
         st.dataframe(off_df[show_cols].sort_values("Games", ascending=False),
                      use_container_width=True, hide_index=True)
 
@@ -147,6 +158,46 @@ with tab1:
                 )
                 st.plotly_chart(fig_ha, use_container_width=True)
 
+        # Second row: PPP and Pace
+        ch3, ch4 = st.columns(2)
+        with ch3:
+            if "PPP" in off_df.columns and "Official" in off_df.columns:
+                ppp_sorted = off_df[off_df["Games"] > 0].sort_values("PPP")
+                fig_ppp = go.Figure(go.Bar(
+                    x=ppp_sorted["PPP"],
+                    y=ppp_sorted["Official"],
+                    orientation="h",
+                    marker_color="#9b59b6",
+                    text=[f"{v:.3f}" for v in ppp_sorted["PPP"]],
+                    textposition="outside",
+                ))
+                fig_ppp.update_layout(
+                    **PLOT_LAYOUT,
+                    title="Points Per Possession (PPP) — games officiated",
+                    height=max(300, len(ppp_sorted)*40),
+                    yaxis=dict(tickfont=dict(size=11)),
+                )
+                st.plotly_chart(fig_ppp, use_container_width=True)
+
+        with ch4:
+            if "Avg Total Score" in off_df.columns and "Official" in off_df.columns:
+                sc_sorted = off_df[off_df["Games"] > 0].sort_values("Avg Total Score")
+                fig_sc = go.Figure(go.Bar(
+                    x=sc_sorted["Avg Total Score"],
+                    y=sc_sorted["Official"],
+                    orientation="h",
+                    marker_color="#e67e22",
+                    text=[f"{v:.1f}" for v in sc_sorted["Avg Total Score"]],
+                    textposition="outside",
+                ))
+                fig_sc.update_layout(
+                    **PLOT_LAYOUT,
+                    title="Avg Total Score per Game (combined)",
+                    height=max(300, len(sc_sorted)*40),
+                    yaxis=dict(tickfont=dict(size=11)),
+                )
+                st.plotly_chart(fig_sc, use_container_width=True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 2 – OFFICIAL PROFILE
@@ -172,11 +223,19 @@ with tab2:
                 if not match.empty:
                     stats_row = match.iloc[0]
 
+            def _sval(col, default=0):
+                if stats_row is None or col not in stats_row.index:
+                    return default
+                return stats_row[col]
+
             # Bio card
-            games_n   = int(stats_row["Games"])       if stats_row is not None and "Games"      in stats_row.index else 0
-            fouls_n   = int(stats_row["Total Fouls"])  if stats_row is not None and "Total Fouls" in stats_row.index else 0
-            fpg_n     = float(stats_row["Fouls/Game"]) if stats_row is not None and "Fouls/Game"  in stats_row.index else 0.0
-            ha_diff_n = float(stats_row["H/A Diff"])   if stats_row is not None and "H/A Diff"    in stats_row.index else 0.0
+            games_n      = int(_sval("Games"))
+            fouls_n      = int(_sval("Total Fouls"))
+            fpg_n        = float(_sval("Fouls/Game"))
+            ha_diff_n    = float(_sval("H/A Diff"))
+            avg_score_n  = float(_sval("Avg Total Score"))
+            pace_n       = float(_sval("Pace"))
+            ppp_n        = float(_sval("PPP"))
 
             st.markdown(f"""
             <div class="ref-bio-card">
@@ -186,25 +245,38 @@ with tab2:
             """, unsafe_allow_html=True)
 
             bc1, bc2, bc3, bc4 = st.columns(4)
-            bc1.metric("Games",          str(games_n))
-            bc2.metric("Total Fouls",    str(fouls_n))
-            bc3.metric("Fouls/Game",     f"{fpg_n:.1f}")
+            bc1.metric("Games",            str(games_n))
+            bc2.metric("Total Fouls",      str(fouls_n))
+            bc3.metric("Fouls/Game",       f"{fpg_n:.1f}")
             bc4.metric("H/A Differential", f"{ha_diff_n:+.1f}")
+
+            bc5, bc6, bc7, bc8 = st.columns(4)
+            bc5.metric("Avg Total Score", f"{avg_score_n:.1f}", help="Avg combined score per game")
+            bc6.metric("Pace",            f"{pace_n:.1f}",      help="Avg possessions per game")
+            bc7.metric("PPP",             f"{ppp_n:.3f}",       help="Points per possession")
+            bc8.metric("", "")
 
             st.markdown("---")
 
-            # Games worked
+            # Games worked — union of lineup assignments AND games where
+            # this official actually called a foul, so nothing is missed.
             st.markdown('<div class="section-hdr">Games Worked</div>', unsafe_allow_html=True)
             games_worked = query("""
                 SELECT DISTINCT g.id, g.date, g.home_score, g.away_score, g.tracked,
                        t1.name AS t1, t2.name AS t2
-                FROM game_lineup_officials glo
-                JOIN games g ON g.id = glo.game_id
+                FROM games g
                 JOIN teams t1 ON t1.id = g.team1_id
                 JOIN teams t2 ON t2.id = g.team2_id
-                WHERE glo.official_id = ?
+                WHERE g.id IN (
+                    -- assigned to game roster
+                    SELECT game_id FROM game_lineup_officials WHERE official_id = ?
+                    UNION
+                    -- called at least one foul in the game
+                    SELECT game_id FROM game_events
+                    WHERE official_id = ? AND event_type = 'foul'
+                )
                 ORDER BY g.date DESC
-            """, (official_db_id,))
+            """, (official_db_id, official_db_id))
 
             if not games_worked:
                 st.info("No games found for this official.")

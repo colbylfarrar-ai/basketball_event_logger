@@ -25,7 +25,7 @@ def game_team_stats(game_id, t1id, t2id):
             # Extended tracking
             ast_fgm=0,                    # Assisted makes
             paint_fga=0, paint_fgm=0,    # Zone C, shot_type=2 (paint proxy)
-            q4_pts=0,                     # Q4 points scored
+            q1_pts=0, q2_pts=0, q3_pts=0, q4_pts=0,
         )
     s1, s2 = blank(), blank()
     def ts(tid): return s1 if tid == t1id else s2
@@ -58,8 +58,11 @@ def game_team_stats(game_id, t1id, t2id):
                     else:
                         if ev.get("zone") == "C":
                             s["paint_fgm"] += 1
-                    if ev.get("quarter") == 4:
-                        s["q4_pts"] += ev["shot_type"]
+                    _q = ev.get("quarter", 0)
+                    if _q == 1:   s["q1_pts"] += ev["shot_type"]
+                    elif _q == 2: s["q2_pts"] += ev["shot_type"]
+                    elif _q == 3: s["q3_pts"] += ev["shot_type"]
+                    elif _q == 4: s["q4_pts"] += ev["shot_type"]
                     pf = ev["pass_from_id"]
                     if pf and pt.get(pf) == ptm:
                         s["ast"] += 1
@@ -82,8 +85,11 @@ def game_team_stats(game_id, t1id, t2id):
                 if ev["shot_result"] == "make":
                     s["ftm"] += 1
                     s["pts"] += 1
-                    if ev.get("quarter") == 4:
-                        s["q4_pts"] += 1
+                    _q = ev.get("quarter", 0)
+                    if _q == 1:   s["q1_pts"] += 1
+                    elif _q == 2: s["q2_pts"] += 1
+                    elif _q == 3: s["q3_pts"] += 1
+                    elif _q == 4: s["q4_pts"] += 1
             reb = ev["rebound_by_id"]
             if reb and prim:
                 rt, st2 = pt.get(reb), pt.get(prim)
@@ -221,19 +227,20 @@ def compute_tracked_rankings() -> pd.DataFrame:
             fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,
             oreb=0,dreb=0,tov=0,stl=0,blk=0,ast=0,
             poss_secs=0.0,poss_count=0,
-            ast_fgm=0, paint_fga=0, paint_fgm=0, q4_pts=0,
+            ast_fgm=0, paint_fga=0, paint_fgm=0,
+            q1_pts=0, q2_pts=0, q3_pts=0, q4_pts=0,
             opp_fga=0,opp_fgm=0,opp_tpa=0,opp_tpm=0,
             opp_fta=0,opp_ftm=0,opp_oreb=0,opp_dreb=0,
             opp_tov=0,opp_pts=0,opp_poss_secs=0.0,opp_poss_count=0,
-            opp_q4_pts=0,
+            opp_q1_pts=0,opp_q2_pts=0,opp_q3_pts=0,opp_q4_pts=0,
         )
     rec = {t["id"]: blank_rec(t) for t in teams}
 
     MY_KEYS = ["fga","fgm","tpa","tpm","fta","ftm","oreb","dreb",
                "tov","stl","blk","ast","poss_secs","poss_count",
-               "ast_fgm","paint_fga","paint_fgm","q4_pts"]
+               "ast_fgm","paint_fga","paint_fgm","q1_pts","q2_pts","q3_pts","q4_pts"]
     OPP_KEYS = ["fga","fgm","tpa","tpm","fta","ftm","oreb","dreb",
-                "tov","pts","poss_secs","poss_count","q4_pts"]
+                "tov","pts","poss_secs","poss_count","q1_pts","q2_pts","q3_pts","q4_pts"]
 
     for g in tracked:
         t1,t2,h,a,gid = g["team1_id"],g["team2_id"],g["home_score"],g["away_score"],g["id"]
@@ -331,7 +338,13 @@ def compute_tracked_rankings() -> pd.DataFrame:
                     if (r["opp_fga"]+0.44*r["opp_fta"]+r["opp_tov"])>0 else 0.0
         opp_ft_r  = r["opp_fta"]/r["opp_fga"] if r["opp_fga"] else 0.0
 
-        # Q4 clutch
+        # Quarter scoring
+        q1_pts_pg  = r["q1_pts"]/gp if gp else 0.0
+        q1_pa_pg   = r["opp_q1_pts"]/gp if gp else 0.0
+        q2_pts_pg  = r["q2_pts"]/gp if gp else 0.0
+        q2_pa_pg   = r["opp_q2_pts"]/gp if gp else 0.0
+        q3_pts_pg  = r["q3_pts"]/gp if gp else 0.0
+        q3_pa_pg   = r["opp_q3_pts"]/gp if gp else 0.0
         q4_pts_pg  = r["q4_pts"]/gp if gp else 0.0
         q4_pa_pg   = r["opp_q4_pts"]/gp if gp else 0.0
         q4_diff    = q4_pts_pg - q4_pa_pg
@@ -351,6 +364,12 @@ def compute_tracked_rankings() -> pd.DataFrame:
         avg_poss_sec  = r["poss_secs"]/pc if pc else 0.0
         tov_per_poss  = r["tov"]/pc if pc else 0.0
         ast_per_poss  = r["ast"]/pc if pc else 0.0
+
+        # Half-time stats
+        h1_pts_pg  = (r["q1_pts"] + r["q2_pts"]) / gp if gp else 0.0
+        h2_pts_pg  = (r["q3_pts"] + r["q4_pts"]) / gp if gp else 0.0
+        h1_pa_pg   = (r["opp_q1_pts"] + r["opp_q2_pts"]) / gp if gp else 0.0
+        h2_pa_pg   = (r["opp_q3_pts"] + r["opp_q4_pts"]) / gp if gp else 0.0
 
         rows.append({
             "Team":r["name"],"Class":r["cls"],"Gender":r["gen"],
@@ -391,10 +410,21 @@ def compute_tracked_rankings() -> pd.DataFrame:
             "AST/TOV":round(ast_tov,2),
             "Opp TOV%":round(opp_tov_r,1),
             "Opp FT Rate":round(opp_ft_r,2),
-            # Clutch
+            # Quarter scoring
+            "Q1 Pts/G":round(q1_pts_pg,1),"Q1 PA/G":round(q1_pa_pg,1),
+            "Q1 Diff":round(q1_pts_pg-q1_pa_pg,1),
+            "Q2 Pts/G":round(q2_pts_pg,1),"Q2 PA/G":round(q2_pa_pg,1),
+            "Q2 Diff":round(q2_pts_pg-q2_pa_pg,1),
+            "Q3 Pts/G":round(q3_pts_pg,1),"Q3 PA/G":round(q3_pa_pg,1),
+            "Q3 Diff":round(q3_pts_pg-q3_pa_pg,1),
             "Q4 Pts/G":round(q4_pts_pg,1),
             "Q4 PA/G":round(q4_pa_pg,1),
             "Q4 Diff":round(q4_diff,1),
+            # Half splits
+            "H1 Pts/G":round(h1_pts_pg,1),"H1 PA/G":round(h1_pa_pg,1),
+            "H1 Diff":round(h1_pts_pg-h1_pa_pg,1),
+            "H2 Pts/G":round(h2_pts_pg,1),"H2 PA/G":round(h2_pa_pg,1),
+            "H2 Diff":round(h2_pts_pg-h2_pa_pg,1),
             # Home/Away
             "Home":record_str(r["hw"],r["hl"]),
             "Away":record_str(r["aw"],r["al"]),

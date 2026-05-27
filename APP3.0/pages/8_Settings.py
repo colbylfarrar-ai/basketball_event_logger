@@ -17,8 +17,6 @@ from Database.supabase_sync import (
     get_active_season_info,
     switch_season,
     add_season,
-    update_season_credentials,
-    is_online,
 )
 
 initialize_database()
@@ -80,7 +78,7 @@ active_info = get_active_season_info()
 col_a, col_b = st.columns(2)
 with col_a:
     st.markdown(f"**Active season:** `{active_name}`")
-    st.markdown("**Database:** Supabase PostgreSQL")
+    st.markdown("**Database:** SQLite (local)")
 with col_b:
     rows_total = 0
     for tbl in ["teams", "games", "players", "game_events"]:
@@ -90,12 +88,11 @@ with col_b:
         except Exception:
             pass
     st.markdown(f"**Records (teams+games+players+events):** {rows_total:,}")
-    try:
-        from Database.db import get_connection as _gc
-        _gc()
+    db_file = get_db_path()
+    if db_file and db_file.exists():
         st.markdown("**Connection:** 🟢 Connected")
-    except Exception:
-        st.markdown("**Connection:** 🔴 Not connected")
+    else:
+        st.markdown("**Connection:** 🔴 DB file missing")
 
 st.markdown("---")
 
@@ -123,165 +120,45 @@ st.markdown("---")
 # ── Add New Season ─────────────────────────────────────────────────────────
 with st.expander("➕ Register a New Season", expanded=False):
     st.markdown(
-        "Each season is a separate **Supabase project**. "
-        "Create a new project on [supabase.com](https://supabase.com), "
-        "apply the schema, then register its credentials here."
+        "Each season gets its own local SQLite file. "
+        "A new empty database is created automatically when you switch to the season."
     )
     new_name = st.text_input(
         "Season name (e.g. 2025-26)",
         key="new_season_name",
         placeholder="2025-26",
     )
-    new_url = st.text_input(
-        "Supabase URL",
-        key="new_season_url",
-        placeholder="https://yourproject.supabase.co",
-    )
-    new_key = st.text_input(
-        "Supabase Anon Key",
-        key="new_season_key",
-        type="password",
-        placeholder="eyJhbGci…",
-    )
-    new_dbpw = st.text_input(
-        "Database Password",
-        key="new_season_dbpw",
-        type="password",
-        placeholder="your-supabase-db-password",
-        help="Found at: Supabase dashboard → Project Settings → Database → Database Password",
-    )
-    new_proj = st.text_input(
-        "Project ID (optional)",
-        key="new_season_proj",
-        placeholder="abcdefghijklmnop",
-    )
-    col_ns1, col_ns2 = st.columns(2)
-    with col_ns1:
-        if st.button("Register Season", key="btn_create_season", type="primary",
-                     use_container_width=True):
-            if not new_name.strip():
-                st.error("Enter a season name.")
-            elif new_name.strip() in all_seasons:
-                st.error(f"Season '{new_name.strip()}' already exists.")
-            else:
-                ok = add_season(
-                    name=new_name.strip(),
-                    supabase_url=new_url,
-                    supabase_key=new_key,
-                    supabase_project_id=new_proj,
-                    supabase_db_password=new_dbpw,
+    if st.button("Register Season", key="btn_create_season", type="primary"):
+        if not new_name.strip():
+            st.error("Enter a season name.")
+        elif new_name.strip() in all_seasons:
+            st.error(f"Season '{new_name.strip()}' already exists.")
+        else:
+            ok = add_season(name=new_name.strip())
+            if ok:
+                st.success(
+                    f"Season **{new_name.strip()}** registered. "
+                    "Click **Switch** above to activate it."
                 )
-                if ok:
-                    st.success(
-                        f"Season **{new_name.strip()}** registered. "
-                        "Click **Switch** above to activate it."
-                    )
-                    st.rerun()
-                else:
-                    st.error("Failed to register season. Check the name and try again.")
-    with col_ns2:
-        st.caption(
-            "💡 Steps:\n"
-            "1. Create a new project on [supabase.com](https://supabase.com)\n"
-            "2. Run the schema SQL in the Supabase SQL editor\n"
-            "3. Copy the URL from Project Settings → API\n"
-            "4. Copy the DB password from Project Settings → Database"
-        )
+                st.rerun()
+            else:
+                st.error("Failed to register season. Check the name and try again.")
 
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  DATABASE CONNECTION
+#  DATABASE FILE
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("### 🗄️ Database Connection")
-st.caption(
-    "All data reads and writes go directly to Supabase PostgreSQL. "
-    "There is no local database — Supabase is the single source of truth."
-)
+st.markdown("### 🗄️ Database File")
+st.caption("All data is stored in a local SQLite file — no internet connection required.")
 
-_online = is_online()
-_db_ok  = False
-_db_err = ""
-try:
-    from Database.db import get_connection as _gc
-    _gc()
-    _db_ok = True
-except Exception as _exc:
-    _db_err = str(_exc)
-
+_db_path = get_db_path()
 col_s1, col_s2 = st.columns(2)
 with col_s1:
-    st.markdown(f"{'🟢' if _online else '🔴'} **Internet:** {'Online' if _online else 'Offline'}")
+    st.markdown(f"**File:** `{_db_path.name}`")
 with col_s2:
-    st.markdown(f"{'🟢' if _db_ok else '🔴'} **PostgreSQL:** {'Connected' if _db_ok else 'Not connected'}")
-
-if not _db_ok:
-    _has_seasons_file = (
-        Path(__file__).resolve().parent.parent / "Database" / "seasons.json"
-    ).exists()
-
-    if not _has_seasons_file:
-        st.warning(
-            "**Database not configured.**\n\n"
-            "Add your Supabase credentials to **Streamlit Secrets**:\n\n"
-            "1. Go to your app on **share.streamlit.io**\n"
-            "2. Click **⋮ → Settings → Secrets**\n"
-            "3. Add **both** of these keys:\n"
-            "```toml\n"
-            "SUPABASE_URL = \"https://your-project.supabase.co\"\n"
-            "SUPABASE_DB_PASSWORD = \"your-database-password\"\n"
-            "```\n"
-            "Find your password at: "
-            "Supabase dashboard → Project Settings → Database → Database Password\n\n"
-            "4. Save — the app restarts and connects via the Transaction Pooler automatically.\n\n"
-            "**Advanced:** supply a full pooler URL instead:\n"
-            "```toml\n"
-            "SUPABASE_DB_URL = \"postgresql://postgres.<project-id>:<password>"
-            "@aws-0-<region>.pooler.supabase.com:6543/postgres\"\n"
-            "```\n"
-            "(Get it from: Supabase dashboard → Project Settings → Database → Connection string → Transaction pooler)"
-        )
-    else:
-        st.info(
-            "No database password for this season. "
-            "Expand **Edit Credentials** below and add your Database Password."
-        )
-    if _db_err:
-        with st.expander("Error details"):
-            st.code(_db_err)
-
-st.markdown("---")
-
-# ── Update credentials ──────────────────────────────────────────────────────
-with st.expander("🔑 Edit Credentials for Current Season", expanded=False):
-    cur_url  = (active_info or {}).get("supabase_url", "")
-    cur_key  = (active_info or {}).get("supabase_key", "")
-    cur_proj = (active_info or {}).get("supabase_project_id", "")
-    cur_dbpw = (active_info or {}).get("supabase_db_password", "")
-
-    upd_url  = st.text_input("Supabase URL",       value=cur_url,  key="upd_url")
-    upd_key  = st.text_input("Supabase Anon Key",  value=cur_key,  key="upd_key",  type="password")
-    upd_dbpw = st.text_input("Database Password",  value=cur_dbpw, key="upd_dbpw", type="password",
-                              help="Supabase dashboard → Project Settings → Database → Database Password")
-    upd_proj = st.text_input("Project ID (optional)", value=cur_proj, key="upd_proj")
-
-    if st.button("Save Credentials", key="btn_save_creds", type="primary"):
-        ok = update_season_credentials(active_name, upd_url, upd_key, upd_proj)
-        if ok:
-            # Also save db password (update_season_credentials doesn't handle it)
-            try:
-                import json as _json
-                from Database.supabase_sync import load_seasons_config, save_seasons_config
-                _scfg = load_seasons_config()
-                if active_name in _scfg.get("seasons", {}):
-                    _scfg["seasons"][active_name]["supabase_db_password"] = upd_dbpw.strip()
-                    save_seasons_config(_scfg)
-            except Exception:
-                pass
-            st.success("Credentials saved.")
-            st.rerun()
-        else:
-            st.error("Failed to save credentials.")
+    _db_size = f"{_db_path.stat().st_size / 1024:.1f} KB" if _db_path.exists() else "missing"
+    st.markdown(f"**Size:** {_db_size}")
 
 st.divider()
 

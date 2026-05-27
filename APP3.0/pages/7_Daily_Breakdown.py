@@ -7,7 +7,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
+import calendar as _calendar_mod
+from datetime import datetime, date as _date_cls
 from Database.db import query, initialize_database
 from helpers.settings_utils import get_all_settings, apply_page_config, apply_theme_css
 from helpers.stats_players import (compute_player_rankings, compute_player_ratings,
@@ -77,6 +78,34 @@ st.markdown("""
 }
 .upset-title { font-size:14px; font-weight:800; color:#e74c3c; margin-bottom:6px; }
 .upset-body  { font-size:13px; color:#c9d1d9; }
+
+/* ── Calendar ── */
+.cal-wrap {
+    background:#0d1117; border:1px solid #30363d; border-radius:14px;
+    padding:18px 20px; margin-bottom:16px;
+}
+.cal-nav {
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:14px;
+}
+.cal-month-lbl { font-size:18px; font-weight:800; color:#f0f6fc; }
+.cal-year-lbl  { font-size:13px; color:#8b949e; }
+.cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+.cal-dow  { font-size:10px; font-weight:700; color:#8b949e; text-align:center;
+            text-transform:uppercase; letter-spacing:1px; padding:4px 0; }
+.cal-day  { border-radius:8px; padding:6px 4px; text-align:center; min-height:46px;
+            display:flex; flex-direction:column; align-items:center; justify-content:flex-start; }
+.cal-day-num { font-size:12px; font-weight:600; color:#c9d1d9; }
+.cal-day-empty  { opacity:0.15; }
+.cal-day-no-game .cal-day-num { color:#555d68; }
+.cal-day-sel { background:#1f2d3d !important; border:1px solid #58a6ff !important; }
+.cal-dot { width:8px; height:8px; border-radius:50%; margin-top:3px; }
+.cal-dot-green  { background:#2ecc71; }
+.cal-dot-yellow { background:#f0a500; }
+.cal-dot-red    { background:#e74c3c; }
+.cal-legend { display:flex; gap:16px; margin-top:10px; align-items:center; }
+.cal-legend-item { display:flex; align-items:center; gap:5px;
+                   font-size:11px; color:#8b949e; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,41 +113,163 @@ st.markdown("""
 st.title("📅 Daily Breakdown")
 
 # ── Load all dates ────────────────────────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
-def _get_dates():
-    rows = query("SELECT DISTINCT date FROM games WHERE date IS NOT NULL ORDER BY date DESC")
-    return [r["date"] for r in rows] if rows else []
+def _normalize_date(d):
+    """Return YYYY-MM-DD regardless of input format (handles M/D/YYYY or YYYY-MM-DD)."""
+    if d is None:
+        return None
+    s = str(d).strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%-m/%-d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    # fallback: try splitting on /
+    parts = s.split("/")
+    if len(parts) == 3:
+        try:
+            m, day, yr = int(parts[0]), int(parts[1]), int(parts[2])
+            return datetime(yr, m, day).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return s
 
-all_dates = _get_dates()
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_all_game_dates():
+    rows = query("SELECT date, COUNT(*) AS cnt FROM games WHERE date IS NOT NULL GROUP BY date ORDER BY date")
+    if not rows:
+        return {}, [], {}
+    counts = {}
+    iso_to_raw = {}  # ISO date → raw DB value for query params
+    for r in rows:
+        raw = str(r["date"]).strip()
+        iso = _normalize_date(raw)
+        if iso:
+            counts[iso] = counts.get(iso, 0) + r["cnt"]
+            iso_to_raw[iso] = raw
+    dates = sorted(counts.keys())
+    return counts, dates, iso_to_raw
+
+_date_counts, all_dates, _iso_to_raw = _get_all_game_dates()
 
 if not all_dates:
     st.info("No game dates found. Add games with dates to unlock the Daily Breakdown.")
     st.stop()
 
-# ── Date selector ─────────────────────────────────────────────────────────────
-# Format for display
+# ── Helper: friendly date format ─────────────────────────────────────────────
 def _fmt_date(d):
     try:
-        return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %-d, %Y")
+        return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %d, %Y")
     except Exception:
-        try:
-            return datetime.strptime(d, "%Y-%m-%d").strftime("%A, %B %d, %Y")
-        except Exception:
-            return str(d)
+        return str(d)
 
-date_display = {d: _fmt_date(d) for d in all_dates}
-sel_date = st.selectbox(
-    "Select Date",
-    options=all_dates,
-    format_func=lambda d: date_display.get(d, d),
-    key="daily_date_sel",
-)
+# ── Year / Month navigation ───────────────────────────────────────────────────
+_all_years  = sorted(set(d[:4] for d in all_dates), reverse=True)
+_all_months = sorted(set(d[:7] for d in all_dates))  # "YYYY-MM"
 
-st.markdown(f"### {date_display.get(sel_date, sel_date)}")
+# Default to most recent year/month
+_default_ym = all_dates[-1][:7]  # most recent ym
+_default_yr = _default_ym[:4]
+
+nav_col1, nav_col2 = st.columns([1, 2])
+with nav_col1:
+    sel_year = st.selectbox("📅 Year", _all_years,
+                             index=0, key="db_year")
+with nav_col2:
+    _months_for_year = sorted(set(d[5:7] for d in all_dates if d.startswith(sel_year)))
+    _month_opts = [f"{sel_year}-{m}" for m in _months_for_year]
+    _month_labels = {ym: _calendar_mod.month_name[int(ym[5:7])] for ym in _month_opts}
+    # Default to last month in selected year
+    _default_month_idx = len(_month_opts) - 1
+    sel_ym = st.selectbox(
+        "📆 Month",
+        _month_opts,
+        index=_default_month_idx,
+        format_func=lambda ym: _month_labels.get(ym, ym),
+        key="db_month",
+    )
+
+# Dates in the selected month that have games
+_sel_year_int  = int(sel_ym[:4])
+_sel_month_int = int(sel_ym[5:7])
+_dates_in_month = [d for d in all_dates if d.startswith(sel_ym)]
+
+# ── Calendar render ───────────────────────────────────────────────────────────
+def _dot_class(cnt):
+    if cnt <= 0:   return ""
+    if cnt <= 2:   return "cal-dot cal-dot-green"
+    if cnt <= 5:   return "cal-dot cal-dot-yellow"
+    return              "cal-dot cal-dot-red"
+
+def _render_calendar(year, month, date_counts, selected_date=None):
+    _, days_in_month = _calendar_mod.monthrange(year, month)
+    first_weekday    = _calendar_mod.monthrange(year, month)[0]  # 0=Mon
+
+    dow_labels = "".join(f'<div class="cal-dow">{d}</div>'
+                         for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"])
+
+    cells = '<div class="cal-dow">Mon</div><div class="cal-dow">Tue</div><div class="cal-dow">Wed</div><div class="cal-dow">Thu</div><div class="cal-dow">Fri</div><div class="cal-dow">Sat</div><div class="cal-dow">Sun</div>'
+
+    # Empty leading cells
+    for _ in range(first_weekday):
+        cells += '<div class="cal-day cal-day-empty"></div>'
+
+    for day in range(1, days_in_month + 1):
+        d_str = f"{year:04d}-{month:02d}-{day:02d}"
+        cnt   = date_counts.get(d_str, 0)
+        sel_cls = " cal-day-sel" if d_str == selected_date else ""
+        no_game = " cal-day-no-game" if cnt == 0 else ""
+        dot_html = f'<div class="{_dot_class(cnt)}"></div>' if cnt > 0 else ""
+        cells += (
+            f'<div class="cal-day{no_game}{sel_cls}">'
+            f'<span class="cal-day-num">{day}</span>'
+            f'{dot_html}'
+            f'</div>'
+        )
+
+    legend = """
+    <div class="cal-legend">
+        <span style="font-size:11px;color:#8b949e;font-weight:600">Game Load:</span>
+        <span class="cal-legend-item"><span style="width:10px;height:10px;border-radius:50%;background:#2ecc71;display:inline-block"></span>1–2 games</span>
+        <span class="cal-legend-item"><span style="width:10px;height:10px;border-radius:50%;background:#f0a500;display:inline-block"></span>3–5 games</span>
+        <span class="cal-legend-item"><span style="width:10px;height:10px;border-radius:50%;background:#e74c3c;display:inline-block"></span>6+ games</span>
+    </div>"""
+
+    month_name = _calendar_mod.month_name[month]
+    html = f"""
+<div class="cal-wrap">
+  <div class="cal-nav">
+    <span class="cal-month-lbl">{month_name}</span>
+    <span class="cal-year-lbl">{year}</span>
+  </div>
+  <div class="cal-grid">{cells}</div>
+  {legend}
+</div>"""
+    return html
+
+# ── Day selector ──────────────────────────────────────────────────────────────
+# Default to most recent date in selected month, or first date in month
+if _dates_in_month:
+    _default_day_idx = len(_dates_in_month) - 1  # most recent
+    sel_date = st.selectbox(
+        "📋 Select Day",
+        _dates_in_month,
+        index=_default_day_idx,
+        format_func=_fmt_date,
+        key="daily_date_sel",
+    )
+else:
+    st.info(f"No games in {_calendar_mod.month_name[_sel_month_int]} {_sel_year_int}.")
+    st.stop()
+
+# Render calendar (non-interactive — shows context)
+st.html(_render_calendar(_sel_year_int, _sel_month_int, _date_counts, sel_date))
+
+st.markdown(f"### {_fmt_date(sel_date)}")
 
 # ── Load games for selected date ──────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_games_on_date(date_str):
+    raw = _iso_to_raw.get(date_str, date_str)
     rows = query("""
         SELECT g.id, g.date, g.home_score, g.away_score, g.tracked,
                g.team1_id, g.team2_id,
@@ -128,7 +279,7 @@ def _get_games_on_date(date_str):
         JOIN teams t2 ON t2.id = g.team2_id
         WHERE g.date = ?
         ORDER BY g.id
-    """, (date_str,))
+    """, (raw,))
     return rows or []
 
 day_games = _get_games_on_date(sel_date)
@@ -280,6 +431,8 @@ st.markdown("---")
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION: Top Performers
 # ─────────────────────────────────────────────────────────────────────────────
+_raw_sel_date = _iso_to_raw.get(sel_date, sel_date)
+
 if tracked_count > 0:
     st.markdown('<div class="section-hdr">🎯 Top Performers</div>', unsafe_allow_html=True)
 
@@ -299,7 +452,7 @@ if tracked_count > 0:
             GROUP BY ge.game_id, ge.primary_player_id
             ORDER BY pts DESC
             LIMIT 1
-        """, (sel_date,))
+        """, (_raw_sel_date,))
         top_pts = top_pts_rows[0] if top_pts_rows else None
     except Exception:
         top_pts = None
@@ -317,7 +470,7 @@ if tracked_count > 0:
             GROUP BY ge.game_id, ge.rebound_by_id
             ORDER BY reb DESC
             LIMIT 1
-        """, (sel_date,))
+        """, (_raw_sel_date,))
         top_reb = top_reb_rows[0] if top_reb_rows else None
     except Exception:
         top_reb = None
@@ -337,7 +490,7 @@ if tracked_count > 0:
             GROUP BY ge.game_id, ge.pass_from_id
             ORDER BY ast DESC
             LIMIT 1
-        """, (sel_date,))
+        """, (_raw_sel_date,))
         top_ast = top_ast_rows[0] if top_ast_rows else None
     except Exception:
         top_ast = None
@@ -423,12 +576,6 @@ for g in day_games:
         with st.expander(f"📊 Box Score: {t1} vs {t2}"):
             try:
                 rows_t1, rows_t2, game_info = compute_game_box_score(g["id"])
-                quarter_data = compute_game_quarter_scores(g["id"])
-
-                if quarter_data:
-                    _show_linescore(quarter_data, t1, t2,
-                                    g["team1_id"], g["team2_id"])
-
                 has_data = any(not r.get("_totals") for r in rows_t1 + rows_t2)
                 if has_data:
                     show_game_box_score(rows_t1, rows_t2, {}, game_info, _cfg)

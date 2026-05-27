@@ -72,7 +72,7 @@ def compute_player_game_log(player_id: int, team_id: int) -> list:
         result    = "W" if (my_score or 0) > (opp_score or 0) else "L"
 
         s = dict(pts=0, ast=0, oreb=0, dreb=0, stl=0, blk=0, tov=0,
-                 fgm=0, fga=0, tpm=0, tpa=0, ftm=0, fta=0, sc=0, pf=0, poss_used=0)
+                 fgm=0, fga=0, tpm=0, tpa=0, ftm=0, fta=0, sc=0, scs=0, scp=0, sco=0, pf=0, poss_used=0)
         team_sc = 0
 
         for ev in events:
@@ -87,15 +87,15 @@ def compute_player_game_log(player_id: int, team_id: int) -> list:
                 if ev["shot_created_by_id"] and pt_map.get(ev["shot_created_by_id"]) == team_id:
                     team_sc += 1
                 if ev["primary_player_id"] == pid:
-                    s["fga"] += 1; s["sc"] += 1; s["poss_used"] += 1
+                    s["fga"] += 1; s["sc"] += 1; s["scs"] += 1; s["poss_used"] += 1
                     if ev["shot_type"] == 3: s["tpa"] += 1
                     if ev["shot_result"] == "make":
                         s["fgm"] += 1; s["pts"] += ev["shot_type"]
                         if ev["shot_type"] == 3: s["tpm"] += 1
                 if ev["pass_from_id"] == pid:
-                    s["sc"] += 1
+                    s["sc"] += 1; s["scp"] += 1
                     if ev["shot_result"] == "make": s["ast"] += 1
-                if ev["shot_created_by_id"] == pid: s["sc"] += 1
+                if ev["shot_created_by_id"] == pid: s["sc"] += 1; s["sco"] += 1
                 if ev["blocked_by_id"] == pid: s["blk"] += 1
                 if ev["rebound_by_id"] == pid:
                     sh_team = pt_map.get(ev["primary_player_id"])
@@ -141,7 +141,8 @@ def compute_player_game_log(player_id: int, team_id: int) -> list:
             "FGM": s["fgm"], "FGA": s["fga"], "FG%": fgp,
             "3PM": s["tpm"], "3PA": s["tpa"], "3P%": tpp,
             "FTM": s["ftm"], "FTA": s["fta"], "FT%": ftp,
-            "SC": s["sc"], "SC%": sc_pct, "Poss": s["poss_used"],
+            "SC": s["sc"], "SCS": s["scs"], "SCP": s["scp"], "SCO": s["sco"],
+            "SC%": sc_pct, "Poss": s["poss_used"],
             "+/-": pm, "MIN": mins, "GS": gs,
         })
 
@@ -202,7 +203,7 @@ def compute_player_career(player_id: int):
     on_court_event_ids = {r["event_id"] for r in gel_bulk}
 
     tot = dict(gp=len(rows), pts=0, ast=0, oreb=0, dreb=0, stl=0, blk=0, tov=0,
-               fgm=0, fga=0, tpm=0, tpa=0, ftm=0, fta=0, sc=0, pf=0,
+               fgm=0, fga=0, tpm=0, tpa=0, ftm=0, fta=0, sc=0, scs=0, scp=0, sco=0, pf=0,
                poss_secs=0.0, poss_used=0, plus_minus=0,
                shots=[],
                # Shot quality (offensive)
@@ -222,7 +223,7 @@ def compute_player_career(player_id: int):
 
             if et == "shot":
                 if ev["primary_player_id"] == pid:
-                    tot["fga"] += 1; tot["sc"] += 1; tot["poss_used"] += 1
+                    tot["fga"] += 1; tot["sc"] += 1; tot["scs"] += 1; tot["poss_used"] += 1
                     if ev["shot_type"] == 3: tot["tpa"] += 1
                     if ev["shot_result"] == "make":
                         tot["fgm"] += 1; tot["pts"] += ev["shot_type"]
@@ -256,9 +257,9 @@ def compute_player_career(player_id: int):
                             tot["est_fg_sum"]   += max(0.0, min(1.0, _efg + _e_mod))
                             tot["est_fg_shots"] += 1
                 if ev["pass_from_id"] == pid:
-                    tot["sc"] += 1
+                    tot["sc"] += 1; tot["scp"] += 1
                     if ev["shot_result"] == "make": tot["ast"] += 1
-                if ev["shot_created_by_id"] == pid: tot["sc"] += 1
+                if ev["shot_created_by_id"] == pid: tot["sc"] += 1; tot["sco"] += 1
                 if ev["blocked_by_id"] == pid: tot["blk"] += 1
                 if ev["rebound_by_id"] == pid:
                     sh_team = pt_map.get(ev["primary_player_id"])
@@ -318,10 +319,26 @@ def compute_team_tracked(tid):
              ast_fgm=0,paint_fga=0,paint_fgm=0,
              q1_pts=0,q2_pts=0,q3_pts=0,q4_pts=0,
              q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0,
+             q1_oreb=0,q2_oreb=0,q3_oreb=0,q4_oreb=0,
+             q1_dreb=0,q2_dreb=0,q3_dreb=0,q4_dreb=0,
              opp_fga=0,opp_fgm=0,opp_tpa=0,opp_tpm=0,opp_fta=0,opp_ftm=0,
              opp_oreb=0,opp_dreb=0,opp_tov=0,opp_pts=0,
              opp_q1_pts=0,opp_q2_pts=0,opp_q3_pts=0,opp_q4_pts=0,
-             opp_q1_poss=0,opp_q2_poss=0,opp_q3_poss=0,opp_q4_poss=0)
+             opp_q1_poss=0,opp_q2_poss=0,opp_q3_poss=0,opp_q4_poss=0,
+             opp_q1_oreb=0,opp_q2_oreb=0,opp_q3_oreb=0,opp_q4_oreb=0,
+             opp_q1_dreb=0,opp_q2_dreb=0,opp_q3_dreb=0,opp_q4_dreb=0)
+    # Assisted vs self-created shot trackers per quarter (our team only)
+    # "ast" = pass_from_id credited to a same-team player; "sc" = everything else
+    for _pfx in ("ast", "sc"):
+        for _q in (1, 2, 3, 4):
+            for _st in ("fga", "fgm", "tpa", "tpm", "pts"):
+                agg[f"{_pfx}_q{_q}_{_st}"] = 0
+    for _tb in range(3):
+        for _st in ("pts", "poss", "fga", "fgm", "tpa", "tpm", "ast_fgm"):
+            agg[f"tb{_tb}_{_st}"] = 0
+        for _q in (1, 2, 3, 4):
+            for _st in ("pts", "poss", "fga", "fgm", "tpa", "tpm", "ast_fgm"):
+                agg[f"tb{_tb}_q{_q}_{_st}"] = 0
     game_log = []
 
     # ── Batch-load all lineup + event data upfront (eliminates N+1 queries) ──
@@ -351,10 +368,24 @@ def compute_team_tracked(tid):
                      poss_count=0,real_poss_secs=0.0,
                      ast_fgm=0,paint_fga=0,paint_fgm=0,
                      q1_pts=0,q2_pts=0,q3_pts=0,q4_pts=0,
-                     q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0)
+                     q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0,
+                     q1_oreb=0,q2_oreb=0,q3_oreb=0,q4_oreb=0,
+                     q1_dreb=0,q2_dreb=0,q3_dreb=0,q4_dreb=0)
+        for _pfx in ("ast", "sc"):
+            for _q in (1, 2, 3, 4):
+                for _st in ("fga", "fgm", "tpa", "tpm", "pts"):
+                    my_s[f"{_pfx}_q{_q}_{_st}"] = 0
+        for _tb in range(3):
+            for _st in ("pts", "poss", "fga", "fgm", "tpa", "tpm", "ast_fgm"):
+                my_s[f"tb{_tb}_{_st}"] = 0
+            for _q in (1, 2, 3, 4):
+                for _st in ("pts", "poss", "fga", "fgm", "tpa", "tpm", "ast_fgm"):
+                    my_s[f"tb{_tb}_q{_q}_{_st}"] = 0
         opp_s = dict(fga=0,fgm=0,tpa=0,tpm=0,fta=0,ftm=0,oreb=0,dreb=0,tov=0,pts=0,
                      q1_pts=0,q2_pts=0,q3_pts=0,q4_pts=0,
-                     q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0)
+                     q1_poss=0,q2_poss=0,q3_poss=0,q4_poss=0,
+                     q1_oreb=0,q2_oreb=0,q3_oreb=0,q4_oreb=0,
+                     q1_dreb=0,q2_dreb=0,q3_dreb=0,q4_dreb=0)
 
         for ev in events:
             prim=ev["primary_player_id"]
@@ -388,7 +419,6 @@ def compute_team_tracked(tid):
                         if ev["shot_type"]==3: bucket["tpm"]+=1
                         pf=ev["pass_from_id"]
                         if pf and pt.get(pf)==ptm:
-                            (my_s if ptm==tid else {})["ast"] = my_s["ast"]+(1 if ptm==tid else 0)
                             if ptm==tid: my_s["ast"]+=1
                 # Paint proxy (zone C, 2PT) — our team only
                 if ptm==tid and ev.get("zone")=="C" and ev["shot_type"]==2:
@@ -403,6 +433,43 @@ def compute_team_tracked(tid):
                     _qk = f"q{ev['quarter']}_pts"
                     if ptm==tid: my_s[_qk]+=ev["shot_type"]
                     else:        opp_s[_qk]+=ev["shot_type"]
+                # Assisted vs self-created per quarter (our team only)
+                if ptm==tid and ev["quarter"] in (1,2,3,4):
+                    _q  = ev["quarter"]
+                    _pf = ev["pass_from_id"]
+                    _pfx = "ast" if (_pf and pt.get(_pf)==tid) else "sc"
+                    my_s[f"{_pfx}_q{_q}_fga"] += 1
+                    if ev["shot_type"]==3:
+                        my_s[f"{_pfx}_q{_q}_tpa"] += 1
+                    if ev["shot_result"]=="make":
+                        my_s[f"{_pfx}_q{_q}_fgm"] += 1
+                        my_s[f"{_pfx}_q{_q}_pts"] += ev["shot_type"]
+                        if ev["shot_type"]==3:
+                            my_s[f"{_pfx}_q{_q}_tpm"] += 1
+                # Time-bucket stats (our team shots only)
+                if ptm==tid:
+                    _tb    = 0 if psec < 12 else (1 if psec < 27 else 2)
+                    _is_mk = ev["shot_result"] == "make"
+                    _is_3t = ev["shot_type"] == 3
+                    _pf_tb = ev["pass_from_id"]
+                    _ast_tb = bool(_pf_tb and pt.get(_pf_tb) == tid)
+                    my_s[f"tb{_tb}_fga"]  += 1
+                    my_s[f"tb{_tb}_poss"] += 1
+                    if _is_3t: my_s[f"tb{_tb}_tpa"] += 1
+                    if _is_mk:
+                        my_s[f"tb{_tb}_fgm"] += 1
+                        my_s[f"tb{_tb}_pts"] += ev["shot_type"]
+                        if _is_3t: my_s[f"tb{_tb}_tpm"] += 1
+                        if _ast_tb: my_s[f"tb{_tb}_ast_fgm"] += 1
+                    if _ev_quarter in (1, 2, 3, 4):
+                        my_s[f"tb{_tb}_q{_ev_quarter}_fga"]  += 1
+                        my_s[f"tb{_tb}_q{_ev_quarter}_poss"] += 1
+                        if _is_3t: my_s[f"tb{_tb}_q{_ev_quarter}_tpa"] += 1
+                        if _is_mk:
+                            my_s[f"tb{_tb}_q{_ev_quarter}_fgm"] += 1
+                            my_s[f"tb{_tb}_q{_ev_quarter}_pts"] += ev["shot_type"]
+                            if _is_3t: my_s[f"tb{_tb}_q{_ev_quarter}_tpm"] += 1
+                            if _ast_tb: my_s[f"tb{_tb}_q{_ev_quarter}_ast_fgm"] += 1
                 # SC: shooter
                 if ptm==tid: my_s["sc"]+=1
                 # SC: passer
@@ -417,10 +484,15 @@ def compute_team_tracked(tid):
                 if reb and prim:
                     rt=pt.get(reb); st2=pt.get(prim)
                     if rt and st2:
+                        _reb_q = ev["quarter"]
                         if rt==st2:
-                            (my_s if rt==tid else opp_s)["oreb"]+=1
+                            _reb_bucket = my_s if rt==tid else opp_s
+                            _reb_bucket["oreb"]+=1
+                            if _reb_q in (1,2,3,4): _reb_bucket[f"q{_reb_q}_oreb"]+=1
                         else:
-                            (my_s if rt==tid else opp_s)["dreb"]+=1
+                            _reb_bucket = my_s if rt==tid else opp_s
+                            _reb_bucket["dreb"]+=1
+                            if _reb_q in (1,2,3,4): _reb_bucket[f"q{_reb_q}_dreb"]+=1
             elif et=="free_throw":
                 if ptm:
                     bucket = my_s if ptm==tid else opp_s
@@ -435,6 +507,11 @@ def compute_team_tracked(tid):
             elif et=="turnover":
                 if ptm:
                     (my_s if ptm==tid else opp_s)["tov"]+=1
+                    if ptm==tid:
+                        _tb_tov = 0 if psec < 12 else (1 if psec < 27 else 2)
+                        my_s[f"tb{_tb_tov}_poss"] += 1
+                        if _ev_quarter in (1, 2, 3, 4):
+                            my_s[f"tb{_tb_tov}_q{_ev_quarter}_poss"] += 1
                 stl=ev["stolen_by_id"]
                 if stl and pt.get(stl)==tid: my_s["stl"]=my_s.get("stl",0)+1
 
@@ -444,11 +521,22 @@ def compute_team_tracked(tid):
         _t1 = g["team1_id"]
         _ms = (g["home_score"] if _t1==tid else g["away_score"]) or 0
         _os = (g["away_score"] if _t1==tid else g["home_score"]) or 0
+        _ast_fga_tot = sum(my_s[f"ast_q{_q}_fga"] for _q in (1, 2, 3, 4))
+        _sc_fga_tot  = sum(my_s[f"sc_q{_q}_fga"]  for _q in (1, 2, 3, 4))
         game_log.append({"date": g["date"],
                          "opp":  g["t2_name"] if _t1==tid else g["t1_name"],
                          "ortg": round(100*my_s["pts"]/_gp, 1),
                          "drtg": round(100*opp_s["pts"]/_go, 1),
-                         "margin": _ms - _os})
+                         "margin": _ms - _os,
+                         "oreb": my_s["oreb"],
+                         "dreb": my_s["dreb"],
+                         "reb":  my_s["oreb"] + my_s["dreb"],
+                         "q1_oreb": my_s["q1_oreb"], "q1_dreb": my_s["q1_dreb"],
+                         "q2_oreb": my_s["q2_oreb"], "q2_dreb": my_s["q2_dreb"],
+                         "q3_oreb": my_s["q3_oreb"], "q3_dreb": my_s["q3_dreb"],
+                         "q4_oreb": my_s["q4_oreb"], "q4_dreb": my_s["q4_dreb"],
+                         "ast_fga": _ast_fga_tot,
+                         "sc_fga":  _sc_fga_tot})
         for k in my_s:  agg[k]+=my_s[k]
         for k in opp_s: agg[f"opp_{k}"]+=opp_s[k]
 
@@ -532,6 +620,61 @@ def compute_team_tracked(tid):
     pct_from_2   = two_pm*2/_tot_pts*100  if _tot_pts else 0.0
     pct_from_3   = agg["tpm"]*3/_tot_pts*100 if _tot_pts else 0.0
     pct_from_ft  = agg["ftm"]/_tot_pts*100   if _tot_pts else 0.0
+    # Per-quarter rebounds (team)
+    q1_oreb_pg = agg["q1_oreb"]/gp if gp else 0.0
+    q2_oreb_pg = agg["q2_oreb"]/gp if gp else 0.0
+    q3_oreb_pg = agg["q3_oreb"]/gp if gp else 0.0
+    q4_oreb_pg = agg["q4_oreb"]/gp if gp else 0.0
+    q1_dreb_pg = agg["q1_dreb"]/gp if gp else 0.0
+    q2_dreb_pg = agg["q2_dreb"]/gp if gp else 0.0
+    q3_dreb_pg = agg["q3_dreb"]/gp if gp else 0.0
+    q4_dreb_pg = agg["q4_dreb"]/gp if gp else 0.0
+    q1_reb_pg  = q1_oreb_pg + q1_dreb_pg
+    q2_reb_pg  = q2_oreb_pg + q2_dreb_pg
+    q3_reb_pg  = q3_oreb_pg + q3_dreb_pg
+    q4_reb_pg  = q4_oreb_pg + q4_dreb_pg
+    # Per-quarter rebounds (opponent)
+    opp_q1_oreb_pg = agg["opp_q1_oreb"]/gp if gp else 0.0
+    opp_q2_oreb_pg = agg["opp_q2_oreb"]/gp if gp else 0.0
+    opp_q3_oreb_pg = agg["opp_q3_oreb"]/gp if gp else 0.0
+    opp_q4_oreb_pg = agg["opp_q4_oreb"]/gp if gp else 0.0
+    opp_q1_dreb_pg = agg["opp_q1_dreb"]/gp if gp else 0.0
+    opp_q2_dreb_pg = agg["opp_q2_dreb"]/gp if gp else 0.0
+    opp_q3_dreb_pg = agg["opp_q3_dreb"]/gp if gp else 0.0
+    opp_q4_dreb_pg = agg["opp_q4_dreb"]/gp if gp else 0.0
+    opp_q1_reb_pg  = opp_q1_oreb_pg + opp_q1_dreb_pg
+    opp_q2_reb_pg  = opp_q2_oreb_pg + opp_q2_dreb_pg
+    opp_q3_reb_pg  = opp_q3_oreb_pg + opp_q3_dreb_pg
+    opp_q4_reb_pg  = opp_q4_oreb_pg + opp_q4_dreb_pg
+
+    # ── Time-bucket (possession-length) stats ──────────────────────────────
+    _tb_labels = ["<12s", "12-27s", "27s+"]
+    _tb_data = []
+    for _tbi in range(3):
+        _tbd = {
+            "label":   _tb_labels[_tbi],
+            "poss":    agg[f"tb{_tbi}_poss"],
+            "pts":     agg[f"tb{_tbi}_pts"],
+            "fga":     agg[f"tb{_tbi}_fga"],
+            "fgm":     agg[f"tb{_tbi}_fgm"],
+            "tpa":     agg[f"tb{_tbi}_tpa"],
+            "tpm":     agg[f"tb{_tbi}_tpm"],
+            "ast_fgm": agg[f"tb{_tbi}_ast_fgm"],
+            "by_quarter": [],
+        }
+        for _qi in (1, 2, 3, 4):
+            _tbd["by_quarter"].append({
+                "poss":    agg[f"tb{_tbi}_q{_qi}_poss"],
+                "pts":     agg[f"tb{_tbi}_q{_qi}_pts"],
+                "fga":     agg[f"tb{_tbi}_q{_qi}_fga"],
+                "fgm":     agg[f"tb{_tbi}_q{_qi}_fgm"],
+                "tpa":     agg[f"tb{_tbi}_q{_qi}_tpa"],
+                "tpm":     agg[f"tb{_tbi}_q{_qi}_tpm"],
+                "ast_fgm": agg[f"tb{_tbi}_q{_qi}_ast_fgm"],
+            })
+        _tb_data.append(_tbd)
+
+    game_log.sort(key=lambda x: x["date"])
 
     return dict(gp=gp,poss=poss,op_pos=op_pos,ortg=ortg,drtg=drtg,net=ortg-drtg,pace=pace,
                 efg=efg,oefg=oefg,ts=ts_,tov_r=tov_r,oreb_p=oreb_p,ft_r=ft_r,tpar=tpar,
@@ -544,6 +687,18 @@ def compute_team_tracked(tid):
                 avg_poss_len=_fmt_secs(avg_poss_secs),
                 ast_pct=ast_pct, unast_pct=unast_pct,
                 paint_fg_p=paint_fg_p, paint_pts_pg=paint_pts_pg,
+                q1_oreb_pg=q1_oreb_pg, q2_oreb_pg=q2_oreb_pg,
+                q3_oreb_pg=q3_oreb_pg, q4_oreb_pg=q4_oreb_pg,
+                q1_dreb_pg=q1_dreb_pg, q2_dreb_pg=q2_dreb_pg,
+                q3_dreb_pg=q3_dreb_pg, q4_dreb_pg=q4_dreb_pg,
+                q1_reb_pg=q1_reb_pg,   q2_reb_pg=q2_reb_pg,
+                q3_reb_pg=q3_reb_pg,   q4_reb_pg=q4_reb_pg,
+                opp_q1_oreb_pg=opp_q1_oreb_pg, opp_q2_oreb_pg=opp_q2_oreb_pg,
+                opp_q3_oreb_pg=opp_q3_oreb_pg, opp_q4_oreb_pg=opp_q4_oreb_pg,
+                opp_q1_dreb_pg=opp_q1_dreb_pg, opp_q2_dreb_pg=opp_q2_dreb_pg,
+                opp_q3_dreb_pg=opp_q3_dreb_pg, opp_q4_dreb_pg=opp_q4_dreb_pg,
+                opp_q1_reb_pg=opp_q1_reb_pg,   opp_q2_reb_pg=opp_q2_reb_pg,
+                opp_q3_reb_pg=opp_q3_reb_pg,   opp_q4_reb_pg=opp_q4_reb_pg,
                 blk_rate=blk_rate, stl_rate=stl_rate, ast_tov_r=ast_tov_r,
                 opp_tov_r=opp_tov_r, opp_ft_r=opp_ft_r2, dreb_p=dreb_p, opp_oreb_p=opp_oreb_p,
                 q1_pts_pg=q1_pts_pg, q2_pts_pg=q2_pts_pg, q3_pts_pg=q3_pts_pg, q4_pts_pg=q4_pts_pg,
@@ -557,6 +712,7 @@ def compute_team_tracked(tid):
                 opp_q3_ppp=opp_q3_ppp, opp_q4_ppp=opp_q4_ppp,
                 opp_h1_ppp=opp_h1_ppp, opp_h2_ppp=opp_h2_ppp,
                 pct_from_2=pct_from_2, pct_from_3=pct_from_3, pct_from_ft=pct_from_ft,
+                tb_data=_tb_data,
                 game_log=game_log,
                 **agg)
 
@@ -711,6 +867,8 @@ def compute_league_four_factors() -> dict:
     return {k: float(np.mean(v)) if v else 0.0 for k, v in buckets.items()}
 
 
+_HOME_ADV = 2.5   # neutral-site correction per side (5 pts total home advantage)
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def compute_matchup(a_id, b_id):
     gs_a = games_for_team(a_id)
@@ -724,33 +882,158 @@ def compute_matchup(a_id, b_id):
     adv_a = compute_team_tracked(a_id)
     adv_b = compute_team_tracked(b_id)
 
-    if adv_a and adv_b:
-        # League avg DRtg for calibration — cached, zero DB queries on warm hit
-        league_drtg = compute_league_drtg()
-
-        avg_pace=(adv_a["pace"]+adv_b["pace"])/2
-        proj_a = (adv_a["ortg"]/100) * avg_pace * (adv_b["drtg"]/league_drtg)
-        proj_b = (adv_b["ortg"]/100) * avg_pace * (adv_a["drtg"]/league_drtg)
-        method = "efficiency"
-    else:
-        proj_a = (ppg_a + papg_b) / 2
-        proj_b = (ppg_b + papg_a) / 2
-        method = "score"
-
-    diff = proj_a - proj_b
-    prob_a = 1 / (1 + np.exp(-diff * 0.15))
-
-    # Head-to-head
+    # ── Head-to-head (fetch before projection so we can blend) ──────────────
     h2h_raw = query("""
         SELECT home_score,away_score,date,team1_id
         FROM games
         WHERE ((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))
           AND home_score IS NOT NULL AND away_score IS NOT NULL
     """, (a_id, b_id, b_id, a_id))
-    h2h = sorted(h2h_raw, key=lambda g: pd.to_datetime(g["date"], format="mixed", errors="coerce"), reverse=True)
+    h2h = sorted(h2h_raw,
+                 key=lambda g: pd.to_datetime(g["date"], format="mixed", errors="coerce"),
+                 reverse=True)   # newest first
+
+    # Neutral-site scores from H2H, recency-weighted (newer games count more)
+    h2h_scores_a, h2h_scores_b, h2h_weights = [], [], []
+    for i, g in enumerate(h2h):
+        if g["team1_id"] == a_id:   # A was home
+            na = g["home_score"] - _HOME_ADV
+            nb = g["away_score"] + _HOME_ADV
+        else:                        # A was away
+            na = g["away_score"] + _HOME_ADV
+            nb = g["home_score"] - _HOME_ADV
+        h2h_scores_a.append(na)
+        h2h_scores_b.append(nb)
+        h2h_weights.append(2.0 ** -i)   # 1, 0.5, 0.25 … newest = highest
+
+    n_h2h = len(h2h)
+    if n_h2h:
+        tw = sum(h2h_weights)
+        h2h_proj_a = sum(s*w for s,w in zip(h2h_scores_a, h2h_weights)) / tw
+        h2h_proj_b = sum(s*w for s,w in zip(h2h_scores_b, h2h_weights)) / tw
+        # Weight increases with more games, caps at 0.65
+        h2h_w = min(0.65, 0.40 + 0.10 * (n_h2h - 1))
+    else:
+        h2h_proj_a = h2h_proj_b = None
+        h2h_w = 0.0
+
+    eff_w = 1.0 - h2h_w
+
+    # ── Efficiency projection (additive formula avoids multiplicative blowup) ─
+    if adv_a and adv_b:
+        league_drtg = compute_league_drtg()
+        avg_pace = (adv_a["pace"] + adv_b["pace"]) / 2
+        # Additive: A's ortg adjusted by how much worse/better B's defense is
+        eff_a = avg_pace * (adv_a["ortg"] + adv_b["drtg"] - league_drtg) / 100
+        eff_b = avg_pace * (adv_b["ortg"] + adv_a["drtg"] - league_drtg) / 100
+        method = "efficiency"
+    else:
+        eff_a = (ppg_a + papg_b) / 2
+        eff_b = (ppg_b + papg_a) / 2
+        method = "score"
+
+    # ── Blend ───────────────────────────────────────────────────────────────
+    if h2h_proj_a is not None:
+        proj_a = h2h_w * h2h_proj_a + eff_w * eff_a
+        proj_b = h2h_w * h2h_proj_b + eff_w * eff_b
+        method = method + "+h2h"
+    else:
+        proj_a, proj_b = eff_a, eff_b
+
+    diff = proj_a - proj_b
+    prob_a = 1 / (1 + np.exp(-diff * 0.15))
 
     return dict(proj_a=proj_a, proj_b=proj_b, prob_a=prob_a,
                 method=method, h2h=h2h,
                 adv_a=adv_a, adv_b=adv_b,
                 ppg_a=ppg_a, papg_a=papg_a, ppg_b=ppg_b, papg_b=papg_b,
-                wa=wa, la=la, wb=wb, lb=lb)
+                wa=wa, la=la, wb=wb, lb=lb,
+                h2h_proj_a=h2h_proj_a, h2h_proj_b=h2h_proj_b,
+                eff_proj_a=eff_a, eff_proj_b=eff_b, n_h2h=n_h2h)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_all_teams_standings() -> list:
+    """Box-score standings for every team that has at least one completed game.
+
+    Returns one dict per team with:
+        id, name, class, gender, gp, wins, losses, pf, pa,
+        ppg, opp_ppg, margin, win_pct,
+        pyth_win_pct  – Pythagorean expectation (PPG² / (PPG²+OPP_PPG²))
+        sos           – average opponent win% (strength of schedule)
+    N/A-class teams are included but flagged; callers may exclude from
+    class-relative rankings.
+    """
+    rows = query("""
+        SELECT t.id, t.name, t.class AS cls, t.gender,
+               COUNT(*) AS gp,
+               SUM(CASE WHEN g.team1_id=t.id THEN g.home_score
+                        ELSE g.away_score END) AS pf,
+               SUM(CASE WHEN g.team1_id=t.id THEN g.away_score
+                        ELSE g.home_score END) AS pa,
+               SUM(CASE WHEN (g.team1_id=t.id AND g.home_score > g.away_score)
+                          OR (g.team2_id=t.id AND g.away_score > g.home_score)
+                        THEN 1 ELSE 0 END) AS wins
+        FROM teams t
+        JOIN games g ON g.team1_id = t.id OR g.team2_id = t.id
+        WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+          AND g.home_score != 0 AND g.away_score != 0
+        GROUP BY t.id, t.name, t.class, t.gender
+    """)
+    if not rows:
+        return []
+
+    # Build initial dict for each team
+    standings = []
+    team_wins: dict = {}
+    team_gp:   dict = {}
+    for r in rows:
+        gp   = r["gp"]  or 0
+        pf   = r["pf"]  or 0
+        pa   = r["pa"]  or 0
+        wins = r["wins"] or 0
+        losses = gp - wins
+        ppg      = pf / gp if gp else 0.0
+        opp_ppg  = pa / gp if gp else 0.0
+        margin   = ppg - opp_ppg
+        win_pct  = wins / gp if gp else 0.0
+        pyth     = ppg**2 / (ppg**2 + opp_ppg**2) if (ppg + opp_ppg) > 0 else 0.5
+        standings.append({
+            "id":         r["id"],
+            "name":       r["name"],
+            "class":      r["cls"] or "",
+            "gender":     r["gender"] or "",
+            "gp":         gp,
+            "wins":       wins,
+            "losses":     losses,
+            "pf":         pf,
+            "pa":         pa,
+            "ppg":        round(ppg, 1),
+            "opp_ppg":    round(opp_ppg, 1),
+            "margin":     round(margin, 1),
+            "win_pct":    round(win_pct, 3),
+            "pyth":       round(pyth, 3),
+            "sos":        0.0,   # filled below
+        })
+        team_wins[r["id"]] = win_pct
+        team_gp[r["id"]]   = gp
+
+    # Compute SOS — average opponent win% weighted by games played together
+    all_game_rows = query("""
+        SELECT team1_id, team2_id
+        FROM games
+        WHERE home_score IS NOT NULL AND away_score IS NOT NULL
+    """)
+    from collections import defaultdict
+    opp_win_pcts: dict = defaultdict(list)
+    for g in all_game_rows:
+        t1, t2 = g["team1_id"], g["team2_id"]
+        if t1 in team_wins and t2 in team_wins:
+            opp_win_pcts[t1].append(team_wins[t2])
+            opp_win_pcts[t2].append(team_wins[t1])
+
+    for entry in standings:
+        opps = opp_win_pcts.get(entry["id"], [])
+        entry["sos"] = round(sum(opps) / len(opps), 3) if opps else 0.0
+
+    return sorted(standings, key=lambda x: x["margin"], reverse=True)

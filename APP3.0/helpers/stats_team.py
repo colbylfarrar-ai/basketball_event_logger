@@ -523,6 +523,8 @@ def compute_team_tracked(tid):
         _os = (g["away_score"] if _t1==tid else g["home_score"]) or 0
         _ast_fga_tot = sum(my_s[f"ast_q{_q}_fga"] for _q in (1, 2, 3, 4))
         _sc_fga_tot  = sum(my_s[f"sc_q{_q}_fga"]  for _q in (1, 2, 3, 4))
+        _efg_g  = (my_s["fgm"]  + 0.5*my_s["tpm"])  / my_s["fga"]  if my_s["fga"]  else 0.0
+        _oefg_g = (opp_s["fgm"] + 0.5*opp_s["tpm"]) / opp_s["fga"] if opp_s["fga"] else 0.0
         game_log.append({"date": g["date"],
                          "opp":  g["t2_name"] if _t1==tid else g["t1_name"],
                          "ortg": round(100*my_s["pts"]/_gp, 1),
@@ -536,7 +538,25 @@ def compute_team_tracked(tid):
                          "q3_oreb": my_s["q3_oreb"], "q3_dreb": my_s["q3_dreb"],
                          "q4_oreb": my_s["q4_oreb"], "q4_dreb": my_s["q4_dreb"],
                          "ast_fga": _ast_fga_tot,
-                         "sc_fga":  _sc_fga_tot})
+                         "sc_fga":  _sc_fga_tot,
+                         "efg":     round(_efg_g,  3),
+                         "oefg":    round(_oefg_g, 3),
+                         "pace":    round((_gp + _go) / 2, 1),
+                         "fga":     my_s["fga"],
+                         "fgm":     my_s["fgm"],
+                         "tpa":     my_s["tpa"],
+                         "tpm":     my_s["tpm"],
+                         "pts":     my_s["pts"],
+                         "tov":     my_s["tov"],
+                         "ast":     my_s["ast"],
+                         "ast_fgm": my_s["ast_fgm"],
+                         "stl":     my_s.get("stl", 0),
+                         "blk":     my_s.get("blk", 0),
+                         "opp_pts": opp_s["pts"],
+                         "opp_fga": opp_s["fga"],
+                         "opp_tpa": opp_s["tpa"],
+                         "opp_tpm": opp_s["tpm"],
+                         })
         for k in my_s:  agg[k]+=my_s[k]
         for k in opp_s: agg[f"opp_{k}"]+=opp_s[k]
 
@@ -953,6 +973,44 @@ def compute_matchup(a_id, b_id):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def compute_league_advanced_percentiles(team_id: int) -> dict:
+    """Returns 0-100 percentile rank for team_id on key advanced metrics vs all other teams."""
+    teams = query("SELECT id FROM teams")
+    all_adv: dict = {}
+    for t in teams:
+        adv = compute_team_tracked(t["id"])
+        if adv:
+            all_adv[t["id"]] = adv
+    if team_id not in all_adv or len(all_adv) < 2:
+        return {}
+    my_adv = all_adv[team_id]
+    # (key, higher_is_better): True=higher better, False=lower better, None=neutral
+    metrics = [
+        ("ortg",      True),  ("drtg",      False), ("net",       True),
+        ("efg",       True),  ("oefg",      False), ("tov_r",     False),
+        ("oreb_p",    True),  ("ft_r",      True),  ("pace",      None),
+        ("pts_pg",    True),  ("ast_tov_r", True),  ("ppp",       True),
+        ("opp_tov_r", True),  ("dreb_p",    True),  ("blk_rate",  True),
+        ("stl_rate",  True),
+    ]
+    result: dict = {}
+    for k, hib in metrics:
+        vals = [v.get(k) for v in all_adv.values() if v.get(k) is not None]
+        if len(vals) < 2:
+            result[k] = 50
+            continue
+        my_val = my_adv.get(k, 0)
+        if hib is True:
+            pct = round(sum(1 for v in vals if v <= my_val) / len(vals) * 100)
+        elif hib is False:
+            pct = round(sum(1 for v in vals if v >= my_val) / len(vals) * 100)
+        else:
+            pct = 50
+        result[k] = pct
+    return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_all_teams_standings() -> list:
     """Box-score standings for every team that has at least one completed game.
 
@@ -1037,3 +1095,41 @@ def compute_all_teams_standings() -> list:
         entry["sos"] = round(sum(opps) / len(opps), 3) if opps else 0.0
 
     return sorted(standings, key=lambda x: x["margin"], reverse=True)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def compute_league_advanced_stats() -> list:
+    """Per-team advanced stats for all teams with tracked data — used for league-wide rankings."""
+    teams = query("SELECT id, name FROM teams")
+    out = []
+    for t in teams:
+        a = compute_team_tracked(t["id"])
+        if not a:
+            continue
+        out.append({
+            "id":        t["id"],
+            "name":      t["name"],
+            "ortg":      a["ortg"],
+            "drtg":      a["drtg"],
+            "net":       round(a["ortg"] - a["drtg"], 2),
+            "pace":      a["pace"],
+            "efg":       a["efg"] * 100,
+            "tov_r":     a["tov_r"] * 100,
+            "oreb_p":    a["oreb_p"] * 100,
+            "ft_r":      a["ft_r"],
+            "oefg":      a["oefg"] * 100,
+            "opp_tov_r": a.get("opp_tov_r", 0) * 100,
+            "dreb_p":    a.get("dreb_p", 0) * 100,
+            "opp_ft_r":  a.get("opp_ft_r", 0),
+            "ts":        a["ts"] * 100,
+            "tpp":       a["tpp"] * 100,
+            "fgp":       a["fgp"] * 100,
+            "pts_pg":    a["pts_pg"],
+            "ast_pct":   a["ast_pct"],
+            "stl_rate":  a.get("stl_rate", 0),
+            "blk_rate":  a.get("blk_rate", 0),
+            "ast_tov":   a.get("ast_tov_r", 0),
+            "tpar":      a["tpar"] * 100,
+            "ppp":       a["ppp"],
+        })
+    return out

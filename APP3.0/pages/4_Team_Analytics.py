@@ -17,7 +17,9 @@ from helpers.charts import (zone_color, render_hot_zones, show_shot_chart, show_
 from helpers.stats_team import (compute_player_game_log, compute_player_career,
                                 compute_team_tracked, compute_on_off,
                                 compute_league_drtg, compute_league_four_factors,
-                                compute_matchup, compute_all_teams_standings)
+                                compute_matchup, compute_all_teams_standings,
+                                compute_league_advanced_stats,
+                                compute_league_advanced_percentiles)
 from helpers.stats_players import (compute_player_ratings,
                                    compute_player_rankings,
                                    compute_game_box_score,
@@ -110,6 +112,14 @@ st.markdown("""
 }
 .win-badge  { border-color:#2ecc71; color:#2ecc71; }
 .loss-badge { border-color:#e74c3c; color:#e74c3c; }
+.str-card {
+    border-radius:8px; padding:8px 10px; margin-bottom:5px;
+}
+.str-card-good { background:#0d2818; border:1px solid #2ecc71; }
+.str-card-bad  { background:#2d0a0a; border:1px solid #e74c3c; }
+.str-name-good { color:#2ecc71; font-weight:700; font-size:13px; }
+.str-name-bad  { color:#e74c3c; font-weight:700; font-size:13px; }
+.str-desc { color:#8b949e; font-size:10px; margin-top:1px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -256,6 +266,225 @@ with tab_ov:
                 f"<div class='kpi-value'>{_my_ppg:.1f} / {_my_opp:.1f}</div>"
                 f"<div class='kpi-sub'>PPG / OPP PPG</div>"
                 f"</div>", unsafe_allow_html=True)
+
+    # ── Coach Dashboard (requires tracked data) ───────────────────────────────
+    if adv:
+        _lg_adv = compute_league_advanced_stats()
+
+        def _lrank(stat_key: str, higher_is_better: bool = True):
+            """Return (rank, total) for this team in the league for stat_key."""
+            entries = [(t[stat_key], t["id"]) for t in _lg_adv if stat_key in t]
+            if not entries:
+                return None, 0
+            entries.sort(key=lambda x: x[0], reverse=higher_is_better)
+            for i, (_, tid) in enumerate(entries):
+                if tid == team_id:
+                    return i + 1, len(entries)
+            return None, len(entries)
+
+        def _rcolor(rank, total):
+            if rank is None or total == 0:
+                return "#8b949e"
+            p = rank / total
+            return "#2ecc71" if p <= 0.25 else ("#f0a500" if p <= 0.50 else "#e74c3c")
+
+        def _pbar(rank, total):
+            if rank is None or total <= 1:
+                return ""
+            pct = (1 - (rank - 1) / (total - 1)) * 100
+            col = "#2ecc71" if pct >= 75 else ("#f0a500" if pct >= 50 else "#e74c3c")
+            return (
+                f"<div style='background:#21262d;border-radius:3px;height:4px;"
+                f"overflow:hidden;margin-top:5px'>"
+                f"<div style='background:{col};width:{pct:.0f}%;height:100%;"
+                f"border-radius:3px'></div></div>"
+            )
+
+        # ── Efficiency Rankings ───────────────────────────────────────────────
+        st.markdown("<div class='section-hdr'>Efficiency Rankings</div>",
+                    unsafe_allow_html=True)
+        _eff_cols = st.columns(5)
+        _eff_defs = [
+            ("ORtg",    f"{adv['ortg']:.1f}",              "ortg", True,  "pts / 100 poss"),
+            ("DRtg",    f"{adv['drtg']:.1f}",              "drtg", False, "pts allowed / 100"),
+            ("Net Rtg", f"{adv['ortg']-adv['drtg']:+.1f}", "net",  True,  "ORtg − DRtg"),
+            ("Pace",    f"{adv['pace']:.1f}",              "pace", None,  "poss per game"),
+            ("PPP",     f"{adv['ppp']:.3f}",               "ppp",  True,  "pts per possession"),
+        ]
+        for _ec, (_lbl, _val, _key, _hib, _sub) in zip(_eff_cols, _eff_defs):
+            _rb = _pb_h = ""
+            if _key and _hib is not None:
+                _rk, _tot = _lrank(_key, _hib)
+                _rc = _rcolor(_rk, _tot)
+                if _rk:
+                    _rb = (f"<div style='font-size:10px;font-weight:700;color:{_rc};"
+                           f"margin-top:3px'>#{_rk} of {_tot}</div>")
+                _pb_h = _pbar(_rk, _tot)
+            _ec.markdown(
+                f"<div class='adv-tile'>"
+                f"<div class='adv-label'>{_lbl}</div>"
+                f"<div class='adv-value'>{_val}</div>"
+                f"<div style='font-size:10px;color:#8b949e;margin-top:2px'>{_sub}</div>"
+                f"{_rb}{_pb_h}"
+                f"</div>", unsafe_allow_html=True)
+
+        # ── Four Factors Dashboard ────────────────────────────────────────────
+        st.markdown("<div class='section-hdr'>Four Factors</div>",
+                    unsafe_allow_html=True)
+        _lg_ff_ov = compute_league_four_factors()
+
+        def _ff_card(col, label, team_val, opp_val, lg_avg, rank_key, hib, fmt):
+            _rk, _tot = _lrank(rank_key, hib)
+            _rc = _rcolor(_rk, _tot)
+            _pb_h = _pbar(_rk, _tot)
+            _tv_better = (team_val >= opp_val) if hib else (team_val <= opp_val)
+            _tv_col = "#2ecc71" if _tv_better else "#e74c3c"
+            _rank_str = (f"<div style='font-size:10px;font-weight:700;color:{_rc};"
+                         f"margin-top:3px'>#{_rk}/{_tot}</div>") if _rk else ""
+            col.markdown(
+                f"<div style='background:#161b22;border:1px solid #30363d;"
+                f"border-radius:10px;padding:12px 10px;text-align:center;"
+                f"margin-bottom:6px'>"
+                f"<div style='font-size:9px;color:#8b949e;text-transform:uppercase;"
+                f"letter-spacing:1px'>{label}</div>"
+                f"<div style='font-size:26px;font-weight:900;color:{_tv_col};"
+                f"line-height:1.1'>{fmt.format(team_val)}</div>"
+                f"<div style='font-size:11px;color:#e74c3c;margin-top:1px'>"
+                f"opp {fmt.format(opp_val)}</div>"
+                f"<div style='font-size:10px;color:#6e7681'>"
+                f"lg avg {fmt.format(lg_avg)}</div>"
+                f"{_rank_str}{_pb_h}"
+                f"</div>",
+                unsafe_allow_html=True)
+
+        st.markdown(
+            "<div style='font-size:11px;color:#f0a500;font-weight:700;"
+            "text-transform:uppercase;letter-spacing:1px;margin:6px 0 4px'>"
+            "OFFENSE</div>", unsafe_allow_html=True)
+        _o4_cols = st.columns(4)
+        _o4_data = [
+            ("eFG%",    adv["efg"]*100,         adv["oefg"]*100,
+             _lg_ff_ov.get("efg",0)*100,    "efg",      True,  "{:.1f}%"),
+            ("TOV%",    adv["tov_r"]*100,        adv.get("opp_tov_r",0)*100,
+             _lg_ff_ov.get("tov_r",0)*100,  "tov_r",    False, "{:.1f}%"),
+            ("OREB%",   adv["oreb_p"]*100,       adv.get("opp_oreb_p",0)*100,
+             _lg_ff_ov.get("oreb_p",0)*100, "oreb_p",   True,  "{:.1f}%"),
+            ("FT Rate", adv["ft_r"],             adv.get("opp_ft_r",0),
+             _lg_ff_ov.get("ft_r",0),       "ft_r",     True,  "{:.3f}"),
+        ]
+        for _oc, (_lbl, _tv, _ov, _lv, _key, _hib, _fmt) in zip(_o4_cols, _o4_data):
+            _ff_card(_oc, _lbl, _tv, _ov, _lv, _key, _hib, _fmt)
+
+        st.markdown(
+            "<div style='font-size:11px;color:#3498db;font-weight:700;"
+            "text-transform:uppercase;letter-spacing:1px;margin:10px 0 4px'>"
+            "DEFENSE</div>", unsafe_allow_html=True)
+        _d4_cols = st.columns(4)
+        _d4_data = [
+            ("Opp eFG%",    adv["oefg"]*100,             adv["efg"]*100,
+             _lg_ff_ov.get("oefg",0)*100,      "oefg",      False, "{:.1f}%"),
+            ("Opp TOV%",    adv.get("opp_tov_r",0)*100,  adv["tov_r"]*100,
+             _lg_ff_ov.get("opp_tov_r",0)*100, "opp_tov_r", True,  "{:.1f}%"),
+            ("DREB%",       adv.get("dreb_p",0)*100,     adv.get("opp_oreb_p",0)*100,
+             _lg_ff_ov.get("dreb_p",0)*100,    "dreb_p",    True,  "{:.1f}%"),
+            ("Opp FT Rate", adv.get("opp_ft_r",0),       adv["ft_r"],
+             _lg_ff_ov.get("opp_ft_r",0),      "opp_ft_r",  False, "{:.3f}"),
+        ]
+        for _dc, (_lbl, _tv, _ov, _lv, _key, _hib, _fmt) in zip(_d4_cols, _d4_data):
+            _ff_card(_dc, _lbl, _tv, _ov, _lv, _key, _hib, _fmt)
+
+        # ── Key Stats at a Glance ─────────────────────────────────────────────
+        st.markdown("<div class='section-hdr'>Key Stats at a Glance</div>",
+                    unsafe_allow_html=True)
+        _qs_defs = [
+            ("TS%",     f"{adv['ts']*100:.1f}%",    "ts",       True,  "true shooting"),
+            ("FG%",     f"{adv['fgp']*100:.1f}%",   "fgp",      True,  "field goal %"),
+            ("3P%",     f"{adv['tpp']*100:.1f}%",   "tpp",      True,  "three-point %"),
+            ("FT%",     f"{adv['ftp']*100:.1f}%",   None,       None,  "free throw %"),
+            ("3PAr",    f"{adv['tpar']*100:.1f}%",  None,       None,  "3-pt attempt rate"),
+            ("AST%",    f"{adv['ast_pct']:.1f}%",   "ast_pct",  True,  "assisted FGM rate"),
+            ("AST/TOV", f"{adv['ast_tov_r']:.2f}",  "ast_tov",  True,  "ball security"),
+            ("STL%",    f"{adv['stl_rate']:.1f}%",  "stl_rate", True,  "steals / opp poss"),
+        ]
+        _qs_cols = st.columns(8)
+        for _qc, (_lbl, _val, _key, _hib, _sub) in zip(_qs_cols, _qs_defs):
+            _rb2 = _pb2 = ""
+            if _key and _hib is not None:
+                _rk2, _tot2 = _lrank(_key, _hib)
+                _rc2 = _rcolor(_rk2, _tot2)
+                if _rk2:
+                    _rb2 = (f"<div style='font-size:9px;font-weight:700;color:{_rc2};"
+                            f"margin-top:2px'>#{_rk2}/{_tot2}</div>")
+                _pb2 = _pbar(_rk2, _tot2)
+            _qc.markdown(
+                f"<div style='background:#161b22;border:1px solid #30363d;"
+                f"border-radius:8px;padding:10px 8px;text-align:center'>"
+                f"<div style='font-size:9px;color:#8b949e;text-transform:uppercase;"
+                f"letter-spacing:1px'>{_lbl}</div>"
+                f"<div style='font-size:18px;font-weight:800;color:#58a6ff'>{_val}</div>"
+                f"<div style='font-size:9px;color:#6e7681;margin-top:1px'>{_sub}</div>"
+                f"{_rb2}{_pb2}"
+                f"</div>", unsafe_allow_html=True)
+
+        # ── Scoring Breakdown + Strengths / Areas to Improve ─────────────────
+        _sb_left, _sb_right = st.columns([1, 2])
+        with _sb_left:
+            st.markdown("<div class='section-hdr'>Scoring Breakdown</div>",
+                        unsafe_allow_html=True)
+            _pts_2  = (int(adv.get("fgm", 0)) - int(adv.get("tpm", 0))) * 2
+            _pts_3  = int(adv.get("tpm", 0)) * 3
+            _pts_ft = int(adv.get("ftm", 0))
+            show_scoring_pie(_pts_2, _pts_3, _pts_ft, "Points from 2s / 3s / FTs")
+
+        with _sb_right:
+            st.markdown(
+                "<div class='section-hdr'>Team Strengths &amp; Areas to Improve</div>",
+                unsafe_allow_html=True)
+            _ranked_pool = [
+                ("ORtg",       "ortg",      True,  "points per 100 possessions"),
+                ("DRtg",       "drtg",      False, "points allowed per 100"),
+                ("Net Rating", "net",       True,  "overall efficiency differential"),
+                ("eFG%",       "efg",       True,  "effective field goal shooting"),
+                ("OREB%",      "oreb_p",    True,  "offensive rebounding rate"),
+                ("Opp TOV%",   "opp_tov_r", True,  "forcing opponent turnovers"),
+                ("DREB%",      "dreb_p",    True,  "defensive rebounding rate"),
+                ("TS%",        "ts",        True,  "overall shooting efficiency"),
+                ("AST/TOV",    "ast_tov",   True,  "ball security & playmaking"),
+                ("STL Rate",   "stl_rate",  True,  "steals per 100 opp possessions"),
+                ("3P%",        "tpp",       True,  "three-point shooting"),
+            ]
+            _with_ranks = []
+            for _sname, _skey, _shib, _sdesc in _ranked_pool:
+                _rk3, _tot3 = _lrank(_skey, _shib)
+                if _rk3 and _tot3 > 1:
+                    _with_ranks.append((_sname, _rk3, _tot3, _sdesc, _rk3 / _tot3))
+            _with_ranks.sort(key=lambda x: x[4])
+            _strengths  = _with_ranks[:3]
+            _weaknesses = _with_ranks[-3:][::-1]
+
+            _str_col, _wk_col = st.columns(2)
+            with _str_col:
+                st.markdown(
+                    "<div style='font-size:11px;color:#2ecc71;font-weight:700;"
+                    "text-transform:uppercase;letter-spacing:1px;margin-bottom:6px'>"
+                    "STRENGTHS</div>", unsafe_allow_html=True)
+                for _sn, _rk3, _tot3, _sd, _ in _strengths:
+                    st.markdown(
+                        f"<div class='str-card str-card-good'>"
+                        f"<div class='str-name-good'>#{_rk3} — {_sn}</div>"
+                        f"<div class='str-desc'>{_sd}</div>"
+                        f"</div>", unsafe_allow_html=True)
+            with _wk_col:
+                st.markdown(
+                    "<div style='font-size:11px;color:#e74c3c;font-weight:700;"
+                    "text-transform:uppercase;letter-spacing:1px;margin-bottom:6px'>"
+                    "AREAS TO IMPROVE</div>", unsafe_allow_html=True)
+                for _sn, _rk3, _tot3, _sd, _ in _weaknesses:
+                    st.markdown(
+                        f"<div class='str-card str-card-bad'>"
+                        f"<div class='str-name-bad'>#{_rk3} — {_sn}</div>"
+                        f"<div class='str-desc'>{_sd}</div>"
+                        f"</div>", unsafe_allow_html=True)
 
     # ── Schedule ─────────────────────────────────────────────────────────────
     st.markdown("<div class='section-hdr'>Season Schedule & Results</div>", unsafe_allow_html=True)
@@ -776,6 +1005,81 @@ with tab_an:
                     f"<div style='font-size:10px;color:#8b949e'>{sub}</div>"
                     f"</div>", unsafe_allow_html=True)
 
+            # ── League Percentile Rankings ────────────────────────────────────
+            _pct = compute_league_advanced_percentiles(team_id)
+            if _pct:
+                st.write("")
+                st.markdown("<div class='section-hdr'>League Percentile Rankings</div>",
+                            unsafe_allow_html=True)
+                st.caption("Where this team ranks percentile-wise vs all teams with tracked data. "
+                           "Green ≥ 66th · Yellow ≥ 34th · Red < 34th")
+                _pct_defs = [
+                    ("ORtg",    "ortg",      "Offensive Rating"),
+                    ("DRtg",    "drtg",      "Defensive Rating"),
+                    ("Net Rtg", "net",        "Net Rating"),
+                    ("eFG%",    "efg",       "Eff. FG%"),
+                    ("TOV%",    "tov_r",     "Turnover Rate"),
+                    ("OREB%",   "oreb_p",    "Off. Reb %"),
+                    ("FT Rate", "ft_r",      "FT Rate"),
+                    ("PPP",     "ppp",       "Pts / Poss"),
+                ]
+                _pct_tile_cols = st.columns(len(_pct_defs))
+                for _pc, (abbr, k, desc) in zip(_pct_tile_cols, _pct_defs):
+                    _pv = _pct.get(k, 50)
+                    _pc_clr = "#2ecc71" if _pv >= 66 else "#f0a500" if _pv >= 34 else "#e74c3c"
+                    _pc.markdown(
+                        f"<div class='adv-tile'>"
+                        f"<div class='adv-label'>{abbr}</div>"
+                        f"<div style='font-size:26px;font-weight:900;color:{_pc_clr}'>{_pv}</div>"
+                        f"<div style='font-size:9px;color:#8b949e;margin-bottom:5px'>percentile</div>"
+                        f"<div class='ff-bar-wrap'><div style='background:{_pc_clr};height:100%;"
+                        f"border-radius:4px;width:{_pv}%'></div></div>"
+                        f"</div>", unsafe_allow_html=True)
+
+                # Team radar chart (percentile-based)
+                st.write("")
+                _r_meta = [
+                    ("ORtg",     "ortg"),
+                    ("Opp TOV%", "opp_tov_r"),
+                    ("OREB%",    "oreb_p"),
+                    ("FT Rate",  "ft_r"),
+                    ("eFG%",     "efg"),
+                    ("Net Rtg",  "net"),
+                    ("BLK%",     "blk_rate"),
+                    ("STL%",     "stl_rate"),
+                ]
+                _r_cats   = [x[0] for x in _r_meta]
+                _r_vals   = [_pct.get(x[1], 50) for x in _r_meta]
+                _r_cats_c = _r_cats + [_r_cats[0]]
+                _r_vals_c = _r_vals + [_r_vals[0]]
+                fig_radar = go.Figure()
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=_r_vals_c, theta=_r_cats_c, fill="toself", name=sel_name,
+                    line=dict(color="#f0a500", width=2.5),
+                    fillcolor="rgba(240,165,0,0.18)"))
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=[50]*len(_r_cats_c), theta=_r_cats_c, fill="toself",
+                    name="League Avg (50th pct)",
+                    line=dict(color="#8b949e", width=1.5, dash="dot"),
+                    fillcolor="rgba(139,148,158,0.06)"))
+                fig_radar.update_layout(
+                    **PLOT_LAYOUT,
+                    polar=dict(
+                        bgcolor="#0d1117",
+                        radialaxis=dict(visible=True, range=[0, 100],
+                                        tickvals=[25, 50, 75, 100],
+                                        tickfont=dict(size=8, color="#8b949e"),
+                                        gridcolor="#30363d"),
+                        angularaxis=dict(tickfont=dict(size=11, color="#c9d1d9"),
+                                         gridcolor="#30363d"),
+                    ),
+                    title=f"{sel_name} — Team Profile vs League (Percentile Rank)",
+                    showlegend=True,
+                    legend=dict(orientation="h", y=-0.12),
+                    height=460,
+                )
+                st.plotly_chart(fig_radar, use_container_width=True)
+
         # ── SCORING ──────────────────────────────────────────────────────────
         with sub_scoring:
             st.markdown("<div class='section-hdr'>Scoring Overview</div>", unsafe_allow_html=True)
@@ -961,6 +1265,133 @@ with tab_an:
                                 "AST%":         f"{_qd['ast_fgm']/_qd['fgm']*100:.1f}%" if _qd["fgm"] else "—",
                             })
                     st.dataframe(pd.DataFrame(_bq_rows), use_container_width=True, hide_index=True)
+
+            # ── Q4 Clutch Performance ─────────────────────────────────────────
+            st.write("")
+            st.markdown("<div class='section-hdr'>Q4 Clutch Performance</div>",
+                        unsafe_allow_html=True)
+            _q4_margin = adv["q4_pts_pg"] - adv["opp_q4_pts_pg"]
+            _q4_cols = st.columns(5)
+            for _q4c, (lbl, val, sub) in zip(_q4_cols, [
+                ("Q4 PPG",    f"{adv['q4_pts_pg']:.1f}",               "our Q4 scoring"),
+                ("Q4 PA/G",   f"{adv['opp_q4_pts_pg']:.1f}",           "opp Q4 scoring"),
+                ("Q4 Margin", f"{_q4_margin:+.1f}",                     "Q4 pts edge"),
+                ("Q4 PPP",    f"{adv['q4_ppp']:.3f}",                   "our Q4 eff."),
+                ("opp Q4 PPP",f"{adv['opp_q4_ppp']:.3f}",              "opp Q4 eff."),
+            ]):
+                _q4_clr = "#f0a500"
+                if lbl == "Q4 Margin":
+                    _q4_clr = "#2ecc71" if _q4_margin >= 0 else "#e74c3c"
+                _q4c.markdown(
+                    f"<div class='adv-tile'>"
+                    f"<div class='adv-label'>{lbl}</div>"
+                    f"<div style='font-size:22px;font-weight:900;color:{_q4_clr}'>{val}</div>"
+                    f"<div style='font-size:10px;color:#8b949e'>{sub}</div>"
+                    f"</div>", unsafe_allow_html=True)
+
+            # ── Score Margin Distribution ──────────────────────────────────────
+            _gl_sc = adv.get("game_log", [])
+            if len(_gl_sc) >= 3:
+                st.write("")
+                st.markdown("<div class='section-hdr'>Score Margin Distribution</div>",
+                            unsafe_allow_html=True)
+                _marg_vals = [e["margin"] for e in _gl_sc]
+                _wins_dist  = sum(1 for m in _marg_vals if m > 0)
+                _losses_dist = sum(1 for m in _marg_vals if m < 0)
+                _avg_mov    = round(sum(_marg_vals) / len(_marg_vals), 1)
+                _max_win    = max(_marg_vals) if _marg_vals else 0
+                _max_loss   = min(_marg_vals) if _marg_vals else 0
+
+                _dm_c1, _dm_c2 = st.columns([2, 1])
+                with _dm_c1:
+                    fig_margin_hist = go.Figure()
+                    fig_margin_hist.add_trace(go.Histogram(
+                        x=_marg_vals,
+                        nbinsx=max(8, len(_marg_vals) // 2),
+                        marker=dict(
+                            color=[("#2ecc71" if m >= 0 else "#e74c3c") for m in _marg_vals],
+                            line=dict(color="#0d1117", width=1)),
+                        opacity=0.85,
+                        name="Game Margin",
+                    ))
+                    fig_margin_hist.add_vline(x=0, line_color="#555d68", line_width=1.5)
+                    fig_margin_hist.add_vline(
+                        x=_avg_mov, line_dash="dot", line_color="#f0a500", line_width=2,
+                        annotation_text=f"Avg: {_avg_mov:+.1f}",
+                        annotation_font_color="#f0a500", annotation_position="top right")
+                    fig_margin_hist.update_layout(
+                        **PLOT_LAYOUT,
+                        title="Distribution of Game Margins (W = green, L = red)",
+                        xaxis_title="Score Margin", yaxis_title="Games",
+                        showlegend=False, height=300)
+                    st.plotly_chart(fig_margin_hist, use_container_width=True)
+
+                with _dm_c2:
+                    st.markdown(
+                        f"<div class='pl-hero' style='padding:16px;margin-top:30px'>"
+                        f"<div style='font-size:11px;color:#8b949e;text-transform:uppercase;"
+                        f"letter-spacing:1px;margin-bottom:10px'>Margin Summary</div>"
+                        f"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px'>"
+                        f"<div><div style='color:#8b949e;font-size:10px'>Tracked Games</div>"
+                        f"<div style='font-size:18px;font-weight:800;color:#f0f6fc'>"
+                        f"{len(_marg_vals)}</div></div>"
+                        f"<div><div style='color:#8b949e;font-size:10px'>Avg Margin</div>"
+                        f"<div style='font-size:18px;font-weight:800;color:"
+                        f"{'#2ecc71' if _avg_mov>=0 else '#e74c3c'}'>{_avg_mov:+.1f}</div></div>"
+                        f"<div><div style='color:#8b949e;font-size:10px'>Biggest Win</div>"
+                        f"<div style='font-size:18px;font-weight:800;color:#2ecc71'>"
+                        f"+{_max_win}</div></div>"
+                        f"<div><div style='color:#8b949e;font-size:10px'>Biggest Loss</div>"
+                        f"<div style='font-size:18px;font-weight:800;color:#e74c3c'>"
+                        f"{_max_loss}</div></div>"
+                        f"</div></div>", unsafe_allow_html=True)
+
+            # ── Shooting Efficiency Trend (eFG% per game) ─────────────────────
+            _gl_efg = adv.get("game_log", [])
+            if len(_gl_efg) >= 2 and "efg" in (_gl_efg[0] if _gl_efg else {}):
+                st.write("")
+                st.markdown("<div class='section-hdr'>Shooting Efficiency Trend — eFG% per Game</div>",
+                            unsafe_allow_html=True)
+                _efg_labels = []
+                for _ee in _gl_efg:
+                    try:
+                        _dl_e = datetime.strptime(
+                            _ee["date"], "%Y-%m-%d").strftime("%b %d")
+                    except Exception:
+                        _dl_e = _ee.get("date", "—")
+                    _efg_labels.append(f"{_dl_e} vs {_ee['opp']}")
+                _efg_vals  = [round(e.get("efg",  0) * 100, 1) for e in _gl_efg]
+                _oefg_vals = [round(e.get("oefg", 0) * 100, 1) for e in _gl_efg]
+                _season_efg  = adv["efg"]  * 100
+                _season_oefg = adv["oefg"] * 100
+
+                fig_efg_trend = go.Figure()
+                fig_efg_trend.add_hline(
+                    y=_season_efg, line_dash="dot", line_color="#f0a500", line_width=1.5,
+                    annotation_text=f"Season eFG% {_season_efg:.1f}%",
+                    annotation_font_color="#f0a500", annotation_position="bottom right")
+                fig_efg_trend.add_hline(
+                    y=_season_oefg, line_dash="dot", line_color="#e74c3c", line_width=1.5,
+                    annotation_text=f"Opp eFG% {_season_oefg:.1f}%",
+                    annotation_font_color="#e74c3c", annotation_position="top right")
+                fig_efg_trend.add_trace(go.Scatter(
+                    x=_efg_labels, y=_efg_vals, name="Team eFG%",
+                    mode="lines+markers", line=dict(color="#f0a500", width=2.5),
+                    marker=dict(size=8, color=[
+                        "#2ecc71" if v >= _season_efg else "#e74c3c" for v in _efg_vals]),
+                    hovertemplate="%{x}<br>eFG%: %{y:.1f}%<extra></extra>"))
+                fig_efg_trend.add_trace(go.Scatter(
+                    x=_efg_labels, y=_oefg_vals, name="Opp eFG%",
+                    mode="lines+markers", line=dict(color="#e74c3c", width=2, dash="dot"),
+                    marker=dict(size=6),
+                    hovertemplate="%{x}<br>Opp eFG%: %{y:.1f}%<extra></extra>"))
+                fig_efg_trend.update_layout(
+                    **PLOT_LAYOUT,
+                    title="Effective FG% per Game — Team vs Opponent",
+                    xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                    yaxis_title="eFG%", height=340,
+                    legend=dict(orientation="h", y=-0.22))
+                st.plotly_chart(fig_efg_trend, use_container_width=True)
 
         # ── SHOOTING ─────────────────────────────────────────────────────────
         with sub_shooting:
@@ -1266,6 +1697,105 @@ with tab_an:
                             title="Avg Shot Rating by Zone",
                             yaxis_title="Shot Rating", height=300)
                         st.plotly_chart(fig_sratz, use_container_width=True)
+
+            # ── Guarded vs Unguarded ───────────────────────────────────────
+            if _all_shots_raw:
+                st.markdown("<div class='section-hdr'>Guarded vs Unguarded Shots</div>",
+                            unsafe_allow_html=True)
+                st.caption("Shots where an opposing defender is tagged as the primary contest.")
+
+                def _gu_agg(shots):
+                    fga = len(shots)
+                    fgm = sum(1 for s in shots if s["shot_result"] == "make")
+                    tpa = sum(1 for s in shots if s["shot_type"] == 3)
+                    tpm = sum(1 for s in shots if s["shot_type"] == 3 and s["shot_result"] == "make")
+                    twa = fga - tpa; twm = fgm - tpm
+                    efg = (fgm + 0.5*tpm) / fga if fga else 0
+                    pts = twm*2 + tpm*3
+                    ppp = pts / fga if fga else 0
+                    denom = twa*2 + tpa*3
+                    sce = pts / denom if denom else 0
+                    return dict(fga=fga, fgm=fgm, fg_pct=fgm/fga*100 if fga else 0,
+                                tpa=tpa, tpm=tpm, tp_pct=tpm/tpa*100 if tpa else 0,
+                                twa=twa, twm=twm, tw_pct=twm/twa*100 if twa else 0,
+                                efg=efg*100, ppp=round(ppp,3), sce=round(sce,3), pts=pts)
+
+                _guard_shots   = [s for s in _all_shots_raw if s.get("guarded_by_id") is not None]
+                _unguard_shots = [s for s in _all_shots_raw if s.get("guarded_by_id") is None]
+                _ga = _gu_agg(_guard_shots)
+                _ua = _gu_agg(_unguard_shots)
+                _ta = _gu_agg(_all_shots_raw)
+
+                _gu_df = pd.DataFrame([
+                    {"Type": "Guarded",   **{k: round(v,1) if isinstance(v,float) else v
+                                             for k,v in _ga.items()}},
+                    {"Type": "Unguarded", **{k: round(v,1) if isinstance(v,float) else v
+                                             for k,v in _ua.items()}},
+                    {"Type": "ALL",       **{k: round(v,1) if isinstance(v,float) else v
+                                             for k,v in _ta.items()}},
+                ])
+                _gu_show = ["Type", "fga", "fgm", "fg_pct", "twa", "twm", "tw_pct",
+                            "tpa", "tpm", "tp_pct", "efg", "ppp", "sce"]
+                _gu_rename = {"fga":"FGA","fgm":"FGM","fg_pct":"FG%",
+                              "twa":"2PA","twm":"2PM","tw_pct":"2P%",
+                              "tpa":"3PA","tpm":"3PM","tp_pct":"3P%",
+                              "efg":"eFG%","ppp":"PPP","sce":"SCE"}
+                _gu_display = _gu_df[[c for c in _gu_show if c in _gu_df.columns]].rename(
+                    columns=_gu_rename)
+                for _pc in ["FG%","2P%","3P%","eFG%"]:
+                    if _pc in _gu_display.columns:
+                        _gu_display[_pc] = _gu_display[_pc].apply(
+                            lambda v: f"{v:.1f}%" if isinstance(v, (int,float)) else v)
+                st.dataframe(_gu_display, use_container_width=True, hide_index=True)
+
+                # Side-by-side charts
+                _gu_labels = ["Guarded", "Unguarded"]
+                _gu_c1, _gu_c2 = st.columns(2)
+                with _gu_c1:
+                    fig_gu_pct = go.Figure()
+                    for _bar_lbl, _bar_key, _bar_clr in [
+                        ("FG%",  "fg_pct", "#f0a500"),
+                        ("2P%",  "tw_pct", "#3498db"),
+                        ("3P%",  "tp_pct", "#2ecc71"),
+                        ("eFG%", "efg",    "#9b59b6"),
+                    ]:
+                        _bar_vals = [round(_ga[_bar_key],1), round(_ua[_bar_key],1)]
+                        fig_gu_pct.add_trace(go.Bar(
+                            name=_bar_lbl, x=_gu_labels, y=_bar_vals,
+                            marker_color=_bar_clr,
+                            text=[f"{v:.1f}%" for v in _bar_vals], textposition="outside"))
+                    fig_gu_pct.update_layout(
+                        **PLOT_LAYOUT, barmode="group",
+                        title="FG% Comparison — Guarded vs Unguarded",
+                        yaxis_title="%", height=320,
+                        legend=dict(orientation="h", y=-0.22))
+                    st.plotly_chart(fig_gu_pct, use_container_width=True)
+
+                with _gu_c2:
+                    _gu_eff_vals = [_ga["ppp"], _ua["ppp"]]
+                    _gu_sce_vals = [_ga["sce"], _ua["sce"]]
+                    fig_gu_eff = go.Figure()
+                    fig_gu_eff.add_trace(go.Bar(
+                        name="PPP", x=_gu_labels, y=_gu_eff_vals,
+                        marker_color="#f0a500",
+                        text=[f"{v:.3f}" for v in _gu_eff_vals], textposition="outside"))
+                    fig_gu_eff.add_trace(go.Bar(
+                        name="SCE", x=_gu_labels, y=_gu_sce_vals,
+                        marker_color="#3498db",
+                        text=[f"{v:.3f}" for v in _gu_sce_vals], textposition="outside"))
+                    fig_gu_eff.update_layout(
+                        **PLOT_LAYOUT, barmode="group",
+                        title="Efficiency — Guarded vs Unguarded",
+                        yaxis_title="Value", height=320,
+                        legend=dict(orientation="h", y=-0.22))
+                    st.plotly_chart(fig_gu_eff, use_container_width=True)
+
+                _g_pct_tot = len(_guard_shots) / len(_all_shots_raw) * 100 if _all_shots_raw else 0
+                st.info(
+                    f"**{_g_pct_tot:.0f}%** of shots taken against a tagged defender · "
+                    f"Guarded eFG%: **{_ga['efg']:.1f}%** · "
+                    f"Unguarded eFG%: **{_ua['efg']:.1f}%** · "
+                    f"Advantage: **{_ua['efg']-_ga['efg']:+.1f}pp** on uncontested looks")
 
             # ── Player Shooting Comparison ─────────────────────────────────
             st.markdown("<div class='section-hdr'>Player Shooting Comparison</div>",
@@ -2036,6 +2566,96 @@ with tab_an:
                 f"({_opp_q_ppp_map[_worst_def_q]:.3f} opp PPP) · "
                 f"Best: **{_best_def_q}** ({_opp_q_ppp_map[_best_def_q]:.3f} opp PPP)")
 
+            # ── Opponent Shot Zones ───────────────────────────────────────────
+            st.write("")
+            st.markdown("<div class='section-hdr'>Opponent Shot Profile (What They're Shooting At Us)</div>",
+                        unsafe_allow_html=True)
+            _def_opp_shots = []
+            if tr_gs:
+                _def_gids = [g["id"] for g in tr_gs]
+                _def_ph   = ",".join("?" * len(_def_gids))
+                _def_our_pids_rows = query(
+                    f"SELECT DISTINCT player_id FROM game_lineup_players "
+                    f"WHERE game_id IN ({_def_ph}) AND team_id = ?",
+                    tuple(_def_gids) + (team_id,))
+                _def_our_pids = {r["player_id"] for r in (_def_our_pids_rows or [])}
+                if _def_our_pids:
+                    _def_opp_shots = query(
+                        f"SELECT zone, shot_type, shot_result, guarded_by_id "
+                        f"FROM game_events "
+                        f"WHERE game_id IN ({_def_ph}) AND event_type='shot' "
+                        f"AND primary_player_id NOT IN ({','.join('?'*len(_def_our_pids))})",
+                        tuple(_def_gids) + tuple(_def_our_pids))
+
+            if _def_opp_shots:
+                _dsh_c1, _dsh_c2 = st.columns(2)
+                with _dsh_c1:
+                    st.markdown("**Opponent Hot Zones — All**")
+                    render_hot_zones(_def_opp_shots, title="")
+                with _dsh_c2:
+                    # Opp shot zone summary
+                    _dsh_zones = {"C":[], "LC":[], "LW":[], "RW":[], "RC":[]}
+                    for _ds in _def_opp_shots:
+                        _dz = _ds.get("zone")
+                        if _dz in _dsh_zones:
+                            _dsh_zones[_dz].append(_ds)
+                    _dsh_rows = []
+                    for _dz, _dshots in _dsh_zones.items():
+                        if not _dshots:
+                            continue
+                        _dfga = len(_dshots)
+                        _dfgm = sum(1 for s in _dshots if s["shot_result"] == "make")
+                        _dtpa = sum(1 for s in _dshots if s["shot_type"] == 3)
+                        _dtpm = sum(1 for s in _dshots if s["shot_type"]==3 and s["shot_result"]=="make")
+                        _defg = (_dfgm+0.5*_dtpm)/_dfga if _dfga else 0
+                        _dsh_rows.append({
+                            "Zone":  _dz,
+                            "FGA":   _dfga,
+                            "FGM":   _dfgm,
+                            "FG%":   f"{_dfgm/_dfga*100:.1f}%" if _dfga else "—",
+                            "3PA":   _dtpa,
+                            "3P%":   f"{_dtpm/_dtpa*100:.1f}%" if _dtpa else "—",
+                            "eFG%":  f"{_defg*100:.1f}%",
+                            "Vol%":  f"{_dfga/len(_def_opp_shots)*100:.0f}%",
+                        })
+                    if _dsh_rows:
+                        st.markdown("**Zone Breakdown**")
+                        st.dataframe(pd.DataFrame(_dsh_rows),
+                                     use_container_width=True, hide_index=True)
+
+                # Zone volume bar chart
+                _dz_labels = [r["Zone"] for r in (_dsh_rows if _def_opp_shots else [])]
+                _dz_fga    = [r["FGA"]  for r in (_dsh_rows if _def_opp_shots else [])]
+                _dz_fgpct  = [float(r["FG%"].replace("%",""))
+                              for r in (_dsh_rows if _def_opp_shots else []) if r["FG%"] != "—"]
+                if _dz_labels and _dz_fga:
+                    _dsh_chart_c1, _dsh_chart_c2 = st.columns(2)
+                    with _dsh_chart_c1:
+                        fig_dsh_vol = go.Figure(go.Bar(
+                            x=_dz_labels, y=_dz_fga,
+                            marker_color="#e74c3c",
+                            text=_dz_fga, textposition="outside"))
+                        fig_dsh_vol.update_layout(
+                            **PLOT_LAYOUT, title="Opp Shot Volume by Zone",
+                            yaxis_title="FGA", height=280)
+                        st.plotly_chart(fig_dsh_vol, use_container_width=True)
+                    with _dsh_chart_c2:
+                        if _dz_fgpct:
+                            fig_dsh_pct = go.Figure(go.Bar(
+                                x=_dz_labels[:len(_dz_fgpct)], y=_dz_fgpct,
+                                marker_color=[
+                                    "#e74c3c" if v >= 50 else
+                                    "#f0a500" if v >= 35 else "#2ecc71"
+                                    for v in _dz_fgpct],
+                                text=[f"{v:.1f}%" for v in _dz_fgpct],
+                                textposition="outside"))
+                            fig_dsh_pct.update_layout(
+                                **PLOT_LAYOUT, title="Opp FG% by Zone (red=danger)",
+                                yaxis_title="FG%", height=280)
+                            st.plotly_chart(fig_dsh_pct, use_container_width=True)
+            else:
+                st.info("No opponent shot data available for tracked games.")
+
         # ── TRENDS ────────────────────────────────────────────────────────────
         with sub_trends:
             _gl_tr = adv.get("game_log", [])
@@ -2300,6 +2920,195 @@ with tab_an:
                     yaxis_title="PPP", height=320,
                     legend=dict(orientation="h", y=-0.2))
                 st.plotly_chart(fig_ppp_tr, use_container_width=True)
+
+                # ── eFG% Trend ────────────────────────────────────────────────
+                if "efg" in (_gl_tr[0] if _gl_tr else {}):
+                    st.markdown("<div class='section-hdr'>Shooting Efficiency Trend — eFG%</div>",
+                                unsafe_allow_html=True)
+                    _efg_tr_vals  = [round(e.get("efg",  0)*100, 1) for e in _gl_tr]
+                    _oefg_tr_vals = [round(e.get("oefg", 0)*100, 1) for e in _gl_tr]
+                    _efg_r3  = _roll3(_efg_tr_vals)
+                    _oefg_r3 = _roll3(_oefg_tr_vals)
+                    _seas_efg  = round(adv["efg"]  * 100, 1)
+                    _seas_oefg = round(adv["oefg"] * 100, 1)
+
+                    fig_efg_tr = go.Figure()
+                    fig_efg_tr.add_hline(y=_seas_efg, line_dash="dot", line_color="#f0a500",
+                                         line_width=1.2,
+                                         annotation_text=f"Season {_seas_efg:.1f}%",
+                                         annotation_font_color="#f0a500",
+                                         annotation_position="bottom right")
+                    fig_efg_tr.add_hline(y=_seas_oefg, line_dash="dot", line_color="#e74c3c",
+                                         line_width=1.2,
+                                         annotation_text=f"Opp {_seas_oefg:.1f}%",
+                                         annotation_font_color="#e74c3c",
+                                         annotation_position="top right")
+                    fig_efg_tr.add_trace(go.Scatter(
+                        x=_gl_labels_tr, y=_efg_tr_vals, name="Team eFG% (game)",
+                        mode="lines+markers",
+                        line=dict(color="#f0a500", width=1.5, dash="dot"),
+                        marker=dict(size=5), opacity=0.6))
+                    fig_efg_tr.add_trace(go.Scatter(
+                        x=_gl_labels_tr, y=_efg_r3, name="Team eFG% (3G avg)",
+                        mode="lines+markers",
+                        line=dict(color="#f0a500", width=2.5), marker=dict(size=7)))
+                    fig_efg_tr.add_trace(go.Scatter(
+                        x=_gl_labels_tr, y=_oefg_tr_vals, name="Opp eFG% (game)",
+                        mode="lines+markers",
+                        line=dict(color="#e74c3c", width=1.5, dash="dot"),
+                        marker=dict(size=5), opacity=0.6))
+                    fig_efg_tr.add_trace(go.Scatter(
+                        x=_gl_labels_tr, y=_oefg_r3, name="Opp eFG% (3G avg)",
+                        mode="lines+markers",
+                        line=dict(color="#e74c3c", width=2.5), marker=dict(size=7)))
+                    fig_efg_tr.update_layout(
+                        **PLOT_LAYOUT,
+                        title="eFG% per Game — Team vs Opponent (Raw + 3G Rolling)",
+                        xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                        yaxis_title="eFG%", height=350,
+                        legend=dict(orientation="h", y=-0.22))
+                    st.plotly_chart(fig_efg_tr, use_container_width=True)
+
+                # ── Pace Trend ────────────────────────────────────────────────
+                if "pace" in (_gl_tr[0] if _gl_tr else {}):
+                    st.markdown("<div class='section-hdr'>Pace Trend — Possessions per Game</div>",
+                                unsafe_allow_html=True)
+                    _pace_tr_vals = [e.get("pace", 0) for e in _gl_tr]
+                    _pace_r3      = _roll3(_pace_tr_vals)
+                    _seas_pace    = round(adv["pace"], 1)
+
+                    fig_pace_tr = go.Figure()
+                    fig_pace_tr.add_hline(y=_seas_pace, line_dash="dot",
+                                          line_color="#58a6ff", line_width=1.5,
+                                          annotation_text=f"Season avg {_seas_pace:.1f}",
+                                          annotation_font_color="#58a6ff",
+                                          annotation_position="top right")
+                    fig_pace_tr.add_trace(go.Bar(
+                        x=_gl_labels_tr, y=_pace_tr_vals,
+                        name="Pace (game)", marker_color="#21262d", opacity=0.7))
+                    fig_pace_tr.add_trace(go.Scatter(
+                        x=_gl_labels_tr, y=_pace_r3, name="3G Rolling Pace",
+                        mode="lines+markers",
+                        line=dict(color="#58a6ff", width=2.5), marker=dict(size=7)))
+                    fig_pace_tr.update_layout(
+                        **PLOT_LAYOUT,
+                        title="Pace per Game + 3-Game Rolling Average",
+                        xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                        yaxis_title="Possessions", height=320,
+                        legend=dict(orientation="h", y=-0.22))
+                    st.plotly_chart(fig_pace_tr, use_container_width=True)
+
+                # ── Turnover & Steal Trend ─────────────────────────────────────
+                if "tov" in (_gl_tr[0] if _gl_tr else {}):
+                    st.markdown("<div class='section-hdr'>Turnover & Steal Trend</div>",
+                                unsafe_allow_html=True)
+                    _tov_tr_vals = [e.get("tov",  0) for e in _gl_tr]
+                    _stl_tr_vals = [e.get("stl",  0) for e in _gl_tr]
+                    _ast_tr_vals = [e.get("ast",  0) for e in _gl_tr]
+                    _tov_r3 = _roll3(_tov_tr_vals)
+                    _stl_r3 = _roll3(_stl_tr_vals)
+
+                    _tov_stl_c1, _tov_stl_c2 = st.columns(2)
+                    with _tov_stl_c1:
+                        fig_tov_tr = go.Figure()
+                        fig_tov_tr.add_trace(go.Bar(
+                            x=_gl_labels_tr, y=_tov_tr_vals,
+                            name="TOV", marker_color="#e74c3c", opacity=0.55))
+                        fig_tov_tr.add_trace(go.Scatter(
+                            x=_gl_labels_tr, y=_tov_r3, name="TOV (3G avg)",
+                            mode="lines+markers",
+                            line=dict(color="#e74c3c", width=2.5), marker=dict(size=7)))
+                        fig_tov_tr.add_hline(
+                            y=adv.get("tov_pg", 0), line_dash="dot",
+                            line_color="#f0a500", line_width=1.2,
+                            annotation_text=f"Avg {adv.get('tov_pg',0):.1f}",
+                            annotation_font_color="#f0a500",
+                            annotation_position="top right")
+                        fig_tov_tr.update_layout(
+                            **PLOT_LAYOUT, title="Turnovers per Game + 3G Avg",
+                            xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                            yaxis_title="TOV", height=300,
+                            legend=dict(orientation="h", y=-0.28))
+                        st.plotly_chart(fig_tov_tr, use_container_width=True)
+
+                    with _tov_stl_c2:
+                        fig_stl_tr = go.Figure()
+                        fig_stl_tr.add_trace(go.Bar(
+                            x=_gl_labels_tr, y=_stl_tr_vals,
+                            name="STL", marker_color="#2ecc71", opacity=0.55))
+                        fig_stl_tr.add_trace(go.Scatter(
+                            x=_gl_labels_tr, y=_stl_r3, name="STL (3G avg)",
+                            mode="lines+markers",
+                            line=dict(color="#2ecc71", width=2.5), marker=dict(size=7)))
+                        fig_stl_tr.add_hline(
+                            y=adv.get("stl_pg", 0), line_dash="dot",
+                            line_color="#f0a500", line_width=1.2,
+                            annotation_text=f"Avg {adv.get('stl_pg',0):.1f}",
+                            annotation_font_color="#f0a500",
+                            annotation_position="top right")
+                        fig_stl_tr.update_layout(
+                            **PLOT_LAYOUT, title="Steals per Game + 3G Avg",
+                            xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                            yaxis_title="STL", height=300,
+                            legend=dict(orientation="h", y=-0.28))
+                        st.plotly_chart(fig_stl_tr, use_container_width=True)
+
+                # ── AST Trend ─────────────────────────────────────────────────
+                if "ast" in (_gl_tr[0] if _gl_tr else {}):
+                    st.markdown("<div class='section-hdr'>Assists & Ball Movement Trend</div>",
+                                unsafe_allow_html=True)
+                    _ast_vals = [e.get("ast", 0) for e in _gl_tr]
+                    _ast_r3   = _roll3(_ast_vals)
+                    _ato_vals = [round(e.get("ast",0)/max(1,e.get("tov",1)), 2)
+                                 for e in _gl_tr]
+                    _ato_r3   = _roll3(_ato_vals)
+
+                    _ast_c1, _ast_c2 = st.columns(2)
+                    with _ast_c1:
+                        fig_ast_tr = go.Figure()
+                        fig_ast_tr.add_trace(go.Bar(
+                            x=_gl_labels_tr, y=_ast_vals,
+                            name="AST", marker_color="#3498db", opacity=0.55))
+                        fig_ast_tr.add_trace(go.Scatter(
+                            x=_gl_labels_tr, y=_ast_r3, name="AST (3G avg)",
+                            mode="lines+markers",
+                            line=dict(color="#3498db", width=2.5), marker=dict(size=7)))
+                        fig_ast_tr.add_hline(
+                            y=adv.get("ast_pg", 0), line_dash="dot",
+                            line_color="#f0a500", line_width=1.2,
+                            annotation_text=f"Avg {adv.get('ast_pg',0):.1f}",
+                            annotation_font_color="#f0a500",
+                            annotation_position="top right")
+                        fig_ast_tr.update_layout(
+                            **PLOT_LAYOUT, title="Assists per Game + 3G Avg",
+                            xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                            yaxis_title="AST", height=300,
+                            legend=dict(orientation="h", y=-0.28))
+                        st.plotly_chart(fig_ast_tr, use_container_width=True)
+
+                    with _ast_c2:
+                        fig_ato_tr = go.Figure()
+                        fig_ato_tr.add_trace(go.Scatter(
+                            x=_gl_labels_tr, y=_ato_vals, name="AST/TOV (game)",
+                            mode="lines+markers",
+                            line=dict(color="#e67e22", width=1.5, dash="dot"),
+                            marker=dict(size=5), opacity=0.6))
+                        fig_ato_tr.add_trace(go.Scatter(
+                            x=_gl_labels_tr, y=_ato_r3, name="AST/TOV (3G avg)",
+                            mode="lines+markers",
+                            line=dict(color="#e67e22", width=2.5), marker=dict(size=7)))
+                        fig_ato_tr.add_hline(
+                            y=adv.get("ast_tov_r", 0), line_dash="dot",
+                            line_color="#f0a500", line_width=1.2,
+                            annotation_text=f"Season {adv.get('ast_tov_r',0):.2f}",
+                            annotation_font_color="#f0a500",
+                            annotation_position="top right")
+                        fig_ato_tr.update_layout(
+                            **PLOT_LAYOUT, title="AST/TOV Ratio — Game by Game",
+                            xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                            yaxis_title="AST/TOV", height=300,
+                            legend=dict(orientation="h", y=-0.28))
+                        st.plotly_chart(fig_ato_tr, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

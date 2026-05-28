@@ -1,0 +1,352 @@
+"""
+glossary.py — the app-wide "super stat glossary" (Synergy / Hudl style).
+
+A single source of truth for every stat the app computes: abbreviation, full
+name, category, formula, plain-English definition, how to read it, and whether
+it is an invented / signature metric unique to this app.
+
+`render_glossary()` is the reusable interactive component — a search box + a
+category filter + expandable definition cards — embedded inside the analytics
+pages (no standalone page). It is a UI helper (imports streamlit), the mirror of
+the Streamlit-free engine, like box_score.py / ui.py.
+
+Definitions are written to match THIS app's engine exactly, including the locked
+calls (possession = FGA + TOV; PER = Game Score proxy; Shot Rating = difficulty;
+ratings are pool-relative z-scores where 50 = league average).
+"""
+from __future__ import annotations
+
+import streamlit as st
+
+# Each entry: (ABBR, Full name, Category, Formula, Definition, How to read it, invented?)
+# Formula "" means none / counting stat.
+STAT_DEFS = [
+    # ── Box score (counting) ──────────────────────────────────────────────────
+    ("PTS",  "Points",            "Box Score", "2·2PM + 3·3PM + FTM",
+     "Total points scored.", "Counting stat — more is better.", False),
+    ("REB",  "Total Rebounds",    "Box Score", "OREB + DREB",
+     "Offensive plus defensive rebounds secured.", "More is better.", False),
+    ("OREB", "Offensive Rebounds","Box Score", "",
+     "Rebounds grabbed on the offensive glass after a team's own miss.",
+     "Fuels second-chance points.", False),
+    ("DREB", "Defensive Rebounds","Box Score", "",
+     "Rebounds grabbed off an opponent miss to end their possession.",
+     "Ends defensive possessions.", False),
+    ("AST",  "Assists",           "Box Score", "",
+     "Passes that directly lead to a made field goal.", "More is better.", False),
+    ("STL",  "Steals",            "Box Score", "",
+     "Times the player takes the ball away from the offense.", "More is better.", False),
+    ("BLK",  "Blocks",            "Box Score", "",
+     "Opponent field-goal attempts the player blocks.", "More is better.", False),
+    ("TOV",  "Turnovers",         "Box Score", "",
+     "Possessions lost via bad pass, travel, offensive foul, etc.",
+     "Fewer is better.", False),
+    ("PF",   "Personal Fouls",    "Box Score", "",
+     "Fouls a player commits (charged to the fouler, not the player fouled).",
+     "Fewer is better — foul trouble limits minutes.", False),
+    ("+/-",  "Plus / Minus",      "Box Score", "team pts − opp pts while on floor",
+     "Team scoring margin while the player is on the court.",
+     "Positive = team outscores opponents with them on.", False),
+    ("MIN",  "Minutes Played",    "Box Score", "Σ possession_secs on floor ÷ 60",
+     "Estimated minutes from the time elapsed on possessions the player was on "
+     "the floor for. Slightly undercounts (≈16% of events carry 0 secs).",
+     "Context for per-minute rates.", False),
+
+    # ── Shooting ──────────────────────────────────────────────────────────────
+    ("FG%",  "Field-Goal %",      "Shooting", "FGM / FGA",
+     "Share of field-goal attempts made (2s + 3s).", "Higher is better.", False),
+    ("2P%",  "Two-Point %",       "Shooting", "2PM / 2PA",
+     "Accuracy on two-point attempts.", "Higher is better.", False),
+    ("3P%",  "Three-Point %",     "Shooting", "3PM / 3PA",
+     "Accuracy on three-point attempts.", "~33% breaks even with a 50% two.", False),
+    ("FT%",  "Free-Throw %",      "Shooting", "FTM / FTA",
+     "Accuracy at the line.", "Higher is better; ~70%+ is solid.", False),
+    ("eFG%", "Effective FG%",     "Shooting", "(FGM + 0.5·3PM) / FGA",
+     "Field-goal % that credits a made three for being worth 1.5× a two.",
+     "The honest shooting-efficiency number. Higher is better.", False),
+    ("TS%",  "True Shooting %",   "Shooting", "PTS / (2·(FGA + 0.44·FTA))",
+     "Scoring efficiency across 2s, 3s AND free throws in one number.",
+     "The single best shooting-efficiency stat. ~50%+ is strong at HS.", False),
+    ("3PAr", "Three-Point Rate",  "Shooting", "3PA / FGA",
+     "Share of a player's shots that are threes.",
+     "Shot-profile, not quality — how often they shoot from deep.", False),
+    ("FTr",  "Free-Throw Rate",   "Shooting", "FTA / FGA",
+     "How often a player gets to the line relative to shooting.",
+     "Higher = draws contact / attacks the rim.", False),
+    ("PPS",  "Points Per Shot",   "Shooting", "FG points / FGA",
+     "Points produced per field-goal attempt (field goals only, no FTs).",
+     "Higher is better; rewards efficient shot selection.", False),
+    ("PPSA", "Pts Per Scoring Att","Shooting", "PTS / FGA",
+     "All points (incl. FTs) divided by field-goal attempts.",
+     "Higher is better; credits getting to the line.", False),
+    ("Paint FG%", "Paint FG%",    "Shooting", "paint FGM / paint FGA",
+     "Accuracy on shots from the painted area.",
+     "Higher = strong finisher inside.", False),
+    ("Paint PTS", "Paint Points", "Shooting", "2·paint FGM",
+     "Points scored on shots in the paint.", "Inside scoring volume.", False),
+
+    # ── Playmaking ──────────────────────────────────────────────────────────────
+    ("AST/TO", "Assist-to-Turnover","Playmaking", "AST / TOV",
+     "Assists for every turnover committed.",
+     "Higher = takes care of the ball; >2.0 is excellent.", False),
+    ("AST%",  "Assist %",         "Playmaking", "AST / team FGM while on floor",
+     "Share of teammate field goals the player assisted while on the court.",
+     "Higher = central creator.", False),
+    ("TOV%",  "Turnover %",       "Playmaking", "TOV / (FGA + TOV)",
+     "Share of a player's possessions that end in a turnover. Uses this app's "
+     "locked possession rule (one shot OR one turnover).",
+     "Lower is better.", False),
+    ("USG%",  "Usage Rate",       "Playmaking", "player POSS / team POSS on floor",
+     "Share of team possessions a player uses (shoots or turns over) while on "
+     "the floor. Possessions = FGA + TOV.",
+     "Higher = bigger offensive role / focal point.", False),
+    ("SC",    "Shot Creation",    "Playmaking", "shots self-created + created for others",
+     "Credit for generating shots — taking a self-created shot or passing/"
+     "setting up a teammate's shot.", "Higher = engine of the offense.", False),
+    ("SCE",   "Self-Creation %",  "Playmaking", "self-created shots / FGA",
+     "Share of a player's own shots they created off the dribble (no pass into "
+     "the shot).", "Higher = shot-maker who doesn't need setup.", False),
+
+    # ── Rebounding rates ──────────────────────────────────────────────────────
+    ("OREB%", "Off. Rebound %",   "Rebounding", "OREB / (OREB + opp DREB) on floor",
+     "Share of available offensive rebounds the player grabbed while on court.",
+     "Higher is better; inferred from lineup data.", False),
+    ("DREB%", "Def. Rebound %",   "Rebounding", "DREB / (DREB + opp OREB) on floor",
+     "Share of available defensive rebounds the player secured while on court.",
+     "Higher is better.", False),
+    ("TRB%",  "Total Rebound %",  "Rebounding", "REB / total available REB on floor",
+     "Share of all available rebounds the player grabbed while on court.",
+     "Higher is better.", False),
+
+    # ── Defense ────────────────────────────────────────────────────────────────
+    ("STOCKS","Stocks",           "Defense", "STL + BLK",
+     "Steals plus blocks — a single 'disruption' number.",
+     "Higher = more defensive events.", False),
+    ("DSHOT%","Defended FG%",      "Defense", "opp FG% when guarded by player",
+     "Field-goal % opponents shoot when this player is the listed defender.",
+     "Lower is better — tighter on-ball defense.", False),
+    ("Guarded%","Contest Rate",    "Defense", "guarded opp shots / opp shots on floor",
+     "Share of opponent shots that were contested while the player was on court.",
+     "Higher = active contesting defense.", False),
+
+    # ── Possession & pace ───────────────────────────────────────────────────────
+    ("POSS",  "Possessions",      "Possession & Pace", "FGA + TOV",
+     "This app's LOCKED possession rule: a possession is exactly one shot OR one "
+     "turnover. Free throws and fouls never add a possession.",
+     "The denominator for all per-possession and pace stats.", False),
+    ("Pace",  "Pace",             "Possession & Pace", "possessions per game",
+     "How many possessions a team plays per game.",
+     "Higher = faster, run-and-gun; lower = grind-it-out.", False),
+    ("PPP",   "Points Per Poss.", "Possession & Pace", "PTS / POSS",
+     "Points scored per possession — the core efficiency unit.",
+     "Higher on offense / lower allowed on defense is better.", False),
+    ("ORtg",  "Offensive Rating", "Possession & Pace", "≈ 100 · PTS / POSS",
+     "Points produced per 100 possessions (Dean Oliver). Individual ORtg uses "
+     "on-court lineup fractions since the DB has no minutes.",
+     "Higher is better. Directional on this small sample.", False),
+    ("DRtg",  "Defensive Rating", "Possession & Pace", "≈ 100 · opp PTS / POSS",
+     "Points allowed per 100 possessions.",
+     "Lower is better.", False),
+    ("NetRtg","Net Rating",       "Possession & Pace", "ORtg − DRtg",
+     "Margin per 100 possessions — the bottom-line efficiency number.",
+     "Positive and bigger is better.", False),
+
+    # ── Advanced production ──────────────────────────────────────────────────────
+    ("GS",    "Game Score",       "Advanced",
+     "PTS + 0.4·FGM − 0.7·FGA − 0.4·(FTA−FTM) + 0.7·OREB + 0.3·DREB + STL + "
+     "0.7·AST + 0.7·BLK − 0.4·PF − TOV",
+     "Hollinger's single-game value box-score summary.",
+     "~10 is a solid game, 20+ is excellent.", False),
+    ("PER",   "Player Efficiency","Advanced", "= Game Score (proxy)",
+     "This app uses Game Score as the PER proxy — there is no league-wide pace/"
+     "baseline in a single-program DB to compute true Hollinger PER.",
+     "Read it like Game Score, not NBA PER (no 15.0 average).", False),
+    ("EFF",   "Efficiency (NBA)", "Advanced",
+     "(PTS+REB+AST+STL+BLK) − (missed FG + missed FT + TOV)",
+     "The classic NBA 'efficiency' aggregate.",
+     "Higher is better; rewards all-around box production.", False),
+    ("FIC",   "Floor Impact Ctr.","Advanced",
+     "PTS + OREB + 0.75·DREB + AST + STL + BLK − 0.75·FGA − 0.375·FTA − TOV − 0.5·PF",
+     "RealGM's Floor Impact Counter — a fuller all-around impact number.",
+     "Higher is better.", False),
+    ("PRF",   "Pts Responsible For","Advanced", "PTS + 2·AST2 + 3·AST3",
+     "Points a player created — their own points plus the points their assists "
+     "produced (split by 2-pt vs 3-pt assists).",
+     "Higher = bigger share of offense generated.", False),
+    ("per-32","Per-32 Minutes",   "Advanced", "stat · 32 / MIN",
+     "A counting stat scaled to 32 minutes for fair comparison. HS games run "
+     "≈32 min, so per-32 ≈ per-game here.",
+     "Normalizes for playing time.", False),
+
+    # ── Shot quality / Shot Lab ───────────────────────────────────────────────
+    ("Shot Rating","Shot Rating", "Shot Quality", "100 · avg shot difficulty",
+     "Difficulty (NOT efficiency) of the shots a player takes, 0–100. Anchors: "
+     "50 = sample-average shot, 100 = contested self-created three. Difficulty = "
+     "1 − sample make-rate for that shot's (zone, 2/3, creation, guarded) bucket.",
+     "Higher = takes harder shots (degree of difficulty).", True),
+    ("xFG%",  "Expected FG%",     "Shot Quality", "Σ bucket make-rate over shots taken",
+     "The FG% an average shooter would post on this player's exact shot diet "
+     "(by zone, 2/3, creation, contest).",
+     "A 'shot quality' baseline to compare actual FG% against.", False),
+    ("SMOE",  "Shot-Making Over Exp.","Shot Quality", "FG% − xFG%",
+     "How much better (or worse) a player shoots than their shot difficulty "
+     "predicts. The pure shot-making signal.",
+     "Positive = makes tougher shots than expected.", True),
+    ("xPPS",  "Expected Pts/Shot","Shot Quality", "expected points per shot from buckets",
+     "Points-per-shot an average shooter would get on this player's shot diet.",
+     "Compare to actual PPS to isolate finishing.", False),
+
+    # ── 0–100 player ratings (pool-relative z-scores) ──────────────────────────
+    ("OVERALL","Overall Rating",  "Ratings", "blend of the four categories + PER + GS",
+     "Master 0–100 player rating. Pool-relative z-score: 50 = league average, "
+     "+10 per standard deviation, clamped 0–100.",
+     "70+ elite, 62+ great, 54+ above average, ~50 average.", False),
+    ("OFFENSE","Offense Rating",  "Ratings", "shooting (3PR·3P%·TS%) + finishing",
+     "0–100 offensive rating from shooting and finishing inputs (z-scaled, "
+     "50 = average).", "Higher is better.", False),
+    ("DEFENSE","Defense Rating",  "Ratings", "stocks · STL · BLK · contest %",
+     "0–100 defensive rating from disruption and contesting inputs.",
+     "Higher is better; thinner signal than offense in this data.", False),
+    ("PLAYMAKING","Playmaking Rating","Ratings", "AST · SC · AST/TOV · TOV(inv)",
+     "0–100 rating of shot creation and ball security.", "Higher is better.", False),
+    ("REBOUNDING","Rebounding Rating","Ratings", "OREB/DREB/REB per-g + REB%",
+     "0–100 rating of rebounding volume and rate.", "Higher is better.", False),
+    ("2WAY",  "Two-Way Rating",   "Ratings", "mean(OFFENSE, DEFENSE)",
+     "Balance of offensive and defensive value in one number.",
+     "Higher = impacts both ends.", True),
+    ("VERSATILITY","Versatility", "Ratings",
+     "100 · Shannon entropy of normalized PTS/REB/AST/STL/BLK shares ÷ ln5",
+     "How evenly a player fills the box score across the five core categories.",
+     "100 = does everything; 0 = one-dimensional.", True),
+
+    # ── Team & league ────────────────────────────────────────────────────────────
+    ("Power", "Power Rating",     "Team & League", "z-scored blend → 0–100",
+     "Opponent-adjusted overall team strength on a 0–100 scale (50 = league "
+     "average). Built from results, margin and a class bridge.",
+     "Higher is better; drives the rankings.", False),
+    ("Four Factors","Dean Oliver's Four Factors","Team & League",
+     "eFG% (40%) · TOV% (25%) · ORB% (20%) · FTr (15%)",
+     "The four things that win games, weighted by importance. Defense = the "
+     "opponent's four factors against you.",
+     "Win the factors, win the game.", False),
+    ("Pythag","Pythagorean Wins", "Team & League", "PF^14 / (PF^14 + PA^14)",
+     "Expected win % from points scored vs allowed (exponent 14).",
+     "Compare to actual record to find lucky/unlucky teams.", False),
+    ("Luck",  "Luck",             "Team & League", "actual wins − Pythagorean wins",
+     "Wins above or below what scoring margins predict.",
+     "Positive = winning more than the margins say (close-game luck).", True),
+    ("SOS",   "Strength of Sched.","Team & League", "avg opponent power rating",
+     "Average power rating of the opponents a team has faced.",
+     "Higher = tougher schedule.", False),
+    ("Volatility","Volatility",   "Team & League", "std-dev of game margin",
+     "Game-to-game swing in scoring margin.",
+     "Lower = steadier, more predictable team.", True),
+    ("Dominance","Dominance",     "Team & League", "mean of scaled MOV, win%, blowout%",
+     "How decisively a team wins, 0–100 (margin + win rate + blowout rate).",
+     "Higher = wins big and often.", True),
+    ("Consistency","Consistency", "Team & League", "scale100(−margin volatility)",
+     "Game-to-game reliability, 0–100.", "Higher = fewer surprises.", True),
+    ("Clutch","Clutch",           "Team & League", "scaled close-game win% & margin",
+     "Performance in close games (≤5), 0–100. None when <2 close games.",
+     "Higher = wins the tight ones.", True),
+    ("Momentum","Momentum",       "Team & League", "scale100(last-5 MOV − season MOV)",
+     "Whether a team is trending up or down vs its own baseline, 0–100.",
+     "Higher = getting hotter.", True),
+    ("Balance","Scoring Balance", "Team & League", "(eff. scorers−1)/(n−1)·100",
+     "How evenly scoring is spread; effective scorers = 1/Σ(scoring shareᵢ²).",
+     "Higher = balanced attack; low = one-man show.", True),
+
+    # ── Officiating ──────────────────────────────────────────────────────────────
+    ("FPG",   "Fouls Per Game",   "Officiating", "fouls called / games worked",
+     "How many fouls an official calls per game.",
+     "Higher = tighter whistle; context matters.", False),
+    ("Call %","Call Share",       "Officiating", "ref's fouls / all fouls in their games",
+     "Share of the whistle an official accounts for in their games.", "", False),
+    ("H/A",   "Home/Away Lean",   "Officiating", "home fouls − away fouls",
+     "Fouls called on the home team minus the away team (team 1 = home).",
+     "Near 0 = even; large = a lean (small samples swing hard).", False),
+    ("±FPG",  "FPG Consistency",  "Officiating", "std-dev of fouls/game",
+     "Game-to-game swing in an official's foul count.",
+     "Lower = a more predictable whistle.", False),
+]
+
+CATEGORIES = ["Box Score", "Shooting", "Playmaking", "Rebounding", "Defense",
+              "Possession & Pace", "Advanced", "Shot Quality", "Ratings",
+              "Team & League", "Officiating"]
+
+
+def _esc(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _card_html(abbr, name, cat, formula, definition, good, invented):
+    tag = ("<span class='gloss-cat' style='border-color:rgba(var(--accent-rgb),0.4)'>"
+           "✦ SIGNATURE</span>" if invented
+           else f"<span class='gloss-cat'>{_esc(cat)}</span>")
+    formula_html = (f"<div class='gloss-formula'>{_esc(formula)}</div>"
+                    if formula else "")
+    good_html = (f"<div class='gloss-good'>📈 {_esc(good)}</div>" if good else "")
+    return (
+        f"<div class='gloss-card'>{tag}"
+        f"<span class='gloss-abbr'>{_esc(abbr)}</span> "
+        f"<span class='gloss-full'>· {_esc(name)}</span>"
+        f"<div class='gloss-def'>{_esc(definition)}</div>"
+        f"{formula_html}{good_html}</div>"
+    )
+
+
+def render_glossary(key_prefix: str = "gloss", categories=None,
+                    intro: str | None = None, columns: int = 2):
+    """Interactive, searchable stat glossary embedded in a page.
+
+    Parameters
+    ----------
+    key_prefix : unique prefix for widget keys (one page may host several).
+    categories : optional list to restrict to a page's relevant categories.
+                 None = all categories.
+    intro      : optional caption shown above the controls.
+    columns    : number of card columns (2 reads well on wide layout).
+    """
+    pool = STAT_DEFS
+    if categories:
+        catset = set(categories)
+        pool = [d for d in STAT_DEFS if d[2] in catset]
+
+    avail_cats = [c for c in CATEGORIES if any(d[2] == c for d in pool)]
+    if any(d[6] for d in pool):
+        avail_cats = avail_cats + ["✦ Signature (invented)"]
+
+    if intro:
+        st.caption(intro)
+
+    c1, c2 = st.columns([2, 3])
+    q = c1.text_input("🔎 Search stats", key=f"{key_prefix}_q",
+                      placeholder="e.g. TS%, usage, rebound, clutch…").strip().lower()
+    picked = c2.multiselect("Filter by category", avail_cats, default=[],
+                            key=f"{key_prefix}_cats",
+                            help="Leave empty to show every category.")
+
+    def _match(d):
+        abbr, name, cat, formula, definition, good, invented = d
+        if picked:
+            ok_cat = cat in picked or ("✦ Signature (invented)" in picked and invented)
+            if not ok_cat:
+                return False
+        if q:
+            hay = " ".join((abbr, name, cat, definition, good)).lower()
+            if q not in hay:
+                return False
+        return True
+
+    rows = [d for d in pool if _match(d)]
+    st.caption(f"{len(rows)} of {len(pool)} stats"
+               + (" · ✦ = invented / signature metric unique to this app"
+                  if any(d[6] for d in pool) else ""))
+
+    if not rows:
+        st.info("No stats match that search. Try a different term or clear the filter.")
+        return
+
+    cols = st.columns(columns)
+    for i, d in enumerate(rows):
+        cols[i % columns].markdown(_card_html(*d), unsafe_allow_html=True)

@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# SQLite databases (generated/local data — recreated from schema.sql)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Season config (machine-local season → db-file mapping)
+database/seasons.json
+
+# Streamlit secrets / local config
+.streamlit/secrets.toml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

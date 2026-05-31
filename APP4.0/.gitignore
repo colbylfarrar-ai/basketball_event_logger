@@ -6,11 +6,16 @@ __pycache__/
 venv/
 env/
 
-# SQLite databases (generated/local data — recreated from schema.sql)
-*.db
+# SQLite journal/temp files — never commit these
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Ignore all .db files EXCEPT the main analytics database. We ship that one to
+# Streamlit Cloud as a read-only data mirror: author data locally, then commit
+# and push the updated analytics.db to refresh the deployed site.
+*.db
+!database/analytics.db
 
 # Season config (machine-local season → db-file mapping)
 database/seasons.json

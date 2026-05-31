@@ -46,7 +46,7 @@ PALETTE = ["#58a6ff", "#3fb950", "#f0a500", "#bc8cff", "#ff7b72", "#56d4dd",
 FONT_FAMILY = ("'Segoe UI Variable Display','Segoe UI',-apple-system,"
                "BlinkMacSystemFont,Inter,Roboto,sans-serif")
 
-_CSS_PATH = _ROOT / "Assets" / "style.css"
+_CSS_PATH = _ROOT / "assets" / "style.css"
 
 
 # ── Page boot ───────────────────────────────────────────────────────────────────

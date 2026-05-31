@@ -28,7 +28,7 @@ st.set_page_config(page_title="Analytics Hub", page_icon="📊", layout=_layout,
                    initial_sidebar_state="expanded")
 
 # ── Global CSS + theme ─────────────────────────────────────────────────────────
-_css_path = Path(__file__).resolve().parent / "Assets" / "style.css"
+_css_path = Path(__file__).resolve().parent / "assets" / "style.css"
 if _css_path.exists():
     st.markdown(f"<style>{_css_path.read_text(encoding='utf-8')}</style>",
                 unsafe_allow_html=True)
@@ -320,16 +320,16 @@ def _links(items):
 
 
 st.caption("📥 Build")
-_links([("Pages/1_Input_Hub.py", "Input Hub", "🗂️"),
-        ("Pages/2_Game_Tracker.py", "Game Tracker", "⏱️"),
-        ("Pages/3_Schedule.py", "Schedule", "📅")])
+_links([("pages/1_Input_Hub.py", "Input Hub", "🗂️"),
+        ("pages/2_Game_Tracker.py", "Game Tracker", "⏱️"),
+        ("pages/3_Schedule.py", "Schedule", "📅")])
 st.caption("📈 Analyze")
-_links([("Pages/4_Rankings.py", "Rankings", "🏆"),
-        ("Pages/5_Team_Dashboard.py", "Team Dashboard", "📊"),
-        ("Pages/6_Players.py", "Players", "👤")])
+_links([("pages/4_Rankings.py", "Rankings", "🏆"),
+        ("pages/5_Team_Dashboard.py", "Team Dashboard", "📊"),
+        ("pages/6_Players.py", "Players", "👤")])
 st.caption("🎯 Plan & scout")
-_links([("Pages/7_Officials.py", "Officials", "🦓"),
-        ("Pages/8_Settings.py", "Settings", "⚙️")])
+_links([("pages/7_Officials.py", "Officials", "🦓"),
+        ("pages/8_Settings.py", "Settings", "⚙️")])
 
 try:
     from database.db import get_db_path as _gp

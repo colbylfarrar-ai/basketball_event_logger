@@ -1,7 +1,7 @@
 """
 predictor.py — Pre-game matchup predictor (the "War Room").
 
-APP4.0 already opponent-adjusts team ratings (helpers/team_ratings) and predicts
+APP5.0 already opponent-adjusts team ratings (helpers/team_ratings) and predicts
 a point spread; what it lacked was EvanMiya's *matchup preview*: pick any two
 teams and get a projected score, a win probability, and — most importantly — a
 transparent, line-by-line breakdown of where the number comes from (adjusted-net

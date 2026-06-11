@@ -82,6 +82,48 @@ def q_label(q):
     return f"Q{q}" if q <= 4 else f"OT{q - 4}"
 
 
+# ── League / score primitives ────────────────────────────────────────────────────
+def gender_label(g):
+    """League gender code → display label ('F' → 'Girls', 'M' → 'Boys')."""
+    return "Girls" if g == "F" else "Boys"
+
+
+def gender_radio(container=None, *, default="F", key=None, label="League",
+                 horizontal=True):
+    """Shared Girls/Boys league toggle. Returns 'F' or 'M'.
+
+    `container` is an st.columns slot (or st, the default). Single source for the
+    st.radio(['F','M']) pattern repeated across Rankings / Team Dashboard /
+    Players / War Room.
+    """
+    c = container if container is not None else st
+    opts = ["F", "M"]
+    return c.radio(label, opts, index=opts.index(default),
+                   format_func=gender_label, horizontal=horizontal, key=key)
+
+
+def score_card(rows, *, footer="", footer_top=False, style_names=False):
+    """Return HTML for the standard score card (CSS in assets/style.css).
+
+    `rows` = [(name, points, won_bool), …] rendered top-to-bottom; the winner row
+    gets `.score-winner`, the loser `.score-loser` — on the points cell, and on
+    the team name too when `style_names=True`. `footer` is the small meta line
+    (date / margin, may hold a badge span); `footer_top` renders it above the rows.
+    Caller wraps the result with st.markdown(..., unsafe_allow_html=True).
+    """
+    body = ""
+    for name, pts, won in rows:
+        cls = "score-winner" if won else "score-loser"
+        ncls = f" {cls}" if style_names else ""
+        body += (
+            "<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<span class='score-card-team{ncls}'>{name}</span>"
+            f"<span class='score-card-pts {cls}'>{pts}</span></div>")
+    foot = f"<div class='score-card-date'>{footer}</div>" if footer else ""
+    inner = (foot + body) if footer_top else (body + foot)
+    return f"<div class='score-card'>{inner}</div>"
+
+
 def style_fig(fig, height=340, **kw):
     """Apply the shared modern dark Plotly theme. Pass ``margin=`` to override.
 
@@ -111,23 +153,6 @@ def style_fig(fig, height=340, **kw):
 # dashboard" look. No extra pip dependencies (works on the deploy mirror + CPU
 # box). NOTE: st.metric is ALREADY styled into KPI cards by the Modern UI 2.0
 # layer in assets/styles.css ([data-testid="stMetric"]) — do not re-inject that.
-
-def format_number(num, decimals=1):
-    """Compact a large number to a K/M string (29.0 M, 880 K); small numbers pass
-    through. Reusable for any big counting stat on a scorecard."""
-    try:
-        n = float(num)
-    except (TypeError, ValueError):
-        return str(num)
-    a = abs(n)
-    if a >= 1_000_000:
-        return f"{n/1_000_000:.{decimals}f} M"
-    if a >= 10_000:
-        return f"{n/1_000:.0f} K"
-    if a >= 1_000:
-        return f"{n/1_000:.{decimals}f} K"
-    return f"{n:.0f}" if float(n).is_integer() else f"{n:.{decimals}f}"
-
 
 def gauge(value, title="", vmin=0, vmax=100, ref=None, suffix="", accent=None,
           height=190, number_fmt=".0f", bands=None):
@@ -173,3 +198,87 @@ def kpi(col, label, value, delta=None, help=None, delta_color="normal"):
     """Thin wrapper over st.metric so BI scorecard call sites read declaratively.
     `col` is an st.columns slot (or st itself)."""
     col.metric(label, value, delta, help=help, delta_color=delta_color)
+
+
+# ── Rich table + chart wrappers (optional deps, graceful fallback) ────────────────
+# streamlit-aggrid and streamlit-extras are optional. If either can't import (e.g.
+# the deploy mirror, or a stripped venv), these degrade to the native Streamlit
+# widget so no page breaks. Single source so the rich-table / chart-export look is
+# identical everywhere — the display mirror of the "degrade gracefully" rule.
+
+def grid(df, key, *, height=480, page_size=25, fit_columns=False):
+    """Sortable, per-column-filter table via streamlit-aggrid; native
+    ``st.dataframe`` fallback. ``key`` must be unique per call. Use for any dense,
+    explorable table (rankings, stat dumps) where the user benefits from in-grid
+    sort/filter the static dataframe can't give."""
+    try:
+        from st_aggrid import AgGrid, GridOptionsBuilder
+        gob = GridOptionsBuilder.from_dataframe(df)
+        gob.configure_default_column(filter=True, sortable=True, resizable=True)
+        gob.configure_pagination(paginationAutoPageSize=False,
+                                 paginationPageSize=page_size)
+        AgGrid(df, gridOptions=gob.build(), height=height, theme="streamlit",
+               key=key, fit_columns_on_grid_load=fit_columns,
+               allow_unsafe_jscode=True)
+    except Exception:
+        st.dataframe(df, hide_index=True, width="stretch", key=f"{key}_native")
+
+
+def chart(fig, *, data=None, key=None, export=("CSV",)):
+    """Render a Plotly ``fig``. When ``data`` is supplied AND streamlit-extras is
+    importable, wrap it in a ``chart_container`` that adds *Dataframe* + *Export*
+    (CSV) tabs beneath the chart — so any viz becomes inspectable / downloadable
+    with no per-page boilerplate. Plain ``st.plotly_chart`` otherwise. Honours the
+    app width convention (``width='stretch'``)."""
+    if data is not None:
+        try:
+            from streamlit_extras.chart_container import chart_container
+            with chart_container(data, export_formats=list(export)):
+                st.plotly_chart(fig, width="stretch", key=key)
+            return
+        except Exception:
+            pass
+    st.plotly_chart(fig, width="stretch", key=key)
+
+
+# ── Empty state / loading ───────────────────────────────────────────────────────
+def empty_state(title, body="", *, icon="🏀", cta=None):
+    """Branded empty-state card — the polished replacement for a bare ``st.info``.
+
+    Use on any tab/section that has no data yet (e.g. an untracked team). Accent
+    and theming come from the global ``.empty-state`` CSS (assets/style.css), so
+    it restyles with the chosen theme. ``cta`` is an optional next-step line."""
+    cta_html = f"<div class='empty-state-cta'>{cta}</div>" if cta else ""
+    st.markdown(
+        f"<div class='empty-state'><div class='empty-state-icon'>{icon}</div>"
+        f"<div class='empty-state-title'>{title}</div>"
+        f"<div class='empty-state-body'>{body}</div>{cta_html}</div>",
+        unsafe_allow_html=True)
+
+
+def loading(msg="Crunching the numbers…"):
+    """Spinner contextmanager for heavy cached calls: ``with ui.loading('…'):``.
+    Thin passthrough over ``st.spinner`` so call sites read consistently."""
+    return st.spinner(msg)
+
+
+# ── Team identity colour ─────────────────────────────────────────────────────────
+def team_color(name, team_id=None):
+    """A stable identity colour for a team, so each team carries one colour across
+    every chart/card with **no schema change**.
+
+    The colour is a deterministic hash of the team name into the shared
+    ``PALETTE`` (``hashlib`` — stable across processes, unlike ``hash()``). If
+    ``team_id`` is given and a per-team override is stored in ``app_settings``
+    (set on the Settings page, key ``team_color::<id>``), that override wins."""
+    if team_id is not None:
+        try:
+            from helpers.settings_utils import get_setting
+            override = get_setting(f"team_color::{team_id}", "")
+            if override:
+                return override
+        except Exception:
+            pass
+    import hashlib
+    digest = hashlib.md5(str(name).strip().lower().encode("utf-8")).hexdigest()
+    return PALETTE[int(digest, 16) % len(PALETTE)]

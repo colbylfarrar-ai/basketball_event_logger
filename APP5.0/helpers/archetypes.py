@@ -1,22 +1,30 @@
 """
 archetypes.py — Data-driven player archetypes + similarity engine.
 
-Basketball-Index sells role/archetype auto-classification; APP4.0 only had a
+Basketball-Index sells role/archetype auto-classification; APP5.0 only had a
 rule-based scouting label. This learns archetypes from the data instead: it
 z-scores every player on a basketball-meaningful feature set, runs k-means to
 group similar players, then *names* each group from the statistical signature of
 its centroid (a cluster that shoots a ton of efficient threes becomes
-"Sharpshooter"; one that lives at the rim and rebounds becomes "Interior Force").
+"Movement Shooter"; one that lives at the rim and rebounds becomes "Interior Force").
 It also answers "who plays like X?" via cosine similarity in the same space.
 
-No sklearn / scipy dependency — k-means (with k-means++ seeding) and cosine
-similarity are implemented in numpy, which the app already ships. Pure data
-layer: feed it the rows from player_ratings.player_stat_table; no streamlit, no
-DB access here.
+Clustering uses scikit-learn's KMeans with a silhouette-chosen k when available
+(data-driven cluster count instead of a rule of thumb); if sklearn is missing it
+falls back to the bundled numpy k-means++ so the feature never hard-breaks.
+Cosine similarity is numpy. Pure data layer: feed it the rows from
+player_ratings.player_stat_table; no streamlit, no DB access here.
 """
 from __future__ import annotations
 
 import numpy as np
+
+try:
+    from sklearn.cluster import KMeans as _SKKMeans
+    from sklearn.metrics import silhouette_score as _silhouette
+    _HAVE_SKLEARN = True
+except Exception:
+    _HAVE_SKLEARN = False
 
 
 # Features the clustering / similarity run on. Keys match player_stat_table.
@@ -44,10 +52,6 @@ _AXES = {
     "blocks":      ["BPG"],
     "creation":    ["SelfCr%"],
 }
-
-
-def _safe(num, den):
-    return num / den if den else 0.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -126,10 +130,45 @@ def _kmeans(X, k, iters=80, seed=7):
 
 
 def _suggest_k(n):
-    """A sane default cluster count for n players."""
+    """A sane default cluster count for n players (numpy-fallback heuristic)."""
     if n < 6:
         return max(2, n // 2)
     return int(max(3, min(7, round(n / 5))))
+
+
+def _fit_kmeans(X, k, seed=7):
+    """(labels, centroids) via sklearn KMeans when available, else numpy k-means++.
+    X is already standardized, so Euclidean KMeans is appropriate."""
+    if _HAVE_SKLEARN and X.shape[0] >= k:
+        km = _SKKMeans(n_clusters=k, random_state=seed, n_init=10)
+        labels = km.fit_predict(X)
+        return labels, km.cluster_centers_
+    return _kmeans(X, k, seed=seed)
+
+
+def _choose_k(X, kmin=3, kmax=7, seed=7):
+    """Pick k by the highest mean silhouette score (sklearn). Falls back to the
+    _suggest_k heuristic without sklearn or on a sample too thin to score.
+
+    kmin starts at 3: silhouette on diffuse HS data almost always maxes at k=2
+    (one big split scores highest), but "2 archetypes" is useless for a role
+    taxonomy — so we explore 3-7 and take the best within a usable range."""
+    n = X.shape[0]
+    if not _HAVE_SKLEARN or n < 5:
+        return _suggest_k(n)
+    best_k, best_s = None, -1.0
+    for k in range(kmin, min(kmax, n - 1) + 1):
+        try:
+            labels = _SKKMeans(n_clusters=k, random_state=seed,
+                               n_init=10).fit_predict(X)
+            if len(set(labels)) < 2:
+                continue
+            s = _silhouette(X, labels)
+        except Exception:
+            continue
+        if s > best_s:
+            best_k, best_s = k, s
+    return best_k or _suggest_k(n)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -203,10 +242,10 @@ def cluster_players(table, k=None, features=None, seed=7):
     if n == 0:
         return {"players": {}, "clusters": [], "k": 0, "features": feats}
     if k is None:
-        k = _suggest_k(n)
+        k = _choose_k(X, seed=seed)
     k = max(1, min(k, n))
 
-    labels, C = _kmeans(X, k, seed=seed)
+    labels, C = _fit_kmeans(X, k, seed=seed)
 
     # name each cluster, de-duplicating identical names with a numeric suffix
     axis_by_c = {c: _axis_scores(C[c], feats) for c in range(k)}
@@ -240,6 +279,42 @@ def cluster_players(table, k=None, features=None, seed=7):
         })
     clusters.sort(key=lambda d: -(d["avg_overall"] or 0))
     return {"players": players, "clusters": clusters, "k": k, "features": feats}
+
+
+def style_map(table, features=None, seed=7):
+    """2D PCA projection of players in standardized style-space, tagged with the
+    archetype each was clustered into — a "map" where neighbours play alike.
+
+    Returns {"points": {pid: {x, y, archetype, cluster, name, team, overall}},
+             "evr": [pc1_var, pc2_var]}  (explained-variance ratio per axis).
+    The two axes are the directions of greatest style variance, so left/right and
+    up/down are the biggest real differences in how these players play. Needs
+    scikit-learn; returns empty points without it (caller can hide the chart)."""
+    if not _HAVE_SKLEARN:
+        return {"points": {}, "evr": None}
+    try:
+        from sklearn.decomposition import PCA
+    except Exception:
+        return {"points": {}, "evr": None}
+    pids, X, _means, _sds, _feats = build_matrix(table, features)
+    if len(pids) < 3:
+        return {"points": {}, "evr": None}
+    clus = cluster_players(table, features=features, seed=seed)
+    pca = PCA(n_components=2)
+    XY = pca.fit_transform(X)
+    pts = {}
+    for i, pid in enumerate(pids):
+        r = table.get(pid, {})
+        info = clus["players"].get(pid, {})
+        pts[pid] = {
+            "x": float(XY[i, 0]), "y": float(XY[i, 1]),
+            "archetype": info.get("archetype", "—"),
+            "cluster": info.get("cluster"),
+            "name": r.get("name", str(pid)), "team": r.get("team", ""),
+            "overall": r.get("OVERALL"),
+        }
+    return {"points": pts,
+            "evr": [round(float(v), 3) for v in pca.explained_variance_ratio_]}
 
 
 def similar_players(table, player_id, features=None, n=6):

@@ -1,5 +1,5 @@
 """
-team_ratings.py — Team power-rating engine for APP4.0.
+team_ratings.py — Team power-rating engine for APP5.0.
 
 Two ratings, each collapsing several sub-ratings into ONE number:
 
@@ -58,8 +58,7 @@ DEFAULT_REG        = 4.0   # phantom average-games per team (shrinkage strength)
 _SOR_MARGIN_CAP    = 20    # margin credited to a result is clamped to ±this
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -183,7 +182,7 @@ def _power_scale(rating_by_team):
     out = {}
     for t, v in rating_by_team.items():
         z = _safe(v - mean, sd) if sd else 0.0
-        out[t] = max(0.0, min(100.0, 50 + 10 * z))
+        out[t] = S.scale100(z)
     return out
 
 

@@ -1,5 +1,5 @@
 """
-main.py — Executive Dashboard + multipage entry point for APP4.0.
+main.py — Executive Dashboard + multipage entry point for APP5.0.
 
 The landing page is a best-in-class BI dashboard: a top KPI scorecard row, an
 asymmetric command-center grid (gauges left, hero charts center, ranked
@@ -24,7 +24,7 @@ try:
 except Exception:
     pass
 
-st.set_page_config(page_title="Analytics Hub", page_icon="📊", layout=_layout,
+st.set_page_config(page_title="Analytics Hub", page_icon="", layout=_layout,
                    initial_sidebar_state="expanded")
 
 # ── Global CSS + theme ─────────────────────────────────────────────────────────
@@ -42,6 +42,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from helpers.ui import (style_fig as _style, gauge as _gauge, GOOD, BAD)
 from helpers.settings_utils import get_setting
+import helpers.trends as TRD
 
 ACCENT = get_setting("accent_color", "#f0a500")
 AWAY = "#e74c3c"
@@ -144,14 +145,7 @@ def _dashboard(gender):
             if not evs:
                 continue
 
-            def _el(q, t):
-                try:
-                    m, s = (t.split(":") + ["0"])[:2]
-                    base = 480*(q-1) if q <= 4 else 480*4+240*(q-5)
-                    return base + ((480 if q <= 4 else 240) - (int(m)*60+int(s)))
-                except Exception:
-                    return 0
-            evs.sort(key=lambda e: _el(e["quarter"], e["time"]))
+            evs.sort(key=lambda e: S.elapsed(e["quarter"], e["time"]))
             h = a = 0
             mc = [(0.0, 0)]
             for e in evs:
@@ -160,7 +154,7 @@ def _dashboard(gender):
                     h += v
                 elif e["tid"] == g["t2"]:
                     a += v
-                mc.append((_el(e["quarter"], e["time"]), h - a))
+                mc.append((S.elapsed(e["quarter"], e["time"]), h - a))
             gei = WP.game_excitement_index(WP.wp_curve(mc))
             if best is None or gei > best[0]:
                 best = (gei, g["n1"], g["n2"], h, a)
@@ -175,7 +169,7 @@ def _dashboard(gender):
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.markdown(
-    "<div class='lab-hero'><h1>📊 Analytics Hub — Executive Dashboard</h1>"
+    "<div class='lab-hero'><h1>Analytics Hub — Executive Dashboard</h1>"
     "<p>Track it · analyze it · predict it · scout it. The whole program at a glance.</p>"
     "</div>", unsafe_allow_html=True)
 
@@ -199,14 +193,14 @@ else:
     k[1].metric("Tracked games", D["tracked"],
                 f"{D['games_played']} played total", delta_color="off")
     if D["top"]:
-        k[2].metric("🏆 Top team", D["top"]["name"],
+        k[2].metric("Top team", D["top"]["name"],
                     f"Power {D['top']['Power']:.0f}", delta_color="off")
     if D["hot"]:
-        k[3].metric("🔥 Hottest", D["hot"][0],
+        k[3].metric("Hottest", D["hot"][0],
                     f"{D['hot'][2]}" if D["hot"][2] else None, delta_color="off")
     if D["scorer"]:
         dl = (D["scorer"][2] - D.get("player_avg_ppg", 0)) if D["scorer"][2] else None
-        k[4].metric("🎯 Top scorer", D["scorer"][0],
+        k[4].metric("Top scorer", D["scorer"][0],
                     f"{dl:+.1f} vs avg ppg" if dl is not None else None)
 
     # ── game of the season banner ──────────────────────────────────────────────
@@ -214,7 +208,7 @@ else:
         gei, n1, n2, h, a = D["game"]
         from helpers.win_probability import excitement_label
         st.markdown(
-            f"<div class='glass-tile'>🔥 <b>Game of the season</b> — "
+            f"<div class='glass-tile'><b>Game of the season</b> — "
             f"{n2} {a} @ {n1} {h} · "
             f"<span style='color:var(--accent)'>GEI {gei:.1f} · {excitement_label(gei)}</span>"
             f"</div>", unsafe_allow_html=True)
@@ -304,6 +298,75 @@ else:
                 })
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  SEARCH + NOTABLES
+# ══════════════════════════════════════════════════════════════════════════════
+@st.cache_data(ttl=300, show_spinner=False)
+def _search_notables(gender):
+    import helpers.player_ratings as _PR
+    table = _PR.player_stat_table(gender=gender, min_games=1)
+    players = [{"name": r["name"], "team": r["team"], "ppg": r.get("PPG"),
+                "ovr": r.get("OVERALL")} for r in table.values()]
+    return {"players": players, "notables": TRD.league_notables(table=table)}
+
+
+if D["scored"]:
+    EX = _search_notables(_gender)
+    with st.expander("🔎  Search players & teams"):
+        q = st.text_input("Search by name", placeholder="player or team…",
+                          label_visibility="collapsed").strip().lower()
+        if q:
+            pm = sorted([p for p in EX["players"] if q in (p["name"] or "").lower()],
+                        key=lambda p: -(p["ovr"] or 0))[:8]
+            tm = sorted([s for s in D["scored"].values()
+                         if q in (s["name"] or "").lower()],
+                        key=lambda s: s["Rank"])[:8]
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                st.caption("Players")
+                if pm:
+                    st.dataframe(pd.DataFrame([
+                        {"Player": p["name"], "Team": p["team"],
+                         "PPG": round(p["ppg"], 1) if p["ppg"] else None,
+                         "OVR": round(p["ovr"]) if p["ovr"] else None} for p in pm]),
+                        hide_index=True, width="stretch")
+                else:
+                    st.caption("No players match.")
+            with sc2:
+                st.caption("Teams")
+                if tm:
+                    st.dataframe(pd.DataFrame([
+                        {"Rank": s["Rank"], "Team": s["name"],
+                         "Rec": f"{s['W']}-{s['L']}", "Power": round(s["Power"])}
+                        for s in tm]), hide_index=True, width="stretch")
+                else:
+                    st.caption("No teams match.")
+
+    nb = EX["notables"]
+    if any(nb.values()):
+        st.markdown("<div class='lab-hdr'>Notables</div>", unsafe_allow_html=True)
+        nc = st.columns(3)
+        with nc[0]:
+            st.caption("Hot hands — double-figure scoring streaks")
+            for cur, longest, label in nb["streaks"]:
+                if cur or longest:
+                    st.markdown(f"**{cur}** in a row · {label} "
+                                f"<span style='color:#8b949e'>(long {longest})</span>",
+                                unsafe_allow_html=True)
+        with nc[1]:
+            st.caption("Most double-doubles")
+            for cnt, label in nb["double_doubles"]:
+                if cnt:
+                    st.markdown(f"**{cnt}** · {label}")
+        with nc[2]:
+            st.caption("Top scoring games")
+            for pts, label, date, opp in nb["highs"]:
+                if pts:
+                    st.markdown(f"**{pts}** · {label} "
+                                f"<span style='color:#8b949e'>vs {opp[:14]}</span>",
+                                unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  NAVIGATION
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("<div class='lab-hdr'>Jump in</div>", unsafe_allow_html=True)
@@ -314,27 +377,31 @@ def _links(items):
     for c, (path, label, icon) in zip(cols, items):
         with c:
             try:
-                st.page_link(path, label=label, icon=icon)
+                st.page_link(path, label=label, icon=icon or None)
             except Exception:
-                st.markdown(f"{icon} {label}")
+                st.markdown(f"{icon} {label}".strip())
 
 
-st.caption("📥 Build")
-_links([("pages/1_Input_Hub.py", "Input Hub", "🗂️"),
-        ("pages/2_Game_Tracker.py", "Game Tracker", "⏱️"),
-        ("pages/3_Schedule.py", "Schedule", "📅")])
-st.caption("📈 Analyze")
-_links([("pages/4_Rankings.py", "Rankings", "🏆"),
-        ("pages/5_Team_Dashboard.py", "Team Dashboard", "📊"),
-        ("pages/6_Players.py", "Players", "👤")])
-st.caption("🎯 Plan & scout")
-_links([("pages/7_Officials.py", "Officials", "🦓"),
-        ("pages/8_Settings.py", "Settings", "⚙️")])
+st.caption("Build")
+_links([("pages/1_Input_Hub.py", "Input Hub", ""),
+        ("pages/2_Game_Tracker.py", "Game Tracker", ""),
+        ("pages/3_Event_Editor.py", "Event Editor", ""),
+        ("pages/4_Schedule.py", "Schedule", ""),
+        ("pages/11_Setup.py", "Setup", "")])
+st.caption("Analyze")
+_links([("pages/5_Rankings.py", "Rankings", ""),
+        ("pages/6_Team_Dashboard.py", "Team Dashboard", ""),
+        ("pages/7_Players.py", "Players", ""),
+        ("pages/10_Data_Explorer.py", "Data Explorer", "")])
+st.caption("Plan & scout")
+_links([("pages/9_War_Room.py", "War Room", ""),
+        ("pages/8_Officials.py", "Officials", ""),
+        ("pages/12_Settings.py", "Settings", "")])
 
 try:
     from database.db import get_db_path as _gp
     _p = _gp()
-    st.caption(f"🟢 Database ready ({_p.name})" if _p.exists()
-               else "⚠️ Database file not found — run the app once to initialise it.")
+    st.caption(f"Database ready ({_p.name})" if _p.exists()
+               else "Database file not found — run the app once to initialise it.")
 except Exception as _e:
-    st.warning(f"⚠️ Database error — {_e}")
+    st.warning(f"Database error — {_e}")

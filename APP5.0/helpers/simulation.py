@@ -227,55 +227,6 @@ def simulate_season(scored, schedule, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED):
     return out
 
 
-def season_schedule(teams, games_per_team, seed=DEFAULT_SEED):
-    """
-    Build a synthetic (team_a, team_b, home) schedule for a "what-if" season.
-
-    Each team plays ~`games_per_team` games against the others, drawn from
-    repeated shuffled round-robins (home court alternates randomly). Used by the
-    Sim Lab when the user picks a custom field + season length rather than
-    re-simulating the games that actually happened (`schedule_from_results`).
-
-    Greedy + seeded so it's deterministic; parity leftovers are paired loosely,
-    so a team's final game count can be ±1 off the target — the season sim reads
-    each team's own count, so that's harmless.
-    """
-    teams = list(teams)
-    n = len(teams)
-    if n < 2 or games_per_team < 1:
-        return []
-    rng = np.random.default_rng(seed)
-    counts = {t: 0 for t in teams}
-    base = [(teams[i], teams[j]) for i in range(n) for j in range(i + 1, n)]
-    sched = []
-    guard = 0
-    cap = games_per_team * n * 4
-    while min(counts.values()) < games_per_team and guard < cap:
-        guard += 1
-        pool = base[:]
-        rng.shuffle(pool)
-        progressed = False
-        for a, b in pool:
-            if counts[a] < games_per_team and counts[b] < games_per_team:
-                home = a if rng.random() < 0.5 else b
-                sched.append((a, b, home))
-                counts[a] += 1
-                counts[b] += 1
-                progressed = True
-        if not progressed:
-            need = [t for t in teams if counts[t] < games_per_team]
-            if len(need) < 2:
-                break
-            rng.shuffle(need)
-            for i in range(0, len(need) - 1, 2):
-                a, b = need[i], need[i + 1]
-                home = a if rng.random() < 0.5 else b
-                sched.append((a, b, home))
-                counts[a] += 1
-                counts[b] += 1
-    return sched
-
-
 def schedule_from_results(gender=None):
     """
     Build a (team_a, team_b, home) schedule from finished games for season sim.

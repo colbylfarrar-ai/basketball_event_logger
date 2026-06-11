@@ -39,8 +39,7 @@ import helpers.team_ratings as TR
 PYTHAG_EXP = 14.0
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -109,17 +108,11 @@ def _scale100(by_team, higher_better=True):
         z = ((v - mean) / sd) if sd else 0.0
         if not higher_better:
             z = -z
-        out[t] = round(max(0.0, min(100.0, 50 + 10 * z)), 1)
+        out[t] = round(S.scale100(z), 1)
     return out
 
 
-def percentile(value, pool, higher_better=True):
-    """Percentile (0-100) of `value` within `pool` (list of numbers)."""
-    vals = [v for v in pool if v is not None]
-    if not vals or value is None:
-        return None
-    below = sum(1 for v in vals if (v < value) == higher_better)
-    return round(100 * below / len(vals), 0)
+percentile = S.percentile   # shared definition lives in helpers.stats
 
 
 def _streak(results):
@@ -369,7 +362,7 @@ def team_tracked_pack(gender=None, tracked=None):
     qrows = query(
         """SELECT ge.game_id AS gid, p.team_id AS tid, ge.quarter AS q,
                   SUM(CASE WHEN ge.event_type='free_throw' THEN 1
-                           ELSE ge.shot_type END) AS pts
+                           WHEN ge.shot_type=3 THEN 3 ELSE 2 END) AS pts
            FROM game_events ge
            JOIN players p ON p.id = ge.primary_player_id
            WHERE ge.game_id IN ({}) AND ge.shot_result='make'

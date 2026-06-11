@@ -1,0 +1,263 @@
+"""
+event_log.py — read & repair the play-by-play event stream of a game.
+
+The Game Tracker can only DELETE the last event during live logging. This is the
+after-the-fact corrections layer: fix a mis-tagged shooter / zone / result / type,
+or delete a bogus event, for ANY game that has events. Edits keep the derived
+data consistent:
+
+  * game_event_lineup (who was on the floor for each event) is UNCHANGED by a
+    field edit and is cascade-deleted with an event — so on/off, RAPM and lineup
+    ratings stay valid without re-snapshotting.
+  * +/- in game_lineup_players is adjusted whenever an edit or delete changes a
+    made basket's points or its scoring team (mirrors the Game Tracker's own
+    +/- logic, so the stored +/- never drifts).
+  * recompute_final_score() re-freezes games.home/away_score from the events, so
+    records & rankings line up with the corrected log.
+
+Pure data layer: database.db only, no streamlit.
+"""
+from __future__ import annotations
+
+from database.db import query, execute
+
+ZONES = ("LC", "LW", "C", "RW", "RC")
+EVENT_TYPES = ("shot", "free_throw", "foul", "turnover")
+
+# Fields kept per event_type; everything else is nulled on save so a type change
+# can't leave stale columns (a turnover keeping a zone, a foul keeping a result).
+_FIELDS_BY_TYPE = {
+    "shot": ("primary_player_id", "shot_type", "shot_result", "zone",
+             "pass_from_id", "shot_created_by_id", "rebound_by_id",
+             "blocked_by_id", "guarded_by_id"),
+    "free_throw": ("primary_player_id", "shot_result", "rebound_by_id"),
+    "foul": ("primary_player_id", "secondary_player_id", "official_id"),
+    "turnover": ("primary_player_id", "stolen_by_id"),
+}
+
+# Every nullable column the editor manages (written on each update).
+_ALL_FIELDS = ("primary_player_id", "shot_type", "shot_result", "zone",
+               "pass_from_id", "shot_created_by_id", "rebound_by_id",
+               "blocked_by_id", "guarded_by_id", "secondary_player_id",
+               "stolen_by_id", "official_id")
+# Text columns among _ALL_FIELDS; the rest are integer ids / shot_type.
+_STR_FIELDS = ("shot_result", "zone")
+
+
+# ── people / labels ─────────────────────────────────────────────────────────────
+def _abbr(name):
+    """'Adair Girls' -> 'AG'."""
+    return "".join(w[0].upper() for w in str(name).split() if w)
+
+
+def game_people(game_id):
+    """Resolve the two teams' players + officials for a game.
+
+    Returns dict with:
+      players   [{id, name, number, team_id, label}]  (archived included so any
+                historical event reference still resolves)
+      officials [{id, name}]
+      pid2label, label2pid, oid2name, name2oid, pid2team
+    Labels are 'ABBR #num Name', de-duplicated with an [id] suffix if needed.
+    """
+    g = query("""SELECT g.team1_id, g.team2_id, t1.name n1, t2.name n2
+                 FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                              JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""",
+              (game_id,))
+    empty = {"players": [], "officials": [], "pid2label": {}, "label2pid": {},
+             "oid2name": {}, "name2oid": {}, "pid2team": {}}
+    if not g:
+        return empty
+    g = g[0]
+    abbr = {g["team1_id"]: _abbr(g["n1"]), g["team2_id"]: _abbr(g["n2"])}
+    rows = query("""SELECT id, name, number, team_id FROM players
+                    WHERE team_id IN (?,?) ORDER BY team_id, number, name""",
+                 (g["team1_id"], g["team2_id"]))
+    pid2label, label2pid, pid2team, players = {}, {}, {}, []
+    for r in rows:
+        lbl = f"{abbr.get(r['team_id'], '')} #{r['number']} {r['name']}".strip()
+        if lbl in label2pid:
+            lbl = f"{lbl} [{r['id']}]"
+        pid2label[r["id"]] = lbl
+        label2pid[lbl] = r["id"]
+        pid2team[r["id"]] = r["team_id"]
+        players.append({**r, "label": lbl})
+    offs = query("SELECT id, name FROM officials ORDER BY name")
+    return {
+        "players": players, "officials": offs,
+        "pid2label": pid2label, "label2pid": label2pid,
+        "oid2name": {o["id"]: o["name"] for o in offs},
+        "name2oid": {o["name"]: o["id"] for o in offs},
+        "pid2team": pid2team,
+    }
+
+
+# ── load ────────────────────────────────────────────────────────────────────────
+def games_with_events():
+    """[{id, date, n1, n2, tracked, n_events}] for every game that has events,
+    most recent first — the games the editor can open."""
+    return query("""
+        SELECT g.id, g.date, t1.name n1, t2.name n2, g.tracked,
+               COUNT(ge.id) n_events
+        FROM games g
+        JOIN teams t1 ON t1.id=g.team1_id
+        JOIN teams t2 ON t2.id=g.team2_id
+        JOIN game_events ge ON ge.game_id=g.id
+        GROUP BY g.id
+        ORDER BY g.date DESC, g.id DESC""")
+
+
+def load_events(game_id, quarter=None):
+    """Raw event rows for a game (optionally one quarter), in log order."""
+    if quarter:
+        return query(
+            "SELECT * FROM game_events WHERE game_id=? AND quarter=? ORDER BY id",
+            (game_id, quarter))
+    return query("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (game_id,))
+
+
+def quarters_in_game(game_id):
+    return [r["quarter"] for r in query(
+        "SELECT DISTINCT quarter FROM game_events WHERE game_id=? ORDER BY quarter",
+        (game_id,))]
+
+
+# ── scoring / +- bookkeeping ─────────────────────────────────────────────────────
+def event_points(ev):
+    """Points an event put on the board (0 unless a made shot / free throw)."""
+    if ev.get("shot_result") != "make":
+        return 0
+    if ev.get("event_type") == "shot":
+        return 3 if ev.get("shot_type") == 3 else 2
+    if ev.get("event_type") == "free_throw":
+        return 1
+    return 0
+
+
+def _pm_contrib(pts, scoring_tid, team_id):
+    if not pts or scoring_tid is None:
+        return 0
+    return pts if team_id == scoring_tid else -pts
+
+
+def _apply_pm_delta(game_id, event_id, old_pts, old_stid, new_pts, new_stid):
+    """Shift game_lineup_players.plus_minus for the floor of one event when its
+    scoring (points or scoring team) changed old -> new."""
+    if (old_pts, old_stid) == (new_pts, new_stid):
+        return
+    floor = query(
+        "SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?",
+        (event_id,))
+    for r in floor:
+        delta = (_pm_contrib(new_pts, new_stid, r["team_id"])
+                 - _pm_contrib(old_pts, old_stid, r["team_id"]))
+        if delta:
+            execute("UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
+                    "WHERE game_id=? AND player_id=?",
+                    (delta, game_id, r["player_id"]))
+
+
+# ── mutate ───────────────────────────────────────────────────────────────────────
+def _resolved(ev):
+    """Type-cleaned field values of an existing event (irrelevant cols -> None)."""
+    keep = set(_FIELDS_BY_TYPE.get(ev["event_type"], ()))
+    return {f: (ev[f] if f in keep else None) for f in _ALL_FIELDS}
+
+
+def event_changed(ev, vals):
+    """True if `vals` differs from the stored event `ev` (so we only write edits)."""
+    etype = vals.get("event_type") or ev["event_type"]
+    if etype != ev["event_type"]:
+        return True
+    if str(vals.get("time") or ev["time"]) != str(ev["time"]):
+        return True
+    if int(vals.get("quarter") or ev["quarter"]) != int(ev["quarter"]):
+        return True
+    keep = set(_FIELDS_BY_TYPE[etype])
+    for f in _ALL_FIELDS:
+        nv = vals.get(f) if f in keep else None
+        ov = ev[f]
+        if f not in _STR_FIELDS:           # integer id / shot_type columns
+            nv = int(nv) if nv is not None else None
+            ov = int(ov) if ov is not None else None
+        if (nv if nv is not None else None) != (ov if ov is not None else None):
+            return True
+    return False
+
+
+def update_event(game_id, ev_id, vals, pid2team):
+    """Write one corrected event. `vals` holds event_type + the managed fields
+    (player/official ids already resolved, None where blank). Nulls fields the
+    final type doesn't use, fixes +/- if the scoring changed, then UPDATEs."""
+    old = query("SELECT * FROM game_events WHERE id=?", (ev_id,))
+    if not old:
+        return
+    old = old[0]
+    etype = vals.get("event_type")
+    if etype not in EVENT_TYPES:
+        etype = old["event_type"]
+    keep = set(_FIELDS_BY_TYPE[etype])
+    clean = {f: (vals.get(f) if f in keep else None) for f in _ALL_FIELDS}
+    if etype != "shot":
+        clean["shot_type"] = None
+    clean = {f: (int(v) if v is not None and f != "shot_result" and f != "zone"
+                 else v) for f, v in clean.items()}
+
+    # +/- adjustment from old scoring -> new scoring over this event's floor
+    old_pts = event_points(old)
+    new_pts = event_points({"event_type": etype,
+                            "shot_result": clean["shot_result"],
+                            "shot_type": clean["shot_type"]})
+    _apply_pm_delta(game_id, ev_id, old_pts,
+                    pid2team.get(old["primary_player_id"]),
+                    new_pts, pid2team.get(clean["primary_player_id"]))
+
+    execute(
+        "UPDATE game_events SET event_type=?, quarter=?, time=?, "
+        + ", ".join(f"{f}=?" for f in _ALL_FIELDS)
+        + " WHERE id=?",
+        (etype, int(vals.get("quarter") or old["quarter"]),
+         str(vals.get("time") or old["time"]),
+         *[clean[f] for f in _ALL_FIELDS], ev_id))
+
+
+def delete_event(game_id, ev_id, pid2team):
+    """Delete an event, first reversing its +/- contribution. The FK cascade
+    clears its game_event_lineup snapshot."""
+    old = query("SELECT * FROM game_events WHERE id=?", (ev_id,))
+    if not old:
+        return
+    old = old[0]
+    _apply_pm_delta(game_id, ev_id, event_points(old),
+                    pid2team.get(old["primary_player_id"]), 0, None)
+    execute("DELETE FROM game_events WHERE id=?", (ev_id,))
+
+
+def score_from_events(game_id):
+    """(home_pts, away_pts) computed from the event stream (team1 = home).
+    Read-only — the authoritative live-score logic, reused for previews."""
+    g = query("SELECT team1_id, team2_id FROM games WHERE id=?", (game_id,))
+    if not g:
+        return None
+    t1, t2 = g[0]["team1_id"], g[0]["team2_id"]
+    rows = query("""
+        SELECT p.team_id,
+               SUM(CASE WHEN ge.event_type='shot'       AND ge.shot_result='make'
+                            THEN ge.shot_type
+                        WHEN ge.event_type='free_throw'  AND ge.shot_result='make'
+                            THEN 1 ELSE 0 END) pts
+        FROM game_events ge JOIN players p ON p.id=ge.primary_player_id
+        WHERE ge.game_id=? AND ge.shot_result='make'
+        GROUP BY p.team_id""", (game_id,))
+    pts = {r["team_id"]: (r["pts"] or 0) for r in rows}
+    return pts.get(t1, 0), pts.get(t2, 0)
+
+
+def recompute_final_score(game_id):
+    """Re-freeze games.home_score/away_score from the events. Returns (h, a)."""
+    hp_ap = score_from_events(game_id)
+    if hp_ap is None:
+        return None
+    execute("UPDATE games SET home_score=?, away_score=? WHERE id=?",
+            (hp_ap[0], hp_ap[1], game_id))
+    return hp_ap

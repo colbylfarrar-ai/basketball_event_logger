@@ -1,5 +1,5 @@
 """
-stats.py — Basketball stat engine for APP4.0.
+stats.py — Basketball stat engine for APP5.0.
 
 Computes box-score and advanced stats from the `game_events` table.
 Pure data layer: depends only on database.db, never on streamlit, so it can be
@@ -10,7 +10,7 @@ Data model recap (see database/schema.sql, game_events):
     primary_player_id   shooter / FT shooter / fouler / player who turned it over
     shot_result         'make' | 'miss'
     shot_type           2 | 3
-    zone                'LC' | 'LW' | 'C' | 'RW' | 'RC'   (C = paint/center)
+    zone                'LC' | 'LW' | 'C' | 'RW' | 'RC'   (C = center / top)
     pass_from_id        player who passed into the shot   (assist if shot made)
     shot_created_by_id  screener who freed the shooter     ("SC" field)
     guarded_by_id       defender contesting the shot       (NULL = uncontested)
@@ -49,11 +49,6 @@ from database.db import query
 #: never fully logged (e.g. game 4, Adair vs Ketchum: 61 events, tracked=0), so
 #: its partial events must never leak into "all games" aggregates.
 _TRACKED_SUBQUERY = "ge.game_id IN (SELECT id FROM games WHERE tracked=1)"
-
-
-def tracked_game_ids():
-    """Ids of every fully-tracked game — the canonical analytics sample."""
-    return [r["id"] for r in query("SELECT id FROM games WHERE tracked=1")]
 
 
 def _game_filter(game_ids):
@@ -238,9 +233,55 @@ def _safe(num, den):
     return num / den if den else 0.0
 
 
-def shots_created(b):
-    """SC = shoot a shot (+1) + pass to a shot (+1) + screen to free a shooter (+1)."""
-    return b["SC_shoot"] + b["SC_pass"] + b["SC_screen"]
+def scale100(z):
+    """Map a z-score to a 0-100 index (50 = league average, +10 per SD), clamped."""
+    return max(0.0, min(100.0, 50 + 10 * z))
+
+
+def percentile(value, pool, higher_better=True):
+    """Percentile (0-100) of `value` within `pool` (a list of numbers)."""
+    vals = [v for v in pool if v is not None]
+    if not vals or value is None:
+        return None
+    below = sum(1 for v in vals if (v < value) == higher_better)
+    return round(100 * below / len(vals), 0)
+
+
+# ── game-clock helpers (regulation 8:00 quarters, 4:00 OT) ──────────────────────
+def clock_secs(t):
+    """Seconds shown on the game clock for an 'M:S' string. Tolerant of bad input."""
+    try:
+        m, s = (str(t).split(":") + ["0"])[:2]
+        return int(m) * 60 + int(s)
+    except (ValueError, TypeError):
+        return 0
+
+
+def q_len(q):
+    """Length in seconds of period q (480 in regulation, 240 in OT)."""
+    return 480 if q <= 4 else 240
+
+
+def q_base(q):
+    """Seconds elapsed before period q tips off."""
+    return 480 * (q - 1) if q <= 4 else 480 * 4 + 240 * (q - 5)
+
+
+def elapsed(q, t):
+    """Seconds since tip-off for clock time t in period q (chronological sort key)."""
+    return q_base(q) + (q_len(q) - clock_secs(t))
+
+
+def usage_pct(p_poss, player_min, team_poss, team_min_over5):
+    """USG% core formula: 100 * pPoss * (TmMP/5) / (playerMin * TmPoss).
+
+    A possession is a shot or a turnover (FTs and fouls don't count). `team_min_over5`
+    is the team's clock-minutes (sum of its players' on-floor minutes / 5). Returns
+    None when any denominator term is non-positive.
+    """
+    if player_min <= 0 or team_poss <= 0 or team_min_over5 <= 0:
+        return None
+    return 100 * _safe(p_poss * team_min_over5, player_min * team_poss)
 
 
 def shot_efficiency(b):
@@ -370,9 +411,6 @@ def paint_points(b):
     """Points scored in the paint = 2 * paint makes (2PM from the Center zone)."""
     return b["paint_FGM"] * 2
 
-def paint_fgm(b):
-    return b["paint_FGM"]
-
 
 # ── composite box metrics ───────────────────────────────────────────────────────
 
@@ -399,6 +437,20 @@ def fic(b):
         + b["AST"] + b["STL"] + 0.75 * b["BLK"]
         - 0.75 * b["FGA"] - 0.375 * b["FTA"] - b["TOV"] - 0.5 * b["PF"]
     )
+
+
+def vps(b):
+    """
+    Hudl Value Point System — a production-to-mistakes ratio:
+      (PTS + REB + 2·(AST + STL + BLK)) / (FT miss + 2·(FG miss + PF + TOV))
+    Returns None when the denominator is 0 (no misses, fouls or turnovers).
+    """
+    reb = b.get("TRB", b["ORB"] + b["DRB"])
+    num = b["PTS"] + reb + 2 * (b["AST"] + b["STL"] + b["BLK"])
+    ft_miss = b["FTA"] - b["FTM"]
+    fg_miss = b["FGA"] - b["FGM"]
+    den = ft_miss + 2 * (fg_miss + b["PF"] + b["TOV"])
+    return num / den if den > 0 else None
 
 
 def prf(b):
@@ -448,10 +500,6 @@ def ppp(b):
 def app(b):
     """Assists Per Possession = AST / usage possessions."""
     return _safe(b["AST"], player_possessions(b))
-
-def tpp(b):
-    """Turnovers Per Possession = TOV / usage possessions."""
-    return _safe(b["TOV"], player_possessions(b))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -816,16 +864,6 @@ def minutes_played(game_ids=None):
     return {r["pid"]: (r["mins"] or 0.0) for r in rows}
 
 
-def total_game_minutes(game_ids=None):
-    """Total elapsed minutes across the games = sum(possession_secs)/60."""
-    clause, params = _game_filter(game_ids)
-    row = query(
-        f"SELECT SUM(ge.possession_secs) / 60.0 m FROM game_events ge WHERE 1=1{clause}",
-        params,
-    )
-    return (row[0]["m"] or 0.0) if row else 0.0
-
-
 def plus_minus(game_ids=None):
     """{player_id: cumulative +/-} from game_lineup_players.plus_minus."""
     if game_ids:
@@ -846,40 +884,6 @@ def plus_minus(game_ids=None):
 def per_minutes(value, minutes, base=32):
     """Normalise a counting total to a per-`base`-minutes rate (default per-32)."""
     return _safe(value * base, minutes)
-
-
-def usage_rate(player_id, team_id, game_ids=None, events=None,
-               player_min=None, game_min=None):
-    """
-    USG% = 100 * (FGA + TOV) * (Team MP / 5)
-                 / (player minutes * (Team_FGA + Team_TOV)).
-    Share of team possessions a player uses while on the floor; a possession is
-    a shot or a turnover (free throws and fouls don't count).
-
-    `game_min` is THIS team's clock-minutes (Team MP / 5), derived from the sum
-    of the team's players' on-floor minutes / 5 — a per-team figure, never the
-    whole league's. (A single global value over-states usage ~15x for a team
-    that only played one game.)
-    """
-    if events is None:
-        events = fetch_events(game_ids)
-    boxes = aggregate_player_boxes(game_ids, events=events)
-    p = boxes.get(player_id)
-    if not p:
-        return None
-    tb = _team_box(team_id, game_ids, events=events)
-    pmins = minutes_played(game_ids)
-    if player_min is None:
-        player_min = pmins.get(player_id, 0.0)
-    if game_min is None:
-        team_pids = {r["id"] for r in
-                     query("SELECT id FROM players WHERE team_id = ?", (team_id,))}
-        game_min = sum(m for pid, m in pmins.items() if pid in team_pids) / 5.0
-    if player_min <= 0 or game_min <= 0:
-        return None
-    team_poss = player_possessions(tb)
-    p_poss = player_possessions(p)
-    return 100 * _safe(p_poss * game_min, player_min * team_poss)
 
 
 def defended_fg_pct(game_ids=None, events=None):
@@ -1419,6 +1423,154 @@ def player_zone_guarded(game_ids=None, events=None, player_id=None):
         return final.get(player_id, {"guarded": {"FGA": 0, "FGM": 0, "pct": 0.0},
                                      "open": {"FGA": 0, "FGM": 0, "pct": 0.0}})
     return final
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SHOT LOCATIONS  (tap-captured x/y — the real shot chart, superset of zones)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def located_shots(game_ids=None, events=None, player_id=None, team_id=None):
+    """
+    Tap-captured shot attempts that carry an (x, y) court location.
+
+    Returns a list of {x, y, make, value, guarded, zone, player_id, team_id, dist}
+    for every 'shot' event with shot_x/shot_y set, optionally filtered to one
+    player (the shooter) or one team. Legacy zone-only shots (no x/y) are skipped,
+    so callers can fall back to player_zone_splits()/shot_chart for those games.
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    import helpers.court_geom as CG
+    out = []
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        x, y = e.get("shot_x"), e.get("shot_y")
+        if x is None or y is None:
+            continue
+        if player_id is not None and e["primary_player_id"] != player_id:
+            continue
+        if team_id is not None and e.get("shooter_team_id") != team_id:
+            continue
+        out.append({
+            "x": x, "y": y,
+            "make": e["shot_result"] == "make",
+            "value": 3 if e["shot_type"] == 3 else 2,
+            "guarded": e["guarded_by_id"] is not None,
+            "zone": e["zone"],
+            "player_id": e["primary_player_id"],
+            "team_id": e.get("shooter_team_id"),
+            "dist": CG.shot_distance(x, y),
+        })
+    return out
+
+
+def shot_location_summary(shots):
+    """
+    Roll a list of located_shots() into rim / mid-range / three splits plus the
+    average shot distance. Returns None for an empty list. Rim = within 4 ft;
+    mid = a 2 beyond the rim; three = value 3.
+    """
+    if not shots:
+        return None
+    n = len(shots)
+    makes = sum(1 for s in shots if s["make"])
+    rim = [s for s in shots if s["dist"] <= 4]
+    mid = [s for s in shots if s["dist"] > 4 and s["value"] == 2]
+    three = [s for s in shots if s["value"] == 3]
+
+    def _fg(group):
+        return (sum(1 for s in group if s["make"]) / len(group)) if group else None
+
+    return {
+        "n": n, "fg": _safe(makes, n),
+        "avg_dist": _safe(sum(s["dist"] for s in shots), n),
+        "rim_n": len(rim), "rim_fg": _fg(rim),
+        "mid_n": len(mid), "mid_fg": _fg(mid),
+        "three_n": len(three), "three_fg": _fg(three),
+    }
+
+
+def mapped_shots(game_ids=None, events=None, player_id=None, team_id=None,
+                 include_approx=True):
+    """
+    Every shot placed on the court — real tap-captured (x, y) when present, else
+    the zone centroid (flagged approx) so the new maps work on legacy zone data.
+
+    Each: {x, y, make, value, guarded, zone, player_id, team_id, dist, approx}.
+    `include_approx=False` keeps only real located shots. This is the feed for the
+    hexbin / expected-points renders; it sharpens automatically as taps replace
+    the zone approximations.
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    import helpers.court_geom as CG
+    out = []
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        if player_id is not None and e["primary_player_id"] != player_id:
+            continue
+        if team_id is not None and e.get("shooter_team_id") != team_id:
+            continue
+        value = 3 if e["shot_type"] == 3 else 2
+        x, y, approx = e.get("shot_x"), e.get("shot_y"), False
+        if x is None or y is None:
+            if not include_approx:
+                continue
+            c = CG.zone_centroid(e["zone"], value)
+            if c is None:
+                continue
+            x, y, approx = c[0], c[1], True
+        out.append({
+            "x": x, "y": y, "make": e["shot_result"] == "make", "value": value,
+            "guarded": e["guarded_by_id"] is not None, "zone": e["zone"],
+            "player_id": e["primary_player_id"], "team_id": e.get("shooter_team_id"),
+            "dist": CG.shot_distance(x, y), "approx": approx,
+        })
+    return out
+
+
+def distance_make_model(game_ids=None, events=None, shots=None, bin_ft=2.0):
+    """
+    League make-rate by (shot value, distance bin) — the engine behind the
+    expected-points surface. Pools every shot (real + zone-approx) so the rates
+    are stable on a small sample. Returns {"bins", "bins_n", "by_value",
+    "overall", "bin_ft"}.
+    """
+    if shots is None:
+        shots = mapped_shots(game_ids, events)
+    agg = defaultdict(lambda: {"fga": 0, "fgm": 0})
+    byval = defaultdict(lambda: {"fga": 0, "fgm": 0})
+    tot = {"fga": 0, "fgm": 0}
+    for s in shots:
+        key = (s["value"], int(s["dist"] // bin_ft))
+        agg[key]["fga"] += 1
+        byval[s["value"]]["fga"] += 1
+        tot["fga"] += 1
+        if s["make"]:
+            agg[key]["fgm"] += 1
+            byval[s["value"]]["fgm"] += 1
+            tot["fgm"] += 1
+    return {
+        "bins": {k: _safe(v["fgm"], v["fga"]) for k, v in agg.items()},
+        "bins_n": {k: v["fga"] for k, v in agg.items()},
+        "by_value": {k: _safe(v["fgm"], v["fga"]) for k, v in byval.items()},
+        "overall": _safe(tot["fgm"], tot["fga"]), "bin_ft": bin_ft,
+    }
+
+
+def expected_points_at(x, y, model):
+    """Expected points for a shot from (x, y): league make-rate at that distance &
+    value × the value. Falls back to the value-wide rate for thin distance bins."""
+    import helpers.court_geom as CG
+    value = CG.shot_value(x, y)
+    dist = CG.shot_distance(x, y)
+    key = (value, int(dist // model["bin_ft"]))
+    rate = model["bins"].get(key)
+    if rate is None or model["bins_n"].get(key, 0) < 4:
+        rate = model["by_value"].get(value, model["overall"])
+    return rate * value
 
 
 # ══════════════════════════════════════════════════════════════════════════════

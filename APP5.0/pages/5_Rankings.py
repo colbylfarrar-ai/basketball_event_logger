@@ -1,28 +1,33 @@
 """
-3_Rankings.py — Team rankings, deep dives, charts and a matchup predictor.
+4_Rankings.py — the league-wide view: team rankings, deep dives and charts.
 
-Four tabs:
-  • Overview          — the source of truth. Results-only "Score" power ratings
-                        for every team, plus a per-team deep dive (record, record
-                        vs top 10, vs class, schedule).
-  • Tracked           — possession-based ratings over tracked games only, with a
-                        per-team tracked schedule that opens the full box score.
-  • Team Charts       — how teams score / win, quarter breakdown, who can shoot,
-                        shot volume — built from tracked-game events.
-  • Matchup Predictor — Vegas-style spread, projected score, total and win
-                        probability between any two teams, from the ratings.
+League-wide tabs:
+  • Overview    — the source of truth. Results-only "Score" power ratings for
+                  every team, with Class / min-games filters that drive the team
+                  leaders, signature metrics and the rankings table.
+  • Team        — the per-team deep dive (record, vs top 10, vs class, schedule,
+                  percentile profile) moved out of Overview into its own tab.
+  • Tracked     — possession-based ratings over tracked games only (the full
+                  tracked stat set), with a per-team tracked schedule that opens
+                  the full box score.
+  • Team Charts — how teams score / win, quarter breakdown, who can shoot, shot
+                  volume — built from tracked-game events. A team filter takes
+                  teams out of the graphs and a per-stat bar gallery covers the
+                  headline team stats.
+  • Everything  — futuristic league-wide analytics over every team (landscape,
+                  tiers, Pythagoras, momentum, win network). The whole-league
+                  companion to the Tracked tab. (Matchup predictions + sims now
+                  live on the War Room page.)
 
 All rating math lives in helpers/team_ratings.py; this page is display + controls.
 """
 import sys
 import math
-from math import erf, sqrt
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from collections import defaultdict
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -30,10 +35,12 @@ import streamlit as st
 from database.db import query
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
-from helpers.ui import (page_chrome, rgb as _rgb, style_fig as _style,
-                        q_label as _q_label, AWAY, CARD_BG, GRID)
-from helpers.glossary import render_glossary
+from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
+                        AWAY, gender_radio, gender_label, score_card)
+from helpers.cards import team_short
+from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
+import helpers.team_analytics as TA
 import helpers.stats as S
 import helpers.league_analytics as LA
 
@@ -54,10 +61,6 @@ TIER_PALETTE = ["#00e5ff", "#3fb950", "#58a6ff", "#f0a500", "#8b949e"]
 # ══════════════════════════════════════════════════════════════════════════════
 #  SHARED HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _norm_cdf(x, mu=0.0, sd=1.0):
-    return 0.5 * (1 + erf((x - mu) / (sd * sqrt(2))))
-
 
 def _team_results(team_id):
     """Completed games for a team, oldest first. team1 = home, team2 = away."""
@@ -127,16 +130,20 @@ def _lab_hdr(text):
 
 
 def _tier(power):
-    """Power 0-100 → (tier name, color). 50 = league average on the z-scale."""
+    """Power 0-100 → (tier name, color). 50 = league average on the z-scale.
+
+    Band edges (70/62/54/46) match the player OVERALL ladder (helpers.cards.tier)
+    so "elite/great/above-average/average" mean the same number on both scales.
+    """
     if power is None:
         return "—", GREY
-    if power >= 68:
+    if power >= 70:
         return "S · ELITE", "#00e5ff"
-    if power >= 60:
+    if power >= 62:
         return "A · CONTENDER", "#3fb950"
-    if power >= 52:
+    if power >= 54:
         return "B · SOLID", "#58a6ff"
-    if power >= 44:
+    if power >= 46:
         return "C · MIDDLING", "#f0a500"
     return "D · REBUILDING", "#e74c3c"
 
@@ -169,40 +176,64 @@ def _pctile_bar(label, val_txt, pct):
         f"</div></div>")
 
 
-def _gauge(value, vmin, vmax, label, suffix="", good_high=True, ref=None,
-           height=200):
-    """Futuristic gauge vs a league [vmin,vmax] range, league avg (`ref`) drawn
-    as a cyan threshold; red/amber/green zones key off `good_high`."""
-    span = (vmax - vmin) or 1
-    lo, hi = vmin + span / 3, vmin + 2 * span / 3
-    if good_high:
-        zones = [(vmin, lo, "rgba(231,76,60,.20)"), (lo, hi, "rgba(240,165,0,.16)"),
-                 (hi, vmax, "rgba(63,185,80,.22)")]
-    else:
-        zones = [(vmin, lo, "rgba(63,185,80,.22)"), (lo, hi, "rgba(240,165,0,.16)"),
-                 (hi, vmax, "rgba(231,76,60,.20)")]
-    mode = "gauge+number+delta" if ref is not None else "gauge+number"
-    ind = dict(
-        mode=mode, value=value,
-        number={"suffix": suffix, "font": {"size": 26, "color": "#f0f6fc"}},
-        gauge={
-            "axis": {"range": [vmin, vmax], "tickwidth": 1,
-                     "tickcolor": "#30363d", "tickfont": {"size": 9}},
-            "bar": {"color": ACCENT, "thickness": 0.3},
-            "bgcolor": "rgba(0,0,0,0)", "borderwidth": 0,
-            "steps": [{"range": [a, b], "color": c} for a, b, c in zones]},
-        title={"text": label, "font": {"size": 12, "color": "#8b949e"}})
-    if ref is not None:
-        ind["delta"] = {"reference": ref, "increasing": {"color": GOOD},
-                        "decreasing": {"color": BAD}, "font": {"size": 12}}
-        ind["gauge"]["threshold"] = {"line": {"color": CYBER, "width": 3},
-                                     "thickness": 0.85, "value": ref}
-    fig = go.Figure(go.Indicator(**ind))
-    fig.update_layout(template="plotly_dark", height=height,
-                      paper_bgcolor="rgba(0,0,0,0)",
-                      margin=dict(l=22, r=22, t=44, b=8),
-                      font=dict(color="#c9d1d9"))
-    return fig
+@st.cache_data(ttl=600, show_spinner=False)
+def _team_tracked_deep(team_id):
+    """Possession-based tracked deep dive for one team — None if no tracked games.
+
+    Mirrors (and extends) APP3's 'Team Deep Dive': pace-adjusted ratings, the
+    four factors on both ends, a per-period PPG/PPP table and a per-game
+    efficiency log that drives the win/loss pattern charts. Everything is built
+    from tracked play-by-play, so it is a small, directional sample.
+    """
+    game_log = TA.team_game_log(team_id)
+    tracked_ids = [g["game_id"] for g in game_log if g["tracked"]]
+    if not tracked_ids:
+        return None
+    events = S.fetch_events(tracked_ids)
+    tb, ob = TA.team_and_opp_box(team_id, tracked_ids, events=events)
+    gp = len(tracked_ids)
+    rt = S.team_ratings(team_id, None, tracked_ids)
+    off_poss = rt.get("off_poss") or 0.0
+    def_poss = rt.get("def_poss") or 0.0
+    ff = TA.four_factors(tb, ob)
+
+    qb = TA.quarter_boxes(team_id, tracked_ids, events=events)
+
+    def _pack(qs):
+        tp = sum(qb[q]["team"]["PTS"] for q in qs if q in qb)
+        op = sum(qb[q]["opp"]["PTS"] for q in qs if q in qb)
+        tposs = sum(qb[q]["poss"] for q in qs if q in qb)
+        oposs = sum(qb[q]["opp_poss"] for q in qs if q in qb)
+        ng = max((qb[q]["n_games"] for q in qs if q in qb), default=0) or gp
+        return {"tppg": tp / ng if ng else 0.0, "oppg": op / ng if ng else 0.0,
+                "tppp": tp / tposs if tposs else 0.0,
+                "oppp": op / oposs if oposs else 0.0}
+
+    periods = [{"Period": lbl, **_pack(qs)} for lbl, qs in
+               [("Q1", [1]), ("Q2", [2]), ("H1", [1, 2]),
+                ("Q3", [3]), ("Q4", [4]), ("H2", [3, 4])]]
+    periods.append({
+        "Period": "Full Game",
+        "tppg": tb["PTS"] / gp if gp else 0.0,
+        "oppg": ob["PTS"] / gp if gp else 0.0,
+        "tppp": tb["PTS"] / off_poss if off_poss else 0.0,
+        "oppp": ob["PTS"] / def_poss if def_poss else 0.0})
+
+    return {
+        "gp": gp,
+        "ortg": rt["ORtg"], "drtg": rt["DRtg"], "net": rt["NetRtg"],
+        "ppp": tb["PTS"] / off_poss if off_poss else 0.0,
+        "oppp": ob["PTS"] / def_poss if def_poss else 0.0,
+        "pace": (off_poss + def_poss) / 2 / gp if gp else 0.0,
+        "efg": S.efg(tb), "oefg": S.efg(ob), "ts": S.ts(tb), "ots": S.ts(ob),
+        "paint": S.paint_fg_pct(tb),
+        "tov": ff["off"]["TOV"], "ftov": ff["def"]["TOV"], "oreb": ff["off"]["ORB"],
+        "dreb": (tb["DRB"] / (tb["DRB"] + ob["ORB"])
+                 if (tb["DRB"] + ob["ORB"]) else 0.0),
+        "ftr": tb["FTA"] / tb["FGA"] if tb["FGA"] else 0.0,
+        "periods": periods,
+        "trend": TA.per_game_metrics(team_id, game_log, events=events),
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -211,10 +242,7 @@ def _gauge(value, vmin, vmax, label, suffix="", good_high=True, ref=None,
 
 st.title("Rankings")
 
-gender = st.radio(
-    "League", ["F", "M"],
-    format_func=lambda g: "Girls" if g == "F" else "Boys",
-    horizontal=True)
+gender = gender_radio()
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _score_ratings(g):
@@ -257,12 +285,13 @@ TOP5 = {tid for tid, r in scored.items() if r["Rank"] <= 5}
 TOP10 = {tid for tid, r in scored.items() if r["Rank"] <= 10}
 TOP25 = {tid for tid, r in scored.items() if r["Rank"] <= 25}
 
-# tracked advanced bundle (one cached box pass) — shared by League Lab + Stat Lab
+# tracked advanced bundle (one cached box pass) — shared by League Lab tab
 pack = _tracked_pack(gender, tracked)
 
-tab_over, tab_track, tab_chart, tab_lab, tab_stat, tab_pred, tab_gloss = st.tabs(
-    ["🏆 Overview", "🎯 Tracked", "📊 Team Charts", "🚀 League Lab",
-     "🔬 Stat Lab", "🆚 Matchup Predictor", "📖 Glossary"])
+(tab_over, tab_team, tab_cmp, tab_track, tab_chart, tab_evr,
+ tab_gloss) = st.tabs(
+    ["Overview", "Team", "Compare", "Tracked", "Team Charts",
+     "Everything", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -280,16 +309,17 @@ with tab_over:
     _best_off = max(all_rows, key=lambda r: r["PPG"])
     _best_def = min(all_rows, key=lambda r: r["oPPG"])
 
-    def _form_leader(metric, hi=True, need=None):
+    def _form_leader(metric, hi=True, need=None, pool=None):
         cand = [(t, form_stats[t]) for t in form_stats
                 if form_stats[t].get(metric) is not None
+                and (pool is None or t in pool)
                 and (need is None or need(form_stats[t]))]
         if not cand:
             return None, None
         return (max if hi else min)(cand, key=lambda c: c[1][metric])
 
     _hot_t, _hot = _form_leader("streak_len", need=lambda r: r["streak_type"] == "W")
-    _league_name = "Girls" if gender == "F" else "Boys"
+    _league_name = gender_label(gender)
     _chips = "".join(
         f"<span class='stat-chip'>{lbl} <b>{val}</b></span>"
         for lbl, val in [
@@ -343,107 +373,146 @@ with tab_over:
             t1w = g["home_score"] > g["away_score"]
             s1 = "score-winner" if t1w else "score-loser"
             s2 = "score-winner" if not t1w else "score-loser"
-            rc[i % 4].markdown(
-                f"<div class='score-card'>"
-                f"<div class='score-card-date'>{g['date']}"
-                f"{' · ●' if g['tracked'] else ''}</div>"
-                f"<div style='display:flex;justify-content:space-between'>"
-                f"<span class='score-card-team'>{g['t1']}</span>"
-                f"<span class='score-card-pts {s1}'>{g['home_score']}</span></div>"
-                f"<div style='display:flex;justify-content:space-between'>"
-                f"<span class='score-card-team'>{g['t2']}</span>"
-                f"<span class='score-card-pts {s2}'>{g['away_score']}</span></div>"
-                f"</div>", unsafe_allow_html=True)
+            rc[i % 4].markdown(score_card(
+                [(g['t1'], g['home_score'], t1w),
+                 (g['t2'], g['away_score'], not t1w)],
+                footer=f"{g['date']}{' · ●' if g['tracked'] else ''}",
+                footer_top=True), unsafe_allow_html=True)
 
-    # ── Team leaders ─────────────────────────────────────────────────────────
-    st.markdown("<div class='section-hdr'>Team leaders</div>",
-                unsafe_allow_html=True)
+    # ── Filters (drive team leaders, signature metrics & rankings table) ──────
+    st.markdown("<div class='section-hdr'>Filters</div>", unsafe_allow_html=True)
+    st.caption("Class / minimum-games filters apply to the team leaders, "
+               "signature metrics, advanced standings and the rankings table "
+               "below. The league pulse and recent results stay league-wide.")
+    _ov_classes = sorted({r["class"] for r in all_rows},
+                         key=lambda c: TR._CLASS_RANK.get(c, 99))
+    _ov_maxgp = max((r["GP"] for r in all_rows), default=1)
+    _fc1, _fc2 = st.columns([2, 1])
+    _ov_pick = _fc1.multiselect("Class", _ov_classes, default=_ov_classes,
+                                key="ov_cls")
+    _ov_mingp = (_fc2.slider("Min games played", 1, int(_ov_maxgp), 1, key="ov_gp")
+                 if _ov_maxgp > 1 else 1)
+    ov_tids = [t for t in sorted(scored, key=lambda t: scored[t]["Rank"])
+               if scored[t]["class"] in _ov_pick and scored[t]["GP"] >= _ov_mingp]
+    ov_rows = [scored[t] for t in ov_tids]
+    ov_set = set(ov_tids)
 
-    def _leader_card(col, label, key, hi=True, fmt="{:.1f}"):
-        best = max(all_rows, key=lambda r: r[key]) if hi else \
-            min(all_rows, key=lambda r: r[key])
-        col.markdown(
-            f"<div class='dash-card'><div class='dash-card-title'>{label}</div>"
-            f"<div class='dash-card-value'>{fmt.format(best[key])}</div>"
-            f"<div class='dash-card-sub'>{best['name']}</div>"
-            f"<div class='dash-card-meta'>{best['class']} · "
-            f"{best['W']}-{best['L']}</div></div>", unsafe_allow_html=True)
-
-    tl = st.columns(5)
-    _leader_card(tl[0], "Top rating", "Rating")
-    _leader_card(tl[1], "Best offense (PPG)", "PPG")
-    _leader_card(tl[2], "Best defense (PA/G)", "oPPG", hi=False)
-    _leader_card(tl[3], "Point margin", "MOV", fmt="{:+.1f}")
-    _leader_card(tl[4], "Strength of record", "SOR", fmt="{:.2f}")
-
-    # ── signature (made-up, league-relative) metric leaders ──────────────────
-    _lab_hdr("Signature metrics")
-    st.caption(
-        "New composite indices, all 0-100 with 50 = league average (+10 per std "
-        "dev). **Dominance** blends margin, win% and blowout rate. "
-        "**Consistency** rewards low game-to-game margin volatility. **Clutch** "
-        "blends record and margin in games decided by ≤5. **Momentum** is recent "
-        "(last-5) vs season form. **Luck** is wins above Pythagorean expectation.")
-
-    def _sig_tile(col, title, metric, fmt="{:.0f}", hi=True, need=None,
-                  color=CYBER, suffix=""):
-        t, r = _form_leader(metric, hi=hi, need=need)
-        if t is None:
-            col.markdown(
-                f"<div class='glass-tile'><div class='glass-label'>{title}</div>"
-                f"<div class='glass-value' style='color:{GREY}'>—</div>"
-                f"<div class='glass-sub'>no qualifier</div></div>",
-                unsafe_allow_html=True)
-            return
-        col.markdown(
-            f"<div class='glass-tile'><div class='glass-label'>{title}</div>"
-            f"<div class='glass-value' style='color:{color}'>"
-            f"{fmt.format(r[metric])}{suffix}</div>"
-            f"<div class='glass-sub'>{name_of[t]} · {class_of[t]}</div></div>",
-            unsafe_allow_html=True)
-
-    sg = st.columns(5)
-    _sig_tile(sg[0], "Most dominant", "Dominance", color=CYBER)
-    _sig_tile(sg[1], "Most consistent", "Consistency", color=GOOD)
-    _sig_tile(sg[2], "Clutch king", "Clutch", color=PURPLE)
-    _sig_tile(sg[3], "Hottest", "streak_len", fmt="W{:.0f}",
-              need=lambda r: r["streak_type"] == "W", color=GOLD)
-    _sig_tile(sg[4], "Luckiest", "Luck_wins", fmt="{:+.1f}", suffix=" W", color=BLUE)
-
-    with st.expander("📋 Advanced standings — every team, every composite"):
-        adv = []
-        for t, r in sorted(scored.items(), key=lambda kv: kv[1]["Rank"]):
-            f = form_stats.get(t, {})
-            adv.append({
-                "Rank": r["Rank"], "Team": r["name"], "Class": r["class"],
-                "W-L": f"{r['W']}-{r['L']}", "Power": r["Power"],
-                "Dominance": f.get("Dominance"), "Consistency": f.get("Consistency"),
-                "Clutch": f.get("Clutch"), "Momentum": f.get("Momentum"),
-                "MOV": round(f.get("MOV", 0), 1),
-                "Volatility": round(f.get("Volatility", 0), 1),
-                "Pyth W": round(f.get("Pyth_W", 0), 1),
-                "Luck (W)": round(f.get("Luck_wins", 0), 2),
-            })
-        adv_df = pd.DataFrame(adv)
-        st.dataframe(
-            adv_df, hide_index=True, width="stretch",
-            height=min(640, 60 + 32 * len(adv_df)),
-            column_config={
-                k: st.column_config.ProgressColumn(k, format="%.0f", min_value=0,
-                                                   max_value=100)
-                for k in ("Power", "Dominance", "Consistency", "Clutch",
-                          "Momentum")})
-        st.download_button("⬇ Advanced standings (CSV)", adv_df.to_csv(index=False),
-                           file_name=f"advanced_standings_{gender}.csv",
-                           mime="text/csv", key="dl_adv")
-
-    st.markdown("<div class='section-hdr'>Rankings table</div>",
-                unsafe_allow_html=True)
-    rows = _filter_rows(sorted(scored.values(), key=lambda r: r["Rank"]), "ov")
-    if not rows:
+    if not ov_rows:
         st.info("No teams match the current Class / games filter.")
     else:
-        df = pd.DataFrame(rows)[[
+        # ── Team leaders ─────────────────────────────────────────────────────
+        st.markdown("<div class='section-hdr'>Team leaders</div>",
+                    unsafe_allow_html=True)
+
+        def _leader_card(col, label, key, hi=True, fmt="{:.1f}"):
+            best = max(ov_rows, key=lambda r: r[key]) if hi else \
+                min(ov_rows, key=lambda r: r[key])
+            col.markdown(
+                f"<div class='dash-card'><div class='dash-card-title'>{label}</div>"
+                f"<div class='dash-card-value'>{fmt.format(best[key])}</div>"
+                f"<div class='dash-card-sub'>{best['name']}</div>"
+                f"<div class='dash-card-meta'>{best['class']} · "
+                f"{best['W']}-{best['L']}</div></div>", unsafe_allow_html=True)
+
+        tl = st.columns(5)
+        _leader_card(tl[0], "Top rating", "Rating")
+        _leader_card(tl[1], "Best offense (PPG)", "PPG")
+        _leader_card(tl[2], "Best defense (PA/G)", "oPPG", hi=False)
+        _leader_card(tl[3], "Point margin", "MOV", fmt="{:+.1f}")
+        _leader_card(tl[4], "Strength of record", "SOR", fmt="{:.2f}")
+
+        # ── signature (made-up, league-relative) metric leaders ──────────────
+        _lab_hdr("Signature metrics")
+        st.caption(
+            "New composite indices, all 0-100 with 50 = league average (+10 per std "
+            "dev). **Dominance** blends margin, win% and blowout rate. "
+            "**Consistency** rewards low game-to-game margin volatility. **Clutch** "
+            "blends record and margin in games decided by ≤5. **Momentum** is recent "
+            "(last-5) vs season form. **Luck** is wins above Pythagorean expectation.")
+
+        def _sig_tile(col, title, metric, fmt="{:.0f}", hi=True, need=None,
+                      color=CYBER, suffix=""):
+            t, r = _form_leader(metric, hi=hi, need=need, pool=ov_set)
+            if t is None:
+                col.markdown(
+                    f"<div class='glass-tile'><div class='glass-label'>{title}</div>"
+                    f"<div class='glass-value' style='color:{GREY}'>—</div>"
+                    f"<div class='glass-sub'>no qualifier</div></div>",
+                    unsafe_allow_html=True)
+                return
+            col.markdown(
+                f"<div class='glass-tile'><div class='glass-label'>{title}</div>"
+                f"<div class='glass-value' style='color:{color}'>"
+                f"{fmt.format(r[metric])}{suffix}</div>"
+                f"<div class='glass-sub'>{name_of[t]} · {class_of[t]}</div></div>",
+                unsafe_allow_html=True)
+
+        sg = st.columns(5)
+        _sig_tile(sg[0], "Most dominant", "Dominance", color=CYBER)
+        _sig_tile(sg[1], "Most consistent", "Consistency", color=GOOD)
+        _sig_tile(sg[2], "Clutch king", "Clutch", color=PURPLE)
+        _sig_tile(sg[3], "Hottest", "streak_len", fmt="W{:.0f}",
+                  need=lambda r: r["streak_type"] == "W", color=GOLD)
+        _sig_tile(sg[4], "Luckiest", "Luck_wins", fmt="{:+.1f}", suffix=" W",
+                  color=BLUE)
+
+        with st.expander("Standings — by district"):
+            _distmap = {row["id"]: (row["district"] or "")
+                        for row in query("SELECT id, district FROM teams")}
+            _grp = {}
+            for t in ov_tids:
+                r = scored[t]
+                key = _distmap.get(t) or f"Class {r['class']}"
+                _grp.setdefault(key, []).append(r)
+            for _dname in sorted(_grp):
+                _gts = sorted(_grp[_dname],
+                              key=lambda r: -(r["W"] / max(r["W"] + r["L"], 1)))
+                _lead = _gts[0]
+                _srows = []
+                for r in _gts:
+                    gb = ((_lead["W"] - r["W"]) + (r["L"] - _lead["L"])) / 2
+                    _srows.append({
+                        "Team": r["name"], "W": r["W"], "L": r["L"],
+                        "Win%": round(r["W"] / max(r["W"] + r["L"], 1) * 100, 1),
+                        "GB": "—" if gb <= 0 else f"{gb:.1f}", "Power": r["Power"]})
+                st.markdown(f"**{_dname}**")
+                st.dataframe(pd.DataFrame(_srows), hide_index=True, width="stretch")
+            st.caption("Grouped by district (set on the Setup page); teams with no "
+                       "district fall back to their class. GB = games behind leader.")
+
+        with st.expander("Advanced standings — every team, every composite"):
+            adv = []
+            for t in ov_tids:
+                r = scored[t]
+                f = form_stats.get(t, {})
+                adv.append({
+                    "Rank": r["Rank"], "Team": r["name"], "Class": r["class"],
+                    "W-L": f"{r['W']}-{r['L']}", "Power": r["Power"],
+                    "Dominance": f.get("Dominance"),
+                    "Consistency": f.get("Consistency"),
+                    "Clutch": f.get("Clutch"), "Momentum": f.get("Momentum"),
+                    "MOV": round(f.get("MOV", 0), 1),
+                    "Volatility": round(f.get("Volatility", 0), 1),
+                    "Pyth W": round(f.get("Pyth_W", 0), 1),
+                    "Luck (W)": round(f.get("Luck_wins", 0), 2),
+                })
+            adv_df = pd.DataFrame(adv)
+            st.dataframe(
+                adv_df, hide_index=True, width="stretch",
+                height=min(640, 60 + 32 * len(adv_df)),
+                column_config={
+                    k: st.column_config.ProgressColumn(k, format="%.0f", min_value=0,
+                                                       max_value=100)
+                    for k in ("Power", "Dominance", "Consistency", "Clutch",
+                              "Momentum")})
+            st.download_button("Advanced standings (CSV)",
+                               adv_df.to_csv(index=False),
+                               file_name=f"advanced_standings_{gender}.csv",
+                               mime="text/csv", key="dl_adv")
+
+        st.markdown("<div class='section-hdr'>Rankings table</div>",
+                    unsafe_allow_html=True)
+        df = pd.DataFrame(ov_rows)[[
             "Rank", "name", "class", "W", "L", "Power", "Rating",
             "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]].rename(
             columns={"name": "Team", "class": "Class"})
@@ -457,9 +526,18 @@ with tab_over:
                 "SOS": st.column_config.NumberColumn("SOS", format="%.2f"),
                 "SOR": st.column_config.NumberColumn("SOR", format="%.2f"),
             })
-        st.download_button("⬇ Rankings (CSV)", df.to_csv(index=False),
+        st.download_button("Rankings (CSV)", df.to_csv(index=False),
                            file_name=f"rankings_{gender}.csv", mime="text/csv",
                            key="dl_scored")
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 2 — TEAM  (per-team deep dive, moved out of Overview)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_team:
+    st.caption("One team, every angle — pick a team for its record, résumé "
+               "splits, composites, league percentile profile and full schedule. "
+               "Both the everything ranking and (where tracked) the possession "
+               "ranking are shown together.")
 
     # ── Team deep dive ───────────────────────────────────────────────────────
     st.markdown("<div class='section-hdr'>Team deep dive</div>",
@@ -649,6 +727,170 @@ with tab_over:
             _style(wl, 260)
             st.plotly_chart(wl, width="stretch")
 
+    # ── Tracked deep dive (possession-based, tracked games only) ─────────────
+    _lab_hdr("Tracked deep dive")
+    _deep = _team_tracked_deep(pick)
+    if not _deep:
+        st.info("No tracked games for this team yet — track a game in the Game "
+                "Tracker to unlock possession ratings, the four factors, "
+                "quarter-by-quarter PPP and win/loss patterns.")
+    else:
+        st.caption(
+            f"Possession-based over **{_deep['gp']} tracked game"
+            f"{'' if _deep['gp'] == 1 else 's'}** — a small sample, so treat as "
+            "directional. PPP = points per possession; PPG = points per game.")
+
+        kc = st.columns(6)
+        kc[0].metric("Net Rtg", f"{_deep['net']:+.1f}", help="ORtg − DRtg")
+        kc[1].metric("ORtg", f"{_deep['ortg']:.1f}", help="pts / 100 poss")
+        kc[2].metric("DRtg", f"{_deep['drtg']:.1f}", help="pts allowed / 100 poss")
+        kc[3].metric("PPP", f"{_deep['ppp']:.3f}")
+        kc[4].metric("Opp PPP", f"{_deep['oppp']:.3f}")
+        kc[5].metric("Pace", f"{_deep['pace']:.1f}", help="poss / game")
+
+        a1 = st.columns(5)
+        a1[0].metric("eFG%", f"{_deep['efg'] * 100:.1f}%")
+        a1[1].metric("Opp eFG%", f"{_deep['oefg'] * 100:.1f}%")
+        a1[2].metric("TS%", f"{_deep['ts'] * 100:.1f}%")
+        a1[3].metric("Opp TS%", f"{_deep['ots'] * 100:.1f}%")
+        a1[4].metric("Paint FG%", f"{_deep['paint'] * 100:.1f}%")
+
+        a2 = st.columns(5)
+        a2[0].metric("TOV%", f"{_deep['tov'] * 100:.1f}%")
+        a2[1].metric("Forced TOV%", f"{_deep['ftov'] * 100:.1f}%")
+        a2[2].metric("OREB%", f"{_deep['oreb'] * 100:.1f}%")
+        a2[3].metric("DREB%", f"{_deep['dreb'] * 100:.1f}%")
+        a2[4].metric("FT rate", f"{_deep['ftr']:.3f}", help="FTA / FGA")
+
+        _dt_q, _dt_wl = st.tabs(["Quarters & PPP", "Win/Loss patterns"])
+
+        with _dt_q:
+            _pr = _deep["periods"]
+            _qtbl = pd.DataFrame([{
+                "Period": p["Period"],
+                "Team PPG": f"{p['tppg']:.1f}",
+                "Opp PPG": f"{p['oppg']:.1f}",
+                "Margin": f"{p['tppg'] - p['oppg']:+.1f}",
+                "Team PPP": f"{p['tppp']:.3f}",
+                "Opp PPP": f"{p['oppp']:.3f}",
+            } for p in _pr])
+            st.dataframe(_qtbl, hide_index=True, width="stretch")
+
+            _bars = [p for p in _pr if p["Period"] != "Full Game"]
+            _lbl = [p["Period"] for p in _bars]
+            _tname = name_of.get(pick, "Team")
+            qc1, qc2 = st.columns(2)
+            with qc1:
+                f1 = go.Figure()
+                f1.add_trace(go.Bar(name=_tname, x=_lbl,
+                                    y=[p["tppp"] for p in _bars],
+                                    marker_color=ACCENT))
+                f1.add_trace(go.Bar(name="Opponent", x=_lbl,
+                                    y=[p["oppp"] for p in _bars],
+                                    marker_color=AWAY))
+                f1.update_layout(barmode="group", title="PPP by period")
+                f1.update_yaxes(title="Points / possession")
+                _style(f1, 300)
+                st.plotly_chart(f1, width="stretch")
+            with qc2:
+                f2 = go.Figure()
+                f2.add_trace(go.Bar(name=_tname, x=_lbl,
+                                    y=[p["tppg"] for p in _bars],
+                                    marker_color=ACCENT))
+                f2.add_trace(go.Bar(name="Opponent", x=_lbl,
+                                    y=[p["oppg"] for p in _bars],
+                                    marker_color=AWAY))
+                f2.update_layout(barmode="group", title="PPG by period")
+                f2.update_yaxes(title="Points / game")
+                _style(f2, 300)
+                st.plotly_chart(f2, width="stretch")
+
+            _qp = {p["Period"]: p["tppp"] for p in _pr
+                   if p["Period"] in ("Q1", "Q2", "Q3", "Q4")}
+            if _qp and max(_qp.values()) > 0:
+                _bq = max(_qp, key=_qp.get)
+                _wq = min(_qp, key=_qp.get)
+                st.info(f"Strongest quarter: **{_bq}** ({_qp[_bq]:.3f} PPP)  ·  "
+                        f"Weakest: **{_wq}** ({_qp[_wq]:.3f} PPP)")
+
+        with _dt_wl:
+            _tr = _deep["trend"]
+            if len(_tr) < 2:
+                st.info("Need at least 2 tracked games for win/loss patterns.")
+            else:
+                _w = [g for g in _tr if g["won"]]
+                _l = [g for g in _tr if not g["won"]]
+                _close = [g for g in _tr if abs(g["margin"]) <= 10]
+                _cw = sum(1 for g in _close if g["won"])
+
+                def _avg(rows, k):
+                    return sum(r[k] for r in rows) / len(rows) if rows else 0.0
+
+                _bul = []
+                if _w:
+                    _bul.append(f"In **wins** ({len(_w)}): ORtg "
+                                f"{_avg(_w, 'ORtg'):.1f}, DRtg {_avg(_w, 'DRtg'):.1f}"
+                                f", margin {_avg(_w, 'margin'):+.1f}")
+                if _l:
+                    _bul.append(f"In **losses** ({len(_l)}): ORtg "
+                                f"{_avg(_l, 'ORtg'):.1f}, DRtg {_avg(_l, 'DRtg'):.1f}"
+                                f", margin {_avg(_l, 'margin'):+.1f}")
+                if _close:
+                    _bul.append(f"Close games (≤10): **{_cw}-{len(_close) - _cw}**")
+                for b in _bul:
+                    st.markdown(f"- {b}")
+
+                wc1, wc2 = st.columns(2)
+                with wc1:
+                    _rows, _oo, _dd = [], [], []
+                    for tag, grp in [("Wins", _w), ("Losses", _l)]:
+                        if grp:
+                            _rows.append(tag)
+                            _oo.append(_avg(grp, "ORtg"))
+                            _dd.append(_avg(grp, "DRtg"))
+                    if _rows:
+                        fwl = go.Figure()
+                        fwl.add_trace(go.Bar(name="ORtg", x=_rows, y=_oo,
+                                             marker_color=ACCENT))
+                        fwl.add_trace(go.Bar(name="DRtg", x=_rows, y=_dd,
+                                             marker_color=AWAY))
+                        fwl.update_layout(barmode="group",
+                                          title="Avg ratings: wins vs losses")
+                        _style(fwl, 300)
+                        st.plotly_chart(fwl, width="stretch")
+                with wc2:
+                    fom = go.Figure()
+                    for tag, grp, clr in [("W", _w, GOOD), ("L", _l, BAD)]:
+                        fom.add_trace(go.Scatter(
+                            x=[g["ORtg"] for g in grp],
+                            y=[g["margin"] for g in grp], mode="markers", name=tag,
+                            marker=dict(color=clr, size=9),
+                            text=[g["opp"] for g in grp],
+                            hovertemplate="%{text}<br>ORtg %{x:.1f}"
+                                          "<br>Margin %{y:+d}<extra></extra>"))
+                    fom.update_layout(title="ORtg vs margin")
+                    fom.update_xaxes(title="ORtg")
+                    fom.update_yaxes(title="Margin")
+                    _style(fom, 300)
+                    st.plotly_chart(fom, width="stretch")
+
+                fdm = go.Figure()
+                for tag, grp, clr in [("W", _w, GOOD), ("L", _l, BAD)]:
+                    fdm.add_trace(go.Scatter(
+                        x=[g["DRtg"] for g in grp],
+                        y=[g["margin"] for g in grp], mode="markers", name=tag,
+                        marker=dict(color=clr, size=9),
+                        text=[g["opp"] for g in grp],
+                        hovertemplate="%{text}<br>DRtg %{x:.1f}"
+                                      "<br>Margin %{y:+d}<extra></extra>"))
+                fdm.update_layout(
+                    title="DRtg vs margin (lower DRtg = better defense)")
+                fdm.update_xaxes(title="DRtg")
+                fdm.update_yaxes(title="Margin")
+                _style(fdm, 300)
+                st.plotly_chart(fdm, width="stretch")
+
+with tab_over:
     # ── Hot & cold (current streaks across the league) ───────────────────────
     streaks = []
     for tid in scored:
@@ -664,7 +906,7 @@ with tab_over:
                       key=lambda x: -x[2])[:5]
         hc1, hc2 = st.columns(2)
         with hc1:
-            st.markdown("🔥 **Win streaks**")
+            st.markdown("**Win streaks**")
             for tid, _, n in hot:
                 st.markdown(
                     f"**{name_of[tid]}** `{class_of[tid]}`  "
@@ -672,7 +914,7 @@ with tab_over:
                     f"({scored[tid]['W']}-{scored[tid]['L']})",
                     unsafe_allow_html=True)
         with hc2:
-            st.markdown("🧊 **Losing streaks**")
+            st.markdown("**Losing streaks**")
             for tid, _, n in cold:
                 st.markdown(
                     f"**{name_of[tid]}** `{class_of[tid]}`  "
@@ -682,9 +924,10 @@ with tab_over:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 2 — TRACKED  (possession-based, advanced)
+#  TAB 3 — TRACKED  (possession-based, advanced)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_track:
+@st.fragment
+def _fx_track():
     if not tracked:
         st.info("No tracked games for this league yet. Track a game in the Game "
                 "Tracker and its advanced ratings appear here.")
@@ -701,22 +944,36 @@ with tab_track:
             st.info("No teams match the current Class / games filter.")
         else:
             df = pd.DataFrame(rows)[[
-                "Rank", "name", "class", "GP", "Power", "NetRtg",
-                "ORtg", "DRtg", "Pace", "eFG", "FGpct", "TPpct", "SOS"]].rename(
-                columns={"name": "Team", "class": "Class"})
+                "Rank", "name", "class", "GP", "Power", "Rating", "RatingPts",
+                "NetRtg", "ORtg", "DRtg", "PPP", "oPPP", "Pace",
+                "eFG", "oeFG", "FGpct", "oFGpct", "TPpct", "SOS", "SOR",
+                "ClassAdj"]].rename(columns={"name": "Team", "class": "Class"})
             st.dataframe(
                 df, hide_index=True, width="stretch",
                 height=min(640, 60 + 35 * len(df)),
                 column_config={
                     "Power": st.column_config.ProgressColumn(
                         "Power", format="%.1f", min_value=0, max_value=100),
+                    "Rating": st.column_config.NumberColumn("Rating", format="%.2f"),
+                    "RatingPts": st.column_config.NumberColumn(
+                        "Rating (pts)", format="%.2f"),
                     "NetRtg": st.column_config.NumberColumn("NetRtg", format="%.1f"),
+                    "ORtg": st.column_config.NumberColumn("ORtg", format="%.1f"),
+                    "DRtg": st.column_config.NumberColumn("DRtg", format="%.1f"),
+                    "PPP": st.column_config.NumberColumn("PPP", format="%.3f"),
+                    "oPPP": st.column_config.NumberColumn("Opp PPP", format="%.3f"),
+                    "Pace": st.column_config.NumberColumn("Pace", format="%.1f"),
                     "eFG": st.column_config.NumberColumn("eFG%", format="%.3f"),
+                    "oeFG": st.column_config.NumberColumn("Opp eFG%", format="%.3f"),
                     "FGpct": st.column_config.NumberColumn("FG%", format="%.3f"),
+                    "oFGpct": st.column_config.NumberColumn("Opp FG%", format="%.3f"),
                     "TPpct": st.column_config.NumberColumn("3P%", format="%.3f"),
                     "SOS": st.column_config.NumberColumn("SOS", format="%.2f"),
+                    "SOR": st.column_config.NumberColumn("SOR", format="%.2f"),
+                    "ClassAdj": st.column_config.NumberColumn(
+                        "ClassAdj", format="%.2f"),
                 })
-            st.download_button("⬇ Tracked ratings (CSV)", df.to_csv(index=False),
+            st.download_button("Tracked ratings (CSV)", df.to_csv(index=False),
                                file_name=f"tracked_ratings_{gender}.csv",
                                mime="text/csv", key="dl_tracked")
 
@@ -742,27 +999,41 @@ with tab_track:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 3 — TEAM CHARTS  (tracked-event driven, cross-team)
+#  TAB 5 — TEAM CHARTS  (tracked-event driven, cross-team) + STAT LAB explorer
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_chart:
+with tab_track:
+    _fx_track()
+
+
+@st.fragment
+def _fx_chart():
     if not tracked:
         st.info("Team charts are built from tracked-game events — none yet for "
                 "this league.")
     else:
         st.caption("How teams score, how they win, and who can shoot — across all "
                    "tracked games in this league. Built from per-game team boxes, "
-                   "so defensive splits (opp eFG%, ORB%) are included.")
+                   "so defensive splits (opp eFG%, ORB%) are included. Use the "
+                   "team filter to take teams out of every graph below.")
 
         # per-team advanced bundle — the single shared box pass from
         # helpers/league_analytics.team_tracked_pack (computed once, cached, and
-        # reused by League Lab + Stat Lab). `ts[t]` carries the same derived keys
-        # this tab used inline, plus extras; 3P% is "TPpct".
-        teams = pack["teams"]
+        # reused by the Everything tab). `ts[t]` carries the
+        # derived keys this tab used inline, plus extras; 3P% is "TPpct".
+        all_teams = pack["teams"]
         own, opp, gp, ts = pack["own"], pack["opp"], pack["gp"], pack["ts"]
         qfor, qagn, tqbox = pack["qfor"], pack["qagn"], pack["tqbox"]
-        labels = [name_of.get(t, str(t)) for t in teams]
 
-        def _hbar(metric, title, axis, pct=False, asc=False, n=2):
+        # ── team filter — drives every chart on this tab ─────────────────────
+        _csel = st.multiselect(
+            "Teams to show", all_teams, default=all_teams,
+            format_func=lambda t: name_of.get(t, str(t)), key="chart_team_filter")
+        teams = [t for t in all_teams if t in set(_csel)] or all_teams
+        labels = [name_of.get(t, str(t)) for t in teams]
+        if len(teams) < len(all_teams):
+            st.caption(f"Showing {len(teams)} of {len(all_teams)} tracked teams.")
+
+        def _hbar(metric, title, axis, pct=False, asc=False, n=2, key=None):
             """Sorted horizontal bar of one team metric."""
             srt = sorted(teams, key=lambda t: ts[t][metric], reverse=not asc)
             vals = [ts[t][metric] for t in srt]
@@ -771,11 +1042,50 @@ with tab_chart:
             fig = go.Figure(go.Bar(
                 y=slab, x=vals, orientation="h", marker_color=ACCENT,
                 text=vals, texttemplate=fmt, textposition="auto",
-                marker_line_width=0))
+                marker_line_width=0,
+                hovertemplate="<b>%{y}</b><br>" + axis + ": %{x}<extra></extra>"))
             fig.update_xaxes(title=axis)
             _style(fig, max(320, 26 * len(srt)))
             st.markdown(f"**{title}**")
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, width="stretch", key=key)
+
+        # ════════════════ EVERY HEADLINE STAT — SORTED BARS ════════════════
+        st.markdown("<div class='section-hdr'>Every headline team stat</div>",
+                    unsafe_allow_html=True)
+        st.caption("Each headline team stat as a sorted bar — one bar per team, "
+                   "respecting the team filter. Four Factors, shooting, efficiency "
+                   "and the core box rates; the full stat set lives in the Stat "
+                   "Lab explorer further down.")
+        _gallery = [
+            ("eFG", "Effective FG%", "eFG%", True, False, 1),
+            ("oeFG", "Opponent eFG% (lower better)", "Opp eFG%", True, True, 1),
+            ("TS", "True shooting %", "TS%", True, False, 1),
+            ("FGpct", "Field-goal %", "FG%", True, False, 1),
+            ("TPpct", "Three-point %", "3P%", True, False, 1),
+            ("FTpct", "Free-throw %", "FT%", True, False, 1),
+            ("TPAr", "Three-point attempt rate", "3PA/FGA %", True, False, 1),
+            ("FTr", "Free-throw rate", "FTA / FGA", False, False, 2),
+            ("ORtg", "Offensive rating", "ORtg", False, False, 1),
+            ("DRtg", "Defensive rating (lower better)", "DRtg", False, True, 1),
+            ("NetRtg", "Net rating", "Net", False, False, 1),
+            ("Pace", "Pace — possessions / game", "Poss/g", False, False, 1),
+            ("PPP", "Points per possession", "PPP", False, False, 3),
+            ("oPPP", "Opp points per possession (lower better)", "Opp PPP",
+             False, True, 3),
+            ("ORBpct", "Offensive-rebound %", "ORB%", True, False, 1),
+            ("DRBpct", "Defensive-rebound %", "DRB%", True, False, 1),
+            ("Astpct", "Assisted % of made FGs", "AST%", True, False, 1),
+            ("TOVpct", "Turnover % (lower better)", "TOV%", True, True, 1),
+            ("ast_pg", "Assists / game", "AST/g", False, False, 1),
+            ("tov_pg", "Turnovers / game (lower better)", "TOV/g", False, True, 1),
+            ("stl_pg", "Steals / game", "STL/g", False, False, 1),
+            ("blk_pg", "Blocks / game", "BLK/g", False, False, 1),
+        ]
+        _gcols = st.columns(2)
+        for _i, (_mk, _ti, _ax, _pc, _as, _nn) in enumerate(_gallery):
+            if all(_mk in ts[t] for t in teams):
+                with _gcols[_i % 2]:
+                    _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn, key=f"gal_{_mk}")
 
         # ════════════════ SCORING ════════════════
         st.markdown("<div class='section-hdr'>Scoring</div>",
@@ -1070,81 +1380,29 @@ with tab_chart:
         st.caption("Quarter PPP uses each team's per-quarter box "
                    "(FGA + TOV possessions — shots + turnovers).")
 
-        # ════════════════ TEAM COMPARISON RADAR ════════════════
-        st.markdown("<div class='section-hdr'>Team comparison radar</div>",
-                    unsafe_allow_html=True)
-        st.caption("Pick 2–5 teams. Each axis is normalized across the shown "
-                   "teams (100 = best); defensive/turnover axes are inverted so "
-                   "outward is always better.")
-        radar_cfg = [("ORtg", "Offense", True), ("DRtg", "Defense", False),
-                     ("TS", "Shooting", True), ("ORBpct", "Off. reb", True),
-                     ("TOVpct", "Ball security", False), ("Pace", "Pace", True),
-                     ("stl_r", "Steals", True), ("blk_r", "Blocks", True)]
-        sel = st.multiselect(
-            "Teams", teams, default=teams[:min(3, len(teams))],
-            format_func=lambda t: name_of.get(t, str(t)), max_selections=5,
-            key="chart_radar")
-        if len(sel) >= 2:
-            cats = [lbl for _, lbl, _ in radar_cfg]
-            keys_r = [k for k, _, _ in radar_cfg]
-            hibs = [h for _, _, h in radar_cfg]
-            # normalize each metric across the SELECTED pool
-            norm = {}
-            for k, hib in zip(keys_r, hibs):
-                vals = [ts[t][k] for t in sel]
-                lo, hi = min(vals), max(vals)
-                d = {}
-                for t in sel:
-                    if hi == lo:
-                        d[t] = 50.0
-                    else:
-                        frac = (ts[t][k] - lo) / (hi - lo)
-                        d[t] = (frac if hib else 1 - frac) * 100
-                norm[k] = d
-            palette = ["#f0a500", "#58a6ff", "#2ecc71", "#e74c3c", "#9b59b6"]
-            rfig = go.Figure()
-            for i, t in enumerate(sel):
-                clr = palette[i % len(palette)]
-                rr, gg, bb = _rgb(clr)
-                vals = [norm[k][t] for k in keys_r]
-                hover = "<br>".join(f"{lbl}: {ts[t][k]:.1f}"
-                                    for k, lbl, _ in radar_cfg)
-                rfig.add_trace(go.Scatterpolar(
-                    r=vals + [vals[0]], theta=cats + [cats[0]], fill="toself",
-                    name=name_of.get(t, str(t)), line=dict(color=clr, width=2),
-                    fillcolor=f"rgba({rr},{gg},{bb},0.15)",
-                    hovertemplate=f"<b>{name_of.get(t, str(t))}</b><br>"
-                                  f"{hover}<extra></extra>"))
-            rfig.update_layout(
-                template="plotly_dark", height=480,
-                paper_bgcolor="rgba(0,0,0,0)",
-                polar=dict(bgcolor=CARD_BG,
-                           radialaxis=dict(range=[0, 100], showticklabels=False,
-                                           gridcolor=GRID),
-                           angularaxis=dict(gridcolor=GRID)),
-                legend=dict(orientation="h", y=-0.08, x=0),
-                margin=dict(l=60, r=60, t=30, b=60))
-            st.plotly_chart(rfig, width="stretch")
-        else:
-            st.info("Select at least two teams to draw the radar.")
-
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 4 — LEAGUE LAB  (futuristic, league-wide analytics)
+#  TAB 5 — EVERYTHING  (whole-league analytics + matchup predictor)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_lab:
+with tab_chart:
+    _fx_chart()
+
+
+@st.fragment
+def _fx_evr():
     st.caption(
-        "The whole field at a glance. **Results-only** views (landscape, tiers, "
-        "Pythagoras, momentum, network) cover every team; the tracked KenPom map, "
-        "gauges and DNA radar use possession data.")
+        "The whole field at a glance — the league-wide companion to the Tracked "
+        "tab. **Results-only** views (landscape, tiers, Pythagoras, momentum, "
+        "network) cover every team; the tracked KenPom map uses possession data. "
+        "Matchup predictions and simulations now live on the War Room page.")
 
     ts = pack["ts"]
     pteams = pack["teams"]
     sv = list(scored.values())
 
     lab_land, lab_tier, lab_pyth, lab_mo, lab_net = st.tabs(
-        ["🌌 Landscape", "🏅 Power tiers", "🎲 Pythagoras & luck",
-         "📈 Momentum", "🕸 Win network"])
+        ["Landscape", "Power tiers", "Pythagoras & luck",
+         "Momentum", "Win network"])
 
     # ──────────────────────────────────────────────────────────────────────
     #  LANDSCAPE
@@ -1201,63 +1459,10 @@ with tab_lab:
                             autorange="reversed")
             _style(kp, 460)
             st.plotly_chart(kp, width="stretch", key="lab_kenpom")
-
-            _lab_hdr("Team spotlight — gauges & DNA")
-            spot = st.selectbox(
-                "Spotlight team", pteams,
-                format_func=lambda t: f"#{tracked[t]['Rank']} {name_of[t]}",
-                key="lab_spot")
-            allO = [ts[t]["ORtg"] for t in pteams]
-            allD = [ts[t]["DRtg"] for t in pteams]
-            allP = [ts[t]["Pace"] for t in pteams]
-            allE = [ts[t]["eFG"] for t in pteams]
-            gc = st.columns(4)
-            gc[0].plotly_chart(_gauge(
-                ts[spot]["ORtg"], min(allO), max(allO), "Off rating",
-                ref=sum(allO) / len(allO)), width="stretch", key="lab_g_o")
-            gc[1].plotly_chart(_gauge(
-                ts[spot]["DRtg"], min(allD), max(allD), "Def rating",
-                good_high=False, ref=sum(allD) / len(allD)),
-                width="stretch", key="lab_g_d")
-            gc[2].plotly_chart(_gauge(
-                ts[spot]["Pace"], min(allP), max(allP), "Pace",
-                ref=sum(allP) / len(allP)), width="stretch", key="lab_g_p")
-            gc[3].plotly_chart(_gauge(
-                ts[spot]["eFG"], min(allE), max(allE), "eFG%", suffix="%",
-                ref=sum(allE) / len(allE)), width="stretch", key="lab_g_e")
-
-            dna_cfg = [("ORtg", "Offense", True), ("DRtg", "Defense", False),
-                       ("eFG", "Shooting", True), ("ORBpct", "Off reb", True),
-                       ("DRBpct", "Def reb", True), ("ast_to", "Ball control", True),
-                       ("stl_r", "Steals", True), ("blk_r", "Blocks", True)]
-            cats, rvals, hov = [], [], []
-            for k, lab, hib in dna_cfg:
-                pool = [ts[t][k] for t in pteams]
-                pct = LA.percentile(ts[spot][k], pool, higher_better=hib)
-                cats.append(lab)
-                rvals.append(pct if pct is not None else 0)
-                hov.append(f"{lab}: {ts[spot][k]:.1f} ({pct:.0f}th)")
-            rr, gg, bb = _rgb(ACCENT)
-            dna = go.Figure(go.Scatterpolar(
-                r=rvals + [rvals[0]], theta=cats + [cats[0]], fill="toself",
-                line=dict(color=ACCENT, width=2),
-                fillcolor=f"rgba({rr},{gg},{bb},0.18)",
-                text=hov + [hov[0]],
-                hovertemplate="%{text}<extra></extra>"))
-            dna.update_layout(
-                template="plotly_dark", height=420,
-                paper_bgcolor="rgba(0,0,0,0)",
-                polar=dict(bgcolor=CARD_BG,
-                           radialaxis=dict(range=[0, 100], showticklabels=False,
-                                           gridcolor=GRID),
-                           angularaxis=dict(gridcolor=GRID)),
-                margin=dict(l=60, r=60, t=30, b=30), showlegend=False)
-            st.markdown(f"**{name_of[spot]} — Team DNA** (league percentile, "
-                        f"outward = better)")
-            st.plotly_chart(dna, width="stretch", key="lab_dna")
+            st.caption("For a single team's gauges and Team-DNA radar, open that "
+                       "team in **Team Analytics → Advanced → Efficiency & DNA**.")
         else:
-            st.info("Track games to unlock the possession-based KenPom map, "
-                    "gauges and DNA radar.")
+            st.info("Track games to unlock the possession-based KenPom map.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  POWER TIERS
@@ -1299,11 +1504,15 @@ with tab_lab:
                              key=lambda c: TR._CLASS_RANK.get(c, 99))
             vio = go.Figure()
             for c in classes:
-                vals = [s["Power"] for s in sv if s["class"] == c]
+                sub = [s for s in sv if s["class"] == c]
+                vals = [s["Power"] for s in sub]
+                nms = [s["name"] for s in sub]
                 vio.add_trace(go.Violin(
                     y=vals, name=c, box_visible=True, meanline_visible=True,
                     points="all", marker=dict(size=3), line=dict(width=1),
-                    fillcolor="rgba(88,166,255,0.10)"))
+                    fillcolor="rgba(88,166,255,0.10)", text=nms,
+                    hovertemplate="<b>%{text}</b><br>" + c +
+                                  " · Power %{y:.1f}<extra></extra>"))
             vio.update_yaxes(title="Power")
             vio.update_layout(showlegend=False)
             _style(vio, 420)
@@ -1398,7 +1607,7 @@ with tab_lab:
         c1, c2 = st.columns(2)
         ranked = sorted(fids, key=lambda t: form_stats[t]["Luck_wins"])
         with c1:
-            st.markdown("🍀 **Luckiest** — most wins above expectation")
+            st.markdown("**Luckiest** — most wins above expectation")
             top = list(reversed(ranked[-10:]))
             lf = go.Figure(go.Bar(
                 y=[name_of.get(t, str(t)) for t in top][::-1],
@@ -1410,7 +1619,7 @@ with tab_lab:
             _style(lf, 360)
             st.plotly_chart(lf, width="stretch", key="lab_lucky")
         with c2:
-            st.markdown("💀 **Unluckiest** — most wins below expectation")
+            st.markdown("**Unluckiest** — most wins below expectation")
             bot = ranked[:10]
             uf = go.Figure(go.Bar(
                 y=[name_of.get(t, str(t)) for t in bot][::-1],
@@ -1566,590 +1775,89 @@ with tab_lab:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 5 — STAT LAB  (configurable, hyper-dense stat exploration)
+#  TAB 6 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_stat:
-    st.caption("Every tracked and derived stat, cross-team. Build your own views: "
-               "a z-score heatmap, correlations, a free scatter explorer, parallel "
-               "coordinates, a scatter matrix, per-team percentile profiles, and "
-               "the full data matrix.")
-
-    ts = pack["ts"]
-    pteams = pack["teams"]
-
-    # ── stat catalog (label, higher_better, format) by group ─────────────────
-    RESULT_GROUPS = [
-        ("Power & résumé", [
-            ("Power", "Power", True, "{:.1f}"), ("Rating", "Rating", True, "{:.2f}"),
-            ("MOV", "Margin/g", True, "{:+.1f}"), ("AdjNet", "Adj net", True, "{:.2f}"),
-            ("SOS", "SOS", True, "{:.2f}"), ("SOR", "SOR", True, "{:.2f}"),
-            ("Dominance", "Dominance", True, "{:.0f}"),
-            ("Consistency", "Consistency", True, "{:.0f}"),
-            ("Clutch", "Clutch", True, "{:.0f}"),
-            ("Momentum", "Momentum", True, "{:.0f}"),
-            ("Volatility", "Volatility", False, "{:.1f}"),
-            ("Luck", "Luck (W)", True, "{:+.1f}"),
-            ("PythW", "Pythag W", True, "{:.1f}")]),
-        ("Scoring", [
-            ("PPG", "PPG", True, "{:.1f}"), ("oPPG", "Opp PPG", False, "{:.1f}"),
-            ("xPPG", "Adj O", True, "{:.1f}"), ("xoPPG", "Adj D", False, "{:.1f}")]),
-    ]
-    TRACK_GROUPS = [
-        ("Efficiency", [
-            ("ORtg", "Off rtg", True, "{:.1f}"), ("DRtg", "Def rtg", False, "{:.1f}"),
-            ("NetRtg", "Net rtg", True, "{:+.1f}"), ("Pace", "Pace", True, "{:.1f}"),
-            ("PPP", "PPP", True, "{:.2f}"), ("oPPP", "Opp PPP", False, "{:.2f}"),
-            ("PPS", "Pts/shot", True, "{:.2f}"), ("SCE", "Scoring eff", True, "{:.3f}")]),
-        ("Shooting", [
-            ("eFG", "eFG%", True, "{:.1f}"), ("oeFG", "Opp eFG%", False, "{:.1f}"),
-            ("TS", "TS%", True, "{:.1f}"), ("FGpct", "FG%", True, "{:.1f}"),
-            ("oFGpct", "Opp FG%", False, "{:.1f}"), ("TPpct", "3P%", True, "{:.1f}"),
-            ("oTPpct", "Opp 3P%", False, "{:.1f}"), ("FTpct", "FT%", True, "{:.1f}"),
-            ("TPAr", "3PA rate", True, "{:.1f}"), ("FTr", "FT rate", True, "{:.2f}")]),
-        ("Rebounding", [
-            ("ORBpct", "OREB%", True, "{:.1f}"), ("DRBpct", "DREB%", True, "{:.1f}"),
-            ("REBpct", "REB%", True, "{:.1f}"), ("oreb_pg", "OREB/g", True, "{:.1f}"),
-            ("dreb_pg", "DREB/g", True, "{:.1f}"), ("reb_pg", "REB/g", True, "{:.1f}")]),
-        ("Ball control & defense", [
-            ("ast_pg", "AST/g", True, "{:.1f}"), ("tov_pg", "TOV/g", False, "{:.1f}"),
-            ("ast_to", "AST/TO", True, "{:.2f}"), ("Astpct", "AST%", True, "{:.1f}"),
-            ("TOVpct", "TOV%", False, "{:.1f}"), ("stl_pg", "STL/g", True, "{:.1f}"),
-            ("blk_pg", "BLK/g", True, "{:.1f}"),
-            ("stocks_pg", "Stocks/g", True, "{:.1f}"),
-            ("stl_r", "STL/100", True, "{:.1f}"), ("blk_r", "BLK/100", True, "{:.1f}"),
-            ("pf_pg", "Fouls/g", False, "{:.1f}")]),
-        ("Style & volume", [
-            ("paint_pg", "Paint pts/g", True, "{:.1f}"),
-            ("paint_share", "Paint %", True, "{:.1f}"),
-            ("three_share", "3PT %", True, "{:.1f}"),
-            ("ft_share", "FT %", True, "{:.1f}"), ("fga_pg", "FGA/g", True, "{:.1f}"),
-            ("tpa_pg", "3PA/g", True, "{:.1f}"), ("poss_pg", "Poss/g", True, "{:.1f}")]),
-    ]
-    PCT100 = {"Power", "Dominance", "Consistency", "Clutch", "Momentum"}
-    META = {k: (lbl, hib, fmt) for grp in RESULT_GROUPS + TRACK_GROUPS
-            for k, lbl, hib, fmt in grp[1]}
-
-    # ── per-team matrix (results-only + tracked) ─────────────────────────────
-    matrix = {}
-    for t, s in scored.items():
-        f = form_stats.get(t, {})
-        d = {"name": s["name"], "class": s["class"], "rank": s["Rank"],
-             "Power": s["Power"], "Rating": s["Rating"], "GP": s["GP"],
-             "PPG": s["PPG"], "oPPG": s["oPPG"], "MOV": s["MOV"],
-             "xPPG": s["xPPG"], "xoPPG": s["xoPPG"], "AdjNet": s["AdjNet"],
-             "SOS": s["SOS"], "SOR": s["SOR"],
-             "Dominance": f.get("Dominance"), "Consistency": f.get("Consistency"),
-             "Clutch": f.get("Clutch"), "Momentum": f.get("Momentum"),
-             "Volatility": f.get("Volatility"), "PythW": f.get("Pyth_W"),
-             "Luck": f.get("Luck_wins")}
-        tt = ts.get(t)
-        for k in META:
-            if k not in d:
-                d[k] = tt.get(k) if tt else None
-        matrix[t] = d
-
-    def _plane(plane):
-        """(groups, tids) for the chosen data plane."""
-        if plane.startswith("Tracked") and pteams:
-            return RESULT_GROUPS + TRACK_GROUPS, list(pteams)
-        return RESULT_GROUPS, sorted(scored, key=lambda t: scored[t]["Rank"])
-
-    def _flat(groups):
-        return [(k, lbl, hib, fmt) for _, items in groups
-                for k, lbl, hib, fmt in items]
-
-    plane_opts = (["Tracked (deep stats)", "Results (all teams)"] if pteams
-                  else ["Results (all teams)"])
-
-    sl_heat, sl_corr, sl_scatter, sl_par, sl_prof, sl_table = st.tabs(
-        ["🔥 Z-score heatmap", "🔗 Correlations", "🎛 Scatter explorer",
-         "📐 Parallel / matrix", "🧬 Team profile", "🗃 Data matrix"])
-
-    # ──────────────────────────────────────────────────────────────────────
-    #  Z-SCORE HEATMAP
-    # ──────────────────────────────────────────────────────────────────────
-    with sl_heat:
-        _lab_hdr("Z-score heatmap — teams × stats")
-        st.caption("Each cell is standard deviations from the league mean, "
-                   "oriented so green = good / red = bad (defensive & turnover "
-                   "stats auto-flipped). The densest single view of the league.")
-        plane = st.radio("Data plane", plane_opts, horizontal=True, key="heat_plane")
-        groups, tids = _plane(plane)
-        flat = _flat(groups)
-        default_keys = [k for k, *_ in flat][:14]
-        sel = st.multiselect(
-            "Stats (columns)", [k for k, *_ in flat],
-            default=default_keys,
-            format_func=lambda k: META[k][0], key="heat_stats")
-        maxn = len(tids)
-        topn = st.slider("Teams (rows, by rank)", 5, maxn, min(24, maxn),
-                         key="heat_n") if maxn > 5 else maxn
-        tids_show = tids[:topn]
-        if not sel or len(tids_show) < 2:
-            st.info("Pick at least one stat and two teams.")
-        else:
-            stat_stats = {}
-            for k in sel:
-                vals = [matrix[t][k] for t in tids_show if matrix[t][k] is not None]
-                stat_stats[k] = (float(np.mean(vals)), float(np.std(vals))) \
-                    if len(vals) >= 2 else None
-            z, hov = [], []
-            for t in tids_show:
-                zr, hr = [], []
-                for k in sel:
-                    v = matrix[t][k]
-                    ms = stat_stats[k]
-                    if v is None or ms is None or ms[1] == 0:
-                        zr.append(None)
-                        hr.append("—")
-                    else:
-                        zz = (v - ms[0]) / ms[1]
-                        if not META[k][1]:
-                            zz = -zz
-                        zr.append(round(zz, 2))
-                        hr.append(META[k][2].format(v))
-                z.append(zr)
-                hov.append(hr)
-            heat = go.Figure(go.Heatmap(
-                z=z, x=[META[k][0] for k in sel],
-                y=[matrix[t]["name"] for t in tids_show],
-                customdata=hov, colorscale="RdYlGn", zmid=0, zmin=-2.5, zmax=2.5,
-                colorbar=dict(title="z", thickness=12),
-                hovertemplate="<b>%{y}</b><br>%{x}: %{customdata} "
-                              "(z %{z})<extra></extra>"))
-            heat.update_layout(
-                template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                height=max(360, 22 * len(tids_show) + 120),
-                margin=dict(l=8, r=8, t=10, b=40),
-                xaxis=dict(side="top", tickangle=-40, tickfont=dict(size=10)),
-                yaxis=dict(autorange="reversed", tickfont=dict(size=10)))
-            st.plotly_chart(heat, width="stretch", key="stat_heat")
-
-    # ──────────────────────────────────────────────────────────────────────
-    #  CORRELATIONS
-    # ──────────────────────────────────────────────────────────────────────
-    with sl_corr:
-        _lab_hdr("Stat correlation matrix")
-        st.caption("Pearson correlation between stats across teams — what tends to "
-                   "travel together. Pick a focused set for a readable grid.")
-        plane = st.radio("Data plane", plane_opts, horizontal=True, key="corr_plane")
-        groups, tids = _plane(plane)
-        flat = _flat(groups)
-        sel = st.multiselect(
-            "Stats", [k for k, *_ in flat],
-            default=[k for k, *_ in flat][:10],
-            format_func=lambda k: META[k][0], key="corr_stats")
-        if len(sel) < 2:
-            st.info("Pick at least two stats.")
-        else:
-            data = []
-            for t in tids:
-                row = [matrix[t][k] for k in sel]
-                if all(v is not None for v in row):
-                    data.append(row)
-            arr = np.array(data, dtype=float)
-            if arr.shape[0] < 3:
-                st.info("Not enough teams with all of these stats to correlate.")
-            else:
-                corr = np.corrcoef(arr, rowvar=False)
-                labels = [META[k][0] for k in sel]
-                cfig = go.Figure(go.Heatmap(
-                    z=corr, x=labels, y=labels, colorscale="RdBu", zmid=0,
-                    zmin=-1, zmax=1, colorbar=dict(title="r", thickness=12),
-                    text=[[f"{v:.2f}" for v in r] for r in corr],
-                    texttemplate="%{text}", textfont=dict(size=9),
-                    hovertemplate="%{y} × %{x}: r %{z:.2f}<extra></extra>"))
-                cfig.update_layout(
-                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                    height=max(380, 30 * len(sel) + 140),
-                    margin=dict(l=8, r=8, t=10, b=10),
-                    xaxis=dict(tickangle=-40, tickfont=dict(size=10)),
-                    yaxis=dict(autorange="reversed", tickfont=dict(size=10)))
-                st.plotly_chart(cfig, width="stretch", key="stat_corr")
-                st.caption(f"Across {arr.shape[0]} teams in the "
-                           f"{plane.split(' ')[0].lower()} plane.")
-
-    # ──────────────────────────────────────────────────────────────────────
-    #  SCATTER EXPLORER
-    # ──────────────────────────────────────────────────────────────────────
-    with sl_scatter:
-        _lab_hdr("Scatter explorer — plot any stat against any other")
-        plane = st.radio("Data plane", plane_opts, horizontal=True, key="sc_plane")
-        groups, tids = _plane(plane)
-        flat = _flat(groups)
-        keys = [k for k, *_ in flat]
-        c = st.columns(4)
-        xk = c[0].selectbox("X axis", keys, index=0,
-                            format_func=lambda k: META[k][0], key="sc_x")
-        yk = c[1].selectbox("Y axis", keys,
-                            index=min(2, len(keys) - 1),
-                            format_func=lambda k: META[k][0], key="sc_y")
-        size_opts = ["(uniform)"] + keys
-        sk = c[2].selectbox("Bubble size", size_opts,
-                            format_func=lambda k: k if k == "(uniform)"
-                            else META[k][0], key="sc_size")
-        ck = c[3].selectbox("Color", size_opts, index=0,
-                            format_func=lambda k: "Power" if k == "(uniform)"
-                            else META[k][0], key="sc_color")
-        pts = [t for t in tids if matrix[t][xk] is not None
-               and matrix[t][yk] is not None]
-        if len(pts) < 2:
-            st.info("Not enough teams with both stats.")
-        else:
-            xs = [matrix[t][xk] for t in pts]
-            ys = [matrix[t][yk] for t in pts]
-            if sk == "(uniform)":
-                sizes = [12] * len(pts)
-            else:
-                sv2 = [matrix[t][sk] for t in pts]
-                lo, hi = min(sv2), max(sv2)
-                sizes = [10 + 26 * ((v - lo) / (hi - lo) if hi > lo else 0.5)
-                         for v in sv2]
-            colvals = [matrix[t]["Power"] if ck == "(uniform)"
-                       else matrix[t][ck] for t in pts]
-            cbar_title = "Power" if ck == "(uniform)" else META[ck][0]
-            scx = go.Figure(go.Scatter(
-                x=xs, y=ys, mode="markers+text",
-                text=[matrix[t]["name"] for t in pts],
-                textposition="top center", textfont=dict(size=8),
-                marker=dict(size=sizes, color=colvals, colorscale="Turbo",
-                            showscale=True,
-                            colorbar=dict(title=cbar_title, thickness=12),
-                            line=dict(width=0.5, color="#0d1117")),
-                hovertemplate="<b>%{text}</b><br>" + META[xk][0] +
-                              " %{x}<br>" + META[yk][0] + " %{y}<extra></extra>"))
-            scx.add_vline(x=float(np.mean(xs)), line=dict(color="#30363d", dash="dot"))
-            scx.add_hline(y=float(np.mean(ys)), line=dict(color="#30363d", dash="dot"))
-            # OLS trend line
-            if len(pts) >= 3:
-                m, b = np.polyfit(xs, ys, 1)
-                xr = [min(xs), max(xs)]
-                scx.add_trace(go.Scatter(
-                    x=xr, y=[m * v + b for v in xr], mode="lines",
-                    line=dict(color=CYBER, dash="dash", width=1.5),
-                    name="trend", hoverinfo="skip"))
-                r = float(np.corrcoef(xs, ys)[0, 1])
-            else:
-                r = float("nan")
-            invx = not META[xk][1]
-            invy = not META[yk][1]
-            scx.update_xaxes(title=META[xk][0] + (" (lower=better)" if invx else ""),
-                             autorange="reversed" if invx else None)
-            scx.update_yaxes(title=META[yk][0] + (" (lower=better)" if invy else ""),
-                             autorange="reversed" if invy else None)
-            _style(scx, 520)
-            st.plotly_chart(scx, width="stretch", key="stat_scatter")
-            if r == r:  # not NaN
-                st.caption(f"Correlation r = {r:+.2f} across {len(pts)} teams.")
-
-    # ──────────────────────────────────────────────────────────────────────
-    #  PARALLEL COORDINATES + SCATTER MATRIX
-    # ──────────────────────────────────────────────────────────────────────
-    with sl_par:
-        _lab_hdr("Parallel coordinates")
-        st.caption("Every team is one line threading all the axes — drag along an "
-                   "axis to brush a range and isolate team types. Colored by Power.")
-        plane = st.radio("Data plane", plane_opts, horizontal=True, key="par_plane")
-        groups, tids = _plane(plane)
-        flat = _flat(groups)
-        keys = [k for k, *_ in flat]
-        sel = st.multiselect(
-            "Axes", keys, default=keys[:6] if len(keys) >= 6 else keys,
-            format_func=lambda k: META[k][0], key="par_stats")
-        pts = [t for t in tids
-               if all(matrix[t][k] is not None for k in sel)] if sel else []
-        if len(sel) < 2 or len(pts) < 3:
-            st.info("Pick at least two axes (teams need all of them tracked).")
-        else:
-            dims = []
-            for k in sel:
-                vals = [matrix[t][k] for t in pts]
-                dims.append(dict(label=META[k][0], values=vals,
-                                 range=[min(vals), max(vals)]))
-            powers = [matrix[t]["Power"] for t in pts]
-            par = go.Figure(go.Parcoords(
-                line=dict(color=powers, colorscale="Turbo", cmin=0, cmax=100,
-                          showscale=True, colorbar=dict(title="Power", thickness=12)),
-                dimensions=dims))
-            par.update_layout(template="plotly_dark",
-                              paper_bgcolor="rgba(0,0,0,0)", height=460,
-                              margin=dict(l=70, r=40, t=40, b=30),
-                              font=dict(color="#c9d1d9", size=11))
-            st.plotly_chart(par, width="stretch", key="stat_parcoords")
-
-        _lab_hdr("Scatter matrix (SPLOM)")
-        st.caption("Pairwise relationships among a handful of stats at once.")
-        sel2 = st.multiselect(
-            "Stats (3-5 best)", keys,
-            default=[k for k in ("Power", "MOV", "SOS") if k in keys][:3] or keys[:3],
-            format_func=lambda k: META[k][0], key="splom_stats")
-        pts2 = [t for t in tids
-                if all(matrix[t][k] is not None for k in sel2)] if sel2 else []
-        if 2 <= len(sel2) <= 6 and len(pts2) >= 3:
-            sp = go.Figure(go.Splom(
-                dimensions=[dict(label=META[k][0], values=[matrix[t][k] for t in pts2])
-                            for k in sel2],
-                text=[matrix[t]["name"] for t in pts2],
-                marker=dict(size=5, color=[matrix[t]["Power"] for t in pts2],
-                            colorscale="Turbo", cmin=0, cmax=100, showscale=False,
-                            line=dict(width=0.3, color="#0d1117")),
-                diagonal=dict(visible=False)))
-            sp.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                             height=560, margin=dict(l=10, r=10, t=10, b=10),
-                             font=dict(color="#c9d1d9", size=9))
-            st.plotly_chart(sp, width="stretch", key="stat_splom")
-        else:
-            st.info("Pick 2-6 stats (teams need all of them) for the matrix.")
-
-    # ──────────────────────────────────────────────────────────────────────
-    #  TEAM PROFILE  (percentile bars across everything)
-    # ──────────────────────────────────────────────────────────────────────
-    with sl_prof:
-        _lab_hdr("Team percentile profile")
-        st.caption("One team versus the whole field on every stat, as percentile "
-                   "bars (green = top of the league). Tracked stats appear when "
-                   "the team has tracked games.")
-        order = sorted(scored, key=lambda t: scored[t]["Rank"])
-        pteam = st.selectbox(
-            "Team", order,
-            format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]} ({class_of[t]})",
-            key="prof_team")
-        is_tracked = pteam in pteams
-        res_pool_tids = order
-        trk_pool_tids = list(pteams)
-        groups = RESULT_GROUPS + (TRACK_GROUPS if is_tracked else [])
-        for gname, items in groups:
-            is_trk = gname not in [g[0] for g in RESULT_GROUPS]
-            pool_tids = trk_pool_tids if is_trk else res_pool_tids
-            st.markdown(f"**{gname}**")
-            cols = st.columns(2)
-            for i, (k, lbl, hib, fmt) in enumerate(items):
-                val = matrix[pteam].get(k)
-                pool = [matrix[t][k] for t in pool_tids]
-                pct = LA.percentile(val, pool, higher_better=hib)
-                txt = "—" if val is None else fmt.format(val)
-                cols[i % 2].markdown(_pctile_bar(lbl, txt, pct),
-                                     unsafe_allow_html=True)
-        if not is_tracked:
-            st.info("Track this team's games to add the possession-based stat "
-                    "groups (efficiency, shooting, rebounding, defense, style).")
-
-    # ──────────────────────────────────────────────────────────────────────
-    #  DATA MATRIX  (the whole thing, sortable, downloadable)
-    # ──────────────────────────────────────────────────────────────────────
-    with sl_table:
-        _lab_hdr("Full data matrix")
-        st.caption("Every team, every stat, in one sortable table. Tracked-only "
-                   "stats are blank for untracked teams. Download the lot as CSV.")
-        cols_order = ["rank", "name", "class", "Power"]
-        seen = set(cols_order)
-        for _, items in RESULT_GROUPS + TRACK_GROUPS:
-            for k, *_ in items:
-                if k not in seen:
-                    cols_order.append(k)
-                    seen.add(k)
-        recs = []
-        for t in sorted(scored, key=lambda t: scored[t]["Rank"]):
-            row = {"rank": matrix[t]["rank"], "name": matrix[t]["name"],
-                   "class": matrix[t]["class"]}
-            for k in cols_order[3:]:
-                row[k] = matrix[t].get(k)
-            recs.append(row)
-        mdf = pd.DataFrame(recs).rename(
-            columns={"rank": "Rank", "name": "Team", "class": "Class",
-                     **{k: META[k][0] for k in META}})
-        colcfg = {META[k][0]: st.column_config.ProgressColumn(
-            META[k][0], format="%.0f", min_value=0, max_value=100)
-            for k in PCT100}
-        st.dataframe(mdf, hide_index=True, width="stretch",
-                     height=min(720, 60 + 32 * len(mdf)), column_config=colcfg)
-        st.download_button("⬇ Full data matrix (CSV)", mdf.to_csv(index=False),
-                           file_name=f"stat_matrix_{gender}.csv", mime="text/csv",
-                           key="dl_matrix")
+with tab_evr:
+    _fx_evr()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TAB 6 — MATCHUP PREDICTOR  (Vegas style)
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_pred:
-    st.caption("Pick two teams and the model projects a Vegas-style line from the "
-               "ratings — point spread, projected score, total and win probability.")
-
-    src = st.radio(
-        "Ratings source", ["Scored (all teams)", "Tracked (advanced)"],
-        horizontal=True,
-        help="Scored uses results-only ratings for every team. Tracked uses "
-             "possession-based ratings — only teams with tracked games.")
-    R = scored if src.startswith("Scored") else tracked
-    if not R:
-        st.info("No ratings available for this source yet.")
-        st.stop()
-
-    pool = sorted(R.keys(), key=lambda t: R[t]["Rank"])
-    fmt = lambda t: f"#{R[t]['Rank']}  {R[t]['name']}  ({R[t]['class']})"
-    c1, c2, c3 = st.columns([2, 2, 1.4])
-    a = c1.selectbox("Team A", pool, index=0, format_func=fmt, key="pa")
-    b = c2.selectbox("Team B", pool, index=min(1, len(pool) - 1),
-                     format_func=fmt, key="pb")
-    site = c3.selectbox("Home court", ["Neutral", "Team A", "Team B"], key="psite")
-
-    if a == b:
-        st.warning("Pick two different teams.")
-        st.stop()
-
-    home = a if site == "Team A" else b if site == "Team B" else None
-    hca = TR.DEFAULT_HCA
-
-    # projected score from the (adjusted) ratings
-    if src.startswith("Scored"):
-        ra, rb = scored[a], scored[b]
-        a_pts = (ra["xPPG"] + rb["xoPPG"]) / 2
-        b_pts = (rb["xPPG"] + ra["xoPPG"]) / 2
-    else:
-        ra, rb = tracked[a], tracked[b]
-        poss = (ra["Pace"] + rb["Pace"]) / 2
-        a_pts = (ra["ORtg"] + rb["DRtg"]) / 2 / 100 * poss
-        b_pts = (rb["ORtg"] + ra["DRtg"]) / 2 / 100 * poss
-
-    if home == a:
-        a_pts += hca / 2; b_pts -= hca / 2
-    elif home == b:
-        b_pts += hca / 2; a_pts -= hca / 2
-
-    margin = a_pts - b_pts                       # + => A favored
-    total = a_pts + b_pts
-    fav, dog = (a, b) if margin >= 0 else (b, a)
-    line = abs(margin)
-    # win probability: margin under a ~11-pt game-to-game std dev
-    win_p = _norm_cdf(line, 0.0, 11.0)
-
-    def _hero_block(t, pts):
-        won = (t == fav)
-        clr = ACCENT if won else "#555d68"
-        tag = "▸ " if won else ""
-        homemark = " 🏠" if home == t else ""
-        return (
-            f"<div style='text-align:center'>"
-            f"<div style='font-size:15px;font-weight:700;color:#c9d1d9'>"
-            f"{tag}{R[t]['name']}{homemark}</div>"
-            f"<div style='font-size:11px;color:#8b949e'>#{R[t]['Rank']} · "
-            f"{R[t]['class']}</div>"
-            f"<div style='font-size:46px;font-weight:900;color:{clr};"
-            f"line-height:1.1'>{pts:.0f}</div></div>")
-
-    st.markdown(
-        f"<div class='game-hero'><table style='width:100%;border:none'><tr>"
-        f"<td style='width:42%'>{_hero_block(a, a_pts)}</td>"
-        f"<td style='width:16%;text-align:center;color:#8b949e;font-size:18px'>vs</td>"
-        f"<td style='width:42%'>{_hero_block(b, b_pts)}</td>"
-        f"</tr></table></div>", unsafe_allow_html=True)
-
-    m = st.columns(4)
-    m[0].metric("Spread", f"{R[fav]['name']} −{line:.1f}")
-    m[1].metric("Projected total", f"{total:.0f}")
-    m[2].metric(f"{R[fav]['name']} win prob", f"{100*win_p:.0f}%")
-    # confidence band off the win prob
-    conf = ("Toss-up" if win_p < 0.58 else "Lean" if win_p < 0.68
-            else "Solid" if win_p < 0.80 else "Strong")
-    m[3].metric("Confidence", conf)
-
-    st.caption(
-        f"Neutral-floor projection with a {hca:.0f}-pt home-court edge "
-        f"({'applied to ' + R[home]['name'] if home else 'neutral site'}). "
-        "Win probability assumes an ~11-point game-to-game standard deviation. "
-        + ("Tracked ratings come from a small, sparsely-connected sample — "
-           "directional only." if not src.startswith("Scored") else
-           "Scored ratings cover every team from results alone."))
-
-    # ── win-probability split bar ────────────────────────────────────────────
-    pa = win_p if fav == a else 1 - win_p
-    pb = 1 - pa
-    st.markdown(
-        f"<div style='background:#2d333b;border-radius:6px;height:26px;"
-        f"overflow:hidden;display:flex'>"
-        f"<div style='background:{ACCENT};width:{pa*100:.0f}%;height:100%;"
-        f"display:flex;align-items:center;justify-content:center;font-size:12px;"
-        f"font-weight:700;color:#000'>"
-        f"{str(round(pa*100)) + '%' if pa > 0.12 else ''}</div>"
-        f"<div style='background:{AWAY};width:{pb*100:.0f}%;height:100%;"
-        f"display:flex;align-items:center;justify-content:center;font-size:12px;"
-        f"font-weight:700;color:#fff'>"
-        f"{str(round(pb*100)) + '%' if pb > 0.12 else ''}</div></div>"
-        f"<div style='display:flex;justify-content:space-between;font-size:12px;"
-        f"margin-top:4px'><span style='color:{ACCENT};font-weight:700'>"
-        f"{R[a]['name']}</span><span style='color:{AWAY};font-weight:700'>"
-        f"{R[b]['name']}</span></div>", unsafe_allow_html=True)
-
-    # ── side-by-side comparison table (✅ marks the better side) ──────────────
-    st.markdown("#### Side-by-side")
-    cmp_spec = [("Rank", "Power rank", False), ("Power", "Power", True),
-                ("PPG", "Points / game", True), ("oPPG", "Opp PPG", False),
-                ("MOV", "Point margin", True), ("SOS", "Strength of schedule", True),
-                ("SOR", "Strength of record", True)]
-    if not src.startswith("Scored"):
-        cmp_spec += [("ORtg", "Off. rating", True), ("DRtg", "Def. rating", False),
-                     ("NetRtg", "Net rating", True), ("Pace", "Pace", True),
-                     ("eFG", "eFG%", True), ("TPpct", "3P%", True)]
-    cmp_rows = []
-    for key, label, hib in cmp_spec:
-        if key not in R[a] or key not in R[b]:
-            continue
-        va, vb = R[a][key], R[b][key]
-        a_better = va >= vb if hib else va <= vb
-        cmp_rows.append({
-            R[a]["name"]: f"{'✅ ' if a_better else ''}{va}",
-            "Stat": label,
-            R[b]["name"]: f"{'✅ ' if not a_better else ''}{vb}"})
-    if cmp_rows:
-        st.dataframe(pd.DataFrame(cmp_rows).set_index("Stat"),
-                     width="stretch")
-
-    # ── head-to-head history ─────────────────────────────────────────────────
-    st.markdown("#### Head-to-head history")
-    h2h = query(
-        """SELECT g.id, g.date, g.home_score, g.away_score, g.tracked,
-                  g.team1_id, g.team2_id
-           FROM games g
-           WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL
-             AND ((g.team1_id=? AND g.team2_id=?) OR (g.team1_id=? AND g.team2_id=?))
-           ORDER BY g.date DESC""", (a, b, b, a))
-    if not h2h:
-        st.info("These teams have not played each other yet.")
-    else:
-        a_w = sum(1 for g in h2h if
-                  (g["team1_id"] == a and g["home_score"] > g["away_score"]) or
-                  (g["team2_id"] == a and g["away_score"] > g["home_score"]))
-        hh = st.columns(2)
-        hh[0].metric(f"{R[a]['name']} wins", a_w)
-        hh[1].metric(f"{R[b]['name']} wins", len(h2h) - a_w)
-        for g in h2h:
-            if g["team1_id"] == a:
-                ap, bp = g["home_score"], g["away_score"]
-            else:
-                ap, bp = g["away_score"], g["home_score"]
-            a_win = ap > bp
-            tr = " · ●" if g["tracked"] else ""
-            st.markdown(
-                f"<div class='score-card'>"
-                f"<span style='color:#8b949e;font-size:11px'>{g['date']}{tr}</span> "
-                f"<span style='color:{ACCENT if a_win else '#8b949e'};font-weight:700'>"
-                f"{R[a]['name']} {ap}</span> – "
-                f"<span style='color:{AWAY if not a_win else '#8b949e'};font-weight:700'>"
-                f"{R[b]['name']} {bp}</span></div>", unsafe_allow_html=True)
-            if g["tracked"]:
-                with st.expander("Box score"):
-                    render_box_score(g["id"])
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  TAB 7 — GLOSSARY
-# ══════════════════════════════════════════════════════════════════════════════
 with tab_gloss:
-    st.markdown("<div class='lab-hdr'>League & team stat glossary</div>",
-                unsafe_allow_html=True)
-    render_glossary(
-        key_prefix="rank_gloss",
-        categories=["Team & League", "Possession & Pace", "Shooting"],
-        intro="Every rating, power and league metric on this page — including the "
-              "signature invented stats (Dominance, Consistency, Clutch, Momentum, "
-              "Luck). Search by name or filter by category.")
+    glossary_tab("rank_gloss")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB — COMPARE  (two teams, head to head)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_cmp:
+    st.caption("Two teams head to head — power and results always; four factors "
+               "and efficiency when both teams are tracked.")
+    _cts = pack["ts"]
+    _cord = sorted(scored, key=lambda t: scored[t]["Rank"])
+
+    def _cfmt(t):
+        return f"#{scored[t]['Rank']} {name_of[t]} ({class_of[t]})"
+
+    _cc = st.columns(2)
+    cA = _cc[0].selectbox("Team A", _cord, index=0, format_func=_cfmt, key="cmp_a")
+    cB = _cc[1].selectbox("Team B", _cord, index=min(1, len(_cord) - 1),
+                          format_func=_cfmt, key="cmp_b")
+    if cA == cB:
+        st.info("Pick two different teams.")
+    else:
+        _sa, _sb = scored[cA], scored[cB]
+        _hm = st.columns(4)
+        _hm[0].metric(team_short(name_of[cA]), f"#{_sa['Rank']}",
+                      f"Power {_sa['Power']:.0f}", delta_color="off")
+        _hm[1].metric("Record", f"{_sa['W']}-{_sa['L']}")
+        _hm[2].metric("Record", f"{_sb['W']}-{_sb['L']}")
+        _hm[3].metric(team_short(name_of[cB]), f"#{_sb['Rank']}",
+                      f"Power {_sb['Power']:.0f}", delta_color="off")
+
+        def _trow(lbl, a, b, hib=True, fmt="{:.1f}", neutral=False):
+            try:
+                aw = (not neutral) and ((a > b) if hib else (a < b))
+                bw = (not neutral) and ((b > a) if hib else (b < a))
+            except TypeError:
+                aw = bw = False
+            ca = "color:#2ea043;font-weight:800" if aw else "color:#c9d1d9"
+            cb = "color:#2ea043;font-weight:800" if bw else "color:#c9d1d9"
+            av = fmt.format(a) if a is not None else "—"
+            bv = fmt.format(b) if b is not None else "—"
+            return (f"<tr><td style='text-align:right;padding:4px 10px;{ca}'>{av}</td>"
+                    f"<td style='text-align:center;color:#8b949e;font-size:11px;"
+                    f"text-transform:uppercase;letter-spacing:1px'>{lbl}</td>"
+                    f"<td style='padding:4px 10px;{cb}'>{bv}</td></tr>")
+
+        def _ttable(title, rows):
+            return (f"<div class='lab-hdr'>{title}</div>"
+                    f"<table style='width:100%;border-collapse:collapse'>"
+                    f"<tr><th style='text-align:right;color:var(--accent);padding:2px 10px'>"
+                    f"{team_short(name_of[cA])}</th><th></th>"
+                    f"<th style='text-align:left;color:var(--accent);padding:2px 10px'>"
+                    f"{team_short(name_of[cB])}</th></tr>{''.join(rows)}</table>")
+
+        st.markdown(_ttable("Results", [
+            _trow("Power", _sa["Power"], _sb["Power"], fmt="{:.0f}"),
+            _trow("Adj offense", _sa["xPPG"], _sb["xPPG"]),
+            _trow("Adj defense", _sa["xoPPG"], _sb["xoPPG"], hib=False),
+            _trow("Adj net", _sa["AdjNet"], _sb["AdjNet"], fmt="{:+.1f}"),
+            _trow("Margin / G", _sa["MOV"], _sb["MOV"], fmt="{:+.1f}"),
+            _trow("Strength of sched", _sa["SOS"], _sb["SOS"], fmt="{:.0f}"),
+        ]), unsafe_allow_html=True)
+        st.caption("Green = the better of the two · adj defense, lower is better.")
+
+        _ma, _mb = _cts.get(cA), _cts.get(cB)
+        if _ma and _mb:
+            st.markdown(_ttable("Tracked profile — four factors & efficiency", [
+                _trow("eFG%", _ma["eFG"], _mb["eFG"]),
+                _trow("Turnover %", _ma["TOVpct"], _mb["TOVpct"], hib=False),
+                _trow("Off reb %", _ma["ORBpct"], _mb["ORBpct"]),
+                _trow("FT rate", _ma["FTr"], _mb["FTr"], fmt="{:.2f}"),
+                _trow("Off rating", _ma["ORtg"], _mb["ORtg"]),
+                _trow("Def rating", _ma["DRtg"], _mb["DRtg"], hib=False),
+                _trow("Net rating", _ma["NetRtg"], _mb["NetRtg"], fmt="{:+.1f}"),
+                _trow("Pace", _ma["Pace"], _mb["Pace"], fmt="{:.0f}", neutral=True),
+                _trow("Points / poss", _ma["PPP"], _mb["PPP"], fmt="{:.2f}"),
+            ]), unsafe_allow_html=True)
+        else:
+            st.info("Four-factor & efficiency compare needs both teams tracked.")

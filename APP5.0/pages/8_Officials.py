@@ -31,8 +31,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from helpers.ui import (page_chrome, style_fig as _style, AWAY, CARD_BG, GRID,
-                        rgb as _rgb)
-from helpers.glossary import render_glossary
+                        rgb as _rgb, grid as _grid)
+from helpers.cards import team_short as _team_short, fmt as _fmt, bar_h
+from helpers.glossary import glossary_tab
 import helpers.officials as OFF
 
 _cfg, ACCENT = page_chrome()
@@ -44,29 +45,6 @@ _ARGB = f"{_AR},{_AG},{_AB}"
 # ══════════════════════════════════════════════════════════════════════════════
 #  SHARED HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _team_short(name):
-    for suf in (" Girls", " Boys"):
-        if name.endswith(suf):
-            return name[:-len(suf)]
-    return name
-
-
-def _fmt(v, fmt):
-    if v is None:
-        return "—"
-    if fmt == "int":
-        return f"{int(v)}"
-    if fmt == "f1":
-        return f"{v:.1f}"
-    if fmt == "f2":
-        return f"{v:.2f}"
-    if fmt == "f3":
-        return f"{v:.3f}"
-    if fmt == "pct":
-        return f"{v * 100:.0f}%"
-    return str(v)
-
 
 def _scatter(rows, xk, yk, xlab, ylab, xfmt, yfmt, color=ACCENT, qkey="games", qmin=1):
     """Bubble scatter of officials over two metrics, labelled by name."""
@@ -100,19 +78,7 @@ def _leader_bar(rows, key, fmt, color=ACCENT, n=12, height=None, qkey=None, qmin
     names = [r["name"] for r in seq]
     vals = [r[key] for r in seq]
     texts = [_fmt(v, fmt) for v in vals]
-    fig = go.Figure(go.Bar(
-        x=vals, y=names, orientation="h", marker_color=color,
-        marker_line_width=0, text=texts, textposition="auto",
-        textfont=dict(size=11), cliponaxis=False,
-        hovertemplate="%{y}: %{text}<extra></extra>"))
-    fig.update_layout(
-        template="plotly_dark", height=height or (60 + 26 * len(seq)),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=4, r=14, t=6, b=6), showlegend=False,
-        font=dict(size=11, color="#c9d1d9"))
-    fig.update_xaxes(visible=False)
-    fig.update_yaxes(showgrid=False, tickfont=dict(size=11), automargin=True)
-    return fig
+    return bar_h(names, vals, texts, color, height)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -199,7 +165,7 @@ with hc1:
     st.markdown(
         f"""
     <div class="lab-hero">
-      <div class="lab-hero-name">🦓 Officiating Lab</div>
+      <div class="lab-hero-name">Officiating Lab</div>
       <div class="lab-hero-sub">{gender_lbl} league · who blows the whistle, how
       tight, and the scoring environment of the games they work.</div>
       <div class="lab-hero-chips">
@@ -237,7 +203,7 @@ _glass(_g[4], "HOTTEST ENV.", f"{_hottest['PPP']:.2f}",
        f"{_hottest['name']} · PPP", "#e3b341")
 
 tab_over, tab_charts, tab_ind, tab_gloss = st.tabs(
-    ["📊 Overview", "📈 Charts", "🔍 Individual", "📖 Glossary"])
+    ["Overview", "Charts", "Individual", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -330,27 +296,12 @@ with tab_over:
         "PPP": round(r["PPP"], 3), "PTS/G": round(r["PTSPG"], 1),
         "POSS/G": round(r["POSSPG"], 1),
     } for r in rows])
-    st.dataframe(
-        full, hide_index=True, width="stretch",
-        height=min(720, 60 + 35 * len(full)),
-        column_config={
-            "GW": st.column_config.NumberColumn("GW", help="Games worked"),
-            "FP100": st.column_config.NumberColumn(
-                "FP100", help="Fouls per 100 possessions — pace-adjusted whistle "
-                "rate (fairer than FPG across fast/slow games)"),
-            "Call share": st.column_config.NumberColumn(
-                "Call %", format="%d%%",
-                help="Share of all fouls in this ref's games that they called"),
-            "H/A": st.column_config.NumberColumn(
-                "H/A", help="Home fouls minus away fouls (+ leans on the home team)"),
-            "Lean%": st.column_config.NumberColumn(
-                "Lean%", format="%d%%",
-                help="H/A diff as a share of the ref's attributable fouls "
-                "(+ = leans on home, − = leans on away)"),
-            "±FPG": st.column_config.NumberColumn(
-                "±FPG", help="Std dev of fouls/game — lower = more consistent"),
-        })
-    st.download_button("⬇ Officials (CSV)", full.to_csv(index=False),
+    _grid(full, "off_full", height=560)
+    st.caption("Sort or filter any column in-grid (click a header for filters) — "
+               "surface the tightest whistles (FP100), the biggest home leans "
+               "(Lean%), or the most consistent refs (±FPG). Every metric is "
+               "defined in the Glossary tab.")
+    st.download_button("Officials (CSV)", full.to_csv(index=False),
                        file_name=f"officials_{gender_lbl}.csv", mime="text/csv",
                        key="dl_off")
 
@@ -651,10 +602,4 @@ with tab_ind:
 #  TAB 4 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_gloss:
-    st.markdown("<div class='lab-hdr'>Officiating & pace glossary</div>",
-                unsafe_allow_html=True)
-    render_glossary(
-        key_prefix="off_gloss",
-        categories=["Officiating", "Possession & Pace", "Box Score"],
-        intro="Every officiating and pace metric on this page, defined. Search by "
-              "name or keyword, or filter by category.")
+    glossary_tab("off_gloss")

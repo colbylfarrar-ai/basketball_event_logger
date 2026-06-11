@@ -47,28 +47,14 @@ ASSIST_SHARE = 0.30     # share of a made FG's WPA credited to the passer
 BLOCK_SHARE = 0.50      # share of a forced-miss stop credited to the blocker
 
 
-def _clock_secs(t):
-    try:
-        m, s = (str(t).split(":") + ["0"])[:2]
-        return int(m) * 60 + int(s)
-    except Exception:
-        return 0
+# Game-clock helpers — canonical versions live in helpers.stats.
+_clock_secs = S.clock_secs
+_q_len = S.q_len
+_q_base = S.q_base
+_elapsed = S.elapsed
 
 
-def _q_len(q):
-    return 480 if q <= 4 else 240
-
-
-def _q_base(q):
-    return 480 * (q - 1) if q <= 4 else 480 * 4 + 240 * (q - 5)
-
-
-def _elapsed(q, t):
-    return _q_base(q) + (_q_len(q) - _clock_secs(t))
-
-
-def _safe(num, den):
-    return num / den if den else 0.0
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -95,34 +81,46 @@ def league_ep(game_ids=None, events=None):
 #  SINGLE-GAME WPA
 # ══════════════════════════════════════════════════════════════════════════════
 
-def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None):
+def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
+             events=None, names=None, ginfo=None):
     """
     Per-player WPA + clutch WPA + a win-probability timeline for one game.
 
     `mode` = "scoring" (made-basket WP jumps) or "possession" (value-over-
     expected over every shot/turnover possession; see module docstring).
 
+    `events` / `names` / `ginfo` are optional pre-fetched inputs so a season-wide
+    caller can fetch them ONCE and avoid re-querying per game (see season_wpa):
+      • events — this game's event rows (else fetched here),
+      • names  — {pid: {"name","team"}} roster map, game-independent (else fetched),
+      • ginfo  — {"t1","t2","n1","n2"} game/team info (else fetched).
+
     Returns {"players": {pid: {"wpa","clutch_wpa","off_wpa","def_wpa","plays",
     "name","team"}}, "timeline": [(elapsed, margin_home, wp_home)], "t1","t2",
     "t1name","t2name","end","mode"} or None if the game has no usable events.
     """
-    g = query("""SELECT g.team1_id t1, g.team2_id t2, t1.name n1, t2.name n2
-                 FROM games g JOIN teams t1 ON t1.id=g.team1_id
-                 JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""", (game_id,))
-    if not g:
-        return None
-    g = g[0]
+    if ginfo is None:
+        g = query("""SELECT g.team1_id t1, g.team2_id t2, t1.name n1, t2.name n2
+                     FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                     JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""", (game_id,))
+        if not g:
+            return None
+        g = g[0]
+    else:
+        g = ginfo
     t1, t2 = g["t1"], g["t2"]
 
-    events = S.fetch_events([game_id])
+    if events is None:
+        events = S.fetch_events([game_id])
     if not events:
         return None
     events = sorted(events, key=lambda e: _elapsed(e["quarter"], e["time"]))
     end = max((_elapsed(e["quarter"], e["time"]) for e in events), default=1) or 1
 
-    # roster names for everyone who appears
-    names = {r["id"]: {"name": r["name"], "team": r["tn"]} for r in query(
-        "SELECT p.id, p.name, t.name tn FROM players p JOIN teams t ON t.id=p.team_id")}
+    # roster names for everyone who appears (game-independent — pass in to reuse)
+    if names is None:
+        names = {r["id"]: {"name": r["name"], "team": r["tn"]} for r in query(
+            "SELECT p.id, p.name, t.name tn FROM players p JOIN teams t ON t.id=p.team_id")}
 
     # ── win-probability timeline (made FG/FT, home perspective) — for the chart ──
     timeline = []
@@ -294,12 +292,34 @@ def season_wpa(gender=None, mode="scoring"):
            WHERE g.tracked=1 AND t.gender=?""", (gender,)) if gender else query(
         "SELECT id FROM games WHERE tracked=1")
     ep = league_ep() if mode == "possession" else None
+    game_ids = [row["id"] for row in tg]
+
+    # Fetch the per-game inputs ONCE instead of inside game_wpa per game (was an
+    # N+1: each call re-pulled events + the full roster + game info). Now ~4
+    # queries total regardless of game count.
+    ev_by_game = defaultdict(list)
+    for e in S.fetch_events(game_ids):
+        ev_by_game[e["game_id"]].append(e)
+    names = {r["id"]: {"name": r["name"], "team": r["tn"]} for r in query(
+        "SELECT p.id, p.name, t.name tn FROM players p JOIN teams t ON t.id=p.team_id")}
+    ginfo = {}
+    if game_ids:
+        _ph = ",".join("?" * len(game_ids))
+        ginfo = {r["id"]: {"t1": r["t1"], "t2": r["t2"], "n1": r["n1"], "n2": r["n2"]}
+                 for r in query(
+                     f"""SELECT g.id, g.team1_id t1, g.team2_id t2,
+                                t1.name n1, t2.name n2
+                         FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                         JOIN teams t2 ON t2.id=g.team2_id
+                         WHERE g.id IN ({_ph})""", tuple(game_ids))}
 
     agg = defaultdict(lambda: {"wpa": 0.0, "clutch_wpa": 0.0, "off_wpa": 0.0,
                                "def_wpa": 0.0, "plays": 0, "games": 0,
                                "name": "", "team": ""})
     for row in tg:
-        res = game_wpa(row["id"], mode=mode, ep=ep)
+        gid = row["id"]
+        res = game_wpa(gid, mode=mode, ep=ep, events=ev_by_game.get(gid, []),
+                       names=names, ginfo=ginfo.get(gid))
         if not res:
             continue
         for pid, r in res["players"].items():

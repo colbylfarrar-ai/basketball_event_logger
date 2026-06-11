@@ -1,7 +1,7 @@
 """
 shrinkage.py — Empirical-Bayes stabilization for small-sample player stats.
 
-APP4.0 rates players on a ~15-game, single-program sample where raw rates are
+APP5.0 rates players on a ~15-game, single-program sample where raw rates are
 noisy: a 2-for-3 night reads as 67% 3P%, a one-game opponent's USG% swings wildly.
 This module pulls every rate toward the league mean by *how much evidence backs
 it*, the way EvanMiya/Basketball-Index stabilize college samples. A player with
@@ -41,8 +41,44 @@ _K_BOUNDS        = (4.0, 60.0)   # clamp EB-estimated k to this band
 RATING_ANCHOR    = 50.0   # league-average value on the 0-100 rating scale
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+from helpers.stats import _safe   # shared definition lives in helpers.stats
+
+try:
+    from scipy.stats import norm as _norm   # exact z-quantile for any conf level
+    _HAVE_SCIPY = True
+except Exception:                            # scipy absent → 95% normal constant
+    _HAVE_SCIPY = False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CONFIDENCE INTERVALS  (how wide is the uncertainty band on a small-sample rate?)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _z_for(conf):
+    """Two-sided z critical value for confidence `conf` (0-1)."""
+    if _HAVE_SCIPY:
+        return float(_norm.ppf(0.5 + conf / 2.0))
+    return 1.96  # 95% fallback when scipy is unavailable
+
+
+def wilson_interval(made, att, conf=0.95):
+    """Wilson score interval for a make/attempt proportion — returns (lo, hi) in
+    0-1, or (None, None) with no attempts.
+
+    The Wilson interval is the right CI for small, bounded samples (HS shot
+    volumes): it never runs past [0,1] and stays sensible at 1-for-2 where the
+    normal approximation breaks. Use it to show "38% (24-54%)" so a coach reads
+    a hot night as the wide, uncertain band it actually is.
+    """
+    if not att or att <= 0:
+        return (None, None)
+    z = _z_for(conf)
+    p = made / att
+    n = float(att)
+    denom = 1.0 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = (z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)) / denom
+    return (max(0.0, center - half), min(1.0, center + half))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -165,10 +201,6 @@ def stabilize_table(table, k_index=DEFAULT_INDEX_K):
         priors[rate_key] = eb_prior((r.get(mk, 0), r.get(ak, 0)) for r in rows)
 
     # volume-weighted pool means for TS%/eFG% (their rates are already in rows)
-    def _pool_rate(num_key, den_key):
-        n = sum(r.get(den_key, 0) for r in rows)
-        return _safe(sum(r.get(num_key, 0) for r in rows), n), n
-
     ts_mean = _safe(sum(r.get("PTS", 0) for r in rows),
                     2 * sum(r.get("FGA", 0) + 0.44 * r.get("FTA", 0) for r in rows))
     efg_num = sum(r.get("FGM", 0) + 0.5 * r.get("3PM", 0) for r in rows)

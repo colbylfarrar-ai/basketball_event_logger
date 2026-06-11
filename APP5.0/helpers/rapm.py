@@ -1,7 +1,7 @@
 """
 rapm.py — Regularized Adjusted Plus-Minus (the gold-standard impact metric).
 
-This is the metric DataBallR / EvanMiya are built on, and APP4.0 can compute the
+This is the metric DataBallR / EvanMiya are built on, and APP5.0 can compute the
 real thing — not a box-score proxy — because every tracked event stores the full
 10-player on-court set (game_event_lineup). RAPM solves, in one ridge regression
 over every possession at once, "how many points per 100 does each player add on
@@ -26,7 +26,9 @@ Free-throw points are not modeled (FTs aren't possessions under the locked rule)
 so RAPM measures field-goal scoring/prevention per 100 possessions. Directional
 on this sample — but it is the genuine adjusted metric, λ-shrunk for safety.
 
-Pure data layer: numpy + database.db + helpers.stats only. No streamlit, no scipy.
+Pure data layer: numpy + database.db + helpers.stats. Optionally uses
+scikit-learn (RidgeCV — cross-validated penalty) and statsmodels (OLS standard
+errors for a significance read); both degrade gracefully if absent. No streamlit.
 """
 from __future__ import annotations
 
@@ -37,16 +39,24 @@ import numpy as np
 from database.db import query
 import helpers.stats as S
 
+try:
+    from sklearn.linear_model import RidgeCV as _RidgeCV
+    _HAVE_SKLEARN = True
+except Exception:
+    _HAVE_SKLEARN = False
+
+try:
+    import statsmodels.api as _sm
+    _HAVE_SM = True
+except Exception:
+    _HAVE_SM = False
+
 
 # Ridge penalty in "possession" units. Larger = more shrinkage toward average.
 # Tuned for this small sample so stars land a few points above 0 and thin
 # samples stay near 0 (see the Impact Lab caption). Exposed for re-tuning.
 DEFAULT_LAMBDA = 1200.0
 DEFAULT_MIN_POSS = 40   # report gate: players below this are too thin to trust
-
-
-def _safe(num, den):
-    return num / den if den else 0.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -110,17 +120,27 @@ def _possessions(game_ids=None, events=None):
 #  RIDGE SOLVE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_rapm(game_ids=None, events=None, lam=DEFAULT_LAMBDA,
-                 min_poss=DEFAULT_MIN_POSS, names=None):
+def compute_rapm(game_ids=None, events=None, lam=None,
+                 min_poss=DEFAULT_MIN_POSS, names=None, inference=False):
     """
     Compute two-way RAPM for every player from possession data.
 
     Returns {player_id: {"ORAPM","DRAPM","RAPM","poss","off_poss","def_poss",
-    "name","team"}} for players clearing `min_poss` (offense+defense), sorted
-    callers can re-sort. Returns {} if there isn't enough data to solve.
+    "name","team","lambda"}} for players clearing `min_poss` (offense+defense).
+    Returns {} if there isn't enough data to solve.
 
-    `lam` is the ridge penalty (bigger = more regression to average). `names`
-    is an optional {pid: {"name","team",...}} map for labels (fetched if None).
+    `lam` — ridge penalty (bigger = more regression to average). Default None
+    auto-tunes it by cross-validation (scikit-learn RidgeCV) when sklearn is
+    installed, else falls back to DEFAULT_LAMBDA; pass a number to force a value.
+    The penalty actually used is reported per row as `lambda`.
+
+    `inference=True` attaches an OLS certainty companion (statsmodels) per player:
+        RAPM_ols, RAPM_se, RAPM_lo, RAPM_hi (95% CI), sig (bool)
+    The headline RAPM stays the ridge estimate (the right point estimate to rank
+    on); the OLS columns quantify how firmly the data pins a player down. On a
+    ~15-game book the CIs are wide and `sig` is rarely True — the honest read.
+
+    `names` is an optional {pid: {"name","team",...}} map for labels.
     """
     rows, on_off, on_def = _possessions(game_ids, events)
     if len(rows) < 30:
@@ -144,11 +164,27 @@ def compute_rapm(game_ids=None, events=None, lam=DEFAULT_LAMBDA,
     ymean = y.mean()
     yc = y - ymean
 
-    # ridge normal equations (do not penalize via a separate intercept — y is
-    # centered, so the average possession maps to β = 0 = league-average player)
-    A = X.T @ X + lam * np.eye(2 * P)
-    b = X.T @ yc
-    beta = np.linalg.solve(A, b)
+    # ── ridge solve (no separate intercept — y is centered, so the average
+    # possession maps to β = 0 = league-average player) ──
+    if lam is None and _HAVE_SKLEARN:
+        rcv = _RidgeCV(alphas=np.logspace(2.0, 4.0, 13), fit_intercept=False)
+        rcv.fit(X, yc)
+        beta = np.asarray(rcv.coef_, dtype=float)
+        used_lam = float(rcv.alpha_)
+    else:
+        used_lam = float(lam) if lam is not None else DEFAULT_LAMBDA
+        A = X.T @ X + used_lam * np.eye(2 * P)
+        beta = np.linalg.solve(A, X.T @ yc)
+
+    # ── optional OLS inference companion (statsmodels) ──
+    ols_beta = ols_cov = None
+    if inference and _HAVE_SM and n > 2 * P + 1:
+        try:
+            res = _sm.OLS(yc, X).fit()
+            ols_beta = np.asarray(res.params, dtype=float)
+            ols_cov = np.asarray(res.cov_params(), dtype=float)
+        except Exception:
+            ols_beta = ols_cov = None
 
     if names is None:
         names = {r["id"]: {"name": r["name"], "team": r["team"]}
@@ -161,13 +197,28 @@ def compute_rapm(game_ids=None, events=None, lam=DEFAULT_LAMBDA,
         opos, dpos = on_off.get(p, 0), on_def.get(p, 0)
         if opos + dpos < min_poss:
             continue
-        orapm = 100.0 * beta[idx[p]]
-        drapm = -100.0 * beta[P + idx[p]]
+        io, idd = idx[p], P + idx[p]
+        orapm = 100.0 * beta[io]
+        drapm = -100.0 * beta[idd]
         m = names.get(p, {})
-        out[p] = {
+        row = {
             "ORAPM": round(orapm, 2), "DRAPM": round(drapm, 2),
             "RAPM": round(orapm + drapm, 2),
             "off_poss": opos, "def_poss": dpos, "poss": opos + dpos,
             "name": m.get("name", str(p)), "team": m.get("team", ""),
+            "lambda": round(used_lam, 1),
         }
+        if ols_beta is not None and ols_cov is not None:
+            rapm_ols = 100.0 * ols_beta[io] - 100.0 * ols_beta[idd]
+            var = 1e4 * (ols_cov[io, io] + ols_cov[idd, idd]
+                         - 2 * ols_cov[io, idd])
+            se = float(np.sqrt(var)) if var > 0 else None
+            row.update({
+                "RAPM_ols": round(rapm_ols, 2),
+                "RAPM_se": round(se, 2) if se is not None else None,
+                "RAPM_lo": round(rapm_ols - 1.96 * se, 2) if se else None,
+                "RAPM_hi": round(rapm_ols + 1.96 * se, 2) if se else None,
+                "sig": bool(se and abs(rapm_ols) > 1.96 * se),
+            })
+        out[p] = row
     return out

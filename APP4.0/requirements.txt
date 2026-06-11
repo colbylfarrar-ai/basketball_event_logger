@@ -1,6 +1,0 @@
-# APP4.0 — Streamlit basketball analytics app
-# Install with:  pip install -r requirements.txt
-streamlit>=1.53.1
-pandas>=2.3.3
-plotly>=6.5.2
-numpy>=2.3.5

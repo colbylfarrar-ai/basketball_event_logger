@@ -3,7 +3,7 @@ badges.py — NBA-2K-style player badges, data-driven.
 
 Basketball-Index's badge layer is the most *legible* way to surface advanced
 stats: instead of "84th percentile in 3P%", a player simply earns a Gold
-**Deadeye**. APP4.0 already computes every percentile it needs, so this turns
+**Deadeye**. APP5.0 already computes every percentile it needs, so this turns
 them into a transparent, gated badge wall — huge engagement for HS players and
 parents, near-zero cost to compute.
 
@@ -22,10 +22,6 @@ from __future__ import annotations
 # Default percentile cutoffs for the three tiers.
 GOLD, SILVER, BRONZE = 90.0, 75.0, 60.0
 _TIER_RANK = {"Gold": 3, "Silver": 2, "Bronze": 1, None: 0}
-
-
-def _safe(num, den):
-    return num / den if den else 0.0
 
 
 def _percentile(value, pool, higher_better=True):
@@ -69,87 +65,87 @@ def _tier(pct, gold=GOLD, silver=SILVER, bronze=BRONZE):
 
 BADGES = [
     # ── Shooting ──────────────────────────────────────────────────────────────
-    {"key": "deadeye", "name": "Deadeye", "emoji": "🎯", "cat": "Shooting",
+    {"key": "deadeye", "name": "Deadeye", "emoji": "", "cat": "Shooting",
      "stat": "3P%", "gate": ("3PA", 10),
      "desc": "Elite three-point accuracy on real volume (≥10 3PA)."},
-    {"key": "sniper", "name": "Volume Sniper", "emoji": "🏹", "cat": "Shooting",
+    {"key": "sniper", "name": "Volume Sniper", "emoji": "", "cat": "Shooting",
      "stat": "3PM", "gate": ("3PA", 12),
      "desc": "Makes threes in bulk."},
-    {"key": "flamethrower", "name": "Flamethrower", "emoji": "🔥", "cat": "Shooting",
+    {"key": "flamethrower", "name": "Flamethrower", "emoji": "", "cat": "Shooting",
      "stat": "eFG%", "gate": ("FGA", 20),
      "desc": "Top-tier effective field-goal % at volume."},
-    {"key": "charity", "name": "Charity Stripe", "emoji": "🆓", "cat": "Shooting",
+    {"key": "charity", "name": "Charity Stripe", "emoji": "", "cat": "Shooting",
      "stat": "FT%", "gate": ("FTA", 12),
      "desc": "Automatic from the free-throw line."},
-    {"key": "hot_hand", "name": "Hot Hand", "emoji": "♨️", "cat": "Shooting",
+    {"key": "hot_hand", "name": "Hot Hand", "emoji": "", "cat": "Shooting",
      "stat": "SMOE", "gate": ("FGA", 20),
      "desc": "Finishes well above the expected value of their shot diet (SMOE)."},
 
     # ── Scoring ───────────────────────────────────────────────────────────────
-    {"key": "bucket", "name": "Bucket Getter", "emoji": "🪣", "cat": "Scoring",
+    {"key": "bucket", "name": "Bucket Getter", "emoji": "", "cat": "Scoring",
      "stat": "PPG", "gate": ("GP", 1),
      "desc": "Leads the way as a primary scorer."},
-    {"key": "efficient", "name": "Efficient Scorer", "emoji": "💎", "cat": "Scoring",
+    {"key": "efficient", "name": "Efficient Scorer", "emoji": "", "cat": "Scoring",
      "stat": "TS%", "gate": ("FGA", 20),
      "desc": "Scores at a high true-shooting clip on real usage.",
      "combo": lambda r, P: _tier(min(P("TS%") or 0, P("PPG") or 0))},
-    {"key": "paint_beast", "name": "Paint Beast", "emoji": "🟦", "cat": "Scoring",
+    {"key": "paint_beast", "name": "Paint Beast", "emoji": "", "cat": "Scoring",
      "stat": "PaintPTS", "gate": ("PaintA", 10),
      "desc": "Dominates scoring inside."},
-    {"key": "self_creator", "name": "Self-Creator", "emoji": "🎬", "cat": "Scoring",
+    {"key": "self_creator", "name": "Self-Creator", "emoji": "", "cat": "Scoring",
      "stat": "SelfCr%", "gate": ("FGA", 20),
      "desc": "Generates their own shot — low assist dependency."},
-    {"key": "closer", "name": "Closer", "emoji": "🕓", "cat": "Scoring",
+    {"key": "closer", "name": "Closer", "emoji": "", "cat": "Scoring",
      "stat": "Q4PPG", "gate": ("FGA", 15),
      "desc": "Pours it on in the fourth quarter."},
-    {"key": "tough_shot", "name": "Tough-Shot Maker", "emoji": "🧗", "cat": "Scoring",
+    {"key": "tough_shot", "name": "Tough-Shot Maker", "emoji": "", "cat": "Scoring",
      "stat": "ShotRating", "gate": ("FGA", 20),
      "desc": "Takes (and makes a living on) the hardest shots."},
 
     # ── Playmaking ────────────────────────────────────────────────────────────
-    {"key": "floor_general", "name": "Floor General", "emoji": "🧠", "cat": "Playmaking",
+    {"key": "floor_general", "name": "Floor General", "emoji": "", "cat": "Playmaking",
      "stat": "APG", "gate": ("GP", 1),
      "desc": "Runs the offense and racks up assists."},
-    {"key": "dime_drop", "name": "Dime Dropper", "emoji": "🎩", "cat": "Playmaking",
+    {"key": "dime_drop", "name": "Dime Dropper", "emoji": "", "cat": "Playmaking",
      "stat": "AST/TOV", "gate": ("AST", 8),
      "desc": "Creates for others while protecting the ball (AST/TO)."},
-    {"key": "connector", "name": "Connector", "emoji": "🔗", "cat": "Playmaking",
+    {"key": "connector", "name": "Connector", "emoji": "", "cat": "Playmaking",
      "stat": "SC/G", "gate": ("GP", 1),
      "desc": "Keeps the ball moving — shots created per game."},
 
     # ── Defense ───────────────────────────────────────────────────────────────
-    {"key": "pickpocket", "name": "Pickpocket", "emoji": "🖐️", "cat": "Defense",
+    {"key": "pickpocket", "name": "Pickpocket", "emoji": "", "cat": "Defense",
      "stat": "SPG", "gate": ("GP", 1),
      "desc": "A menace in passing lanes."},
-    {"key": "rim_protect", "name": "Rim Protector", "emoji": "🚫", "cat": "Defense",
+    {"key": "rim_protect", "name": "Rim Protector", "emoji": "", "cat": "Defense",
      "stat": "BPG", "gate": ("GP", 1),
      "desc": "Erases shots at the basket."},
-    {"key": "lockdown", "name": "Lockdown", "emoji": "🔒", "cat": "Defense",
+    {"key": "lockdown", "name": "Lockdown", "emoji": "", "cat": "Defense",
      "stat": "DSHOT%", "higher_better": False, "gate": ("defFGA", 12),
      "desc": "Smothers the shots they contest (low defended FG%)."},
-    {"key": "disruptor", "name": "Disruptor", "emoji": "⚡", "cat": "Defense",
+    {"key": "disruptor", "name": "Disruptor", "emoji": "", "cat": "Defense",
      "stat": "STOCKS/32", "gate": ("MIN", 32),
      "desc": "Stocks (steals + blocks) per 32 — total defensive activity."},
 
     # ── Rebounding ────────────────────────────────────────────────────────────
-    {"key": "glass", "name": "Glass Cleaner", "emoji": "🪟", "cat": "Rebounding",
+    {"key": "glass", "name": "Glass Cleaner", "emoji": "", "cat": "Rebounding",
      "stat": "RPG", "gate": ("GP", 1),
      "desc": "Owns the defensive glass."},
-    {"key": "putback", "name": "Putback Hunter", "emoji": "🪤", "cat": "Rebounding",
+    {"key": "putback", "name": "Putback Hunter", "emoji": "", "cat": "Rebounding",
      "stat": "OREB/G", "gate": ("GP", 1),
      "desc": "Crashes the offensive boards for second chances."},
 
     # ── Two-way / Identity ────────────────────────────────────────────────────
-    {"key": "two_way", "name": "Two-Way Wire", "emoji": "🔌", "cat": "Two-Way",
+    {"key": "two_way", "name": "Two-Way Wire", "emoji": "", "cat": "Two-Way",
      "stat": "2WAY", "gate": ("GP", 1),
      "desc": "Impacts both ends — average of offense + defense rating."},
-    {"key": "swiss_army", "name": "Swiss-Army Knife", "emoji": "🛠️", "cat": "Two-Way",
+    {"key": "swiss_army", "name": "Swiss-Army Knife", "emoji": "", "cat": "Two-Way",
      "stat": "VERSATILITY", "gate": ("GP", 1),
      "desc": "Fills every column of the box score."},
-    {"key": "iron", "name": "Iron Player", "emoji": "🛡️", "cat": "Two-Way",
+    {"key": "iron", "name": "Iron Player", "emoji": "", "cat": "Two-Way",
      "stat": "MPG", "gate": ("GP", 2),
      "desc": "Logs heavy minutes night in, night out."},
-    {"key": "franchise", "name": "Franchise Cornerstone", "emoji": "👑", "cat": "Two-Way",
+    {"key": "franchise", "name": "Franchise Cornerstone", "emoji": "", "cat": "Two-Way",
      "stat": "OVERALL", "gate": ("GP", 2),
      "desc": "Top-shelf all-around player rating."},
 ]

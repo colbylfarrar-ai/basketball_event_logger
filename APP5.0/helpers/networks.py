@@ -33,8 +33,7 @@ from helpers.lineups import _event_floor
 DEFAULT_MIN_POSS = 20   # a pair needs this many shared possessions to be drawn
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 def chemistry_network(team_id, game_ids=None, events=None,

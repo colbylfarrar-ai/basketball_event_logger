@@ -22,10 +22,10 @@ import helpers.stats as S
 
 
 DEFAULT_MIN_POSS = 12   # a unit needs this many possessions to be reportable
+_NET_PRIOR_POSS  = 40   # possessions of league-average (Net 0) prior mixed in
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 def _event_floor(game_ids=None):
@@ -97,15 +97,21 @@ def unit_ratings(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS)
             continue
         ortg = 100 * _safe(u["off_pts"], u["off_poss"])
         drtg = 100 * _safe(u["def_pts"], u["def_poss"])
+        net = ortg - drtg
+        # Credibility-weight Net toward 0 by sample size: a 12-possession unit
+        # that posts +40 is mostly noise, so it regresses hard; a 100-possession
+        # unit keeps almost all of its edge. NetAdj is what to sort/trust on.
+        cred = poss / (poss + _NET_PRIOR_POSS)
         out.append({
             "players": tuple(sorted(five)),
             "names": [name_of.get(p, str(p)) for p in sorted(five)],
             "off_poss": u["off_poss"], "def_poss": u["def_poss"], "poss": poss,
             "pts_for": u["off_pts"], "pts_against": u["def_pts"],
             "ORtg": round(ortg, 1), "DRtg": round(drtg, 1),
-            "Net": round(ortg - drtg, 1),
+            "Net": round(net, 1),
+            "NetAdj": round(net * cred, 1), "cred": round(cred, 2),
         })
-    out.sort(key=lambda d: -d["Net"])
+    out.sort(key=lambda d: -d["NetAdj"])
     return out
 
 
@@ -169,7 +175,7 @@ def player_unit_summary(team_id, game_ids=None, min_poss=DEFAULT_MIN_POSS):
     for u in units:
         for p in u["players"]:
             agg[p]["poss"] += u["poss"]
-            agg[p]["netposs"] += u["Net"] * u["poss"]
+            agg[p]["netposs"] += u["NetAdj"] * u["poss"]
     return {p: {"name": name_of.get(p, str(p)), "poss": a["poss"],
                 "wnet": round(_safe(a["netposs"], a["poss"]), 1)}
             for p, a in agg.items()}

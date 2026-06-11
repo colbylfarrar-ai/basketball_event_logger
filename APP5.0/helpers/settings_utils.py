@@ -127,7 +127,7 @@ def apply_page_config(settings: dict = None) -> None:
     try:
         st.set_page_config(
             page_title="Analytics Hub",
-            page_icon="📊",
+            page_icon="",
             layout="wide" if wide else "centered",
             initial_sidebar_state="expanded",
         )

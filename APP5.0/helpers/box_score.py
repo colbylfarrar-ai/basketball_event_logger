@@ -22,13 +22,16 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
-from helpers.settings_utils import get_setting
+from helpers.ui import team_color
 import helpers.stats as S
 import helpers.win_probability as WP
 import helpers.team_analytics as TA
 import helpers.lineups as LU
 import helpers.wpa as WPA
 import helpers.team_ratings as TR
+import helpers.gameflow as GF
+import helpers.reports as RP
+import helpers.court as court
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
@@ -45,24 +48,11 @@ BAD = "#e74c3c"
 #  TIME HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _clock_secs(t: str) -> float:
-    try:
-        m, s = t.strip().split(":")
-        return int(m) * 60 + int(s)
-    except Exception:
-        return 0.0
-
-
-def _q_len(q: int) -> int:
-    return 480 if q <= 4 else 240
-
-
-def _q_base(q: int) -> int:
-    return 480 * (q - 1) if q <= 4 else 480 * 4 + 240 * (q - 5)
-
-
-def _elapsed(q: int, t: str) -> float:
-    return _q_base(q) + (_q_len(q) - _clock_secs(t))
+# Game-clock helpers — canonical versions live in helpers.stats.
+_clock_secs = S.clock_secs
+_q_len = S.q_len
+_q_base = S.q_base
+_elapsed = S.elapsed
 
 
 def _q_label(q: int) -> str:
@@ -179,11 +169,13 @@ def _bar(text):
 #  MAIN ENTRY
 # ══════════════════════════════════════════════════════════════════════════════
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _recap(game_id):
+    return RP.game_recap_html(game_id)
+
+
 def render_box_score(game_id: int):
     """Render the full tabbed box-score report for one game."""
-    accent = get_setting("accent_color", "#f0a500")   # home / team1
-    away = "#e74c3c"                                    # away / team2
-
     g = query("""
         SELECT g.*, t1.name AS t1_name, t2.name AS t2_name, t1.gender AS gender
         FROM games g JOIN teams t1 ON t1.id=g.team1_id JOIN teams t2 ON t2.id=g.team2_id
@@ -194,6 +186,10 @@ def render_box_score(game_id: int):
     g = g[0]
     t1id, t2id = g["team1_id"], g["team2_id"]
     t1name, t2name = g["t1_name"], g["t2_name"]        # t1 = home, t2 = away
+    accent = team_color(t1name, t1id)   # home / team1 identity colour
+    away = team_color(t2name, t2id)     # away / team2 identity colour
+    if away == accent:                  # keep the two teams visually distinct
+        away = "#e74c3c"
 
     boxes, team_pts, quarters = _build_boxes(game_id, t1id, t2id)
     if not any(team_pts.values()) and not quarters:
@@ -292,8 +288,14 @@ def render_box_score(game_id: int):
     tsq_h = TA.team_shot_quality(t1id, [game_id], events=events, rates=rates)
     tsq_a = TA.team_shot_quality(t2id, [game_id], events=events, rates=rates)
 
-    tabs = st.tabs(["📊 Overview", "📈 Flow", "🎯 Shooting", "🧭 Quarters",
-                    "👥 Lineups", "📋 Box Score", "🧱 Four Factors"])
+    st.download_button(
+        "⬇ Download game recap (open & print to PDF)",
+        _recap(game_id),
+        file_name=f"recap_{t1name}_vs_{t2name}.html".replace(" ", "_"),
+        mime="text/html", key=f"bs{game_id}_recap")
+
+    tabs = st.tabs(["Overview", "Flow", "Shooting", "Quarters",
+                    "Lineups", "Box Score", "Four Factors"])
 
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 0 — OVERVIEW
@@ -398,6 +400,38 @@ def render_box_score(game_id: int):
                 f"<div class='kpi-value'>{val}</div>"
                 f"<div class='kpi-sub'>{nm}</div></div>", unsafe_allow_html=True)
 
+        # ── scoring breakdown (paint / 2nd chance / off TO / fast break / bench)
+        st.markdown("**Scoring breakdown**")
+        _sb = GF.scoring_buckets([game_id], events=events)
+        _h, _a = (_sb.get(t1id) or {}), (_sb.get(t2id) or {})
+        _cats = [("Paint", "paint"), ("2nd chance", "second_chance"),
+                 ("Off TO", "off_turnover"), ("Fast break", "fast_break"),
+                 ("Bench", "bench")]
+        _sbfig = go.Figure()
+        _sbfig.add_trace(go.Bar(
+            name=t1name, x=[c[0] for c in _cats],
+            y=[_h.get(c[1], 0) for c in _cats], marker_color=accent,
+            marker_line_width=0, text=[_h.get(c[1], 0) for c in _cats],
+            textposition="outside"))
+        _sbfig.add_trace(go.Bar(
+            name=t2name, x=[c[0] for c in _cats],
+            y=[_a.get(c[1], 0) for c in _cats], marker_color=away,
+            marker_line_width=0, text=[_a.get(c[1], 0) for c in _cats],
+            textposition="outside"))
+        _sbfig.update_layout(barmode="group")
+        _sbfig.update_yaxes(title="Points")
+        _style(_sbfig, 300)
+        st.plotly_chart(_sbfig, width="stretch", key=f"bs{game_id}_buckets")
+        st.caption("Field-goal points by type · bench = all points by inferred "
+                   "non-starters (starters = the opening five on the floor).")
+
+        _runs = GF.scoring_runs(game_id, events=events)
+        if _runs:
+            _rtxt = " · ".join(
+                f"{(t1name if r['team_id'] == t1id else t2name)} on a "
+                f"{r['points']}-0 run" for r in _runs[:3])
+            st.caption(f"🔥 **Biggest runs:** {_rtxt}")
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 1 — FLOW
     # ════════════════════════════════════════════════════════════════════════
@@ -438,6 +472,12 @@ def render_box_score(game_id: int):
             hovertemplate="Margin: %{y}<extra></extra>"))
         mfig.add_hline(y=0, line=dict(color="#30363d", width=1))
         _quarter_bands(mfig, qs, end_t)
+        for _r in GF.scoring_runs(game_id, events=events)[:3]:
+            mfig.add_vrect(
+                x0=_r["start"], x1=_r["end"],
+                fillcolor=(accent if _r["team_id"] == t1id else away),
+                opacity=0.12, line_width=0, annotation_text=f"{_r['points']}-0",
+                annotation_position="top left", annotation_font_size=9)
         mfig.update_xaxes(tickvals=xticks, ticktext=xlabels, title="Game clock")
         mfig.update_yaxes(title=f"+{t1name}  /  −{t2name}")
         _style(mfig, 260)
@@ -586,10 +626,9 @@ def render_box_score(game_id: int):
             for i, bk in enumerate(bk_keys):
                 tt = ct[bk]["total"]
                 if tt["FGA"]:
-                    ts = tt["PPS"] / 2  # no FTs in a shot list → TS ≈ PPS/2
                     cfig.add_annotation(
                         x=bk_labels[i], y=tt["FGA"], yshift=12, showarrow=False,
-                        text=f"<b>{tt['FGA']}</b> · eFG {100*tt['eFG']:.0f}% · TS {100*ts:.0f}%",
+                        text=f"<b>{tt['FGA']}</b> · eFG {100*tt['eFG']:.0f}%",
                         font=dict(size=10, color="#c9d1d9"))
             cfig.update_layout(barmode="stack")
             cfig.update_yaxes(title="Attempts")
@@ -729,8 +768,9 @@ def render_box_score(game_id: int):
 
         st.divider()
 
-        # hot zones — 5 zone tiles, filterable by team + player
-        st.markdown("**Hot zones** (zone-level — FGM/FGA + % per spot)")
+        # shot chart — real tap-located court when (x,y) exist, else 5-zone tiles
+        st.markdown("**Shot chart** — tap-located shots on the court, or 5-zone "
+                    "heat when the game has zone-only data")
         hz1, hz2 = st.columns([1, 1])
         with hz1:
             team_pick = st.selectbox("Team", ["Both", t1name, t2name],
@@ -744,22 +784,47 @@ def render_box_score(game_id: int):
         with hz2:
             player_pick = st.selectbox("Player", ["All players"] + list(pmap.keys()),
                                        key=f"bs{game_id}_hz_player")
-        # filter shots, then split each zone by 2s and 3s
-        sel = [e for e in events if e["event_type"] == "shot" and e["zone"]]
-        if tid_pick is not None:
-            sel = [e for e in sel if e["shooter_team_id"] == tid_pick]
-        if player_pick != "All players":
-            pid = _pid_of(pmap[player_pick], boxes)
-            sel = [e for e in sel if e["primary_player_id"] == pid]
-        za = {(z, t): {"fga": 0, "fgm": 0} for z in ZONES for t in (2, 3)}
-        for e in sel:
-            c = za[(e["zone"], 3 if e["shot_type"] == 3 else 2)]
-            c["fga"] += 1
-            if e["shot_result"] == "make":
-                c["fgm"] += 1
-        if not sel:
-            st.info("No located shots for this filter.")
+        pid = (_pid_of(pmap[player_pick], boxes)
+               if player_pick != "All players" else None)
+        who = (player_pick if player_pick != "All players"
+               else team_pick if team_pick != "Both" else "Both teams")
+
+        # tap-captured (x,y) when present, else zone centroid (flagged approx)
+        shots = S.mapped_shots(game_ids=[game_id], events=events,
+                               team_id=tid_pick, player_id=pid)
+        n_real = sum(1 for s in shots if not s["approx"])
+
+        if not shots:
+            st.info("No shots logged for this filter.")
+        elif n_real:
+            # real located shots → true half-court chart (dots or hexbin)
+            view = st.radio("View", ["Shot map", "Hexbin (volume · PPS)"],
+                            horizontal=True, key=f"bs{game_id}_hz_view")
+            if view.startswith("Shot"):
+                cfig, _ = court.shot_map(shots, title=f"{who} · shot chart")
+            else:
+                cfig, _ = court.shot_hexbin(shots, title=f"{who} · shot hexbin")
+            st.plotly_chart(cfig, width="stretch", key=f"bs{game_id}_courtmap")
+            if n_real < len(shots):
+                st.caption(f"{n_real}/{len(shots)} shots are tap-located; the rest "
+                           "sit at their zone centroid. Sharper as you tap shots in "
+                           "the Game Tracker.")
         else:
+            # legacy zone-only game → 5-zone heat tiles (no x/y captured yet)
+            st.caption("Zone-only data for this game — tap shots in the Game "
+                       "Tracker to unlock the full court map.")
+            za = {(z, t): {"fga": 0, "fgm": 0} for z in ZONES for t in (2, 3)}
+            for e in events:
+                if e["event_type"] != "shot" or not e["zone"]:
+                    continue
+                if tid_pick is not None and e["shooter_team_id"] != tid_pick:
+                    continue
+                if pid is not None and e["primary_player_id"] != pid:
+                    continue
+                c = za[(e["zone"], 3 if e["shot_type"] == 3 else 2)]
+                c["fga"] += 1
+                if e["shot_result"] == "make":
+                    c["fgm"] += 1
             # two stacks of five — 3-pointers on top, 2-pointers on the bottom
             for stype, slbl in [(3, "3-pointers"), (2, "2-pointers")]:
                 st.markdown(
@@ -985,6 +1050,7 @@ def render_box_score(game_id: int):
                 "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
                 "GS": round(S.game_score(b), 1), "PER": round(S.per(b), 1),
                 "FIC": round(S.fic(b), 1), "TS%": round(100*S.ts(b), 1),
+                "VPS": (round(S.vps(b), 2) if S.vps(b) is not None else None),
                 "WPA": round(ws.get(pid, {}).get("wpa", 0.0), 3),
                 "PossWPA": round(wpp.get(pid, {}).get("wpa", 0.0), 3),
                 "SMOE": smoe})
@@ -993,14 +1059,52 @@ def render_box_score(game_id: int):
                          column_config={
                              "TS%": st.column_config.ProgressColumn("TS%", format="%.0f",
                                     min_value=0, max_value=100),
+                             "VPS": st.column_config.NumberColumn("VPS", format="%.2f"),
                              "WPA": st.column_config.NumberColumn("WPA", format="%+.3f"),
                              "PossWPA": st.column_config.NumberColumn("PossWPA", format="%+.3f"),
                              "SMOE": st.column_config.NumberColumn("SMOE", format="%+.1f")},
                          key=f"bs{game_id}_adv_players_{tid}")
             st.caption("GS = Game Score · PER ≈ Game Score (single-program proxy) · "
-                       "FIC = Floor Impact Counter · WPA = win-probability added "
-                       "(scoring) · PossWPA = possession-model WPA · SMOE = FG% over "
-                       "expected. RAPM/shrunk metrics are season-scale — omitted here.")
+                       "FIC = Floor Impact Counter · VPS = Hudl Value Point System "
+                       "(value ÷ mistakes) · WPA = win-probability added (scoring) · "
+                       "PossWPA = possession-model WPA · SMOE = FG% over expected. "
+                       "RAPM/shrunk metrics are season-scale — omitted here.")
+
+        # ── rotation / stint timeline ───────────────────────────────────────
+        st.markdown("**Rotation — who was on the floor, when**")
+        _rot = GF.rotation(game_id, events=events)
+        if not _rot["team_ids"]:
+            st.info("No lineup data logged for this game.")
+        else:
+            _endm = _rot["end"] / 60
+            for _tid, _clr in ((t1id, accent), (t2id, away)):
+                _rows = _rot["teams"].get(_tid, [])
+                if not _rows:
+                    continue
+                _tname = t1name if _tid == t1id else t2name
+                _fig = go.Figure()
+                for r in _rows:
+                    _last = r["name"].split()[-1] if r["name"] else ""
+                    _lbl = f"{'★ ' if r['starter'] else ''}#{r['number']} {_last}"
+                    for (s, e) in r["segments"]:
+                        _fig.add_trace(go.Bar(
+                            x=[(e - s) / 60], y=[_lbl], base=s / 60,
+                            orientation="h", marker_color=_clr,
+                            marker_line_width=0, showlegend=False,
+                            hovertemplate=(f"{r['name']} · {s/60:.0f}–{e/60:.0f} "
+                                           f"min<extra></extra>")))
+                for _qb in (8, 16, 24, 32, 36, 40):
+                    if _qb < _endm:
+                        _fig.add_vline(x=_qb, line=dict(color="#30363d", dash="dot"))
+                _fig.update_layout(barmode="overlay",
+                                   title=f"{_tname} — {len(_rows)} played")
+                _fig.update_xaxes(title="Game minute", range=[0, _endm])
+                _fig.update_yaxes(autorange="reversed")
+                _style(_fig, max(200, 26 * len(_rows) + 90))
+                st.plotly_chart(_fig, width="stretch", key=f"bs{game_id}_rot_{_tid}")
+            st.caption("Each bar = a stint on the floor (★ = inferred starter). "
+                       "Minutes from the elapsed clock between events — more "
+                       "complete than the possession-seconds estimate.")
 
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 5 — BOX SCORE
@@ -1055,7 +1159,7 @@ def render_box_score(game_id: int):
             df = make_df(tid)
             st.dataframe(df, hide_index=True, width="stretch", column_config=pcfg,
                          key=f"bs{game_id}_box_{tid}")
-            st.download_button(f"⬇ {nm} box (CSV)", df.to_csv(index=False),
+            st.download_button(f"{nm} box (CSV)", df.to_csv(index=False),
                                file_name=f"box_{game_id}_{nm}.csv", mime="text/csv",
                                key=f"dl_box_{game_id}_{tid}")
 

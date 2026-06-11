@@ -1,7 +1,7 @@
 """
 win_probability.py — In-game win probability + Game Excitement Index.
 
-The one play-by-play artifact APP4.0 was missing that DomSamangy's NCAA
+The one play-by-play artifact APP5.0 was missing that DomSamangy's NCAA
 dashboards (and every pro site) have. From a score-margin-over-time trace it
 produces a live win-probability curve, then distills the curve into a single
 "how dramatic was this game" number — the Game Excitement Index (Luke Benz's
@@ -109,14 +109,14 @@ def game_excitement_index(curve, total_secs=None, ref_secs=GAME_SECONDS):
 def excitement_label(gei):
     """Human tier for a GEI value (textbook Σ|ΔWP| scale, ~0.5–5)."""
     if gei >= 4.0:
-        return "🔥 Instant classic"
+        return "Instant classic"
     if gei >= 3.0:
-        return "⚡ Thriller"
+        return "Thriller"
     if gei >= 2.0:
-        return "🍿 Competitive"
+        return "Competitive"
     if gei >= 1.0:
-        return "📋 Comfortable"
-    return "😴 Wire-to-wire"
+        return "Comfortable"
+    return "Wire-to-wire"
 
 
 def summarize(curve):

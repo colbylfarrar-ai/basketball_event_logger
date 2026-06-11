@@ -16,14 +16,14 @@ import streamlit as st
 
 from database.db import query
 from helpers.settings_utils import (
-    set_setting, ACCENT_PRESETS, STYLE_PRESETS, DEFAULTS,
+    set_setting, get_setting, ACCENT_PRESETS, STYLE_PRESETS, DEFAULTS,
 )
-from helpers.ui import page_chrome
+from helpers.ui import page_chrome, team_color
 
 _cfg, _ = page_chrome()
 
 
-st.title("⚙️ Settings")
+st.title("Settings")
 st.caption("Changes are saved immediately. Reload other pages to see them applied.")
 
 
@@ -109,3 +109,42 @@ else:
     if saved != cur_team:
         set_setting("default_team", saved)
         st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TEAM COLOURS
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader("Team colours")
+st.caption("Give a team its own identity colour — used in its charts and the box "
+           "score. Auto derives a stable colour from the team name; switch on "
+           "Custom to override it.")
+
+_tc_rows = query("SELECT id, name FROM teams ORDER BY name")
+if not _tc_rows:
+    st.info("No teams yet — add teams in the Input Hub first.")
+else:
+    tc1, tc2 = st.columns([3, 2])
+    with tc1:
+        _tc_team = st.selectbox("Team", _tc_rows, format_func=lambda r: r["name"],
+                                key="tc_team")
+    _tid = _tc_team["id"]
+    _key = f"team_color::{_tid}"
+    _cur = get_setting(_key, "")
+    _auto = team_color(_tc_team["name"])
+    with tc2:
+        _use_custom = st.toggle("Custom colour", value=bool(_cur), key="tc_custom",
+                                help="Off = Auto (derived from the team name).")
+    if _use_custom:
+        _picked = st.color_picker("Pick a colour", value=_cur or _auto, key="tc_pick")
+        if _picked != _cur:
+            set_setting(_key, _picked)
+            st.rerun()
+    elif _cur:                       # toggled off → clear the override
+        set_setting(_key, "")
+        st.rerun()
+    st.markdown(
+        f"<span style='display:inline-block;width:16px;height:16px;border-radius:4px;"
+        f"background:{_cur or _auto};vertical-align:middle;margin-right:8px'></span>"
+        f"<span style='color:var(--subtext)'>"
+        f"{'Custom' if _cur else 'Auto'} · {_cur or _auto}</span>",
+        unsafe_allow_html=True)

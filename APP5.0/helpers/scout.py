@@ -1,7 +1,7 @@
 """
 scout.py — coach's scouting-report engine (FastScout-style game prep).
 
-The assembly + printable-HTML layer behind Team Analytics' "🎯 Scout" tab: four
+The assembly + printable-HTML layer behind Team Analytics' "Scout" tab: four
 factors with league percentiles, rule-based "how to guard / how to attack" keys,
 personnel cards, hot zones, and a clean printable HTML the coach can hand out or
 save to PDF (no reportlab dependency). Scout an opponent, or self-scout your own
@@ -14,12 +14,11 @@ from __future__ import annotations
 import html
 
 from database.db import query
-from helpers.ui import GOOD, BAD
 import helpers.league_analytics as LA
 import helpers.badges as BG
 import helpers.stats as S
 
-ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Paint/center",
+ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
 
 
@@ -43,12 +42,37 @@ def team_zone(game_ids, team_pids):
     return out
 
 
+def team_zone_by_type(game_ids, team_pids, events=None):
+    """Team shooting by zone, split into 2PT and 3PT (team's own shots).
+    {zone: {'2': {FGA,FGM,pct}, '3': {FGA,FGM,pct}}} with pct as 0-100."""
+    out = {z: {"2": {"FGA": 0, "FGM": 0}, "3": {"FGA": 0, "FGM": 0}}
+           for z in S.ZONES}
+    if game_ids:
+        zs = S.player_zone_splits(game_ids=list(game_ids), events=events)
+        for pid in team_pids:
+            for (z, stype), cell in zs.get(pid, {}).items():
+                if z not in out:
+                    continue
+                k = "3" if stype == 3 else "2"
+                out[z][k]["FGA"] += cell["FGA"]
+                out[z][k]["FGM"] += cell["FGM"]
+    for z in out:
+        for k in ("2", "3"):
+            a = out[z][k]
+            a["pct"] = (100 * a["FGM"] / a["FGA"]) if a["FGA"] else 0.0
+    return out
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SCOUT BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_scout(team_id, gender, scored, tracked, pack, table):
-    """Assemble every piece of the scouting report for one team."""
+def build_scout(team_id, gender, scored, tracked, pack, table,
+                personnel_limit=7, exclude_pids=None):
+    """Assemble every piece of the scouting report for one team.
+
+    personnel_limit=None shows the WHOLE roster (self-scout); exclude_pids drops
+    players (e.g. injured/suspended) from the personnel list."""
     s = scored.get(team_id, {})
     ts = pack.get("ts", {})
     me = ts.get(team_id)
@@ -123,8 +147,11 @@ def build_scout(team_id, gender, scored, tracked, pack, table):
                     key=lambda r: -(r.get("PPG") or 0))
     badges = BG.award_badges({pid: r for pid, r in table.items()})
     pid_of = {r["name"]: pid for pid, r in table.items() if r["team_id"] == team_id}
+    if exclude_pids:
+        roster = [r for r in roster if pid_of.get(r["name"]) not in exclude_pids]
+    _lim = len(roster) if personnel_limit is None else personnel_limit
     personnel = []
-    for r in roster[:7]:
+    for r in roster[:_lim]:
         notes = []
         if (r.get("3PR") or 0) >= 40 and (r.get("3P%") or 0) >= 30:
             notes.append("deny threes — close out high")
@@ -141,6 +168,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table):
         pid = pid_of.get(r["name"])
         bl = badges.get(pid, [])[:3] if pid else []
         personnel.append({
+            "pid": pid,
             "name": r["name"], "num": r.get("number"),
             "ppg": r.get("PPG"), "rpg": r.get("RPG"), "apg": r.get("APG"),
             "fg": r.get("FG%"), "tp": r.get("3P%"), "ts": r.get("TS%"),
@@ -149,11 +177,36 @@ def build_scout(team_id, gender, scored, tracked, pack, table):
             "badges": [f"{b['emoji']} {b['name']}" for b in bl],
         })
 
-    # ── hot zones ──
-    gids = S.team_game_ids(team_id, tracked_only=True)
+    # ── hot zones (combined + 2/3 split) and per-player shot-creation mix ──
+    # Select the team's tracked games by tracked=1 ALONE — NOT S.team_game_ids,
+    # which also requires recorded final scores. A game can be tracked (events
+    # logged) without its score entered in the games table; those still feed the
+    # four-factors/personnel (event-based) so the zone + creation views must use
+    # the same game set or they come back empty.
+    gids = [r["id"] for r in query(
+        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1",
+        (team_id, team_id))]
     team_pids = tuple(r["id"] for r in
                       query("SELECT id FROM players WHERE team_id=?", (team_id,)))
     zones = team_zone(tuple(gids), team_pids)
+    ev = S.fetch_events(list(gids)) if gids else []
+    zones_by_type = team_zone_by_type(tuple(gids), team_pids, events=ev)
+
+    # how each player gets their shots: self / off a pass / off a screen / both,
+    # as a share of their own FGA (the shooter-side creation mix).
+    cmix = {}
+    for e in ev:
+        if e["event_type"] != "shot" or e["primary_player_id"] is None:
+            continue
+        hp = e["pass_from_id"] is not None
+        hc = e["shot_created_by_id"] is not None
+        k = "both" if hp and hc else "pass" if hp else "screen" if hc else "self"
+        cmix.setdefault(e["primary_player_id"],
+                        {"self": 0, "pass": 0, "screen": 0, "both": 0})[k] += 1
+    for p in personnel:
+        c = cmix.get(p["pid"])
+        tot = sum(c.values()) if c else 0
+        p["creation"] = {k: 100 * c[k] / tot for k in c} if tot else None
 
     return {
         "name": name, "class": s.get("class", "N/A"),
@@ -162,7 +215,8 @@ def build_scout(team_id, gender, scored, tracked, pack, table):
         "trk": tracked.get(team_id),
         "factors": factors, "strengths": strengths, "weaknesses": weaknesses,
         "guard": guard, "attack": attack, "personnel": personnel,
-        "zones": zones, "has_tracked": me is not None,
+        "zones": zones, "zones_by_type": zones_by_type,
+        "has_tracked": me is not None,
     }
 
 
@@ -170,67 +224,102 @@ def build_scout(team_id, gender, scored, tracked, pack, table):
 #  PRINTABLE HTML
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _bar_html(pct, color):
-    pct = pct if pct is not None else 0
-    return (f"<div style='background:#eee;border-radius:4px;height:12px;width:120px;"
-            f"display:inline-block;vertical-align:middle'>"
-            f"<div style='background:{color};width:{pct}%;height:12px;"
-            f"border-radius:4px'></div></div>")
-
-
 def printable_html(sc, opponent_label):
+    """A compact, print-ready ONE-PAGE scouting sheet (browser → Print → PDF).
+    Zero dependencies; intentionally small and simple — no branding band, bars or
+    badges, four factors and zones sit side by side to keep it to a page."""
+    import datetime
     e = html.escape
+    try:
+        _d = datetime.date.today()
+        today = f"{_d.strftime('%b')} {_d.day}, {_d.year}"
+    except Exception:
+        today = ""
+
     trk = sc["trk"]
     rng = (f"ORtg {trk['ORtg']:.0f} · DRtg {trk['DRtg']:.0f} · "
-           f"Net {trk['NetRtg']:+.0f} · Pace {trk['Pace']:.0f}") if trk else "—"
+           f"Net {trk['NetRtg']:+.0f} · Pace {trk['Pace']:.0f}") if trk else ""
+
     rows_f = ""
     for f in sc["factors"]:
         if f["value"] is None:
             continue
-        clr = GOOD if (f["pct"] or 0) >= 60 else (BAD if (f["pct"] or 0) <= 40 else "#888")
-        rows_f += (f"<tr><td>{e(f['label'])}</td><td style='text-align:right'>"
-                   f"{f['value']:.1f}</td><td>{_bar_html(f['pct'], clr)} "
-                   f"{('%.0f' % f['pct']) + 'pctl' if f['pct'] is not None else ''}</td></tr>")
-    guard = "".join(f"<li>{e(x)}</li>" for x in sc["guard"])
-    attack = "".join(f"<li>{e(x)}</li>" for x in sc["attack"])
+        p = f["pct"]
+        rows_f += (f"<tr><td>{e(f['label'])}</td><td class='n'>{f['value']:.1f}</td>"
+                   f"<td class='n'>{('%.0f' % p) if p is not None else '—'}</td></tr>")
+
+    guard = "".join(f"<li>{e(x)}</li>" for x in sc["guard"]) or "<li>—</li>"
+    attack = "".join(f"<li>{e(x)}</li>" for x in sc["attack"]) or "<li>—</li>"
+
     pers = ""
     for p in sc["personnel"]:
-        bdg = " ".join(e(b) for b in p["badges"])
+        fgp = f"{p['fg']:.0f}" if p.get("fg") is not None else "—"
+        tp = f"{p['tp']:.0f}" if p["tp"] is not None else "—"
+        note = e(p["note"]) if p.get("note") else ""
         pers += (f"<tr><td><b>#{p['num']} {e(p['name'])}</b></td>"
-                 f"<td>{(p['ppg'] or 0):.1f}</td><td>{(p['rpg'] or 0):.1f}</td>"
-                 f"<td>{(p['apg'] or 0):.1f}</td>"
-                 f"<td>{('%.0f%%'%p['tp']) if p['tp'] is not None else '—'}</td>"
-                 f"<td>{e(p['note'])}<br><span style='color:#666;font-size:11px'>{bdg}</span></td></tr>")
-    zr = ""
-    for z in S.ZONES:
-        zz = sc["zones"].get(z, {})
-        zr += (f"<tr><td>{ZONE_LABELS[z]}</td><td>{zz.get('FGM',0)}/{zz.get('FGA',0)}</td>"
-               f"<td>{zz.get('pct',0):.0f}%</td></tr>")
+                 f"<td class='n'>{(p['ppg'] or 0):.1f}</td>"
+                 f"<td class='n'>{(p['rpg'] or 0):.1f}</td>"
+                 f"<td class='n'>{(p['apg'] or 0):.1f}</td>"
+                 f"<td class='n'>{fgp}</td><td class='n'>{tp}</td>"
+                 f"<td class='note'>{note}</td></tr>")
 
-    return f"""<!doctype html><html><head><meta charset='utf-8'>
+    zrows = ""
+    zbt = sc.get("zones_by_type", {})
+    for z in S.ZONES:
+        zz = zbt.get(z, {})
+        for i, (tag, cell) in enumerate((("2", zz.get("2", {})),
+                                         ("3", zz.get("3", {})))):
+            fga, fgm = cell.get("FGA", 0), cell.get("FGM", 0)
+            pct = cell.get("pct", 0)
+            fg = f"{fgm}/{fga} · {pct:.0f}%" if fga else "—"
+            lab = (f"<td rowspan='2'><b>{e(ZONE_LABELS[z])}</b></td>"
+                   if i == 0 else "")
+            zrows += f"<tr>{lab}<td>{tag}P</td><td class='n'>{fg}</td></tr>"
+
+    return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
 <title>Scout · {e(sc['name'])}</title>
 <style>
-body{{font-family:Segoe UI,Arial,sans-serif;color:#111;margin:24px;font-size:13px}}
-h1{{margin:0;font-size:24px}} h2{{font-size:15px;border-bottom:2px solid #111;
-padding-bottom:3px;margin:18px 0 8px}}
-table{{border-collapse:collapse;width:100%}} td,th{{padding:4px 8px;border-bottom:1px solid #ddd}}
-.sub{{color:#555;margin:2px 0 10px}} .cols{{display:flex;gap:24px}}
-.col{{flex:1}} ul{{margin:4px 0;padding-left:18px}} li{{margin:3px 0}}
-@media print{{body{{margin:10px}}}}
-</style></head><body>
-<h1>SCOUTING REPORT — {e(sc['name'])}</h1>
-<div class='sub'>{e(opponent_label)} · {e(sc['class'])} · Record {sc['record']} ·
-Power rank #{sc['rank']}/{sc['of']} · {e(rng)}</div>
+*{{box-sizing:border-box}}
+html{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+body{{font-family:'Segoe UI',Arial,sans-serif;color:#111;margin:0;font-size:11px;
+  line-height:1.35;background:#fff}}
+.wrap{{max-width:760px;margin:0 auto;padding:14px 18px}}
+h1{{margin:0;font-size:18px;letter-spacing:.2px}}
+.meta{{color:#555;font-size:11px;margin-top:2px}}
+.rng{{color:#222;font-size:11px;font-weight:600;margin:1px 0 8px}}
+h2{{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#111;
+  border-bottom:1.5px solid #111;padding-bottom:2px;margin:11px 0 5px}}
+.cols{{display:flex;gap:20px}} .col{{flex:1}}
+ul{{margin:2px 0;padding-left:15px}} li{{margin:2px 0}}
+table{{border-collapse:collapse;width:100%;font-size:11px}}
+th{{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;
+  color:#666;border-bottom:1px solid #111;padding:2px 6px}}
+td{{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}}
+.n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
+.note{{color:#555;font-size:10px}}
+.two{{display:flex;gap:20px;align-items:flex-start}} .two>div{{flex:1}}
+.foot{{margin-top:12px;color:#999;font-size:9px}}
+@media print{{.wrap{{padding:8px 12px}}}}
+</style></head><body><div class='wrap'>
+<h1>SCOUT — {e(sc['name'])}</h1>
+<div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
+  Power #{sc['rank']}/{sc['of']}</div>
+<div class='rng'>{e(rng)}</div>
 <div class='cols'>
-<div class='col'><h2>Keys — How to guard them</h2><ul>{guard}</ul></div>
-<div class='col'><h2>Keys — How to attack them</h2><ul>{attack}</ul></div>
+  <div class='col'><h2>Guard them</h2><ul>{guard}</ul></div>
+  <div class='col'><h2>Attack them</h2><ul>{attack}</ul></div>
 </div>
-<h2>Team profile (four factors &amp; tendencies)</h2>
-<table><tr><th>Factor</th><th style='text-align:right'>Value</th><th>League percentile</th></tr>{rows_f}</table>
+<div class='two'>
+  <div><h2>Four factors</h2>
+    <table><tr><th>Factor</th><th class='n'>Val</th><th class='n'>%ile</th></tr>
+    {rows_f}</table></div>
+  <div><h2>Shooting by zone</h2>
+    <table><tr><th>Zone</th><th>Type</th><th class='n'>FG · %</th></tr>
+    {zrows}</table></div>
+</div>
 <h2>Personnel</h2>
-<table><tr><th>Player</th><th>PPG</th><th>RPG</th><th>APG</th><th>3P%</th><th>Scouting note</th></tr>{pers}</table>
-<h2>Shooting by zone</h2>
-<table><tr><th>Zone</th><th>FG</th><th>FG%</th></tr>{zr}</table>
-<div class='sub' style='margin-top:18px'>Generated by APP4.0 Analytics Hub.
-Percentiles are vs the tracked-game field; tendencies from logged possessions.</div>
-</body></html>"""
+<table><tr><th>Player</th><th class='n'>PPG</th><th class='n'>RPG</th>
+  <th class='n'>APG</th><th class='n'>FG%</th><th class='n'>3P%</th><th>Note</th></tr>
+{pers}</table>
+<div class='foot'>Analytics Hub{(' · ' + today) if today else ''}</div>
+</div></body></html>"""

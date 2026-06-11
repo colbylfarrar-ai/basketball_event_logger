@@ -1,5 +1,5 @@
 """
-7_Schedule.py — Calendar-style, one-stop view of every game day.
+3_Schedule.py — Calendar-style, one-stop view of every game day.
 
 Pick a month, click a day on the calendar, and the page unfolds everything that
 happened: a day-at-a-glance summary, the Game of the Day, the biggest upset,
@@ -7,7 +7,7 @@ the day's stat leaders (tracked games), and every final with a full box score
 one click away. Built on the same engine + box-score report as the rest of the
 app, so it always agrees with the source of truth.
 
-This is the APP4.0 successor to APP3.0's "Daily Breakdown" — the static HTML
+This is the APP5.0 successor to APP3.0's "Daily Breakdown" — the static HTML
 calendar is now an interactive, clickable grid.
 """
 import sys
@@ -22,11 +22,28 @@ import streamlit as st
 
 from database.db import query
 from helpers.box_score import render_box_score
-from helpers.ui import page_chrome
+from helpers.ui import page_chrome, score_card, team_color, empty_state
 import helpers.team_ratings as TR
 import helpers.stats as S
 
 _cfg, ACCENT = page_chrome()
+
+
+def _film_widget(url):
+    """Render a game's film. YouTube / direct video file → inline player inside a
+    collapsed expander; anything else (Hudl, NFHS, …) → a link button that opens
+    in a new tab (those sites block iframe embedding)."""
+    url = (url or "").strip()
+    if not url:
+        return
+    low = url.lower()
+    embeddable = ("youtube.com" in low or "youtu.be" in low
+                  or low.endswith((".mp4", ".webm", ".ogg", ".mov")))
+    if embeddable:
+        with st.expander("▶ Film"):
+            st.video(url)
+    else:
+        st.link_button("▶ Watch film", url)
 
 # ── Page-specific CSS (calendar grid + upset/leader cards) ──────────────────────
 st.markdown("""
@@ -82,7 +99,7 @@ def _day_counts():
 @st.cache_data(ttl=600, show_spinner=False)
 def _games_on(date_str):
     return query("""
-        SELECT g.id, g.date, g.location, g.tracked,
+        SELECT g.id, g.date, g.location, g.tracked, g.video_url,
                g.home_score, g.away_score, g.team1_id, g.team2_id,
                t1.name AS t1, t2.name AS t2
         FROM games g
@@ -112,8 +129,10 @@ def _player_meta():
 
 counts = _day_counts()
 if not counts:
-    st.info("No games with dates yet. Add games in the Input Hub and they'll "
-            "appear on the calendar here.")
+    empty_state("No games on the calendar yet",
+                "Add games with a date in the Input Hub and they'll appear "
+                "here, grouped by day.",
+                icon="📅", cta="Input Hub → Games")
     st.stop()
 
 all_dates = sorted(counts)
@@ -174,7 +193,8 @@ if len(months_with_games) > 1:
 #  CALENDAR GRID  (clickable)
 # ══════════════════════════════════════════════════════════════════════════════
 def _load_dot(cnt):
-    return "🟢" if cnt <= 2 else "🟡" if cnt <= 5 else "🔴"
+    """Game-load marker for a calendar day button — matches the legend below."""
+    return "🟢" if cnt <= 2 else "🟠" if cnt <= 5 else "🔴"
 
 
 hdr = st.columns(7)
@@ -225,7 +245,8 @@ st.markdown("---")
 st.markdown(f"### {_fmt_long(sel)}")
 
 if not day_games:
-    st.info("No games on this day. Pick a highlighted day on the calendar.")
+    empty_state("Nothing on this day",
+                "Pick a highlighted day on the calendar above.", icon="📅")
     st.stop()
 
 scored = [g for g in day_games
@@ -260,6 +281,10 @@ if scored:
     h_win = hs >= as_
     badge = ("<div class='gotd-badge'>Tracked · full box inside</div>"
              if gotd["tracked"] else "")
+    # Winner's score wears that team's identity colour (shared app-wide system);
+    # the loser stays muted.
+    c_away = team_color(gotd["t2"], gotd["team2_id"])
+    c_home = team_color(gotd["t1"], gotd["team1_id"])
     st.markdown(f"""
     <div class="game-hero">
         <div style="font-size:12px;color:#8b949e;margin-bottom:8px">
@@ -270,14 +295,14 @@ if scored:
             <div style="font-size:16px;font-weight:700;color:#c9d1d9">
               {'▸ ' if not h_win else ''}{gotd['t2']}</div>
             <div style="font-size:46px;font-weight:900;line-height:1;
-                 color:{ACCENT if not h_win else '#555d68'}">{as_}</div>
+                 color:{c_away if not h_win else '#555d68'}">{as_}</div>
           </td>
           <td style="width:16%;text-align:center;color:#8b949e;font-size:18px">@</td>
           <td style="width:42%;text-align:center">
             <div style="font-size:16px;font-weight:700;color:#c9d1d9">
               {'▸ ' if h_win else ''}{gotd['t1']}</div>
             <div style="font-size:46px;font-weight:900;line-height:1;
-                 color:{ACCENT if h_win else '#555d68'}">{hs}</div>
+                 color:{c_home if h_win else '#555d68'}">{hs}</div>
           </td>
         </tr></table>
         {badge}
@@ -285,8 +310,9 @@ if scored:
     """, unsafe_allow_html=True)
 
     if gotd["tracked"]:
-        with st.expander("📊 Full report — Game of the Day"):
+        with st.expander("Full report — Game of the Day"):
             render_box_score(gotd["id"])
+    _film_widget(gotd["video_url"])
 else:
     st.info("No final scores yet for this day.")
 
@@ -316,7 +342,7 @@ for g in scored:
 if best:
     st.markdown(f"""
     <div class="upset-card">
-        <div class="upset-title">🚨 Biggest upset of the day</div>
+        <div class="upset-title">Biggest upset of the day</div>
         <div class="upset-body">
             <b>#{best['wr']} {best['win']}</b> beat
             <b>#{best['lr']} {best['lose']}</b> ({best['score']})
@@ -350,17 +376,17 @@ if tracked_games:
 
     l = st.columns(3)
     if best_pts and best_pts[0] > 0:
-        l[0].metric("🏀 Top scorer", f"{int(best_pts[0])} PTS", _who(best_pts[1]))
+        l[0].metric("Top scorer", f"{int(best_pts[0])} PTS", _who(best_pts[1]))
     else:
-        l[0].metric("🏀 Top scorer", "—")
+        l[0].metric("Top scorer", "—")
     if best_reb and best_reb[0] > 0:
-        l[1].metric("💪 Top rebounder", f"{int(best_reb[0])} REB", _who(best_reb[1]))
+        l[1].metric("Top rebounder", f"{int(best_reb[0])} REB", _who(best_reb[1]))
     else:
-        l[1].metric("💪 Top rebounder", "—")
+        l[1].metric("Top rebounder", "—")
     if best_ast and best_ast[0] > 0:
-        l[2].metric("🎯 Top playmaker", f"{int(best_ast[0])} AST", _who(best_ast[1]))
+        l[2].metric("Top playmaker", f"{int(best_ast[0])} AST", _who(best_ast[1]))
     else:
-        l[2].metric("🎯 Top playmaker", "—")
+        l[2].metric("Top playmaker", "—")
 
 # ── All Results ─────────────────────────────────────────────────────────────────
 st.markdown("<div class='section-hdr'>All Results</div>", unsafe_allow_html=True)
@@ -384,20 +410,13 @@ for g in day_games:
     tracked_badge = ("<span class='tracked-badge'>tracked</span>"
                      if g["tracked"] else "")
 
-    st.markdown(f"""
-    <div class="score-card">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-            <span class="score-card-team {t2_cls}">{g['t2']}</span>
-            <span class="score-card-pts {t2_cls}">{as_s}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center">
-            <span class="score-card-team {t1_cls}">{g['t1']}</span>
-            <span class="score-card-pts {t1_cls}">{hs_s}</span>
-        </div>
-        <div class="score-card-date">{meta}{tracked_badge}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(score_card(
+        [(g['t2'], as_s, t2_win), (g['t1'], hs_s, t1_win)],
+        footer=f"{meta}{tracked_badge}", style_names=True),
+        unsafe_allow_html=True)
 
     if g["tracked"]:
-        with st.expander(f"📊 Box score — {g['t2']} @ {g['t1']}"):
+        with st.expander(f"Box score — {g['t2']} @ {g['t1']}"):
             render_box_score(g["id"])
+
+    _film_widget(g["video_url"])

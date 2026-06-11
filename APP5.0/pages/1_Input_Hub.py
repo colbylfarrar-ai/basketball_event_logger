@@ -17,7 +17,7 @@ CLASS_OPTIONS  = ["B2", "B1", "A", "2A", "3A", "4A", "5A", "6A", "N/A"]
 GENDER_OPTIONS = ["M", "F"]
 HA_OPTIONS     = ["Home", "Away"]
 
-EDITOR_HELP = "**Click any cell to edit.** Hover a row and click 🗑 to delete. Use the **＋** row at the bottom to add."
+EDITOR_HELP = "**Click any cell to edit.** Hover a row and click to delete. Use the **＋** row at the bottom to add."
 
 
 def sort_by_date(df: pd.DataFrame, col: str = "date", ascending: bool = False) -> pd.DataFrame:
@@ -61,14 +61,14 @@ def load_games_for_team(team_id):
             g.location,
             CASE WHEN g.team1_id=? THEN g.home_score ELSE g.away_score END AS team_score,
             CASE WHEN g.team1_id=? THEN g.away_score ELSE g.home_score END AS opp_score,
-            g.tracked
+            g.tracked, g.video_url
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
         WHERE g.team1_id=? OR g.team2_id=?
     """, (team_id,)*6)
     df = pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","opponent","date","home_away","location","team_score","opp_score","tracked"])
+        columns=["id","opponent","date","home_away","location","team_score","opp_score","tracked","video_url"])
     if not df.empty:
         df["tracked"] = df["tracked"].astype(bool)
     return sort_by_date(df, ascending=False)
@@ -80,13 +80,13 @@ def load_officials():
 def load_games():
     rows = query("""
         SELECT g.id, t1.name AS team1, t2.name AS team2,
-               g.date, g.location, g.home_score, g.away_score, g.tracked
+               g.date, g.location, g.home_score, g.away_score, g.tracked, g.video_url
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
     """)
     df = pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","team1","team2","date","location","home_score","away_score","tracked"])
+        columns=["id","team1","team2","date","location","home_score","away_score","tracked","video_url"])
     if not df.empty:
         df["tracked"] = df["tracked"].astype(bool)
     return sort_by_date(df, ascending=False)
@@ -116,6 +116,30 @@ def apply_delta(editor_key, orig_df, insert_fn, update_fn, delete_fn):
         except Exception as e:
             errors.append(str(e))
     return errors
+
+
+def _norm_score(v):
+    """Editor score cell → int or None (NumberColumn can yield float / NaN)."""
+    if v is None:
+        return None
+    try:
+        if v != v:          # NaN
+            return None
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _live_game(gid):
+    """Current DB row (tracked flag + PBP-derived scores) for a game, or None.
+
+    Tracked games own their score — it is derived from play-by-play in the Game
+    Tracker — so the manual editors here must not overwrite it. Used by
+    upd_game / upd_sched to guard a tracked game's score.
+    """
+    rows = query("SELECT tracked, home_score, away_score FROM games WHERE id=?",
+                 (int(gid),))
+    return rows[0] if rows else None
 
 
 # ── session cache (keyed so changing the team selector resets the editor) ──────
@@ -291,6 +315,7 @@ with tab_games:
                 "home_score": st.column_config.NumberColumn("Home Score",      min_value=0, step=1),
                 "away_score": st.column_config.NumberColumn("Away Score",      min_value=0, step=1),
                 "tracked":    st.column_config.CheckboxColumn("Tracked",       default=False),
+                "video_url":  st.column_config.TextColumn("Film URL", help="Hudl / YouTube / NFHS link. Clickable from the Team Dashboard schedule — opens in a new tab."),
             },
         )
 
@@ -299,17 +324,36 @@ with tab_games:
             def ins_game(r):
                 if r.get("date","").strip() and r.get("team1") and r.get("team2"):
                     execute(
-                        "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked) VALUES (?,?,?,?,?,?,?)",
+                        "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url) VALUES (?,?,?,?,?,?,?,?)",
                         (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
                          r.get("location") or None, r.get("home_score") or None,
-                         r.get("away_score") or None, int(bool(r.get("tracked", False))))
+                         r.get("away_score") or None, int(bool(r.get("tracked", False))),
+                         (r.get("video_url") or "").strip())
                     )
             def upd_game(r):
+                live = _live_game(r["id"])
+                if live and live["tracked"]:
+                    # Tracked games own their PBP-derived score — keep it. Apply
+                    # only non-score edits; reject a manual score / untrack change.
+                    if (_norm_score(r.get("home_score")) != live["home_score"]
+                            or _norm_score(r.get("away_score")) != live["away_score"]
+                            or not bool(r.get("tracked", True))):
+                        raise ValueError(
+                            f"Game #{int(r['id'])} is play-by-play tracked — its score "
+                            "and tracked flag are owned by the Game Tracker, so this "
+                            "edit was not saved. Untrack it there to score it by hand.")
+                    execute(
+                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, video_url=? WHERE id=?",
+                        (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
+                         r.get("location") or None,
+                         (r.get("video_url") or "").strip(), int(r["id"])))
+                    return
                 execute(
-                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, tracked=? WHERE id=?",
+                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, tracked=?, video_url=? WHERE id=?",
                     (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
                      r.get("location") or None, r.get("home_score") or None,
-                     r.get("away_score") or None, int(bool(r.get("tracked", False))), r["id"])
+                     r.get("away_score") or None, int(bool(r.get("tracked", False))),
+                     (r.get("video_url") or "").strip(), r["id"])
                 )
             def del_game(r):
                 execute("DELETE FROM games WHERE id=?", (r["id"],))
@@ -362,6 +406,7 @@ with tab_schedule:
                 "team_score": st.column_config.NumberColumn("Team Score",        min_value=0, step=1),
                 "opp_score":  st.column_config.NumberColumn("Opp Score",         min_value=0, step=1),
                 "tracked":    st.column_config.CheckboxColumn("Tracked",         default=False),
+                "video_url":  st.column_config.TextColumn("Film URL", help="Hudl / YouTube / NFHS link. Clickable from the Team Dashboard schedule — opens in a new tab."),
             },
         )
 
@@ -381,8 +426,9 @@ with tab_schedule:
                 else:
                     t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
                 execute(
-                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked) VALUES (?,?,?,?,?,?,?)",
-                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, tracked)
+                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url) VALUES (?,?,?,?,?,?,?,?)",
+                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, tracked,
+                     (r.get("video_url") or "").strip())
                 )
 
             def upd_sched(r):
@@ -399,9 +445,25 @@ with tab_schedule:
                     t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
                 else:
                     t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
+                live = _live_game(r["id"])
+                if live and live["tracked"]:
+                    # Tracked games own their PBP-derived score — keep it.
+                    if (_norm_score(h_sc) != live["home_score"]
+                            or _norm_score(a_sc) != live["away_score"]
+                            or not tracked):
+                        raise ValueError(
+                            f"Game #{int(r['id'])} is play-by-play tracked — its score "
+                            "and tracked flag are owned by the Game Tracker, so this "
+                            "edit was not saved. Untrack it there to score it by hand.")
+                    execute(
+                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, video_url=? WHERE id=?",
+                        (t1, t2, normalize_date(date), r.get("location") or None,
+                         (r.get("video_url") or "").strip(), int(r["id"])))
+                    return
                 execute(
-                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, tracked=? WHERE id=?",
-                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, tracked, r["id"])
+                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, tracked=?, video_url=? WHERE id=?",
+                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, tracked,
+                     (r.get("video_url") or "").strip(), r["id"])
                 )
 
             def del_sched(r):

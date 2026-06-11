@@ -140,6 +140,15 @@ STAT_DEFS = [
     ("PPP",   "Points Per Poss.", "Possession & Pace", "PTS / POSS",
      "Points scored per possession — the core efficiency unit.",
      "Higher on offense / lower allowed on defense is better.", False),
+    ("Play Type", "Possession / Play Type", "Possession & Pace",
+     "PPP per (tempo bucket) and per (shot-creation context), ranked vs league",
+     "The Synergy-style view: points per possession grouped by HOW the shot was "
+     "generated — tempo (transition ≤6s / early 7–14s / half-court 15s+, from the "
+     "possession clock) and shot creation (self / off a pass / off a screen / "
+     "both). Each gets a league percentile. Inferred from logged tempo + creation "
+     "tags, NOT video-tagged play calls (no PnR/iso film here).",
+     "Higher PPP + percentile = a more efficient way this team generates offense; "
+     "on defense the rank is flipped so fewer points allowed ranks higher.", True),
     ("ORtg",  "Offensive Rating", "Possession & Pace", "≈ 100 · PTS / POSS",
      "Points produced per 100 possessions (Dean Oliver). Individual ORtg uses "
      "on-court lineup fractions since the DB has no minutes.",
@@ -169,6 +178,11 @@ STAT_DEFS = [
      "PTS + OREB + 0.75·DREB + AST + STL + BLK − 0.75·FGA − 0.375·FTA − TOV − 0.5·PF",
      "RealGM's Floor Impact Counter — a fuller all-around impact number.",
      "Higher is better.", False),
+    ("VPS",   "Value Point System","Advanced",
+     "(PTS + REB + 2·(AST+STL+BLK)) / (FT miss + 2·(FG miss + PF + TOV))",
+     "Hudl's production-to-mistakes ratio — positive box-score value over the cost "
+     "of misses, fouls and turnovers (mistakes weighted ×2).",
+     "Higher = more value per mistake; ~1.0 breaks even, 2+ is excellent.", False),
     ("PRF",   "Pts Responsible For","Advanced", "PTS + 2·AST2 + 3·AST3",
      "Points a player created — their own points plus the points their assists "
      "produced (split by 2-pt vs 3-pt assists).",
@@ -200,7 +214,8 @@ STAT_DEFS = [
     ("OVERALL","Overall Rating",  "Ratings", "blend of the four categories + PER + GS",
      "Master 0–100 player rating. Pool-relative z-score: 50 = league average, "
      "+10 per standard deviation, clamped 0–100.",
-     "70+ elite, 62+ great, 54+ above average, ~50 average.", False),
+     "70+ elite, 62+ great, 54+ above average, ~50 average. Team Power uses the "
+     "same ladder (Rankings tiers).", False),
     ("OFFENSE","Offense Rating",  "Ratings", "shooting (3PR·3P%·TS%) + finishing",
      "0–100 offensive rating from shooting and finishing inputs (z-scaled, "
      "50 = average).", "Higher is better.", False),
@@ -283,11 +298,22 @@ STAT_DEFS = [
      "the data. Tames small-sample noise on a short book.",
      "Trust the stabilized value on low volume; it converges to the raw rate as "
      "attempts grow.", True),
-    ("Archetype", "Player Archetype", "Ratings", "k-means on z-scored stats",
-     "A data-driven playing-style group (Sharpshooter, Floor General, Rim "
+    ("Archetype", "Play-Style Cluster", "Ratings", "k-means on z-scored stats",
+     "A data-driven playing-style group (Movement Shooter, Floor General, Rim "
      "Protector, …) learned by clustering players on standardized stats and named "
-     "from the cluster's statistical signature.",
-     "Describes role/style, not quality — two archetypes can be equally good.", True),
+     "from the cluster's statistical signature. Shown as the 'Cluster' chip on a "
+     "player's header and on the Lab → Archetypes tab.",
+     "Describes style, not quality — two clusters can be equally good. Distinct "
+     "from the rule-based Scouting Role below.", True),
+    ("Role", "Scouting Role", "Ratings", "rule-based thresholds on ratings + percentiles",
+     "The plain-language role on a player's profile hero card (Two-Way Force, "
+     "Scoring Machine, Floor General, Glass Cleaner, Defensive Anchor, 3-and-D "
+     "Wing, Spot-Up Shooter, Interior Presence, Versatile Contributor, High-Impact "
+     "Role Player, Developing Player). Assigned by the first matching rule on the "
+     "player's OVERALL / OFFENSE / DEFENSE / PLAYMAKING / REBOUNDING ratings and "
+     "stat percentiles — a scouting label, not a learned cluster.",
+     "Reads how a coach would summarize the player; complements the statistical "
+     "cluster rather than duplicating it.", True),
     ("MtchDiff", "Matchup Difficulty", "Defense", "attempt-weighted opponent OFFENSE faced",
      "How strong the scorers a defender was assigned to were, weighted by shots "
      "faced (reconstructed from who-guarded-whom on every contested shot).",
@@ -381,7 +407,7 @@ def _card_html(abbr, name, cat, formula, definition, good, invented):
            else f"<span class='gloss-cat'>{_esc(cat)}</span>")
     formula_html = (f"<div class='gloss-formula'>{_esc(formula)}</div>"
                     if formula else "")
-    good_html = (f"<div class='gloss-good'>📈 {_esc(good)}</div>" if good else "")
+    good_html = (f"<div class='gloss-good'>{_esc(good)}</div>" if good else "")
     return (
         f"<div class='gloss-card'>{tag}"
         f"<span class='gloss-abbr'>{_esc(abbr)}</span> "
@@ -416,7 +442,7 @@ def render_glossary(key_prefix: str = "gloss", categories=None,
         st.caption(intro)
 
     c1, c2 = st.columns([2, 3])
-    q = c1.text_input("🔎 Search stats", key=f"{key_prefix}_q",
+    q = c1.text_input("Search stats", key=f"{key_prefix}_q",
                       placeholder="e.g. TS%, usage, rebound, clutch…").strip().lower()
     picked = c2.multiselect("Filter by category", avail_cats, default=[],
                             key=f"{key_prefix}_cats",
@@ -451,12 +477,12 @@ def render_glossary(key_prefix: str = "gloss", categories=None,
 def glossary_tab(key_prefix: str):
     """The app's one standard glossary surface — identical on every page.
 
-    Every analytics page's "📖 Glossary" tab is just a call to this, so the
+    Every analytics page's "Glossary" tab is just a call to this, so the
     glossary reads the same everywhere: the FULL searchable catalogue (no
     per-page category subset), one shared intro. The only per-page difference
     is `key_prefix`, which keeps the search/filter widget keys unique.
     """
-    st.subheader("📖 Stat glossary")
+    st.subheader("Stat glossary")
     render_glossary(
         key_prefix, categories=None,
         intro="Every stat the app computes — search by name or filter by category. "

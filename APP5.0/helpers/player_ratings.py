@@ -1,5 +1,5 @@
 """
-player_ratings.py — Per-player 0-100 rating engine for APP4.0.
+player_ratings.py — Per-player 0-100 rating engine for APP5.0.
 
 Rates every eligible player on FIVE numbers, each on a 0-100 scale where
 50 = pool average and +10 = one standard deviation better than the pool
@@ -34,6 +34,7 @@ from collections import defaultdict
 
 from database.db import query
 import helpers.stats as S
+import helpers.shrinkage as SHR
 
 
 CATEGORIES = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
@@ -41,8 +42,22 @@ CATEGORIES = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 DEFAULT_MIN_GAMES = 1   # players below this are dropped from the pool (and z-math)
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+def sample_confidence(gp):
+    """Coarse reliability flag for how much to trust a player's ratings.
+
+    A 0-100 rating built on 2 games is mostly noise; this lets every view label
+    or gray-out thin samples instead of presenting them with false precision.
+    """
+    if gp >= 10:
+        return "High"
+    if gp >= 6:
+        return "Medium"
+    if gp >= 3:
+        return "Low"
+    return "Very Low"
+
+
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -71,7 +86,7 @@ def _scale100(z):
     """z-score -> 0-100 power index (50 = pool average, +10 per std dev)."""
     if z is None:
         return None
-    return max(0.0, min(100.0, 50 + 10 * z))
+    return S.scale100(z)
 
 
 def _avg_z(zs):
@@ -185,7 +200,8 @@ _REBOUNDING = [("OREB/G", False), ("DREB/G", False), ("REB/G", False),
                ("REB%", False), ("OREB%", False), ("DREB%", False)]
 
 
-def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
+def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
+                   stabilize=True):
     """
     Compute every player's five 0-100 ratings over the eligible pool.
 
@@ -196,6 +212,11 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
         Rank,                                                (1 = best OVERALL)
         plus the raw stat inputs (3P%, TS%, Guarded%, REB%, GS/G, …) for display.
     Empty dict if no eligible players.
+
+    `stabilize` (default True) pulls every 0-100 rating toward 50 by games played
+    (helpers.shrinkage.stabilize_index), so a 1-game cameo can't post a 90 OVERALL
+    on noise. Ranks are assigned on the stabilized OVERALL. Pass stabilize=False
+    for the raw, unregressed z-score ratings (e.g. to show raw-vs-stable).
     """
     profiles = player_profiles(game_ids, gender=gender, min_games=min_games)
     if not profiles:
@@ -234,20 +255,28 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
         for p in pids
     }
 
+    def _rate(z, g):
+        """0-100 rating from a z-score, regressed toward 50 by games when on."""
+        v = _scale100(z)
+        if stabilize:
+            v = SHR.stabilize_index(v, g)
+        return _round(v)
+
     out = {}
     for p in pids:
         prof = profiles[p]
         b = prof["box"]
+        g = prof["GP"]
         out[p] = {
             "name": prof["name"], "number": prof["number"],
             "team": prof["team"], "team_id": prof["team_id"], "GP": prof["GP"],
-            "OVERALL":    _round(_scale100(overall_z[p])),
-            "OFFENSE":    _round(_scale100(offense_z[p])),
-            "DEFENSE":    _round(_scale100(defense_z[p])),
-            "PLAYMAKING": _round(_scale100(playmaking_z[p])),
-            "REBOUNDING": _round(_scale100(rebounding_z[p])),
-            "Shooting":   _round(_scale100(shooting_z[p])),
-            "Finishing":  _round(_scale100(finishing_z[p])),
+            "OVERALL":    _rate(overall_z[p], g),
+            "OFFENSE":    _rate(offense_z[p], g),
+            "DEFENSE":    _rate(defense_z[p], g),
+            "PLAYMAKING": _rate(playmaking_z[p], g),
+            "REBOUNDING": _rate(rebounding_z[p], g),
+            "Shooting":   _rate(shooting_z[p], g),
+            "Finishing":  _rate(finishing_z[p], g),
             # raw stats for display
             "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
             "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"],
@@ -280,6 +309,15 @@ def _pct(v, nd=1):
     return None if v is None else round(100 * v, nd)
 
 
+def _ci_pct(made, att):
+    """95% Wilson CI for a make/attempt rate as (lo, hi) in 0-100; (None, None)
+    with no attempts. Lets the UI show how wide a small-sample % really is."""
+    lo, hi = SHR.wilson_interval(made, att)
+    if lo is None:
+        return None, None
+    return round(100 * lo, 1), round(100 * hi, 1)
+
+
 def _versatility(per_game, pool_means):
     """
     Versatility Index (0-100) — how evenly a player fills the box score.
@@ -307,7 +345,8 @@ def _versatility(per_game, pool_means):
 #  COMPREHENSIVE STAT TABLE  (one flat row per player — every stat we track)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
+def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
+                      stabilize=True):
     """
     A single flat row per eligible player holding EVERY stat the app computes:
     meta (name/number/team/class), games, the five 0-100 ratings, raw totals,
@@ -322,7 +361,8 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
     profiles = player_profiles(game_ids, gender=gender, min_games=min_games)
     if not profiles:
         return {}
-    ratings = player_ratings(game_ids, gender=gender, min_games=min_games)
+    ratings = player_ratings(game_ids, gender=gender, min_games=min_games,
+                             stabilize=stabilize)
 
     # shared event pass + rate tables so the per-player advanced metrics below
     # don't each refetch / recompute the whole sample.
@@ -383,8 +423,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
         p_poss = S.estimate_possessions(b)
         tposs  = team_poss.get(prof["team_id"], 0.0)
         gmin_t = team_min.get(prof["team_id"], 0.0) / 5.0   # this team's Tm MP/5
-        usg    = (100 * p_poss * gmin_t / (pmin * tposs)
-                  if pmin > 0 and tposs > 0 and gmin_t > 0 else None)
+        usg    = S.usage_pct(p_poss, pmin, tposs, gmin_t)
         d      = dfg.get(pid, {})
         plus   = pm.get(pid, 0)
 
@@ -414,11 +453,17 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
         two_way = (round((off_r + def_r) / 2, 1)
                    if off_r is not None and def_r is not None else None)
 
+        # 95% Wilson confidence bands on the headline shooting rates
+        fg_lo, fg_hi = _ci_pct(b["FGM"], b["FGA"])
+        tp_lo, tp_hi = _ci_pct(b["3PM"], b["3PA"])
+        ft_lo, ft_hi = _ci_pct(b["FTM"], b["FTA"])
+
         out[pid] = {
             # ── meta ────────────────────────────────────────────────
             "name": prof["name"], "number": prof["number"],
             "team": prof["team"], "team_id": prof["team_id"],
             "class": prof.get("class", "N/A"), "GP": g,
+            "Confidence": sample_confidence(g),
             "Rank": rt.get("Rank"),
             # ── ratings (0-100) ─────────────────────────────────────
             "OVERALL": rt.get("OVERALL"), "OFFENSE": rt.get("OFFENSE"),
@@ -450,6 +495,10 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             "Paint%": _pct(prof["Paint%"]),
             "3PR":  _pct(prof["3PR"]),
             "PPSA": _round(S.ppsa(b)) if has_fga else None,
+            # ── 95% confidence bands on shooting rates (small-sample honesty) ──
+            "FG%lo": fg_lo, "FG%hi": fg_hi,
+            "3P%lo": tp_lo, "3P%hi": tp_hi,
+            "FT%lo": ft_lo, "FT%hi": ft_hi,
             # ── on-court / playmaking rates ─────────────────────────
             "Guarded%": _pct(prof["Guarded%"]),
             "REB%": _pct(prof["REB%"]),
@@ -473,6 +522,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             # ── composite box metrics ───────────────────────────────
             "EFF": _round(S.eff(b)), "EFF/G": pg(S.eff(b)),
             "FIC": _round(S.fic(b)), "FIC/G": pg(S.fic(b)),
+            "VPS": _round(S.vps(b), 2),
             # ── advanced ────────────────────────────────────────────
             "GS": _round(S.game_score(b)), "GS/G": _round(prof["GS/G"]),
             "ShotRating": _round(shot_rt),

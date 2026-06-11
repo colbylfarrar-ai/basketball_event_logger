@@ -93,8 +93,7 @@ def _possessions_by_game(game_ids):
     return dict(acc)
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+from helpers.stats import _safe   # shared definition lives in helpers.stats
 
 
 # ── main entry point ─────────────────────────────────────────────────────────

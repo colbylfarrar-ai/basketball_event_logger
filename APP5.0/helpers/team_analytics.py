@@ -1,5 +1,5 @@
 """
-team_analytics.py — Streamlit-free team-level analytics engine for APP4.0.
+team_analytics.py — Streamlit-free team-level analytics engine for APP5.0.
 
 Everything the Team Analytics page needs, derived from the source of truth
 (`game_events`) plus the existing engines:
@@ -30,8 +30,7 @@ import helpers.team_ratings as TR
 import helpers.player_ratings as PR
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -121,10 +120,10 @@ def team_game_log(team_id):
     """
     Every completed game for the team, oldest first. Each row:
         game_id, date, location, site ('vs'/'@'), opp_id, opp, opp_class,
-        pf, pa, margin, won, tracked.
+        pf, pa, margin, won, tracked, video_url.
     """
     rows = query(
-        """SELECT g.id, g.date, g.location, g.tracked,
+        """SELECT g.id, g.date, g.location, g.tracked, g.video_url,
                   g.team1_id, g.team2_id, g.home_score, g.away_score
            FROM games g
            WHERE (g.team1_id = ? OR g.team2_id = ?)
@@ -147,6 +146,7 @@ def team_game_log(team_id):
             "opp_class": meta.get(opp, {}).get("class", "N/A"),
             "pf": pf, "pa": pa, "margin": pf - pa, "won": pf > pa,
             "tracked": bool(g["tracked"]),
+            "video_url": g["video_url"],
         })
     return out
 
@@ -744,13 +744,7 @@ def league_four_factors(gender=None):
     return out
 
 
-def percentile(value, pool, higher_better=True):
-    """Percentile (0-100) of `value` within `pool` (a list of numbers)."""
-    vals = [v for v in pool if v is not None]
-    if not vals or value is None:
-        return None
-    below = sum(1 for v in vals if (v < value) == higher_better)
-    return round(100 * below / len(vals), 0)
+percentile = S.percentile   # shared definition lives in helpers.stats
 
 
 # ══════════════════════════════════════════════════════════════════════════════

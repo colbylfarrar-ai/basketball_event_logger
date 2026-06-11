@@ -1,7 +1,7 @@
 """
 matchups.py — Defensive matchup intelligence (who guarded whom).
 
-APP4.0 logs `guarded_by_id` on every shot, but only ever used it for a single
+APP5.0 logs `guarded_by_id` on every shot, but only ever used it for a single
 number (DSHOT%, the FG% a defender allows). That same field is a full matchup
 grid: every contested shot is a (defender, shooter) pair, so we can reconstruct
 who each defender was assigned to, how those shooters fared, and — crucially —
@@ -25,8 +25,7 @@ from database.db import query
 import helpers.stats as S
 
 
-def _safe(num, den):
-    return num / den if den else 0.0
+_safe = S._safe   # shared definition lives in helpers.stats
 
 
 def player_names(gender=None):
@@ -168,7 +167,7 @@ def matchup_difficulty(game_ids=None, events=None, strength=None, table=None,
         sd = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
         for d in raw:
             z = (raw[d]["difficulty"] - mean) / sd if sd > 1e-9 else 0.0
-            raw[d]["Difficulty100"] = round(max(0.0, min(100.0, 50 + 10 * z)), 1)
+            raw[d]["Difficulty100"] = round(S.scale100(z), 1)
     return raw
 
 

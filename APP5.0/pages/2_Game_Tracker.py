@@ -6,8 +6,17 @@ import pandas as pd
 import streamlit as st
 from database.db import query, execute, initialize_database
 from helpers.settings_utils import get_all_settings, apply_page_config
+import helpers.court_geom as CG
+from PIL import Image
+
+try:
+    from streamlit_image_coordinates import streamlit_image_coordinates
+    _HAVE_IMG_COORDS = True
+except Exception:
+    _HAVE_IMG_COORDS = False
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
+COURT_W = 340   # tap-court image px (pre-transpose width → displayed height)
 
 initialize_database()
 _cfg = get_all_settings()
@@ -25,6 +34,11 @@ def time_to_secs(t: str) -> float:
         return int(m) * 60 + int(s)
     except Exception:
         return 0.0
+
+@st.cache_resource(show_spinner=False)
+def _court_base(width):
+    """Cached base half-court image for tap capture (rendered once via matplotlib)."""
+    return CG.court_image(width)
 
 def load_lineup(game_id: int) -> dict:
     game = query("""
@@ -454,6 +468,10 @@ if not on_court:
 else:
     event_type = st.selectbox("Event Type", ["Shot", "Free Throw", "Foul", "Turnover"], key="ev_type")
 
+    cap_key = f"shot_xy_{game_id}"
+    if event_type != "Shot":
+        st.session_state.pop(cap_key, None)          # drop stale marker
+
     _last_time = st.session_state.get(f"last_time_{game_id}", "8:00")
     _last_q    = st.session_state.get(f"last_q_{game_id}", 1)
     try:
@@ -463,49 +481,98 @@ else:
     except Exception:
         _last_mins, _last_secs = 8, 0
 
-    with st.form("event_form", clear_on_submit=True):
+    def _time_row():
         mc, sc, qc = st.columns(3)
-        mins_input = mc.number_input("Minutes", min_value=0, max_value=99, step=1, value=_last_mins)
-        secs_input = sc.number_input("Seconds", min_value=0, max_value=59, step=1, value=_last_secs)
-        quarter    = qc.number_input("Quarter", min_value=1, max_value=10, step=1, value=int(_last_q))
+        return (mc.number_input("Minutes", min_value=0, max_value=99, step=1, value=_last_mins),
+                sc.number_input("Seconds", min_value=0, max_value=59, step=1, value=_last_secs),
+                qc.number_input("Quarter", min_value=1, max_value=10, step=1, value=int(_last_q)))
 
-        st.markdown("---")
+    if event_type == "Shot":
+        with st.expander("🏀 Shot", expanded=True):
+            cur = st.session_state.get(cap_key)
+            court_col, form_col = (st.columns([1, 3]) if _HAVE_IMG_COORDS
+                                   else (None, st.container()))
 
-        if event_type == "Shot":
-            # Shooter gets more space; Type & Result are short lists
-            r1a, r1b, r1c = st.columns([3, 1, 1])
-            shooter   = r1a.selectbox("Shooter", all_opts[1:])
-            shot_type = r1b.selectbox("Type", ["2", "3"])
-            result    = r1c.selectbox("Result", ["make", "miss"])
-            # Zone is short; Pass From & Created By need more room
-            r2a, r2b, r2c = st.columns([1, 2, 2])
-            zone      = r2a.selectbox("Zone", ZONES)
-            pass_from = r2b.selectbox("Pass From", all_opts)
-            created   = r2c.selectbox("Shot Created By", all_opts)
-            # All three are player pickers — equal width
-            r3a, r3b, r3c = st.columns(3)
-            guarded   = r3a.selectbox("Guarded By", all_opts)
-            rebound   = r3b.selectbox("Rebound By", all_opts)
-            blocked   = r3c.selectbox("Blocked By", all_opts)
+            # ── court tap, left column (outside the form so each tap reruns to
+            #    redraw the marker) → x/y, auto zone + 2/3 ─────────────────────
+            if _HAVE_IMG_COORDS:
+                with court_col:
+                    W = COURT_W
+                    H = CG.image_height(W)
+                    base = _court_base(W)
+                    shown = (CG.court_image_with_marker(cur[0], cur[1], base=base, width=W)
+                             if cur else base)
+                    disp = shown.transpose(Image.TRANSPOSE)   # sideways: hoop right, halfcourt-POV left = top
+                    st.caption("Tap where the shot was taken")
+                    val = streamlit_image_coordinates(disp, width=disp.width,
+                                                      key=f"court_tap_{game_id}")
+                    if val is not None:
+                        # invert the transpose: display (x,y) → original (y,x) → feet
+                        ox, oy = val["y"], val["x"]
+                        fx, fy = CG.feet_from_px(ox, oy, W, H)
+                        if cur is None or abs(cur[0] - fx) > 1e-6 or abs(cur[1] - fy) > 1e-6:
+                            st.session_state[cap_key] = (fx, fy)
+                            st.rerun()
+                    if cur:
+                        st.caption(f"**{CG.shot_value(*cur)}PT · {CG.zone_from_xy(*cur)}** · "
+                                   f"{CG.shot_distance(*cur):.0f} ft — tap again to move")
+                    else:
+                        st.caption("Zone & 2/3 auto-set from your tap "
+                                   "(skip → logs 2PT, blank zone)")
 
-        elif event_type == "Free Throw":
-            c1, c2, c3 = st.columns([3, 1, 2])
-            shooter = c1.selectbox("Shooter", all_opts[1:])
-            result  = c2.selectbox("Result", ["make", "miss"])
-            rebound = c3.selectbox("Rebound By", all_opts)
+            # ── shot detail form, right column (in line with the court) ───────
+            with form_col:
+                with st.form("event_form", clear_on_submit=True):
+                    mins_input, secs_input, quarter = _time_row()
+                    st.markdown("---")
+                    _cap = st.session_state.get(cap_key)
+                    if _HAVE_IMG_COORDS:
+                        # location, zone AND 2/3 come from the tap — no type/zone dropdowns
+                        r1a, r1b = st.columns([3, 1])
+                        shooter = r1a.selectbox("Shooter", all_opts[1:])
+                        result  = r1b.selectbox("Result", ["make", "miss"])
+                        zone = CG.zone_from_xy(*_cap) if _cap else None
+                        shot_type = CG.shot_value(*_cap) if _cap else 2
+                        r2a, r2b = st.columns(2)
+                        pass_from = r2a.selectbox("Pass From", all_opts)
+                        created   = r2b.selectbox("Shot Created By", all_opts)
+                    else:
+                        r1a, r1b, r1c = st.columns([3, 1, 1])
+                        shooter   = r1a.selectbox("Shooter", all_opts[1:])
+                        shot_type = r1b.selectbox("Type", ["2", "3"])
+                        result    = r1c.selectbox("Result", ["make", "miss"])
+                        r2a, r2b, r2c = st.columns([1, 2, 2])
+                        zone      = r2a.selectbox("Zone", ZONES)
+                        pass_from = r2b.selectbox("Pass From", all_opts)
+                        created   = r2c.selectbox("Shot Created By", all_opts)
+                    # player pickers
+                    r3a, r3b, r3c = st.columns(3)
+                    guarded   = r3a.selectbox("Guarded By", all_opts)
+                    rebound   = r3b.selectbox("Rebound By", all_opts)
+                    blocked   = r3c.selectbox("Blocked By", all_opts)
+                    submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
+    else:
+        with st.form("event_form", clear_on_submit=True):
+            mins_input, secs_input, quarter = _time_row()
+            st.markdown("---")
+            if event_type == "Free Throw":
+                c1, c2, c3 = st.columns([3, 1, 2])
+                shooter = c1.selectbox("Shooter", all_opts[1:])
+                result  = c2.selectbox("Result", ["make", "miss"])
+                rebound = c3.selectbox("Rebound By", all_opts)
 
-        elif event_type == "Foul":
-            c1, c2, c3 = st.columns([2, 2, 1])
-            fouled   = c1.selectbox("Player Fouled", all_opts[1:])
-            fouler   = c2.selectbox("Player Who Fouled", all_opts[1:])
-            official = c3.selectbox("Official", off_opts)
+            elif event_type == "Foul":
+                c1, c2, c3 = st.columns([2, 2, 1])
+                fouled   = c1.selectbox("Player Fouled", all_opts[1:])
+                fouler   = c2.selectbox("Player Who Fouled", all_opts[1:])
+                official = c3.selectbox("Official", off_opts)
 
-        elif event_type == "Turnover":
-            c1, c2 = st.columns(2)
-            tov_p  = c1.selectbox("Turnover By", all_opts[1:])
-            stolen = c2.selectbox("Stolen By", all_opts)
+            elif event_type == "Turnover":
+                c1, c2 = st.columns(2)
+                tov_p  = c1.selectbox("Turnover By", all_opts[1:])
+                stolen = c2.selectbox("Stolen By", all_opts)
 
-        submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
+            submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
 
     if submitted:
         q = int(quarter)
@@ -535,20 +602,23 @@ else:
                         (game_id, oid))
 
         if event_type == "Shot":
+            _xy = st.session_state.get(cap_key)
+            _sx, _sy = _xy if _xy else (None, None)
             eid = execute("""INSERT INTO game_events
                 (game_id,event_type,quarter,time,possession_secs,primary_player_id,
                  shot_type,shot_result,pass_from_id,shot_created_by_id,
-                 rebound_by_id,blocked_by_id,guarded_by_id,zone)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (game_id,"shot",q,t,poss,
                  plookup(shooter,all_id), int(shot_type), result,
                  plookup(pass_from,all_id), plookup(created,all_id),
                  plookup(rebound,all_id), plookup(blocked,all_id),
-                 plookup(guarded,all_id), zone))
+                 plookup(guarded,all_id), zone, _sx, _sy))
             sid = plookup(shooter, all_id)
             scoring_tid = pid_to_team.get(sid) if sid else None
             snapshot_and_apply_pm(eid, scoring_tid if result=="make" else None,
                                   int(shot_type) if result=="make" else 0)
+            st.session_state.pop(cap_key, None)   # reset location for next shot
 
         elif event_type == "Free Throw":
             eid = execute("""INSERT INTO game_events

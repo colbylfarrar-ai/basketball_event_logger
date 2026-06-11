@@ -584,3 +584,54 @@ hr, [data-testid="stDivider"] {
 }
 .gloss-good { font-size: 11.5px; color: var(--subtext); margin-top: 7px; }
 .gloss-good b { color: var(--good); }
+
+/* ── Shared player-card primitives (helpers/cards.py: pctile_bar, glass) ──────
+   Static rules backing the shared card functions, so any page that calls them
+   gets the styling without re-injecting it. Accent-tinted variants (.pl-hdr,
+   .pl-spot) stay page-local because the accent is dynamic. */
+.pl-pct { margin-bottom: 9px; }
+.pl-pct-top { display: flex; justify-content: space-between; align-items: center;
+              margin-bottom: 3px; }
+.pl-pct-lbl { font-size: 12px; color: #c9d1d9; }
+.pl-pct-val { font-size: 12px; font-weight: 700; color: #f0f6fc; }
+.pl-pct-track { background: #21262d; border-radius: 4px; height: 7px; overflow: hidden; }
+.pl-pct-fill { height: 100%; border-radius: 4px; }
+.pl-scout { background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+            padding: 14px; height: 100%; }
+.pl-glass { background: rgba(22,27,34,0.55); -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px); border: 1px solid rgba(48,54,61,0.9);
+            border-radius: 14px; padding: 13px 15px; text-align: center; height: 100%;
+            box-sizing: border-box; }
+.pl-glass-l { font-size: 9px; color: #8b949e; text-transform: uppercase;
+              letter-spacing: 1.3px; font-weight: 700; }
+.pl-glass-v { font-size: 25px; font-weight: 900; line-height: 1.15; margin-top: 4px; }
+.pl-glass-s { font-size: 10px; color: #8b949e; margin-top: 2px; }
+
+/* ── Branded empty state (helpers/ui.py: empty_state) ─────────────────────────
+   Replaces a bare st.info() when a page/tab has no data yet. Accent via var. */
+.empty-state {
+    text-align: center; padding: 38px 26px; border-radius: var(--radius);
+    border: 1px dashed var(--card-border); margin: 6px 0;
+    background: radial-gradient(440px 210px at 50% -12%,
+                rgba(var(--accent-rgb),0.09), transparent 60%), var(--card-bg);
+}
+.empty-state-icon  { font-size: 40px; line-height: 1; opacity: .92; }
+.empty-state-title { font-size: 16px; font-weight: 800; color: var(--text);
+                     margin-top: 12px; letter-spacing: .2px; }
+.empty-state-body  { font-size: 13px; color: var(--subtext); margin-top: 6px;
+                     max-width: 540px; margin: 6px auto 0; line-height: 1.5; }
+.empty-state-cta   { display: inline-block; margin-top: 14px; font-size: 12px;
+                     font-weight: 700; color: var(--accent);
+                     border: 1px solid rgba(var(--accent-rgb),0.45);
+                     border-radius: 999px; padding: 6px 14px;
+                     background: rgba(var(--accent-rgb),0.08); }
+
+/* Skeleton shimmer for loading placeholders */
+@keyframes pl-shimmer { 0% { background-position: -460px 0; }
+                        100% { background-position: 460px 0; } }
+.skeleton {
+    border-radius: 8px; background-size: 920px 100%;
+    background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%,
+                rgba(255,255,255,0.08) 37%, rgba(255,255,255,0.03) 63%);
+    animation: pl-shimmer 1.4s ease infinite;
+}

@@ -1,6 +1,21 @@
-# APP4.0 — Streamlit basketball analytics app
+# APP5.0 — Streamlit basketball analytics app
 # Install with:  pip install -r requirements.txt
 streamlit>=1.53.1
 pandas>=2.3.3
 plotly>=6.5.2
 numpy>=2.3.5
+# Analytics: confidence intervals & distributions (scipy.stats), regularized
+# regression + clustering w/ model selection (scikit-learn), regression with
+# standard errors for significance testing (statsmodels). All free, local,
+# pip-only — no cloud, no service. Used by the small-sample / uncertainty layer.
+scipy>=1.14
+scikit-learn>=1.5
+statsmodels>=0.14
+# Data-exploration UI (Data Explorer page). Both degrade gracefully — the page
+# falls back to native st.dataframe if streamlit-aggrid isn't importable.
+streamlit-aggrid>=1.0
+streamlit-extras>=0.4
+# Tap-to-capture shot locations on the court image (Game Tracker). matplotlib
+# renders the half-court image the taps land on.
+streamlit-image-coordinates>=0.1.9
+matplotlib>=3.8

@@ -1,5 +1,5 @@
 """
-12_Data_Explorer.py — a self-serve analytics playground over every stat the app
+10_Data_Explorer.py — a self-serve analytics playground over every stat the app
 computes. Built for the data-hungry: filter the full ~60-column player table,
 plot any stat against any other (with an OLS trendline), see the league mapped
 into 2D style-space (PCA) coloured by learned archetype, and read a correlation
@@ -18,19 +18,21 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from helpers.ui import (page_chrome, gender_radio, style_fig as _style,
-                        empty_state, grid as _grid, chart as _chart)
+from helpers.ui import (page_chrome, page_header, gender_radio, style_fig as _style,
+                        empty_state, grid as _grid, chart as _chart, DIVERGE)
 import helpers.player_ratings as PR
 import helpers.archetypes as AR
 import helpers.stats as S
 import helpers.court as court
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Data Explorer")
 
-st.title("Data Explorer")
-st.caption("Every stat, your way — filter the full table, build any scatter, map "
-           "the league's playing styles, and correlate anything. Raw and dense by "
-           "design; trust your own read on what matters.")
+page_header("Data Explorer",
+            sub="Every stat, your way — filter the full table, build any scatter, "
+                "map the league's playing styles, and correlate anything. Raw and "
+                "dense by design; trust your own read on what matters.")
 
 # ── cached engine wrappers (compute once per gender/min-games, reuse on rerun) ──
 @st.cache_data(ttl=600, show_spinner=False)
@@ -65,10 +67,25 @@ if not table:
                 "more games in the Game Tracker.", icon="📊")
     st.stop()
 
-# attach archetype label, build the master frame
-_arche = _clusters(gender, min_g)
-df = pd.DataFrame([{**r, "Archetype": _arche.get(pid, {}).get("archetype", "—")}
-                   for pid, r in table.items()])
+# Tier gate: individual player data is plan-level (pool-agnostic). Paid sees the
+# full ~60-column event-derived table + archetypes + shot maps; Free sees only
+# box-derivable columns (the event keys are dropped at the source so the column /
+# axis pickers below never offer them), and the event-only tabs are locked.
+_paid = ENT.has_paid_plan(AUTH.current_user())
+if not _paid:
+    table = PR.box_only_table(table)
+    st.caption("🔒 You're on the **Free** tier — box-score stats only. Tracked "
+               "analytics (ratings, usage, shot quality, archetypes, shot maps) "
+               "are a Paid feature.")
+
+# attach archetype label (Paid only — clustering uses event-derived features),
+# build the master frame
+if _paid:
+    _arche = _clusters(gender, min_g)
+    df = pd.DataFrame([{**r, "Archetype": _arche.get(pid, {}).get("archetype", "—")}
+                       for pid, r in table.items()])
+else:
+    df = pd.DataFrame([dict(r) for r in table.values()])
 
 _EXCLUDE = {"team_id", "number"}
 num_cols = [c for c in df.columns
@@ -130,8 +147,9 @@ with t_scatter:
         kw["trendline_color_override"] = "#8b949e"
     try:
         fig = px.scatter(sub, **kw)
-    except Exception:
-        kw.pop("size", None)
+    except Exception as e:
+        if kw.pop("size", None) is not None:
+            st.caption(f"Size ignored: {e}")
         fig = px.scatter(sub, **kw)
     fig.update_traces(marker=dict(line=dict(width=0)),
                       selector=dict(mode="markers"))
@@ -144,10 +162,17 @@ with t_scatter:
 
 # ── tab 3: PCA style map ───────────────────────────────────────────────────────
 with t_map:
+  if not _paid:
+    st.info("🔒 The style map clusters players on tracked style features "
+            "(usage, shot-creation, shot location) — a Paid feature.")
+  else:
     sm = _stylemap(gender, min_g)
     pts = sm.get("points", {})
     if not pts:
-        st.info("Style map needs scikit-learn and at least 3 players.")
+        empty_state("Style map unavailable",
+                    "Needs scikit-learn installed and at least 3 players in the "
+                    "pool — lower the minimum games or track more games.",
+                    icon="🗺")
     else:
         mdf = pd.DataFrame(list(pts.values()))
         mdf["overall"] = mdf["overall"].fillna(50)
@@ -174,20 +199,25 @@ with t_corr:
     pick = st.multiselect("Stats to correlate", num_cols, default=default_stats,
                           key="dx_corrpick")
     if len(pick) < 2:
-        st.info("Pick at least two stats.")
+        empty_state("Pick at least two stats",
+                    "Choose two or more stats above to build the correlation "
+                    "matrix.", icon="▦")
     else:
         corr = df[pick].corr()
-        fig = px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r",
+        fig = px.imshow(corr, text_auto=".2f", color_continuous_scale=DIVERGE,
                         zmin=-1, zmax=1, aspect="auto")
-        fig.update_layout(height=max(360, 34 * len(pick)),
-                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        _style(fig, max(360, 34 * len(pick)))
         _chart(fig, data=corr.reset_index(), key="dx_corr")
-        st.caption("Pearson correlation across the player pool. Deep red = strong "
-                   "positive, deep blue = strong negative. Use it to spot which "
+        st.caption("Pearson correlation across the player pool. Deep green = strong "
+                   "positive, deep red = strong negative. Use it to spot which "
                    "stats move together (and which are redundant).")
 
 # ── tab 5: shot maps (hexbin / expected points / scatter) ─────────────────────
 with t_shots:
+  if not _paid:
+    st.info("🔒 Shot maps plot tap-captured shot locations and a distance-make "
+            "model — a Paid feature.")
+  else:
     st.caption("Shot locations from the court tap (x, y). Legacy zone-only shots "
                "sit at their zone centroid (approx) so the maps work today — they "
                "sharpen as you track games with the new tap capture.")

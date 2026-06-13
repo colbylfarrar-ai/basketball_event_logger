@@ -1,0 +1,438 @@
+"""
+dashboard/overview.py — the Team Dashboard "Overview" tab.
+
+A coach's one-glance card: coach notes, record (incl. vs ranked teams and by
+game type), power ratings, who carries them, the four factors & scoring mix
+aligned to the league, and the game-by-game margin / rating / PPP trends.
+Extracted from pages/6_Team_Dashboard.py (see helpers/dashboard/__init__.py
+for the ctx convention).
+"""
+from __future__ import annotations
+
+import plotly.graph_objects as go
+import streamlit as st
+
+from database.db import query, execute
+from helpers.ui import AWAY, CARD_BG, GRID
+import helpers.manual_box as MB
+import helpers.team_analytics as TA
+
+
+@st.fragment
+def render(ctx):
+    st.caption("Everything about this team at a glance — power ratings, record, "
+               "who carries them, the four factors and how they score.")
+
+    # ── coach notes (PER-COACH + private — was the global teams.notes) ────────
+    import helpers.scoutboard as SB
+    _curnotes = SB.get_note(ctx.team_id, "team")
+    with st.expander("📝 Team notes" + (" — saved" if _curnotes else ""),
+                     expanded=bool(_curnotes)):
+        SB.render_notes(ctx.team_id, kind="team", key_prefix="tn", label="Notes",
+                        placeholder="Scouting notes, reminders, season context… "
+                                    "private to you, shown here next time.")
+
+    _mprof = MB.manual_team_profile(ctx.team_id)
+    if _mprof:
+        st.markdown("<div class='pl-hdr'>Entered (untracked) games</div>",
+                    unsafe_allow_html=True)
+        _mc = st.columns(4)
+        _mc[0].metric("Games entered", _mprof["games"])
+        _mc[1].metric("PPP", f"{_mprof['PPP']:.2f}")
+        _mc[2].metric("ORtg", f"{_mprof['ORtg']:.0f}")
+        _mc[3].metric("eFG%", f"{_mprof['off_ff']['eFG']:.0f}%")
+        st.caption("From hand-entered box scores (not play-by-play tracked) · "
+                   "possessions = FGA + TOV. Enter boxes on the Setup page.")
+
+    _bytype = {}
+    for r in query("""SELECT game_type, team1_id, home_score, away_score FROM games
+                      WHERE (team1_id=? OR team2_id=?) AND home_score IS NOT NULL
+                        AND away_score IS NOT NULL AND season='Current'""",
+                   (ctx.team_id, ctx.team_id)):
+        won = ((r["home_score"] > r["away_score"]) if r["team1_id"] == ctx.team_id
+               else (r["away_score"] > r["home_score"]))
+        d = _bytype.setdefault(r["game_type"] or "Regular", [0, 0])
+        d[0 if won else 1] += 1
+    if _bytype and (len(_bytype) > 1 or "Regular" not in _bytype):
+        _seg = " · ".join(f"**{k}** {v[0]}-{v[1]}"
+                          for k, v in sorted(_bytype.items()))
+        st.caption(f"Record by game type — {_seg}  "
+                   f"<span style='color:#8b949e'>(set types on Setup)</span>",
+                   unsafe_allow_html=True)
+
+    m = st.columns(5)
+    m[0].metric("Power", ctx.sc_score.get("Power", "—"),
+                help="Results-only 0-100 power rating (50 = league avg).")
+    m[1].metric("League rank", f"#{ctx.sc_score.get('Rank', '—')} of {len(ctx.scored)}",
+                help="Results-only Score ranking across every team in the league.")
+    m[2].metric("Record", f"{ctx.rec['wins']}-{ctx.rec['losses']}")
+    m[3].metric("Margin / game", f"{ctx.rec['MOV']:+.1f}")
+    m[4].metric("Points for / against", f"{ctx.rec['PF_pg']:.0f} / {ctx.rec['PA_pg']:.0f}")
+
+    # ── record vs ranked teams (results-based — every completed game counts) ─
+    _ranks = sorted(ctx.scored.items(), key=lambda kv: kv[1].get("Rank", 1e9))
+    _top10 = {tid for tid, _ in _ranks[:10]}
+    _top25 = {tid for tid, _ in _ranks[:25]}
+
+    def _rec_vs(idset):
+        wv = lv = 0
+        for gg in ctx.log:
+            if gg["opp_id"] in idset and gg["opp_id"] != ctx.team_id:
+                if gg["won"]:
+                    wv += 1
+                else:
+                    lv += 1
+        return wv, lv
+
+    _w10, _l10 = _rec_vs(_top10)
+    _w25, _l25 = _rec_vs(_top25)
+    vr = st.columns(2)
+    vr[0].metric("vs Top 10", f"{_w10}-{_l10}",
+                 help="Record vs the top-10 teams by Score ranking.")
+    vr[1].metric("vs Top 25", f"{_w25}-{_l25}",
+                 help="Record vs the top-25 teams by Score ranking.")
+
+    if ctx.has_tracked:
+        m2 = st.columns(5)
+        m2[0].metric("Off Rtg", f"{ctx.summ.get('ORtg', 0):.1f}",
+                     help="Points scored per 100 possessions (tracked games).")
+        m2[1].metric("Def Rtg", f"{ctx.summ.get('DRtg', 0):.1f}",
+                     help="Points allowed per 100 possessions. Lower is better.")
+        m2[2].metric("Net Rtg", f"{ctx.summ.get('NetRtg', 0):+.1f}")
+        m2[3].metric("Pace", f"{ctx.summ.get('POSS_pg', 0):.1f}",
+                     help="Possessions per game.")
+        if ctx.rank_info["tracked"]:
+            _trk = ctx.rank_info["tracked"]
+            m2[4].metric("Tracked rank", f"#{_trk['rank']} of {_trk['of']}",
+                         help=f"Possession-based power rank over tracked games "
+                              f"(sparse sample — directional). Tracked Power "
+                              f"{_trk['power']} (50 = league avg).")
+        else:
+            m2[4].metric("Tracked Power", ctx.sc_track.get("Power", "—"),
+                         help="Possession-based power over tracked games (sparse "
+                              "sample — directional).")
+
+        # ── efficiency rankings vs league ──────────────────────────────────
+        if ctx.sc_track:
+            st.markdown("<div class='lab-hdr'>Efficiency rankings — vs league"
+                        "</div>", unsafe_allow_html=True)
+            pool_o = [r["ORtg"] for r in ctx.tracked.values()]
+            pool_d = [r["DRtg"] for r in ctx.tracked.values()]
+            pool_n = [r["NetRtg"] for r in ctx.tracked.values()]
+            pool_p = [r["Pace"] for r in ctx.tracked.values()]
+            metrics = [
+                ("Offense", ctx.sc_track["ORtg"], pool_o, True),
+                ("Defense", ctx.sc_track["DRtg"], pool_d, False),
+                ("Net rating", ctx.sc_track["NetRtg"], pool_n, True),
+                ("Pace", ctx.sc_track["Pace"], pool_p, True),
+            ]
+            bars = []
+            for lbl, val, pool, hb in metrics:
+                pct = TA.percentile(val, pool, higher_better=hb) or 0
+                bars.append((lbl, pct, val))
+            ef = go.Figure(go.Bar(
+                x=[b[1] for b in bars], y=[b[0] for b in bars], orientation="h",
+                marker_color=[ctx.GOOD if b[1] >= 50 else ctx.BAD for b in bars],
+                marker_line_width=0,
+                text=[f"{b[1]:.0f}th pct ({b[2]:.1f})" for b in bars],
+                textposition="auto"))
+            ef.update_xaxes(title="League percentile", range=[0, 100])
+            ctx.style(ef, 240)
+            ef.update_layout(margin=dict(l=4, r=14, t=6, b=30))
+            st.plotly_chart(ef, width="stretch", key="ov_effrank")
+            st.caption(f"Where this team ranks among the {len(ctx.tracked)} tracked "
+                       "teams in the league (100 = best).")
+
+    # ── best players ──────────────────────────────────────────────────────────
+    st.markdown("<div class='lab-hdr'>Who carries them</div>",
+                unsafe_allow_html=True)
+    if ctx.players:
+        rated = [p for p in ctx.players if p["OVERALL"] is not None]
+        # OVERALL is an event-derived rating — gate the hero cards behind the
+        # entitlement-folded has_tracked flag (Free keeps the box PPG leaders).
+        if ctx.has_tracked and rated:
+            top = sorted(rated, key=lambda p: p["OVERALL"], reverse=True)[:3]
+            cards = st.columns(max(len(top), 1))
+            _medal = ["#f0a500", "#adb5bd", "#cd7f32"]
+            for i, (col, p) in enumerate(zip(cards, top)):
+                col.markdown(
+                    f"<div class='glass-tile'>"
+                    f"<div class='spotlight-num' style='color:{ctx.ACCENT};font-size:42px'>"
+                    f"{p['OVERALL']:.0f}</div>"
+                    f"<div class='glass-label' style='color:{_medal[i]}'>OVERALL</div>"
+                    f"<div class='glass-sub' style='color:#f0f6fc;font-weight:700;"
+                    f"font-size:13px;margin-top:6px'>#{p['number']} {p['name']}</div>"
+                    f"<div class='glass-sub'>{p['PPG']:.1f} pts · {p['RPG']:.1f} reb · "
+                    f"{p['APG']:.1f} ast</div>"
+                    f"</div>", unsafe_allow_html=True)
+
+        lc, rc = st.columns(2)
+        with lc:
+            st.markdown("**Scoring leaders** — points / game")
+            sl = sorted([p for p in ctx.players if p["PPG"] is not None],
+                        key=lambda p: p["PPG"], reverse=True)[:7]
+            st.plotly_chart(
+                ctx.leader_bar(sl, "PPG", lambda r: f"#{r['number']} {r['name']}",
+                            lambda r: r["PPG"], lambda v: f"{v:.1f}",
+                            color=ctx.ACCENT, height=260),
+                width="stretch", key="ov_ppg")
+        with rc:
+          if ctx.has_tracked and rated:   # OVERALL leaderboard — tracked-only
+            st.markdown("**Top rated** — OVERALL")
+            ol = sorted(rated, key=lambda p: p["OVERALL"], reverse=True)[:7]
+            st.plotly_chart(
+                ctx.leader_bar(ol, "OVERALL", lambda r: f"#{r['number']} {r['name']}",
+                            lambda r: r["OVERALL"], lambda v: f"{v:.0f}",
+                            color="#56d4dd", height=260),
+                width="stretch", key="ov_ovr")
+
+    # ── four factors & scoring mix — every stat aligned to the league ───────────
+    if ctx.has_tracked:
+        st.markdown("<div class='lab-hdr'>Four factors &amp; scoring mix — vs "
+                    "league</div>", unsafe_allow_html=True)
+        _AMBER = "#d29922"
+        lpools = ctx.league_stat_pools(ctx.gender)
+        me = lpools.get(ctx.team_id, {})
+
+        def _vals(key):
+            return [s[key] for s in lpools.values() if s.get(key) is not None]
+
+        def _lg_avg(key):
+            v = _vals(key)
+            return sum(v) / len(v) if v else 0.0
+
+        def _lg_rank(key, hib):
+            v = _vals(key)
+            mv = me.get(key)
+            if mv is None or not v:
+                return None, len(v)
+            return sum(1 for x in v if (x > mv if hib else x < mv)) + 1, len(v)
+
+        def _rcolor(rk, tot):
+            if not rk or tot <= 1:
+                return ctx.GREY
+            p = rk / tot
+            return ctx.GOOD if p <= 0.25 else (_AMBER if p <= 0.50 else ctx.BAD)
+
+        def _pbar(rk, tot):
+            if not rk or tot <= 1:
+                return ""
+            pct = (1 - (rk - 1) / (tot - 1)) * 100
+            c = ctx.GOOD if pct >= 75 else (_AMBER if pct >= 50 else ctx.BAD)
+            return (f"<div style='background:#21262d;border-radius:3px;height:4px;"
+                    f"overflow:hidden;margin-top:5px'><div style='background:{c};"
+                    f"width:{pct:.0f}%;height:100%;border-radius:3px'></div></div>")
+
+        def _ff_card(col, label, key, opp_key, hib, fmt, scale=100.0):
+            tv = me.get(key, 0.0) * scale
+            ov = me.get(opp_key, 0.0) * scale
+            lg = _lg_avg(key) * scale
+            rk, tot = _lg_rank(key, hib)
+            rc = _rcolor(rk, tot)
+            tcol = ctx.GOOD if ((tv >= ov) if hib else (tv <= ov)) else ctx.BAD
+            rstr = (f"<div style='font-size:10px;font-weight:700;color:{rc};"
+                    f"margin-top:3px'>#{rk}/{tot}</div>") if rk else ""
+            col.markdown(
+                f"<div style='background:{CARD_BG};border:1px solid {GRID};"
+                f"border-radius:10px;padding:12px 10px;text-align:center;"
+                f"margin-bottom:6px'>"
+                f"<div style='font-size:9px;color:{ctx.GREY};text-transform:uppercase;"
+                f"letter-spacing:1px'>{label}</div>"
+                f"<div style='font-size:24px;font-weight:900;color:{tcol};"
+                f"line-height:1.1'>{fmt.format(tv)}</div>"
+                f"<div style='font-size:11px;color:{AWAY};margin-top:1px'>"
+                f"opp {fmt.format(ov)}</div>"
+                f"<div style='font-size:10px;color:#6e7681'>lg {fmt.format(lg)}</div>"
+                f"{rstr}{_pbar(rk, tot)}</div>", unsafe_allow_html=True)
+
+        def _stat_card(col, label, key, hib, fmt, scale=1.0, sub=""):
+            v = me.get(key)
+            rk, tot = _lg_rank(key, hib)
+            rc = _rcolor(rk, tot)
+            vtxt = "—" if v is None else fmt.format(v * scale)
+            rstr = (f"<div style='font-size:9px;font-weight:700;color:{rc};"
+                    f"margin-top:2px'>#{rk}/{tot}</div>") if rk else ""
+            col.markdown(
+                f"<div style='background:{CARD_BG};border:1px solid {GRID};"
+                f"border-radius:8px;padding:10px 8px;text-align:center'>"
+                f"<div style='font-size:9px;color:{ctx.GREY};text-transform:uppercase;"
+                f"letter-spacing:1px'>{label}</div>"
+                f"<div style='font-size:18px;font-weight:800;color:{ctx.BLUE}'>{vtxt}"
+                f"</div><div style='font-size:9px;color:#6e7681;margin-top:1px'>"
+                f"{sub}</div>{rstr}{_pbar(rk, tot)}</div>", unsafe_allow_html=True)
+
+        st.markdown("<div style='font-size:11px;color:#f0a500;font-weight:700;"
+                    "text-transform:uppercase;letter-spacing:1px;margin:2px 0 4px'>"
+                    "Offense</div>", unsafe_allow_html=True)
+        _o = st.columns(4)
+        _ff_card(_o[0], "eFG%", "efg", "oefg", True, "{:.1f}%")
+        _ff_card(_o[1], "TOV%", "tov", "opp_tov", False, "{:.1f}%")
+        _ff_card(_o[2], "OREB%", "orb", "opp_orb", True, "{:.1f}%")
+        _ff_card(_o[3], "FT rate", "ftr", "opp_ftr", True, "{:.3f}", scale=1.0)
+
+        st.markdown("<div style='font-size:11px;color:#58a6ff;font-weight:700;"
+                    "text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px'>"
+                    "Defense</div>", unsafe_allow_html=True)
+        _d = st.columns(4)
+        _ff_card(_d[0], "Opp eFG%", "oefg", "efg", False, "{:.1f}%")
+        _ff_card(_d[1], "Opp TOV%", "opp_tov", "tov", True, "{:.1f}%")
+        _ff_card(_d[2], "DREB%", "dreb", "opp_orb", True, "{:.1f}%")
+        _ff_card(_d[3], "Opp FT rate", "opp_ftr", "ftr", False, "{:.3f}", scale=1.0)
+
+        st.markdown("<div class='lab-hdr' style='margin-top:12px'>Key stats — vs "
+                    "league</div>", unsafe_allow_html=True)
+        _k1 = st.columns(4)
+        _stat_card(_k1[0], "TS%", "ts", True, "{:.1f}%", 100.0, "true shooting")
+        _stat_card(_k1[1], "FG%", "fg", True, "{:.1f}%", 100.0, "field goal")
+        _stat_card(_k1[2], "3P%", "tp", True, "{:.1f}%", 100.0, "three-point")
+        _stat_card(_k1[3], "Paint FG%", "paint", True, "{:.1f}%", 100.0, "at the rim")
+        _k2 = st.columns(4)
+        _stat_card(_k2[0], "AST/TO", "ast_tov", True, "{:.2f}", 1.0, "ball security")
+        _stat_card(_k2[1], "STL%", "stl_rate", True, "{:.1f}%", 1.0, "steals / 100")
+        _stat_card(_k2[2], "ORtg", "ortg", True, "{:.1f}", 1.0, "pts / 100")
+        _stat_card(_k2[3], "DRtg", "drtg", False, "{:.1f}", 1.0, "allowed / 100")
+        st.caption("Each card: this team's value (green = beats what they allow / "
+                   f"red = worse), opponent value, league average over the "
+                   f"{len(lpools)} tracked teams, and league rank + percentile bar.")
+
+        st.markdown("**Where the points come from**")
+        dn = go.Figure(go.Pie(
+            labels=["2-pt", "3-pt", "Free throw"],
+            values=[ctx.soff["pts2"], ctx.soff["pts3"], ctx.soff["ptsft"]],
+            hole=0.55, sort=False,
+            marker=dict(colors=[ctx.ACCENT, ctx.BLUE, ctx.GREY]),
+            textinfo="label+percent"))
+        dn.update_layout(
+            template="plotly_dark", height=300,
+            paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
+            margin=dict(l=10, r=10, t=30, b=10),
+            annotations=[dict(text=f"{ctx.soff['pct_paint']*100:.0f}%<br>"
+                                   "<span style='font-size:10px'>in paint</span>",
+                              x=0.5, y=0.5, font=dict(size=15),
+                              showarrow=False)])
+        st.plotly_chart(dn, width="stretch", key="ov_src")
+
+    # ── game-by-game: margin paired with offense/defense (APP3 trend charts) ────
+    def _dual_axis(fig, y2_title, height=360):
+        """MOV-bars-on-y1 + lines-on-y2 layout shared by the trend charts."""
+        ctx.style(fig, height)
+        fig.update_layout(
+            barmode="relative", bargap=0.25,
+            xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
+            yaxis=dict(title="MOV", showgrid=False, zerolinecolor="#30363d"),
+            yaxis2=dict(title=y2_title, overlaying="y", side="right",
+                        showgrid=False),
+            legend=dict(orientation="h", y=-0.28))
+        return fig
+
+    st.markdown("<div class='lab-hdr'>Points scored &amp; allowed — all games"
+                "</div>", unsafe_allow_html=True)
+    _gx = [f"{g['date'][5:]} {g['site']} {g['opp'][:10]}" for g in ctx.log]
+    _mv = [g["margin"] for g in ctx.log]
+    _cm = [ctx.GOOD if m >= 0 else ctx.BAD for m in _mv]
+    fA = go.Figure()
+    fA.add_trace(go.Bar(
+        x=_gx, y=_mv, name="MOV", marker_color=_cm, opacity=0.55,
+        marker_line_width=0, hovertemplate="%{x}<br>MOV %{y:+d}<extra></extra>"))
+    fA.add_trace(go.Scatter(
+        x=_gx, y=[g["pf"] for g in ctx.log], name="Scored", yaxis="y2",
+        mode="lines+markers", line=dict(color=ctx.ACCENT, width=2),
+        marker=dict(size=6), hovertemplate="%{x}<br>Scored %{y}<extra></extra>"))
+    fA.add_trace(go.Scatter(
+        x=_gx, y=[g["pa"] for g in ctx.log], name="Allowed", yaxis="y2",
+        mode="lines+markers", line=dict(color=AWAY, width=2, dash="dot"),
+        marker=dict(size=6), hovertemplate="%{x}<br>Allowed %{y}<extra></extra>"))
+    _dual_axis(fA, "Points")
+    st.plotly_chart(fA, width="stretch", key="ov_ptsmov")
+    st.caption("MOV bars (green win / red loss) on the left axis; points scored "
+               "and allowed on the right — every completed game.")
+
+    _trend = ctx.bundle["trend"] if ctx.has_tracked else []
+    if _trend:
+        _tx = [f"{e['date'][5:]} vs {e['opp'][:10]}" for e in _trend]
+        _tm = [e["margin"] for e in _trend]
+        _tc = [ctx.GOOD if m >= 0 else ctx.BAD for m in _tm]
+
+        st.markdown("<div class='lab-hdr'>Off &amp; Def rating — tracked games"
+                    "</div>", unsafe_allow_html=True)
+        fB = go.Figure()
+        fB.add_trace(go.Bar(
+            x=_tx, y=_tm, name="MOV", marker_color=_tc, opacity=0.55,
+            marker_line_width=0,
+            hovertemplate="%{x}<br>MOV %{y:+.0f}<extra></extra>"))
+        fB.add_trace(go.Scatter(
+            x=_tx, y=[e["ORtg"] for e in _trend], name="ORtg", yaxis="y2",
+            mode="lines+markers", line=dict(color=ctx.ACCENT, width=2),
+            marker=dict(size=6), hovertemplate="%{x}<br>ORtg %{y:.1f}<extra></extra>"))
+        fB.add_trace(go.Scatter(
+            x=_tx, y=[e["DRtg"] for e in _trend], name="DRtg", yaxis="y2",
+            mode="lines+markers", line=dict(color=ctx.BLUE, width=2, dash="dot"),
+            marker=dict(size=6), hovertemplate="%{x}<br>DRtg %{y:.1f}<extra></extra>"))
+        _dual_axis(fB, "Rating")
+        st.plotly_chart(fB, width="stretch", key="ov_ortgmov")
+
+        st.markdown("<div class='lab-hdr'>Points per possession — tracked games"
+                    "</div>", unsafe_allow_html=True)
+        fC = go.Figure()
+        fC.add_trace(go.Bar(
+            x=_tx, y=_tm, name="MOV", marker_color=_tc, opacity=0.45,
+            marker_line_width=0,
+            hovertemplate="%{x}<br>MOV %{y:+.0f}<extra></extra>"))
+        fC.add_trace(go.Scatter(
+            x=_tx, y=[e["PPP"] for e in _trend], name="PPP", yaxis="y2",
+            mode="lines+markers", line=dict(color=ctx.ACCENT, width=2),
+            marker=dict(size=6), hovertemplate="%{x}<br>PPP %{y:.3f}<extra></extra>"))
+        fC.add_trace(go.Scatter(
+            x=_tx, y=[e["oPPP"] for e in _trend], name="oPPP", yaxis="y2",
+            mode="lines+markers", line=dict(color=AWAY, width=2, dash="dot"),
+            marker=dict(size=6), hovertemplate="%{x}<br>oPPP %{y:.3f}<extra></extra>"))
+        _dual_axis(fC, "PPP")
+        st.plotly_chart(fC, width="stretch", key="ov_pppmov")
+
+    # ── margin trend (+ shot-creation mix lines) ───────────────────────────────
+    st.markdown("<div class='lab-hdr'>Margin trend</div>",
+                unsafe_allow_html=True)
+    gx = [f"{g['date'][5:]} {g['site']} {g['opp'][:10]}" for g in ctx.log]
+    mv = [g["margin"] for g in ctx.log]
+    colors = [ctx.GOOD if g["won"] else ctx.BAD for g in ctx.log]
+    mfig = go.Figure(go.Bar(
+        x=gx, y=mv, name="Margin", marker_color=colors, marker_line_width=0,
+        text=[f"{g['pf']}-{g['pa']}" for g in ctx.log], textposition="outside",
+        textfont=dict(size=9),
+        hovertemplate="%{x}<br>Margin %{y:+d}<extra></extra>"))
+    mfig.add_hline(y=0, line=dict(color="#30363d"))
+    # overlay % of FG self-created vs % created (off a pass) per tracked game
+    cbg_ov = ctx.bd.get("creation_by_game", {}) if ctx.has_tracked else {}
+    if cbg_ov:
+        self_sh, crt_sh = [], []
+        for g in ctx.log:
+            c = cbg_ov.get(g["game_id"])
+            if c and (c["self_FGA"] + c["asst_FGA"]):
+                tot = c["self_FGA"] + c["asst_FGA"]
+                self_sh.append(100 * c["self_FGA"] / tot)
+                crt_sh.append(100 * c["asst_FGA"] / tot)
+            else:
+                self_sh.append(None)
+                crt_sh.append(None)
+        mfig.add_trace(go.Scatter(
+            x=gx, y=self_sh, name="% FG self-created", yaxis="y2",
+            mode="lines+markers", connectgaps=True,
+            line=dict(color=ctx.ACCENT, width=2.5), marker=dict(size=6),
+            hovertemplate="%{x}<br>Self-created %{y:.0f}%<extra></extra>"))
+        mfig.add_trace(go.Scatter(
+            x=gx, y=crt_sh, name="% FG created (off pass)", yaxis="y2",
+            mode="lines+markers", connectgaps=True,
+            line=dict(color=ctx.BLUE, width=2.5), marker=dict(size=6),
+            hovertemplate="%{x}<br>Created %{y:.0f}%<extra></extra>"))
+        mfig.update_layout(
+            yaxis=dict(title="Margin"),
+            yaxis2=dict(title="Share of FG %", overlaying="y", side="right",
+                        range=[0, 100], showgrid=False, zerolinecolor="#30363d"))
+    else:
+        mfig.update_yaxes(title="Margin")
+    mfig.update_xaxes(tickangle=-45)
+    ctx.style(mfig, 380)
+    st.plotly_chart(mfig, width="stretch", key="ov_margin")
+    st.caption("Bars: green = win, red = loss (final score labelled). Lines (right "
+               "axis): the share of made/attempted FGs that were self-created (no "
+               "pass) vs created off a pass, each tracked game.")

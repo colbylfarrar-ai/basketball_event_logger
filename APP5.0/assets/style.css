@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   APP4.0 — Global shared stylesheet
+   APP5.0 — Global shared stylesheet
    Injected once by main.py.
    Per-page <style> blocks should only contain page-specific rules.
 ═══════════════════════════════════════════════════════════════════════════ */
@@ -71,7 +71,7 @@
 .score-card-team { font-size: 13px; font-weight: 600; color: #c9d1d9; }
 .score-card-pts  { font-size: 20px; font-weight: 800; }
 .score-winner    { color: #f0a500; }
-.score-loser     { color: #555d68; }
+.score-loser     { color: #8b949e; }
 .score-final     { font-size: 10px; color: #2ecc71; margin-top: 4px; }
 
 /* ── Ranking card ─────────────────────────────────────────────────────────── */

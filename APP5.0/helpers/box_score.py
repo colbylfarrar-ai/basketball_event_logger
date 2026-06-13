@@ -32,6 +32,8 @@ import helpers.team_ratings as TR
 import helpers.gameflow as GF
 import helpers.reports as RP
 import helpers.court as court
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
@@ -198,6 +200,7 @@ def render_box_score(game_id: int):
 
     home_pts, away_pts = team_pts[t1id], team_pts[t2id]
     home_win = home_pts > away_pts
+    away_win = away_pts > home_pts
     htb, atb = _team_total(boxes, t1id), _team_total(boxes, t2id)
     h_poss, a_poss = S.estimate_possessions(htb), S.estimate_possessions(atb)
     qs = sorted(quarters.keys())
@@ -209,10 +212,14 @@ def render_box_score(game_id: int):
         rates = S.shot_quality_rates()            # league-wide (zone,creation,guarded)
     except Exception:
         rates = {}
+        st.caption("League shot-quality baseline unavailable — team SMOE/xFG% "
+                   "may be unreliable for this game.")
     try:
         cr = S.creation_fg_rates()                # league-wide creation-bucket FG%
     except Exception:
         cr = {}
+        st.caption("League creation baseline unavailable — player SMOE may be "
+                   "unreliable for this game.")
 
     # ── season records + rankings for the header ───────────────────────────────
     scored, trk_rank = {}, {}
@@ -220,12 +227,14 @@ def render_box_score(game_id: int):
         scored = TR.score_ratings(gender=g["gender"])
     except Exception:
         scored = {}
+        st.caption("Season records / power rankings unavailable for this game.")
     try:
         trk = TR.tracked_ratings(gender=g["gender"])
         trk_rank = {tid: i + 1 for i, (tid, _) in enumerate(
             sorted(trk.items(), key=lambda kv: -kv[1]["NetRtg"]))}
     except Exception:
         trk_rank = {}
+        st.caption("Tracked rankings unavailable for this game.")
 
     def _team_tag(tid):
         s = scored.get(tid, {})
@@ -237,7 +246,7 @@ def render_box_score(game_id: int):
 
     # ── Scoreboard hero (always on top) ─────────────────────────────────────────
     def block(name, pts, won, color, tid):
-        cls = color if won else "#555d68"
+        cls = color if won else "#8b949e"
         tag = "▸ " if won else ""
         return (f"<div style='text-align:center'>"
                 f"<div style='font-size:15px;font-weight:700;color:#c9d1d9'>{tag}{name}</div>"
@@ -246,16 +255,42 @@ def render_box_score(game_id: int):
                 f"</div>")
 
     place = f" · {g['location']}" if g['location'] else ""
-    status = " · FINAL" if g['tracked'] else " · IN PROGRESS"
+    if g["tracked"]:
+        status = " · FINAL"
+    elif g["home_score"] is not None and g["away_score"] is not None:
+        status = " · FINAL (manual)"
+    else:
+        status = " · IN PROGRESS"
     st.markdown(
         f"<div class='game-hero'>"
         f"<div style='font-size:12px;color:#8b949e;margin-bottom:6px'>"
         f"{g['date']}{place}{status}</div>"
         f"<table style='width:100%;border:none'><tr>"
-        f"<td style='width:42%'>{block(t2name, away_pts, not home_win, away, t2id)}</td>"
+        f"<td style='width:42%'>{block(t2name, away_pts, away_win, away, t2id)}</td>"
         f"<td style='width:16%;text-align:center;color:#8b949e;font-size:18px'>@</td>"
         f"<td style='width:42%'>{block(t1name, home_pts, home_win, accent, t1id)}</td>"
         f"</tr></table></div>", unsafe_allow_html=True)
+
+    # Tier gate: a tracked game's analytics tabs are tracked-depth. Everyone sees
+    # the scoreboard (final score = box-score level); lock the tabs for viewers
+    # who can't see this game's tracked depth — Free, or a Paid coach who is Solo
+    # (not in the Coaches' Co-op) viewing a game that isn't their own, or a game
+    # that simply isn't pooled (in_pool drives the per-game check).
+    if not ENT.can_see_game_tracked(AUTH.current_user(), t1id, t2id,
+                                    in_pool=g["in_pool"]):
+        # Mirror the other gate sites' branched copy so each locked viewer gets the
+        # right reason: Free -> Paid feature; banned -> suspension; Solo scouting ->
+        # co-op invite; League-wide but this game isn't pooled -> neutral not-shared.
+        _gident = AUTH.current_user()
+        if not ENT.has_paid_plan(_gident):
+            st.info(ENT.MSG_PAID)
+        elif ENT.is_pool_banned(_gident):
+            st.info(ENT.MSG_POOL_BANNED)
+        elif not ENT.viewer_is_league_wide(_gident):
+            st.info(ENT.MSG_COOP_INVITE)
+        else:
+            st.info(ENT.MSG_NOT_SHARED)
+        return
 
     # ── shared scoring timeline (Overview KPI + Flow) ──────────────────────────
     scoring = [e for e in events
@@ -288,19 +323,24 @@ def render_box_score(game_id: int):
     tsq_h = TA.team_shot_quality(t1id, [game_id], events=events, rates=rates)
     tsq_a = TA.team_shot_quality(t2id, [game_id], events=events, rates=rates)
 
-    st.download_button(
-        "⬇ Download game recap (open & print to PDF)",
-        _recap(game_id),
-        file_name=f"recap_{t1name}_vs_{t2name}.html".replace(" ", "_"),
-        mime="text/html", key=f"bs{game_id}_recap")
+    from helpers.ui import pdf_or_html_download
+    pdf_or_html_download(
+        "Game recap", _recap(game_id),
+        f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
+        key=f"bs{game_id}_recap")
 
     tabs = st.tabs(["Overview", "Flow", "Shooting", "Quarters",
                     "Lineups", "Box Score", "Four Factors"])
 
+    # Each tab body is a @st.fragment so its widgets (team/player pickers,
+    # lineup sliders, …) rerun only that tab instead of rebuilding all seven.
+    # All shared game state above is captured by closure.
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 0 — OVERVIEW
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[0]:
+    @st.fragment
+    def _tab_overview():
         m = st.columns(5)
         m[0].metric("Game Excitement", summ["gei"] if summ else "—",
                     summ["label"] if summ else None, delta_color="off")
@@ -432,10 +472,14 @@ def render_box_score(game_id: int):
                 f"{r['points']}-0 run" for r in _runs[:3])
             st.caption(f"🔥 **Biggest runs:** {_rtxt}")
 
+    with tabs[0]:
+        _tab_overview()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 1 — FLOW
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[1]:
+    @st.fragment
+    def _tab_flow():
         xticks = [_q_base(q) for q in qs] + [end_t]
         xlabels = [_q_label(q) for q in qs] + ["End"]
 
@@ -598,10 +642,14 @@ def render_box_score(game_id: int):
             st.dataframe(df, hide_index=True, width="stretch", column_config=plcfg,
                          key=f"bs{game_id}_plen_{tid}")
 
+    with tabs[1]:
+        _tab_flow()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 2 — SHOOTING
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[2]:
+    @st.fragment
+    def _tab_shooting():
         # 1) stacked creation × region bar (per team) + creation table
         st.markdown("**Shot profile — creation × shot type**")
         st.caption("Each bar = a creation context; stacked Paint-2 / Mid-2 / 3-pt by "
@@ -888,10 +936,14 @@ def render_box_score(game_id: int):
             _style(cfig, 320)
             st.plotly_chart(cfig, width="stretch", key=f"bs{game_id}_contested")
 
+    with tabs[2]:
+        _tab_shooting()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 3 — QUARTERS
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[3]:
+    @st.fragment
+    def _tab_quarters():
         qb = TA.quarter_boxes(t1id, [game_id], events=events)
         qps = TA.quarter_possession_secs(t1id, [game_id], events=events)
         qsq = sorted(qb.keys())
@@ -977,10 +1029,14 @@ def render_box_score(game_id: int):
                 _style(lf, 250)
                 st.plotly_chart(lf, width="stretch", key=f"bs{game_id}_q_paceline")
 
+    with tabs[3]:
+        _tab_quarters()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 4 — LINEUPS
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[4]:
+    @st.fragment
+    def _tab_lineups():
         st.caption("Observed five-man units and on-court splits from THIS game's "
                    "possessions (a possession = one shot or turnover; FTs excluded). "
                    "Single-game samples are small — read directionally.")
@@ -1031,11 +1087,13 @@ def render_box_score(game_id: int):
         try:
             ws = WPA.game_wpa(game_id, mode="scoring")["players"]
         except Exception:
-            ws = {}
+            ws = None
         try:
             wpp = WPA.game_wpa(game_id, mode="possession")["players"]
         except Exception:
-            wpp = {}
+            wpp = None
+        if ws is None or wpp is None:
+            st.caption("Win-probability data unavailable for this game.")
         rows = []
         for b in sorted([b for b in boxes.values() if b["team_id"] == tid],
                         key=lambda b: -S.game_score(b)):
@@ -1046,14 +1104,17 @@ def render_box_score(game_id: int):
             if b["FGA"]:
                 xfg = S.expected_fg_pct(pid, [game_id], events=events, rates=cr)
                 smoe = round((S.fg_pct(b) - xfg) * 100, 1)
-            rows.append({
+            row = {
                 "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
                 "GS": round(S.game_score(b), 1), "PER": round(S.per(b), 1),
                 "FIC": round(S.fic(b), 1), "TS%": round(100*S.ts(b), 1),
-                "VPS": (round(S.vps(b), 2) if S.vps(b) is not None else None),
-                "WPA": round(ws.get(pid, {}).get("wpa", 0.0), 3),
-                "PossWPA": round(wpp.get(pid, {}).get("wpa", 0.0), 3),
-                "SMOE": smoe})
+                "VPS": (round(S.vps(b), 2) if S.vps(b) is not None else None)}
+            if ws is not None:
+                row["WPA"] = round(ws.get(pid, {}).get("wpa", 0.0), 3)
+            if wpp is not None:
+                row["PossWPA"] = round(wpp.get(pid, {}).get("wpa", 0.0), 3)
+            row["SMOE"] = smoe
+            rows.append(row)
         if rows:
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
                          column_config={
@@ -1106,22 +1167,30 @@ def render_box_score(game_id: int):
                        "Minutes from the elapsed clock between events — more "
                        "complete than the possession-seconds estimate.")
 
+    with tabs[4]:
+        _tab_lineups()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 5 — BOX SCORE
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[5]:
+    @st.fragment
+    def _tab_box():
         cols = ["#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%", "FT", "FT%",
                 "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF", "+/-",
                 "SC", "eFG%", "TS%", "GS"]
+        roster_all = query(
+            "SELECT id AS pid, name, number, team_id FROM players "
+            "WHERE team_id IN (?,?) ORDER BY number, name", (t1id, t2id))
 
         def make_df(tid):
-            rows = []
+            rows, played = [], set()
             pls = sorted([b for b in boxes.values() if b["team_id"] == tid],
                          key=lambda b: (-b["PTS"], -b["MIN"]))
             for b in pls:
                 if not any([b["FGA"], b["FTA"], b["MIN"], b["TRB"], b["AST"],
                             b["PF"], b["TOV"], b["STL"], b["BLK"]]):
                     continue
+                played.add(_pid_of(b, boxes))
                 rows.append({
                     "#": str(b["number"]), "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
                     "FG": f"{b['FGM']}-{b['FGA']}", "FG%": round(100*S._safe(b['FGM'],b['FGA']),1),
@@ -1131,6 +1200,16 @@ def render_box_score(game_id: int):
                     "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
                     "+/-": b["PM"], "SC": b["SC"], "eFG%": round(100*S.efg(b),1),
                     "TS%": round(100*S.ts(b),1), "GS": round(S.game_score(b),1)})
+            # DNP — rostered players with nothing recorded this game
+            for p in roster_all:
+                if p["team_id"] != tid or p["pid"] in played:
+                    continue
+                rows.append({
+                    "#": str(p["number"]), "Player": f"{p['name']} (DNP)", "MIN": 0.0,
+                    "PTS": 0, "FG": "0-0", "FG%": 0.0, "3P": "0-0", "3P%": 0.0,
+                    "FT": "0-0", "FT%": 0.0, "ORB": 0, "DRB": 0, "REB": 0, "AST": 0,
+                    "STL": 0, "BLK": 0, "TOV": 0, "PF": 0, "+/-": 0, "SC": 0,
+                    "eFG%": 0.0, "TS%": 0.0, "GS": 0.0})
             tb = _team_total(boxes, tid)
             rows.append({
                 "#": "", "Player": "TOTAL", "MIN": None, "PTS": tb["PTS"],
@@ -1163,10 +1242,14 @@ def render_box_score(game_id: int):
                                file_name=f"box_{game_id}_{nm}.csv", mime="text/csv",
                                key=f"dl_box_{game_id}_{tid}")
 
+    with tabs[5]:
+        _tab_box()
+
     # ════════════════════════════════════════════════════════════════════════
     #  TAB 6 — FOUR FACTORS
     # ════════════════════════════════════════════════════════════════════════
-    with tabs[6]:
+    @st.fragment
+    def _tab_factors():
         tb_ta, ob_ta = TA.team_and_opp_box(t1id, [game_id], events=events)
         ff_h = TA.four_factors(tb_ta, ob_ta)["off"]
         ff_a = TA.four_factors(ob_ta, tb_ta)["off"]
@@ -1204,6 +1287,9 @@ def render_box_score(game_id: int):
         e1, e2 = st.columns(2)
         e1.metric(f"{t1name} factor edges", h_edges)
         e2.metric(f"{t2name} factor edges", a_edges)
+
+    with tabs[6]:
+        _tab_factors()
 
     st.caption("Recomputed from game_events. Box/advanced formulas in helpers/stats.py; "
                "team, shot-quality & lineup engines in helpers/team_analytics.py + "

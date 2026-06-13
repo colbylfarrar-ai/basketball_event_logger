@@ -1,12 +1,27 @@
+"""
+2_Game_Tracker.py — the live command center (bench / scorer's-table screen).
+
+The mobile PWA (tracker/) owns courtside logging; this page is the second
+screen that WATCHES the game: auto-refreshing scoreboard, quarter scores, team
+fouls + bonus, a live box score with foul-trouble highlighting, the live shot
+chart, and the running play-by-play. Manual logging stays available — demoted
+to a corrections expander for film review or as a backup when no phone is
+logging. Both writers go through helpers/game_events.py, so they stay in
+lockstep.
+"""
+import json
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
-from database.db import query, execute, initialize_database
-from helpers.settings_utils import get_all_settings, apply_page_config
+from database.db import query, execute
+from helpers.ui import page_chrome, page_header, q_label
+import helpers.court as COURT
 import helpers.court_geom as CG
+import helpers.fouls as FOULS
+import helpers.game_events as GE
 from PIL import Image
 
 try:
@@ -17,23 +32,17 @@ except Exception:
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 COURT_W = 340   # tap-court image px (pre-transpose width → displayed height)
+REFRESH_SECS = 3
 
-initialize_database()
-_cfg = get_all_settings()
-apply_page_config(_cfg)
+_cfg, ACCENT = page_chrome("Game Tracker")
 
-st.title("Game Tracker")
+page_header("Game Tracker",
+            sub="Live command center — the phone logs courtside, this screen "
+                "watches the game.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def time_to_secs(t: str) -> float:
-    try:
-        m, s = t.strip().split(":")
-        return int(m) * 60 + int(s)
-    except Exception:
-        return 0.0
 
 @st.cache_resource(show_spinner=False)
 def _court_base(width):
@@ -42,7 +51,8 @@ def _court_base(width):
 
 def load_lineup(game_id: int) -> dict:
     game = query("""
-        SELECT g.id, g.team1_id, g.team2_id, t1.name AS t1_name, t2.name AS t2_name
+        SELECT g.id, g.team1_id, g.team2_id, g.tracked, g.date,
+               t1.name AS t1_name, t2.name AS t2_name
         FROM games g JOIN teams t1 ON t1.id=g.team1_id JOIN teams t2 ON t2.id=g.team2_id
         WHERE g.id=?
     """, (game_id,))[0]
@@ -62,13 +72,35 @@ def load_lineup(game_id: int) -> dict:
 def plookup(label: str, id_map: dict):
     return id_map.get(label) if label and label != "—" else None
 
+def _abbr(name: str) -> str:
+    """'Adair Girls' → 'AG', 'North Valley' → 'NV'"""
+    return "".join(w[0].upper() for w in name.split() if w)
+
+# The on-court five live in widget state, which a browser refresh wipes —
+# zeroing everyone's minutes silently. Persist the picked labels per game in
+# app_settings (same key/value table data_version uses) and re-seed the
+# widgets when a fresh session opens the game.
+def _load_floor(game_id: int):
+    row = query("SELECT value FROM app_settings WHERE key=?",
+                (f"gt_floor_{game_id}",))
+    if not row:
+        return None
+    try:
+        return json.loads(row[0]["value"])
+    except Exception:
+        return None
+
+def _save_floor(game_id: int, payload: dict):
+    execute("INSERT INTO app_settings (key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (f"gt_floor_{game_id}", json.dumps(payload)))
+
 # ══════════════════════════════════════════════════════════════════════════════
-#  STAT COMPUTATIONS
+#  LIVE BOX SCORE  (per-player stats straight from the event stream)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_box(game_id: int, game_info: dict):
-    t1id = game_info["team1_id"]
-    t2id = game_info["team2_id"]
+def compute_box(game_id: int, t1id: int, t2id: int):
+    """Per-player live box rows for both rosters, plus team points."""
     events = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id", (game_id,))
 
     def blank():
@@ -157,138 +189,581 @@ def compute_box(game_id: int, game_info: dict):
         gs   = round(s["pts"]+0.4*s["fgm"]-0.7*s["fga"]-0.4*(s["fta"]-s["ftm"])
                      +0.7*s["oreb"]+0.3*s["dreb"]+s["stl"]+0.7*s["ast"]+0.7*s["blk"]
                      -0.4*s["pf"]-s["tov"], 1)
-        rows.append({"_tid": s["team_id"], "Player": s["name"],
-                     "PTS":s["pts"],"AST":s["ast"],"OREB":s["oreb"],"DREB":s["dreb"],"REB":reb,
-                     "STL":s["stl"],"BLK":s["blk"],"TOV":s["tov"],
-                     "FGM":s["fgm"],"FGA":s["fga"],"3PM":s["tpm"],"3PA":s["tpa"],
-                     "FTM":s["ftm"],"FTA":s["fta"],"SC":s["sc"],"+/-":plus,"MIN":mins,"GS":gs})
+        rows.append({"_tid": s["team_id"], "Player": s["name"], "MIN": mins,
+                     "PTS": s["pts"],
+                     "FG": f"{s['fgm']}-{s['fga']}", "3P": f"{s['tpm']}-{s['tpa']}",
+                     "FT": f"{s['ftm']}-{s['fta']}",
+                     "REB": reb, "AST": s["ast"], "STL": s["stl"], "BLK": s["blk"],
+                     "TOV": s["tov"], "PF": s["pf"], "+/-": plus, "GS": gs})
     return rows, t1_pts, t2_pts
 
-def live_score(game_id: int, t1id: int, t2id: int) -> tuple:
-    """Single aggregating query — only what's needed to show the scoreboard."""
-    rows = query("""
-        SELECT p.team_id,
-               SUM(CASE WHEN ge.event_type='shot'       AND ge.shot_result='make' THEN ge.shot_type
-                        WHEN ge.event_type='free_throw'  AND ge.shot_result='make' THEN 1
-                        ELSE 0 END) AS pts
-        FROM game_events ge
-        JOIN players p ON p.id = ge.primary_player_id
-        WHERE ge.game_id = ?
-          AND ge.event_type IN ('shot','free_throw')
-          AND ge.shot_result = 'make'
-        GROUP BY p.team_id
-    """, (game_id,))
-    pts = {r["team_id"]: (r["pts"] or 0) for r in rows}
-    return pts.get(t1id, 0), pts.get(t2id, 0)
-
-
-def live_possessions(game_id: int, t1id: int, t2id: int) -> tuple:
-    """Possession count per team. A possession ends on a shot or a turnover
-    (+1); fouls and free throws do not change the count."""
-    rows = query("""
-        SELECT p.team_id, COUNT(*) AS poss
-        FROM game_events ge
-        JOIN players p ON p.id = ge.primary_player_id
-        WHERE ge.game_id = ?
-          AND ge.event_type IN ('shot','turnover')
-        GROUP BY p.team_id
-    """, (game_id,))
-    poss = {r["team_id"]: (r["poss"] or 0) for r in rows}
-    return poss.get(t1id, 0), poss.get(t2id, 0)
-
-
-def compute_quarter_scores(game_id: int, t1id: int, t2id: int):
-    """Returns a dict of {quarter: {t1id: pts, t2id: pts}} for all quarters played."""
-    rows = query("""
-        SELECT ge.quarter, ge.event_type, ge.shot_result, ge.shot_type, p.team_id AS tid
-        FROM game_events ge
-        JOIN players p ON p.id = ge.primary_player_id
-        WHERE ge.game_id = ? AND ge.primary_player_id IS NOT NULL
-          AND ge.event_type IN ('shot','free_throw') AND ge.shot_result = 'make'
-        ORDER BY ge.quarter, ge.id
-    """, (game_id,))
-    quarters = {}
-    for r in rows:
-        q = r["quarter"]
-        if q not in quarters:
-            quarters[q] = {t1id: 0, t2id: 0}
-        pts = r["shot_type"] if r["event_type"] == "shot" else 1
-        if r["tid"] in quarters[q]:
-            quarters[q][r["tid"]] += pts
-    return quarters
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  GAME SELECTOR  — Home Team → Away Team → Game
+#  GAME SELECTOR  — one list, newest first, live games on top of mind
 # ══════════════════════════════════════════════════════════════════════════════
 
 all_games = query("""
-    SELECT g.id, t1.name AS t1, t2.name AS t2, g.date
+    SELECT g.id, g.date, g.tracked, t1.name AS t1, t2.name AS t2,
+           (SELECT COUNT(*) FROM game_events ge WHERE ge.game_id = g.id) AS n_ev
     FROM games g JOIN teams t1 ON t1.id=g.team1_id JOIN teams t2 ON t2.id=g.team2_id
 """)
-# Sort by real date (stored as text so ORDER BY is lexicographic)
 all_games = sorted(all_games, key=lambda g: pd.to_datetime(g["date"], format="mixed", errors="coerce"), reverse=True)
 if not all_games:
     st.warning("No games found. Add games in the Input Hub first.")
     st.stop()
 
-# team1 = home, team2 = away
-gs1, gs2, gs3 = st.columns(3)
+def _g_status(g):
+    if g["tracked"]:
+        return "FINAL"
+    return "LIVE" if g["n_ev"] else "not started"
 
-home_teams = sorted({g["t1"] for g in all_games})
-sel_home   = gs1.selectbox("Home Team", home_teams)
+_g_by_id = {g["id"]: g for g in all_games}
+def _g_label(gid):
+    g = _g_by_id[gid]
+    badge = {"LIVE": " · 🔴 LIVE", "FINAL": " · FINAL", "not started": ""}[_g_status(g)]
+    return f"{g['date']} — {g['t1']} vs {g['t2']}{badge}"
 
-home_games = [g for g in all_games if g["t1"] == sel_home]
-away_teams = sorted({g["t2"] for g in home_games})
-sel_away   = gs2.selectbox("Away Team", away_teams)
-
-matching = [g for g in home_games if g["t2"] == sel_away]
-if len(matching) == 1:
-    game_id = matching[0]["id"]
-    gs3.selectbox("Date", [matching[0]["date"]], disabled=True)
-else:
-    date_labels = {g["date"]: g["id"] for g in matching}
-    sel_date    = gs3.selectbox("Date", list(date_labels.keys()))
-    game_id     = date_labels[sel_date]
+_default_idx = next((i for i, g in enumerate(all_games) if _g_status(g) == "LIVE"), 0)
+game_id = st.selectbox("Game", [g["id"] for g in all_games], index=_default_idx,
+                       format_func=_g_label, key="gt_game")
 
 lineup      = load_lineup(game_id)
 game_info   = lineup["game"]
 t1id, t2id  = game_info["team1_id"], game_info["team2_id"]
 t1name, t2name = game_info["t1_name"], game_info["t2_name"]
+is_tracked  = bool(game_info["tracked"])
 
-is_tracked = bool(query("SELECT tracked FROM games WHERE id=?", (game_id,))[0]["tracked"])
-
-gc1, gc2 = st.columns([4, 1])
-if is_tracked:
-    gc2.success("✓ Game Final")
-else:
-    if gc2.button("End Game", type="primary", width="stretch"):
-        t1_final, t2_final = live_score(game_id, t1id, t2id)
-        execute("UPDATE games SET tracked=1, home_score=?, away_score=? WHERE id=?",
-                (t1_final, t2_final, game_id))
-        st.cache_data.clear()   # clear rankings / analytics caches at game end
+# ── End / reopen, both behind a confirm dialog ──────────────────────────────────
+@st.dialog("End game?")
+def _confirm_end(game_id, t1name, t2name):
+    hp, ap = GE.score_from_events(game_id) or (0, 0)
+    st.write(f"Freeze the final score — **{t1name} {hp} · {t2name} {ap}** — "
+             "and mark the game FINAL?")
+    st.caption("Rankings and dashboards pick it up immediately. "
+               "You can reopen the game later if this was a mistap.")
+    c1, c2 = st.columns(2)
+    if c1.button("End game", type="primary", width="stretch", key="dlg_end_yes"):
+        GE.finish_game(game_id)
+        GE.bump_data_version()
+        st.cache_data.clear()
         st.rerun()
+    if c2.button("Cancel", width="stretch", key="dlg_end_no"):
+        st.rerun()
+
+@st.dialog("Reopen game?")
+def _confirm_reopen(game_id):
+    st.write("Unlock this FINAL game so events can be logged again?")
+    st.warning("The frozen score is cleared and will be re-frozen from the "
+               "event stream on the next End Game — a hand-corrected final "
+               "score does not survive this.")
+    c1, c2 = st.columns(2)
+    if c1.button("Reopen", type="primary", width="stretch", key="dlg_reo_yes"):
+        GE.reopen_game(game_id)
+        GE.bump_data_version()
+        st.cache_data.clear()
+        st.rerun()
+    if c2.button("Cancel", width="stretch", key="dlg_reo_no"):
+        st.rerun()
+
+bc1, bc2 = st.columns([4, 1])
+if is_tracked:
+    bc1.success("✓ Game Final")
+    if bc2.button("Reopen", width="stretch"):
+        _confirm_reopen(game_id)
+else:
+    if bc2.button("End Game", type="primary", width="stretch"):
+        _confirm_end(game_id, t1name, t2name)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  COMMAND CENTER  — auto-refreshing while the game is live
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _pf_style(v):
+    """Foul-trouble shading on the PF column (HS: 5 fouls = out)."""
+    if v >= 5: return "background-color:#d73027;color:white;font-weight:700"
+    if v == 4: return "background-color:#a04a12;color:white"
+    if v == 3: return "background-color:#7a5d1e"
+    return ""
+
+def _render_command_center():
+    events_asc = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id",
+                       (game_id,))
+    ls = GE.live_state(game_id, n_events=0)
+    hp, ap = ls["home_pts"], ls["away_pts"]
+    cur_q = max((ev["quarter"] for ev in events_asc), default=1)
+
+    # Fresh name maps each tick — phone-side quick-adds appear without a reload
+    proster = query("SELECT id, name, team_id FROM players WHERE team_id IN (?,?)",
+                    (t1id, t2id))
+    pid_name = {p["id"]: p["name"] for p in proster}
+    pid_team = {p["id"]: p["team_id"] for p in proster}
+    oid_name = {o["id"]: o["name"] for o in query("SELECT id, name FROM officials")}
+    def pn(pid): return pid_name.get(pid, f"ID:{pid}") if pid else None
+    def on_(oid): return oid_name.get(oid, f"ID:{oid}") if oid else None
+
+    # ── scoreboard ──────────────────────────────────────────────────────────────
+    sc1, sc2, sc3 = st.columns([2, 1, 2])
+    sc1.metric(t1name, hp)
+    sc2.markdown(
+        f"<div style='text-align:center;padding-top:8px'>"
+        f"<div style='font-size:1.3em'>{q_label(cur_q)}</div>"
+        f"<div style='color:#888;font-size:0.85em'>poss {ls['home_poss']}–{ls['away_poss']}</div>"
+        f"</div>", unsafe_allow_html=True)
+    sc3.metric(t2name, ap)
+
+    # ── team fouls + bonus (NFHS since 2023-24: fouls reset each quarter,
+    #    two-shot bonus on the 5th team foul of the quarter) ────────────────────
+    tf = FOULS.team_foul_by_quarter(events=events_asc)
+    fc1, fc2 = st.columns(2)
+    for col, tid, tname in ((fc1, t1id, t1name), (fc2, t2id, t2name)):
+        by_q = tf.get(tid, {}).get("by_q", {})
+        # OT extends Q4 for team fouls — no reset, the count carries over.
+        n = (sum(by_q.get(q, 0) for q in range(4, cur_q + 1)) if cur_q > 4
+             else by_q.get(cur_q, 0))
+        bonus = (" &nbsp;<span style='background:#d73027;color:white;padding:1px 8px;"
+                 "border-radius:8px;font-size:0.8em;font-weight:700'>BONUS</span>"
+                 if n >= 5 else "")
+        col.markdown(f"**{tname}** — {q_label(cur_q)} team fouls: {n}{bonus}",
+                     unsafe_allow_html=True)
+
+    # ── quarter scores ──────────────────────────────────────────────────────────
+    qs = ls["quarters"]
+    if qs:
+        qlist = sorted(qs, key=int)
+        r1, r2 = {"Team": t1name}, {"Team": t2name}
+        for q in qlist:
+            r1[q_label(int(q))] = qs[q]["home"]
+            r2[q_label(int(q))] = qs[q]["away"]
+        r1["T"], r2["T"] = hp, ap
+        st.dataframe(pd.DataFrame([r1, r2]), hide_index=True, width="stretch")
+
+    # ── live box score with foul-trouble shading ────────────────────────────────
+    box_rows, _, _ = compute_box(game_id, t1id, t2id)
+    bt1, bt2 = st.tabs([t1name, t2name])
+    for tab, tid in ((bt1, t1id), (bt2, t2id)):
+        rows = [{k: v for k, v in r.items() if k != "_tid"}
+                for r in box_rows if r["_tid"] == tid]
+        if not rows:
+            tab.info("No roster for this team yet.")
+            continue
+        df = (pd.DataFrame(rows)
+              .sort_values(["PTS", "MIN"], ascending=False)
+              .reset_index(drop=True))
+        tab.dataframe(df.style.map(_pf_style, subset=["PF"]),
+                      hide_index=True, width="stretch",
+                      height=min(420, 38 + 35 * len(df)))
+    st.caption("PF shading: 3 amber · 4 orange · 5 red (fouled out). "
+               "MIN from event-clock elapsed time; needs the on-court five set "
+               "wherever the events are logged.")
+
+    # ── live shot chart (tap-captured x/y from the phone or the form below) ────
+    shots = query("""
+        SELECT ge.shot_x AS x, ge.shot_y AS y, ge.shot_result, ge.shot_type,
+               p.team_id AS tid
+        FROM game_events ge JOIN players p ON p.id = ge.primary_player_id
+        WHERE ge.game_id=? AND ge.event_type='shot'
+          AND ge.shot_x IS NOT NULL AND ge.shot_y IS NOT NULL""", (game_id,))
+    if shots:
+        cc1, cc2 = st.columns(2)
+        for col, tid, tname in ((cc1, t1id, t1name), (cc2, t2id, t2name)):
+            tshots = [{"x": s["x"], "y": s["y"],
+                       "make": s["shot_result"] == "make",
+                       "value": s["shot_type"]} for s in shots if s["tid"] == tid]
+            fig, n = COURT.shot_map(tshots, title=f"{tname} — {len(tshots)} shots")
+            with col:
+                if n:
+                    st.plotly_chart(fig, width="stretch",
+                                    key=f"cc_court_{game_id}_{tid}")
+                else:
+                    st.caption(f"{tname}: no located shots yet.")
+    else:
+        st.caption("No located shots yet — taps from the phone (or the court "
+                   "below) land here as the game goes.")
+
+    # ── play-by-play with running score ─────────────────────────────────────────
+    st.markdown("#### Play-by-Play")
+    if not events_asc:
+        st.info("No events logged yet.")
+        return
+
+    # Walk in GAME order (quarter, clock), not insertion order — film-review
+    # backfills and editor fixes insert rows out of chronology, which would
+    # make the running score column lie.
+    events_chrono = sorted(events_asc,
+                           key=lambda e: (e["quarter"],
+                                          -GE.time_to_secs(e["time"]), e["id"]))
+    log_rows, s1, s2 = [], 0, 0
+    for ev in events_chrono:
+        et = ev["event_type"]
+        pts = 0
+        if et == "shot" and ev["shot_result"] == "make":
+            pts = ev["shot_type"]
+        elif et == "free_throw" and ev["shot_result"] == "make":
+            pts = 1
+        if pts:
+            scorer_team = pid_team.get(ev["primary_player_id"])
+            if scorer_team == t1id: s1 += pts
+            elif scorer_team == t2id: s2 += pts
+
+        if et == "shot":
+            verb = "makes" if ev["shot_result"] == "make" else "misses"
+            desc = f"{pn(ev['primary_player_id']) or '—'} {verb} {ev['shot_type']}PT"
+            if ev["zone"]: desc += f" ({ev['zone']})"
+            for col, word in (("pass_from_id", "assist"), ("rebound_by_id", "reb"),
+                              ("blocked_by_id", "blk")):
+                if ev[col]: desc += f" · {word} {pn(ev[col])}"
+        elif et == "free_throw":
+            verb = "makes" if ev["shot_result"] == "make" else "misses"
+            desc = f"{pn(ev['primary_player_id']) or '—'} {verb} FT"
+            if ev["rebound_by_id"]: desc += f" · reb {pn(ev['rebound_by_id'])}"
+        elif et == "foul":
+            desc = f"Foul on {pn(ev['secondary_player_id']) or '—'}"
+            if ev["primary_player_id"]: desc += f" (fouled {pn(ev['primary_player_id'])})"
+            if ev["official_id"]: desc += f" · ref {on_(ev['official_id'])}"
+        elif et == "turnover":
+            desc = f"Turnover {pn(ev['primary_player_id']) or '—'}"
+            if ev["stolen_by_id"]: desc += f" · steal {pn(ev['stolen_by_id'])}"
+        else:
+            desc = et
+        log_rows.append({"Q": q_label(ev["quarter"]), "Time": ev["time"],
+                         "Play": desc, "Score": f"{s1}–{s2}"})
+
+    log_rows.reverse()   # newest first
+    pbp_df = pd.DataFrame(log_rows)
+    st.dataframe(pbp_df, width="stretch", hide_index=True,
+                 height=min(420, 38 + 35 * len(pbp_df)))
+    dc1, dc2 = st.columns(2)
+    dc1.download_button("Export play-by-play (CSV)", pbp_df.to_csv(index=False),
+                        file_name=f"pbp_{game_id}.csv", mime="text/csv",
+                        key="cc_csv")
+    # Undo is a live-game tool only: on a FINAL game it would desync the
+    # frozen score from the event stream (the Event Editor handles that case
+    # drift-aware). Re-check tracked at click time — the phone may have
+    # finished the game while this screen sat open.
+    if not is_tracked and dc2.button("Delete last event", type="secondary",
+                                     key="cc_undo"):
+        if query("SELECT tracked FROM games WHERE id=?", (game_id,))[0]["tracked"]:
+            st.warning("Game was finalized while this screen was open — "
+                       "reopen it (top right) before deleting events.")
+        elif GE.undo_last_event(game_id):
+            # Shared undo path (helpers.game_events): reverses +/- over the
+            # event's lineup snapshot, then deletes (cascade clears
+            # game_event_lineup).
+            st.cache_data.clear()
+            st.rerun(scope="app")
+
+if is_tracked:
+    _render_command_center()
+else:
+    st.fragment(run_every=REFRESH_SECS)(_render_command_center)()
+    st.caption(f"Auto-refreshes every {REFRESH_SECS} s while the game is live.")
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MANUAL LOGGING & CORRECTIONS  — backup writer / film review
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.markdown("### Logging & corrections")
+
+if is_tracked:
+    st.info("Game is FINAL — logging is locked. Reopen the game (top right) to "
+            "resume logging here, or use the Event Editor page for one-off fixes.")
+else:
+    # ── the floor: on-court five + officials (feeds minutes and +/-) ───────────
+    with st.expander("Floor — on-court five & officials", expanded=False):
+        t1_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t1id,))
+        t2_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t2id,))
+        all_offs = query("SELECT id, name FROM officials ORDER BY name")
+
+        t1_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t1_db]
+        t2_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t2_db]
+        off_opts_all = ["—"] + [o["name"] for o in all_offs]
+        t1_pmap  = {f"#{p['number']} {p['name']}": p["id"] for p in t1_db}
+        t2_pmap  = {f"#{p['number']} {p['name']}": p["id"] for p in t2_db}
+        off_imap = {o["name"]: o["id"] for o in all_offs}
+
+        # Re-seed widget state from the persisted floor on a fresh session, so a
+        # browser refresh doesn't silently zero everyone's minutes. The floor is
+        # stored as ids (labels change when a jersey number or name is edited
+        # mid-game); a missing/archived id just leaves its slot on "—".
+        t1_ilab  = {p["id"]: f"#{p['number']} {p['name']}" for p in t1_db}
+        t2_ilab  = {p["id"]: f"#{p['number']} {p['name']}" for p in t2_db}
+        off_ilab = {o["id"]: o["name"] for o in all_offs}
+
+        _stored = _load_floor(game_id) or {}
+        for grp, ilab in (("t1", t1_ilab), ("t2", t2_ilab), ("offs", off_ilab)):
+            for i, pid in enumerate(_stored.get(grp, [])):
+                k = f"{grp}_{game_id}_{i}"
+                lbl = ilab.get(pid)
+                if k not in st.session_state and lbl is not None:
+                    st.session_state[k] = lbl
+
+        lc1, lc2, lc3 = st.columns(3)
+        with lc1:
+            st.markdown(f"**{t1name}**")
+            cur_t1 = [st.selectbox(f"Slot {i+1}", t1_opts, key=f"t1_{game_id}_{i}") for i in range(5)]
+        with lc2:
+            st.markdown(f"**{t2name}**")
+            cur_t2 = [st.selectbox(f"Slot {i+1}", t2_opts, key=f"t2_{game_id}_{i}") for i in range(5)]
+        with lc3:
+            st.markdown("**Officials**")
+            cur_offs = [st.selectbox(f"Slot {i+1}", off_opts_all, key=f"offs_{game_id}_{i}") for i in range(3)]
+
+        _floor_now = {"t1": [t1_pmap.get(s) for s in cur_t1],
+                      "t2": [t2_pmap.get(s) for s in cur_t2],
+                      "offs": [off_imap.get(s) for s in cur_offs]}
+        # Persist only on a change made IN THIS SESSION (vs the previous run),
+        # so a stale second screen that merely rerenders never clobbers the
+        # floor another device saved.
+        _prev_key = f"gt_floor_prev_{game_id}"
+        _prev = st.session_state.get(_prev_key)
+        if _prev is not None and _floor_now != _prev:
+            _save_floor(game_id, _floor_now)
+        st.session_state[_prev_key] = _floor_now
+
+        # Current on-court players (non-"—" selections) with their team
+        on_court = (
+            [(t1_pmap[s], t1id) for s in cur_t1 if s != "—"] +
+            [(t2_pmap[s], t2id) for s in cur_t2 if s != "—"]
+        )
+        # Dedupe — the same player can be picked in two slots. Warn, never block logging.
+        _seen = set()
+        _deduped = []
+        for pid, tid in on_court:
+            if pid not in _seen:
+                _seen.add(pid)
+                _deduped.append((pid, tid))
+        if len(_deduped) < len(on_court):
+            st.warning("Duplicate lineup selection dropped — the same player was picked in more than one slot.")
+        on_court = _deduped
+        if on_court:
+            for _tname, _n in ((t1name, sum(1 for _, t in on_court if t == t1id)),
+                               (t2name, sum(1 for _, t in on_court if t == t2id))):
+                if _n < 5:
+                    st.warning(f"{_tname}: only {_n} of 5 lineup slots selected.")
+        on_court_offs = [off_imap[s] for s in cur_offs if s != "—"]
+
+    # Build player option lists for the event form
+    all_player_rows = query(
+        "SELECT id AS pid, name AS pname, number, team_id FROM players "
+        "WHERE team_id IN (?,?) AND archived=0 ORDER BY name", (t1id, t2id)
+    )
+    pid_to_row = {p["pid"]: p for p in all_player_rows}
+
+    on_court_labels = []
+    for pid, tid in on_court:
+        p = pid_to_row.get(pid)
+        if p:
+            abbr = _abbr(t1name if tid == t1id else t2name)
+            on_court_labels.append((f"{abbr} #{p['number']} {p['pname']}", pid))
+
+    all_opts = ["—"] + [lbl for lbl, _ in on_court_labels]
+    all_id   = {lbl: pid for lbl, pid in on_court_labels}
+    off_opts = ["—"] + [s for s in cur_offs if s != "—"]
+    off_eid  = off_imap
+
+    # ── manual event form ───────────────────────────────────────────────────────
+    with st.expander("Log an event manually (film review / backup writer)",
+                     expanded=False):
+        if not on_court:
+            st.info("Pick the on-court five in the Floor expander above first.")
+        else:
+            event_type = st.selectbox("Event Type", ["Shot", "Free Throw", "Foul", "Turnover"], key="ev_type")
+
+            cap_key = f"shot_xy_{game_id}"
+            if event_type != "Shot" and cap_key in st.session_state:
+                # drop the stale marker AND remount the tap component, else its
+                # remembered click re-seeds the old location on return to Shot
+                st.session_state.pop(cap_key)
+                st.session_state[f"tapgen_{game_id}"] = \
+                    st.session_state.get(f"tapgen_{game_id}", 0) + 1
+
+            _last_time = st.session_state.get(f"last_time_{game_id}", "8:00")
+            _last_q    = st.session_state.get(f"last_q_{game_id}", 1)
+            try:
+                _lm, _ls = _last_time.split(":")
+                _last_mins = int(_lm)
+                _last_secs = int(_ls)
+            except Exception:
+                _last_mins, _last_secs = 8, 0
+
+            def _time_row():
+                mc, sc, qc = st.columns(3)
+                return (mc.number_input("Minutes", min_value=0, max_value=8, step=1,
+                                        value=min(_last_mins, 8)),
+                        sc.number_input("Seconds", min_value=0, max_value=59, step=1, value=_last_secs),
+                        qc.number_input("Quarter", min_value=1, max_value=10, step=1, value=int(_last_q)))
+
+            if event_type == "Shot":
+                cur = st.session_state.get(cap_key)
+                # The tap component keeps returning its LAST click while its key
+                # is unchanged — after a submit pops cap_key, that stale click
+                # would silently re-attach the previous shot's location to the
+                # next one. Versioning the key (nonce bumped on submit) remounts
+                # the component clean.
+                _tapgen = st.session_state.get(f"tapgen_{game_id}", 0)
+                court_col, form_col = (st.columns([1, 3]) if _HAVE_IMG_COORDS
+                                       else (None, st.container()))
+
+                # ── court tap, left column (outside the form so each tap reruns to
+                #    redraw the marker) → x/y, auto zone + 2/3 ─────────────────────
+                if _HAVE_IMG_COORDS:
+                    with court_col:
+                        W = COURT_W
+                        H = CG.image_height(W)
+                        base = _court_base(W)
+                        shown = (CG.court_image_with_marker(cur[0], cur[1], base=base, width=W)
+                                 if cur else base)
+                        disp = shown.transpose(Image.TRANSPOSE)   # sideways: hoop right, halfcourt-POV left = top
+                        st.caption("Tap where the shot was taken")
+                        val = streamlit_image_coordinates(disp, width=disp.width,
+                                                          key=f"court_tap_{game_id}_{_tapgen}")
+                        if val is not None:
+                            # invert the transpose: display (x,y) → original (y,x) → feet
+                            ox, oy = val["y"], val["x"]
+                            fx, fy = CG.feet_from_px(ox, oy, W, H)
+                            if cur is None or abs(cur[0] - fx) > 1e-6 or abs(cur[1] - fy) > 1e-6:
+                                st.session_state[cap_key] = (fx, fy)
+                                st.rerun()
+                        if cur:
+                            st.caption(f"**{CG.shot_value(*cur)}PT · {CG.zone_from_xy(*cur)}** · "
+                                       f"{CG.shot_distance(*cur):.0f} ft — tap again to move")
+                        else:
+                            st.caption("Zone & 2/3 auto-set from your tap "
+                                       "(skip → logs 2PT, blank zone)")
+
+                # ── shot detail form, right column (in line with the court) ───────
+                with form_col:
+                    with st.form("event_form", clear_on_submit=True):
+                        mins_input, secs_input, quarter = _time_row()
+                        st.markdown("---")
+                        _cap = st.session_state.get(cap_key)
+                        if _HAVE_IMG_COORDS:
+                            # location, zone AND 2/3 come from the tap — no type/zone dropdowns
+                            r1a, r1b = st.columns([3, 1])
+                            shooter = r1a.selectbox("Shooter", all_opts[1:])
+                            result  = r1b.selectbox("Result", ["make", "miss"])
+                            zone = CG.zone_from_xy(*_cap) if _cap else None
+                            shot_type = CG.shot_value(*_cap) if _cap else 2
+                            r2a, r2b = st.columns(2)
+                            pass_from = r2a.selectbox("Pass From", all_opts)
+                            created   = r2b.selectbox("Shot Created By", all_opts)
+                        else:
+                            r1a, r1b, r1c = st.columns([3, 1, 1])
+                            shooter   = r1a.selectbox("Shooter", all_opts[1:])
+                            shot_type = r1b.selectbox("Type", ["2", "3"])
+                            result    = r1c.selectbox("Result", ["make", "miss"])
+                            r2a, r2b, r2c = st.columns([1, 2, 2])
+                            zone      = r2a.selectbox("Zone", ZONES)
+                            pass_from = r2b.selectbox("Pass From", all_opts)
+                            created   = r2c.selectbox("Shot Created By", all_opts)
+                        # player pickers
+                        r3a, r3b, r3c = st.columns(3)
+                        guarded   = r3a.selectbox("Guarded By", all_opts)
+                        rebound   = r3b.selectbox("Rebound By", all_opts)
+                        blocked   = r3c.selectbox("Blocked By", all_opts)
+                        submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
+            else:
+                with st.form("event_form", clear_on_submit=True):
+                    mins_input, secs_input, quarter = _time_row()
+                    st.markdown("---")
+                    if event_type == "Free Throw":
+                        c1, c2, c3 = st.columns([3, 1, 2])
+                        shooter = c1.selectbox("Shooter", all_opts[1:])
+                        result  = c2.selectbox("Result", ["make", "miss"])
+                        rebound = c3.selectbox("Rebound By", all_opts)
+
+                    elif event_type == "Foul":
+                        c1, c2, c3 = st.columns([2, 2, 1])
+                        fouled   = c1.selectbox("Player Fouled", all_opts[1:])
+                        fouler   = c2.selectbox("Player Who Fouled", all_opts[1:])
+                        official = c3.selectbox("Official", off_opts)
+
+                    elif event_type == "Turnover":
+                        c1, c2 = st.columns(2)
+                        tov_p  = c1.selectbox("Turnover By", all_opts[1:])
+                        stolen = c2.selectbox("Stolen By", all_opts)
+
+                    submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
+
+            if submitted:
+                q = int(quarter)
+                t = f"{int(mins_input)}:{int(secs_input):02d}"
+                # The clock can't show more time than the period holds
+                # (8:00 quarters, 4:00 OTs) — a typo here corrupts possession
+                # seconds for every later event in the quarter. And the phone
+                # may have finished the game while this screen sat open —
+                # logging into a FINAL game desyncs its frozen score.
+                if GE.time_to_secs(t) > GE.quarter_start_secs(q):
+                    st.error(f"{t} is more than a {'quarter' if q <= 4 else 'OT period'} "
+                             f"holds ({int(GE.quarter_start_secs(q) // 60)}:00) — not logged.")
+                    submitted = False
+                elif query("SELECT tracked FROM games WHERE id=?", (game_id,))[0]["tracked"]:
+                    st.error("Game was finalized while this screen was open — "
+                             "not logged. Reopen the game to keep logging.")
+                    submitted = False
+
+            if submitted:
+                # Persist so the form re-opens with the same time/quarter
+                st.session_state[f"last_time_{game_id}"] = t
+                st.session_state[f"last_q_{game_id}"]    = q
+
+                # Build the event payload; helpers.game_events owns possession secs,
+                # the lineup snapshot, +/- and x/y -> zone/2-3 (shared with the mobile
+                # tracker API, so both writers stay in lockstep).
+                ev = {"quarter": q, "time": t}
+                if event_type == "Shot":
+                    _xy = st.session_state.get(cap_key)
+                    _sx, _sy = _xy if _xy else (None, None)
+                    ev.update(event_type="shot",
+                              primary_player_id=plookup(shooter, all_id),
+                              shot_result=result, shot_x=_sx, shot_y=_sy,
+                              shot_type=int(shot_type), zone=zone,
+                              pass_from_id=plookup(pass_from, all_id),
+                              shot_created_by_id=plookup(created, all_id),
+                              rebound_by_id=plookup(rebound, all_id),
+                              blocked_by_id=plookup(blocked, all_id),
+                              guarded_by_id=plookup(guarded, all_id))
+                    st.session_state.pop(cap_key, None)   # reset location for next shot
+                    # remount the tap component so its stale click can't re-seed
+                    st.session_state[f"tapgen_{game_id}"] = \
+                        st.session_state.get(f"tapgen_{game_id}", 0) + 1
+
+                elif event_type == "Free Throw":
+                    ev.update(event_type="free_throw",
+                              primary_player_id=plookup(shooter, all_id),
+                              shot_result=result,
+                              rebound_by_id=plookup(rebound, all_id))
+
+                elif event_type == "Foul":
+                    ev.update(event_type="foul",
+                              primary_player_id=plookup(fouled, all_id),
+                              secondary_player_id=plookup(fouler, all_id),
+                              official_id=(off_eid.get(official)
+                                           if official and official != "—" else None))
+
+                elif event_type == "Turnover":
+                    ev.update(event_type="turnover",
+                              primary_player_id=plookup(tov_p, all_id),
+                              stolen_by_id=plookup(stolen, all_id))
+
+                GE.log_event(game_id, ev, on_court, on_court_offs)
+                st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TEAM NOTES
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.expander("📋 Team Notes", expanded=False):
+    import helpers.scoutboard as SB
+    st.caption("Private to you — each coach keeps their own notes.")
     notes_col1, notes_col2 = st.columns(2)
     for col, tid, tname in [(notes_col1, t1id, t1name), (notes_col2, t2id, t2name)]:
         with col:
             st.markdown(f"**{tname}**")
-            cur = query("SELECT notes FROM teams WHERE id=?", (tid,))
-            existing_note = cur[0]["notes"] if cur else ""
-            new_note = st.text_area(
-                "Notes", value=existing_note, height=180,
-                placeholder="Scouting notes, tendencies, game plan…",
-                key=f"gt_notes_{game_id}_{tid}",
-                label_visibility="collapsed",
-            )
-            if st.button("💾 Save", key=f"gt_save_notes_{game_id}_{tid}", type="primary"):
-                execute("UPDATE teams SET notes=? WHERE id=?", (new_note, tid))
-                st.success("Saved.")
+            SB.render_notes(tid, kind="team", key_prefix=f"gt_{game_id}",
+                            label="Notes", height=180,
+                            placeholder="Scouting notes, tendencies, game plan…")
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  QUICK ADD — spreadsheet style
@@ -393,362 +868,3 @@ with st.expander("＋ Quick Add Player / Official"):
                 st.rerun()
             else:
                 st.warning("Fill in at least one official row.")
-
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  LINEUP  (no save button — read on every event log)
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.markdown("### Lineup")
-
-t1_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t1id,))
-t2_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t2id,))
-all_offs = query("SELECT id, name FROM officials ORDER BY name")
-
-t1_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t1_db]
-t2_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t2_db]
-off_opts_all = ["—"] + [o["name"] for o in all_offs]
-t1_pmap  = {f"#{p['number']} {p['name']}": p["id"] for p in t1_db}
-t2_pmap  = {f"#{p['number']} {p['name']}": p["id"] for p in t2_db}
-off_imap = {o["name"]: o["id"] for o in all_offs}
-
-lc1, lc2, lc3 = st.columns(3)
-with lc1:
-    st.markdown(f"**{t1name}**")
-    cur_t1 = [st.selectbox(f"Slot {i+1}", t1_opts, key=f"t1_{game_id}_{i}") for i in range(5)]
-with lc2:
-    st.markdown(f"**{t2name}**")
-    cur_t2 = [st.selectbox(f"Slot {i+1}", t2_opts, key=f"t2_{game_id}_{i}") for i in range(5)]
-with lc3:
-    st.markdown("**Officials**")
-    cur_offs = [st.selectbox(f"Slot {i+1}", off_opts_all, key=f"off_{game_id}_{i}") for i in range(3)]
-
-# Current on-court players (non-"—" selections) with their team
-on_court = (
-    [(t1_pmap[s], t1id) for s in cur_t1 if s != "—"] +
-    [(t2_pmap[s], t2id) for s in cur_t2 if s != "—"]
-)
-on_court_offs = [off_imap[s] for s in cur_offs if s != "—"]
-
-# Build player option lists for the event form
-all_player_rows = query(
-    "SELECT id AS pid, name AS pname, number, team_id FROM players "
-    "WHERE team_id IN (?,?) AND archived=0 ORDER BY name", (t1id, t2id)
-)
-pid_to_row = {p["pid"]: p for p in all_player_rows}
-pid_to_team = {p["pid"]: p["team_id"] for p in all_player_rows}
-
-def _abbr(name: str) -> str:
-    """'Adair Girls' → 'AG', 'North Valley' → 'NV'"""
-    return "".join(w[0].upper() for w in name.split() if w)
-
-on_court_labels = []
-for pid, tid in on_court:
-    p = pid_to_row.get(pid)
-    if p:
-        abbr = _abbr(t1name if tid == t1id else t2name)
-        on_court_labels.append((f"{abbr} #{p['number']} {p['pname']}", pid))
-
-all_opts = ["—"] + [lbl for lbl, _ in on_court_labels]
-all_id   = {lbl: pid for lbl, pid in on_court_labels}
-off_opts = ["—"] + [s for s in cur_offs if s != "—"]
-off_eid  = {o["name"]: o["id"] for o in all_offs}
-
-st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  EVENT LOGGER
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.markdown("### Log Event")
-
-if not on_court:
-    st.info("Select players in the lineup above first.")
-else:
-    event_type = st.selectbox("Event Type", ["Shot", "Free Throw", "Foul", "Turnover"], key="ev_type")
-
-    cap_key = f"shot_xy_{game_id}"
-    if event_type != "Shot":
-        st.session_state.pop(cap_key, None)          # drop stale marker
-
-    _last_time = st.session_state.get(f"last_time_{game_id}", "8:00")
-    _last_q    = st.session_state.get(f"last_q_{game_id}", 1)
-    try:
-        _lm, _ls = _last_time.split(":")
-        _last_mins = int(_lm)
-        _last_secs = int(_ls)
-    except Exception:
-        _last_mins, _last_secs = 8, 0
-
-    def _time_row():
-        mc, sc, qc = st.columns(3)
-        return (mc.number_input("Minutes", min_value=0, max_value=99, step=1, value=_last_mins),
-                sc.number_input("Seconds", min_value=0, max_value=59, step=1, value=_last_secs),
-                qc.number_input("Quarter", min_value=1, max_value=10, step=1, value=int(_last_q)))
-
-    if event_type == "Shot":
-        with st.expander("🏀 Shot", expanded=True):
-            cur = st.session_state.get(cap_key)
-            court_col, form_col = (st.columns([1, 3]) if _HAVE_IMG_COORDS
-                                   else (None, st.container()))
-
-            # ── court tap, left column (outside the form so each tap reruns to
-            #    redraw the marker) → x/y, auto zone + 2/3 ─────────────────────
-            if _HAVE_IMG_COORDS:
-                with court_col:
-                    W = COURT_W
-                    H = CG.image_height(W)
-                    base = _court_base(W)
-                    shown = (CG.court_image_with_marker(cur[0], cur[1], base=base, width=W)
-                             if cur else base)
-                    disp = shown.transpose(Image.TRANSPOSE)   # sideways: hoop right, halfcourt-POV left = top
-                    st.caption("Tap where the shot was taken")
-                    val = streamlit_image_coordinates(disp, width=disp.width,
-                                                      key=f"court_tap_{game_id}")
-                    if val is not None:
-                        # invert the transpose: display (x,y) → original (y,x) → feet
-                        ox, oy = val["y"], val["x"]
-                        fx, fy = CG.feet_from_px(ox, oy, W, H)
-                        if cur is None or abs(cur[0] - fx) > 1e-6 or abs(cur[1] - fy) > 1e-6:
-                            st.session_state[cap_key] = (fx, fy)
-                            st.rerun()
-                    if cur:
-                        st.caption(f"**{CG.shot_value(*cur)}PT · {CG.zone_from_xy(*cur)}** · "
-                                   f"{CG.shot_distance(*cur):.0f} ft — tap again to move")
-                    else:
-                        st.caption("Zone & 2/3 auto-set from your tap "
-                                   "(skip → logs 2PT, blank zone)")
-
-            # ── shot detail form, right column (in line with the court) ───────
-            with form_col:
-                with st.form("event_form", clear_on_submit=True):
-                    mins_input, secs_input, quarter = _time_row()
-                    st.markdown("---")
-                    _cap = st.session_state.get(cap_key)
-                    if _HAVE_IMG_COORDS:
-                        # location, zone AND 2/3 come from the tap — no type/zone dropdowns
-                        r1a, r1b = st.columns([3, 1])
-                        shooter = r1a.selectbox("Shooter", all_opts[1:])
-                        result  = r1b.selectbox("Result", ["make", "miss"])
-                        zone = CG.zone_from_xy(*_cap) if _cap else None
-                        shot_type = CG.shot_value(*_cap) if _cap else 2
-                        r2a, r2b = st.columns(2)
-                        pass_from = r2a.selectbox("Pass From", all_opts)
-                        created   = r2b.selectbox("Shot Created By", all_opts)
-                    else:
-                        r1a, r1b, r1c = st.columns([3, 1, 1])
-                        shooter   = r1a.selectbox("Shooter", all_opts[1:])
-                        shot_type = r1b.selectbox("Type", ["2", "3"])
-                        result    = r1c.selectbox("Result", ["make", "miss"])
-                        r2a, r2b, r2c = st.columns([1, 2, 2])
-                        zone      = r2a.selectbox("Zone", ZONES)
-                        pass_from = r2b.selectbox("Pass From", all_opts)
-                        created   = r2c.selectbox("Shot Created By", all_opts)
-                    # player pickers
-                    r3a, r3b, r3c = st.columns(3)
-                    guarded   = r3a.selectbox("Guarded By", all_opts)
-                    rebound   = r3b.selectbox("Rebound By", all_opts)
-                    blocked   = r3c.selectbox("Blocked By", all_opts)
-                    submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
-    else:
-        with st.form("event_form", clear_on_submit=True):
-            mins_input, secs_input, quarter = _time_row()
-            st.markdown("---")
-            if event_type == "Free Throw":
-                c1, c2, c3 = st.columns([3, 1, 2])
-                shooter = c1.selectbox("Shooter", all_opts[1:])
-                result  = c2.selectbox("Result", ["make", "miss"])
-                rebound = c3.selectbox("Rebound By", all_opts)
-
-            elif event_type == "Foul":
-                c1, c2, c3 = st.columns([2, 2, 1])
-                fouled   = c1.selectbox("Player Fouled", all_opts[1:])
-                fouler   = c2.selectbox("Player Who Fouled", all_opts[1:])
-                official = c3.selectbox("Official", off_opts)
-
-            elif event_type == "Turnover":
-                c1, c2 = st.columns(2)
-                tov_p  = c1.selectbox("Turnover By", all_opts[1:])
-                stolen = c2.selectbox("Stolen By", all_opts)
-
-            submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
-
-    if submitted:
-        q = int(quarter)
-        t = f"{int(mins_input)}:{int(secs_input):02d}"
-        # Persist so the form re-opens with the same time/quarter
-        st.session_state[f"last_time_{game_id}"] = t
-        st.session_state[f"last_q_{game_id}"]    = q
-        prev  = query("SELECT time FROM game_events WHERE game_id=? AND quarter=? ORDER BY id DESC LIMIT 1", (game_id, q))
-        start = time_to_secs(prev[0]["time"]) if prev else (8*60 if q<=4 else 4*60)
-        poss  = max(0.0, start - time_to_secs(t))
-
-        def snapshot_and_apply_pm(event_id: int, scoring_team_id=None, pts: int = 0):
-            """Snapshot the current lineup into game_event_lineup.
-            If a scoring event, credit +/- to on-court players and persist
-            them in game_lineup_players."""
-            for pid, tid in on_court:
-                execute("INSERT OR IGNORE INTO game_event_lineup (event_id, player_id, team_id) VALUES (?,?,?)",
-                        (event_id, pid, tid))
-                execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) VALUES (?,?,?)",
-                        (game_id, tid, pid))
-                if scoring_team_id and pts:
-                    delta = pts if tid == scoring_team_id else -pts
-                    execute("UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
-                            "WHERE game_id=? AND player_id=?", (delta, game_id, pid))
-            for oid in on_court_offs:
-                execute("INSERT OR IGNORE INTO game_lineup_officials (game_id, official_id) VALUES (?,?)",
-                        (game_id, oid))
-
-        if event_type == "Shot":
-            _xy = st.session_state.get(cap_key)
-            _sx, _sy = _xy if _xy else (None, None)
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,primary_player_id,
-                 shot_type,shot_result,pass_from_id,shot_created_by_id,
-                 rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (game_id,"shot",q,t,poss,
-                 plookup(shooter,all_id), int(shot_type), result,
-                 plookup(pass_from,all_id), plookup(created,all_id),
-                 plookup(rebound,all_id), plookup(blocked,all_id),
-                 plookup(guarded,all_id), zone, _sx, _sy))
-            sid = plookup(shooter, all_id)
-            scoring_tid = pid_to_team.get(sid) if sid else None
-            snapshot_and_apply_pm(eid, scoring_tid if result=="make" else None,
-                                  int(shot_type) if result=="make" else 0)
-            st.session_state.pop(cap_key, None)   # reset location for next shot
-
-        elif event_type == "Free Throw":
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,
-                 primary_player_id,shot_result,rebound_by_id)
-                VALUES (?,?,?,?,?,?,?,?)""",
-                (game_id,"free_throw",q,t,poss,
-                 plookup(shooter,all_id), result, plookup(rebound,all_id)))
-            sid = plookup(shooter, all_id)
-            scoring_tid = pid_to_team.get(sid) if sid else None
-            snapshot_and_apply_pm(eid, scoring_tid if result=="make" else None,
-                                  1 if result=="make" else 0)
-
-        elif event_type == "Foul":
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,
-                 primary_player_id,secondary_player_id,official_id)
-                VALUES (?,?,?,?,?,?,?,?)""",
-                (game_id,"foul",q,t,poss,
-                 plookup(fouled,all_id), plookup(fouler,all_id),
-                 off_eid.get(official) if official and official != "—" else None))
-            snapshot_and_apply_pm(eid)
-
-        elif event_type == "Turnover":
-            eid = execute("""INSERT INTO game_events
-                (game_id,event_type,quarter,time,possession_secs,
-                 primary_player_id,stolen_by_id)
-                VALUES (?,?,?,?,?,?,?)""",
-                (game_id,"turnover",q,t,poss,
-                 plookup(tov_p,all_id), plookup(stolen,all_id)))
-            snapshot_and_apply_pm(eid)
-
-        st.session_state[f"last_time_{game_id}"] = t
-        st.session_state[f"last_q_{game_id}"]    = q
-        st.rerun()
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  LIVE SCORE + PLAY-BY-PLAY
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.divider()
-
-pid_name = {p["pid"]: p["pname"] for p in all_player_rows}
-oid_name = {o["id"]: o["name"] for o in all_offs}
-def pn(pid): return pid_name.get(pid, f"ID:{pid}") if pid else "—"
-def on_(oid): return oid_name.get(oid, "?") if oid else "—"
-
-t1_live, t2_live = live_score(game_id, t1id, t2id)
-sc1, sc2, sc3 = st.columns([2,1,2])
-sc1.metric(t1name, t1_live)
-sc2.markdown("<div style='text-align:center;font-size:1.4em;padding-top:8px'>vs</div>", unsafe_allow_html=True)
-sc3.metric(t2name, t2_live)
-
-# Possessions — a possession ends on a shot or turnover (+1); fouls / free throws don't count
-t1_poss, t2_poss = live_possessions(game_id, t1id, t2id)
-pc1, pc2, pc3 = st.columns([2,1,2])
-pc1.metric(f"{t1name} Poss.", t1_poss)
-pc2.markdown("<div style='text-align:center;color:#888;padding-top:8px'>possessions</div>", unsafe_allow_html=True)
-pc3.metric(f"{t2name} Poss.", t2_poss)
-
-# Quarter-by-quarter breakdown
-q_scores = compute_quarter_scores(game_id, t1id, t2id)
-if q_scores:
-    all_quarters = sorted(q_scores.keys())
-    def q_label(q): return f"Q{q}" if q <= 4 else f"OT{q-4}"
-    q_row_t1 = {"Team": t1name}
-    q_row_t2 = {"Team": t2name}
-    t1_tot = t2_tot = 0
-    for q in all_quarters:
-        lbl = q_label(q)
-        q_row_t1[lbl] = q_scores[q].get(t1id, 0)
-        q_row_t2[lbl] = q_scores[q].get(t2id, 0)
-        t1_tot += q_scores[q].get(t1id, 0)
-        t2_tot += q_scores[q].get(t2id, 0)
-    q_row_t1["Total"] = t1_tot
-    q_row_t2["Total"] = t2_tot
-    st.dataframe(pd.DataFrame([q_row_t1, q_row_t2]), hide_index=True, width="stretch")
-
-st.markdown("#### Play-by-Play")
-recent = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC", (game_id,))
-
-if not recent:
-    st.info("No events logged yet.")
-else:
-    log_rows = []
-    for ev in recent:
-        et = ev["event_type"]
-        # A possession ends on a shot or turnover (+1); fouls / free throws don't count
-        poss_inc = 1 if et in ("shot", "turnover") else 0
-        if et=="shot":
-            icon = "✅" if ev["shot_result"]=="make" else "❌"
-            desc = (f"{icon} {ev['shot_type']}pt · {ev['zone']} · Shooter:{pn(ev['primary_player_id'])} · "
-                    f"Pass:{pn(ev['pass_from_id'])} · Reb:{pn(ev['rebound_by_id'])} · Blk:{pn(ev['blocked_by_id'])}")
-        elif et=="free_throw":
-            icon = "✅" if ev["shot_result"]=="make" else "❌"
-            desc = f"FT {icon} · Shooter:{pn(ev['primary_player_id'])} · Reb:{pn(ev['rebound_by_id'])}"
-        elif et=="foul":
-            desc = (f"🟡 FOUL · Fouled:{pn(ev['primary_player_id'])} · "
-                    f"By:{pn(ev['secondary_player_id'])} · Official:{on_(ev['official_id'])}")
-        elif et=="turnover":
-            desc = f"🔴 TOV · {pn(ev['primary_player_id'])} · Stolen:{pn(ev['stolen_by_id'])}"
-        else:
-            desc = et
-        log_rows.append({"Q":ev["quarter"],"Time":ev["time"],"Poss":poss_inc,"Play":desc})
-
-    pbp_df = pd.DataFrame(log_rows)
-    st.dataframe(pbp_df, width="stretch", hide_index=True)
-    st.download_button("⬇ Export Play-by-Play (CSV)", pbp_df.to_csv(index=False),
-                       file_name=f"pbp_{game_id}.csv", mime="text/csv", key="dl_pbp")
-
-    if st.button("🗑 Delete Last Event", type="secondary"):
-        last = query("SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC LIMIT 1", (game_id,))
-        if last:
-            ev  = last[0]
-            eid = ev["id"]
-            # Reverse +/- if this was a scoring event
-            if ev["event_type"] in ("shot", "free_throw") and ev["shot_result"] == "make":
-                pts = ev["shot_type"] if ev["event_type"] == "shot" else 1
-                scorer_id   = ev["primary_player_id"]
-                scoring_tid = pid_to_team.get(scorer_id) if scorer_id else None
-                if scoring_tid and pts:
-                    gel_rows = query(
-                        "SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?", (eid,))
-                    for row in gel_rows:
-                        pid, tid = row["player_id"], row["team_id"]
-                        reverse_delta = -pts if tid == scoring_tid else pts
-                        execute(
-                            "UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
-                            "WHERE game_id=? AND player_id=?",
-                            (reverse_delta, game_id, pid))
-            execute("DELETE FROM game_events WHERE id=?", (eid,))
-            st.cache_data.clear()
-            st.rerun()

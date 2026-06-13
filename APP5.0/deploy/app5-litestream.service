@@ -1,0 +1,16 @@
+[Unit]
+Description=Litestream continuous backup of the APP5 SQLite DB
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=app5
+Group=app5
+# `replicate` streams WAL frames to the configured replica continuously.
+ExecStart=/usr/bin/litestream replicate -config /etc/litestream.yml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

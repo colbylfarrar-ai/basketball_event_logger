@@ -68,11 +68,14 @@ def team_zone_by_type(game_ids, team_pids, events=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_scout(team_id, gender, scored, tracked, pack, table,
-                personnel_limit=7, exclude_pids=None):
+                personnel_limit=7, exclude_pids=None, visible_game_ids=None):
     """Assemble every piece of the scouting report for one team.
 
     personnel_limit=None shows the WHOLE roster (self-scout); exclude_pids drops
-    players (e.g. injured/suspended) from the personnel list."""
+    players (e.g. injured/suspended) from the personnel list. `visible_game_ids`
+    is the entitlement read-filter for the hot-zone / shot-creation views: None =
+    unrestricted (own team / admin), a set restricts them to those games (a
+    League-wide scout passes the team's pooled games)."""
     s = scored.get(team_id, {})
     ts = pack.get("ts", {})
     me = ts.get(team_id)
@@ -184,8 +187,11 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     # four-factors/personnel (event-based) so the zone + creation views must use
     # the same game set or they come back empty.
     gids = [r["id"] for r in query(
-        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1",
-        (team_id, team_id))]
+        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
+        "AND season='Current'", (team_id, team_id))]
+    if visible_game_ids is not None:
+        _vis = set(visible_game_ids)
+        gids = [g for g in gids if g in _vis]
     team_pids = tuple(r["id"] for r in
                       query("SELECT id FROM players WHERE team_id=?", (team_id,)))
     zones = team_zone(tuple(gids), team_pids)
@@ -289,7 +295,8 @@ h1{{margin:0;font-size:18px;letter-spacing:.2px}}
 .rng{{color:#222;font-size:11px;font-weight:600;margin:1px 0 8px}}
 h2{{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#111;
   border-bottom:1.5px solid #111;padding-bottom:2px;margin:11px 0 5px}}
-.cols{{display:flex;gap:20px}} .col{{flex:1}}
+table.cols{{width:100%;border-collapse:separate;border-spacing:10px 0;font-size:11px}}
+td.col{{width:50%;vertical-align:top;border:none;padding:0}}
 ul{{margin:2px 0;padding-left:15px}} li{{margin:2px 0}}
 table{{border-collapse:collapse;width:100%;font-size:11px}}
 th{{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;
@@ -297,7 +304,8 @@ th{{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;
 td{{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}}
 .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
 .note{{color:#555;font-size:10px}}
-.two{{display:flex;gap:20px;align-items:flex-start}} .two>div{{flex:1}}
+table.two{{width:100%;border-collapse:separate;border-spacing:10px 0;font-size:11px}}
+td.two-col{{width:50%;vertical-align:top;border:none;padding:0}}
 .foot{{margin-top:12px;color:#999;font-size:9px}}
 @media print{{.wrap{{padding:8px 12px}}}}
 </style></head><body><div class='wrap'>
@@ -305,18 +313,18 @@ td{{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}}
 <div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
   Power #{sc['rank']}/{sc['of']}</div>
 <div class='rng'>{e(rng)}</div>
-<div class='cols'>
-  <div class='col'><h2>Guard them</h2><ul>{guard}</ul></div>
-  <div class='col'><h2>Attack them</h2><ul>{attack}</ul></div>
-</div>
-<div class='two'>
-  <div><h2>Four factors</h2>
+<table class='cols'><tr>
+  <td class='col'><h2>Guard them</h2><ul>{guard}</ul></td>
+  <td class='col'><h2>Attack them</h2><ul>{attack}</ul></td>
+</tr></table>
+<table class='two'><tr>
+  <td class='two-col'><h2>Four factors</h2>
     <table><tr><th>Factor</th><th class='n'>Val</th><th class='n'>%ile</th></tr>
-    {rows_f}</table></div>
-  <div><h2>Shooting by zone</h2>
+    {rows_f}</table></td>
+  <td class='two-col'><h2>Shooting by zone</h2>
     <table><tr><th>Zone</th><th>Type</th><th class='n'>FG · %</th></tr>
-    {zrows}</table></div>
-</div>
+    {zrows}</table></td>
+</tr></table>
 <h2>Personnel</h2>
 <table><tr><th>Player</th><th class='n'>PPG</th><th class='n'>RPG</th>
   <th class='n'>APG</th><th class='n'>FG%</th><th class='n'>3P%</th><th>Note</th></tr>

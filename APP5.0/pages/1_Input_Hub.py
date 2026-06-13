@@ -4,14 +4,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
-from database.db import query, execute, initialize_database, normalize_date
-from helpers.settings_utils import get_all_settings, apply_page_config
+from database.db import query, execute, normalize_date
+from helpers.ui import page_chrome, page_header
+import helpers.seasons as SZ
+import helpers.auth as AUTH
+import helpers.change_requests as CR
 
-initialize_database()
-_cfg = get_all_settings()
-apply_page_config(_cfg)
+_cfg, ACCENT = page_chrome("Input Hub")
+_me = AUTH.current_user()
 
-st.title("Input Hub")
+
+def _gated_delete(table, target_id, label):
+    """Admin deletes now; a coach's delete is queued for admin approval (the row
+    stays live until accepted). Returns True if the caller should delete now."""
+    if CR.should_delete_now(_me):
+        return True
+    CR.request_delete(table, target_id, label, _me.get("email", ""))
+    st.toast(f"Delete of {label} sent to the admin for approval 🕓")
+    return False
+
+page_header("Input Hub")
+
+# Render messages queued before an st.rerun (an inline message would be wiped).
+for _level, _msg in st.session_state.pop("_flash", []):
+    {"success": st.success, "warning": st.warning, "error": st.error}[_level](_msg)
 
 CLASS_OPTIONS  = ["B2", "B1", "A", "2A", "3A", "4A", "5A", "6A", "N/A"]
 GENDER_OPTIONS = ["M", "F"]
@@ -153,25 +169,40 @@ def invalidate(*keys):
     for k in keys:
         st.session_state.pop(k, None)
 
+def flash(level, msg):
+    """Queue a message to render at the top of the page after the next st.rerun."""
+    st.session_state.setdefault("_flash", []).append((level, msg))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  NEW SEASON
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.expander("New Season", expanded=False):
+    _cur_label = SZ.active_label()
     st.warning(
-        "Rolling over archives all current players and schedules under a season label, "
-        "then starts fresh. Historical game data and tracked stats are always preserved."
+        f"Current season: **{_cur_label}**. Rolling over archives all current "
+        "players, schedules **and games** under that label, then starts a fresh "
+        "season. Nothing is deleted — past seasons become an open archive (free, "
+        "full depth, visible to everyone), and current-season stats stop blending "
+        "with last year's."
     )
-    season_label = st.text_input("Season label (e.g. 2024-25)", placeholder="2024-25", key="season_label_input")
+    new_name = st.text_input("New season name (e.g. 2026-2027)",
+                             placeholder="2026-2027", key="season_label_input")
     confirm = st.checkbox("I understand — roll over to a new season", key="new_season_confirm")
-    can_go = confirm and bool(season_label.strip())
+    _nm = new_name.strip()
+    can_go = confirm and bool(_nm) and _nm != _cur_label
     if st.button("Start New Season", type="primary", disabled=not can_go, key="new_season_btn"):
-        lbl = season_label.strip()
-        execute("UPDATE players SET archived=1, season=? WHERE archived=0", (lbl,))
-        execute("UPDATE schedule SET season=? WHERE season='Current'", (lbl,))
+        # Stamp the OUTGOING season's rows with its real label; new rows added
+        # after this default back to 'Current' = the new active season.
+        execute("UPDATE players  SET archived=1, season=? WHERE archived=0", (_cur_label,))
+        execute("UPDATE schedule SET season=? WHERE season='Current'", (_cur_label,))
+        execute("UPDATE games    SET season=? WHERE season='Current'", (_cur_label,))
+        execute("INSERT OR REPLACE INTO app_settings (key, value) "
+                "VALUES ('active_season', ?)", (_nm,))
         invalidate("_players_orig", "players_editor", "_sched_orig", "sched_editor")
-        st.success(f"Season '{lbl}' archived. Add new rosters and schedules to start fresh.")
+        flash("success", f"Archived '{_cur_label}'. Now playing **{_nm}** — add new "
+              "rosters and schedules to start fresh.")
         st.cache_data.clear()
         st.rerun()
 
@@ -212,16 +243,17 @@ with tab_teams:
             execute("UPDATE teams SET name=?, class=?, gender=? WHERE id=?",
                     (r["name"].strip(), r["class"], r["gender"], r["id"]))
         def del_team(r):
-            execute("DELETE FROM teams WHERE id=?", (r["id"],))
+            if _gated_delete("teams", r["id"], f"team '{r.get('name','?')}'"):
+                execute("DELETE FROM teams WHERE id=?", (r["id"],))
 
         errs = apply_delta("teams_editor", orig, ins_team, upd_team, del_team)
         if errs:
-            st.error("\n".join(errs))
+            st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
         else:
-            st.success("Saved!")
-        invalidate("_teams_orig", "teams_editor")
-        st.cache_data.clear()
-        st.rerun()
+            flash("success", "Saved!")
+            invalidate("_teams_orig", "teams_editor")
+            st.cache_data.clear()
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -277,16 +309,17 @@ with tab_players:
                      r["id"])
                 )
             def del_player(r):
-                execute("DELETE FROM players WHERE id=?", (r["id"],))
+                if _gated_delete("players", r["id"], f"player '{r.get('name','?')}'"):
+                    execute("DELETE FROM players WHERE id=?", (r["id"],))
 
             errs = apply_delta("players_editor", orig, ins_player, upd_player, del_player)
             if errs:
-                st.error("\n".join(errs))
+                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
             else:
-                st.success("Saved!")
-            invalidate("_players_orig", "players_editor")
-            st.cache_data.clear()
-            st.rerun()
+                flash("success", "Saved!")
+                invalidate("_players_orig", "players_editor")
+                st.cache_data.clear()
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -301,6 +334,8 @@ with tab_games:
         orig = get_orig("_games_orig", load_games)
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
             columns=["team1","team2","date","location","home_score","away_score","tracked"])
+        # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
+        display["date"] = pd.to_datetime(display["date"], errors="coerce").dt.date
 
         st.data_editor(
             display,
@@ -310,7 +345,7 @@ with tab_games:
             column_config={
                 "team1":      st.column_config.SelectboxColumn("Home Team",    options=tnames, required=True),
                 "team2":      st.column_config.SelectboxColumn("Away Team",    options=tnames, required=True),
-                "date":       st.column_config.TextColumn("Date (YYYY-MM-DD)", required=True),
+                "date":       st.column_config.DateColumn("Date", format="YYYY-MM-DD", required=True),
                 "location":   st.column_config.TextColumn("Location"),
                 "home_score": st.column_config.NumberColumn("Home Score",      min_value=0, step=1),
                 "away_score": st.column_config.NumberColumn("Away Score",      min_value=0, step=1),
@@ -321,7 +356,12 @@ with tab_games:
 
         if st.button("Save Changes", key="save_games", type="primary"):
             tm = team_map()
+            skipped = []
             def ins_game(r):
+                if r.get("team1") and r.get("team1") == r.get("team2"):
+                    skipped.append(f"Skipped a game with '{r['team1']}' as both home "
+                                   "and away — pick two different teams.")
+                    return
                 if r.get("date","").strip() and r.get("team1") and r.get("team2"):
                     execute(
                         "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url) VALUES (?,?,?,?,?,?,?,?)",
@@ -331,6 +371,10 @@ with tab_games:
                          (r.get("video_url") or "").strip())
                     )
             def upd_game(r):
+                if r.get("team1") and r.get("team1") == r.get("team2"):
+                    skipped.append(f"Skipped game #{int(r['id'])} — '{r['team1']}' "
+                                   "can't play itself; pick two different teams.")
+                    return
                 live = _live_game(r["id"])
                 if live and live["tracked"]:
                     # Tracked games own their PBP-derived score — keep it. Apply
@@ -356,16 +400,24 @@ with tab_games:
                      (r.get("video_url") or "").strip(), r["id"])
                 )
             def del_game(r):
-                execute("DELETE FROM games WHERE id=?", (r["id"],))
+                if _gated_delete("games", r["id"],
+                                 f"game {r.get('team1','?')} vs {r.get('team2','?')}"):
+                    execute("DELETE FROM games WHERE id=?", (r["id"],))
 
             errs = apply_delta("games_editor", orig, ins_game, upd_game, del_game)
             if errs:
-                st.error("\n".join(errs))
+                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
+                for _w in skipped:
+                    st.warning(_w)
             else:
-                st.success("Saved!")
-            invalidate("_games_orig", "games_editor")
-            st.cache_data.clear()
-            st.rerun()
+                flash("success", "Saved!")
+                for _w in skipped:
+                    flash("warning", _w)
+                # Same games table as the Team Schedule tab — drop its cached
+                # editor frame too so it can't save stale rows back over this edit.
+                invalidate("_games_orig", "games_editor", "_sched_orig", "sched_editor")
+                st.cache_data.clear()
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -389,6 +441,8 @@ with tab_schedule:
         orig = get_orig("_sched_orig", lambda: load_games_for_team(team_id))
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
             columns=["opponent","date","home_away","location","team_score","opp_score","tracked"])
+        # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
+        display["date"] = pd.to_datetime(display["date"], errors="coerce").dt.date
 
         # Opponents are every team except the selected one
         opp_options = [t for t in tnames if t != selected_team]
@@ -400,7 +454,7 @@ with tab_schedule:
             width="stretch",
             column_config={
                 "opponent":   st.column_config.SelectboxColumn("Opponent",       options=opp_options, required=True),
-                "date":       st.column_config.TextColumn("Date (YYYY-MM-DD)",   required=True),
+                "date":       st.column_config.DateColumn("Date", format="YYYY-MM-DD", required=True),
                 "home_away":  st.column_config.SelectboxColumn("Home / Away",    options=HA_OPTIONS,  required=True),
                 "location":   st.column_config.TextColumn("Location"),
                 "team_score": st.column_config.NumberColumn("Team Score",        min_value=0, step=1),
@@ -467,16 +521,18 @@ with tab_schedule:
                 )
 
             def del_sched(r):
-                execute("DELETE FROM games WHERE id=?", (r["id"],))
+                if _gated_delete("games", r["id"],
+                                 f"scheduled game {r.get('team1','?')} vs {r.get('team2','?')}"):
+                    execute("DELETE FROM games WHERE id=?", (r["id"],))
 
             errs = apply_delta("sched_editor", orig, ins_sched, upd_sched, del_sched)
             if errs:
-                st.error("\n".join(errs))
+                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
             else:
-                st.success("Saved!")
-            invalidate("_sched_orig", "sched_editor", "_games_orig", "games_editor")
-            st.cache_data.clear()
-            st.rerun()
+                flash("success", "Saved!")
+                invalidate("_sched_orig", "sched_editor", "_games_orig", "games_editor")
+                st.cache_data.clear()
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -508,16 +564,17 @@ with tab_officials:
             execute("UPDATE officials SET name=?, official_id=? WHERE id=?",
                     (r["name"].strip(), int(r["official_id"]), r["id"]))
         def del_official(r):
-            execute("DELETE FROM officials WHERE id=?", (r["id"],))
+            if _gated_delete("officials", r["id"], f"official '{r.get('name','?')}'"):
+                execute("DELETE FROM officials WHERE id=?", (r["id"],))
 
         errs = apply_delta("officials_editor", orig, ins_official, upd_official, del_official)
         if errs:
-            st.error("\n".join(errs))
+            st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
         else:
-            st.success("Saved!")
-        invalidate("_officials_orig", "officials_editor")
-        st.cache_data.clear()
-        st.rerun()
+            flash("success", "Saved!")
+            invalidate("_officials_orig", "officials_editor")
+            st.cache_data.clear()
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -46,13 +46,17 @@ _safe = S._safe   # shared definition lives in helpers.stats
 #  RESULTS FETCH  (every finished game, oldest first, per team)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _finished_rows(gender=None):
-    """Finished games for a gender (both scores present), oldest first."""
+def _finished_rows(gender=None, season="Current"):
+    """Finished games for a gender (both scores present), oldest first.
+    `season` partitions to the active season by default (pass None for all)."""
     clause = "WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL"
     params = []
     if gender:
         clause += " AND t1.gender = ?"
         params.append(gender)
+    if season is not None:
+        clause += " AND g.season = ?"
+        params.append(season)
     return query(
         f"""SELECT g.id, g.date, g.team1_id, g.team2_id,
                    g.home_score, g.away_score, g.tracked
@@ -305,10 +309,12 @@ def win_network(gender=None, rows=None, scored=None):
 #  TRACKED STAT PACK  (one box pass → every per-team advanced number)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_tracked_pack(gender=None, tracked=None):
+def team_tracked_pack(gender=None, tracked=None, game_ids=None):
     """
     Assemble the per-team advanced stat bundle from tracked games ONCE, so every
     chart that needs possession / shooting / quarter data reads the same numbers.
+    `game_ids` is the entitlement read-filter (see team_ratings._finished_games):
+    a League-wide surface passes the pooled set so only pooled games feed it.
 
     Returns a dict:
       teams     [team_id, ...] ordered by tracked Power rank
@@ -330,8 +336,8 @@ def team_tracked_pack(gender=None, tracked=None):
       stl_r, blk_r   (steals / blocks per 100 opponent possessions)
     """
     if tracked is None:
-        tracked = TR.tracked_ratings(gender=gender)
-    games = TR._finished_games(gender=gender, tracked_only=True)
+        tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids)
+    games = TR._finished_games(gender=gender, tracked_only=True, game_ids=game_ids)
     if not tracked or not games:
         return {"teams": [], "tracked": tracked or {}, "own": {}, "opp": {},
                 "gp": {}, "ts": {}, "qfor": {}, "qagn": {}, "tqbox": {},

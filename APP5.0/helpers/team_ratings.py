@@ -65,12 +65,23 @@ _safe = S._safe   # shared definition lives in helpers.stats
 #  RESULTS FETCH
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _finished_games(gender=None, tracked_only=False):
+def _finished_games(gender=None, tracked_only=False, game_ids=None,
+                    season="Current"):
     """
     Finished games (both scores present) as neutral team-vs-team rows.
     Returns list of dicts: home_id, away_id, home_pts, away_pts, tracked.
     `gender` filters via the home team ('M'/'F'); teams only play same gender.
+    `game_ids` (a set/iterable, or None) is the entitlement read-filter: when
+    given, only those games are returned — League-wide tracked aggregations pass
+    the pooled set so a Solo coach's games never feed another coach's pool view.
+    An empty `game_ids` means "no visible games" → returns [].
+    `season` is the season partition: default 'Current' (active season) so ratings
+    never blend seasons; pass a label to view an archive, or None for all seasons.
     """
+    if game_ids is not None:
+        game_ids = list(game_ids)
+        if not game_ids:
+            return []
     clause = "WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL"
     params = []
     if gender:
@@ -78,6 +89,12 @@ def _finished_games(gender=None, tracked_only=False):
         params.append(gender)
     if tracked_only:
         clause += " AND g.tracked = 1"
+    if season is not None:
+        clause += " AND g.season = ?"
+        params.append(season)
+    if game_ids is not None:
+        clause += " AND g.id IN (%s)" % ",".join("?" * len(game_ids))
+        params.extend(game_ids)
     rows = query(
         f"""SELECT g.id, g.team1_id AS home_id, g.team2_id AS away_id,
                    g.home_score AS home_pts, g.away_score AS away_pts, g.tracked
@@ -306,9 +323,11 @@ def _tracked_team_game_boxes(games):
 
 
 def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                    reg=DEFAULT_REG):
+                    reg=DEFAULT_REG, game_ids=None):
     """
     Advanced, possession-based power ratings over tracked games only.
+    `game_ids` is the entitlement read-filter (see _finished_games): a League-wide
+    surface passes the pooled set so only pooled games feed the ratings.
     Returns {team_id: {...}} with, per team:
         name, class, GP,
         Pace,                               possessions per game
@@ -322,7 +341,7 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
     Efficiency uses authoritative final scores for points and stats-engine
     possessions; shooting comes straight from the box.
     """
-    games = _finished_games(gender=gender, tracked_only=True)
+    games = _finished_games(gender=gender, tracked_only=True, game_ids=game_ids)
     meta = _team_meta(gender=gender)
     if not games:
         return {}

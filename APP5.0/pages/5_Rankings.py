@@ -1,5 +1,5 @@
 """
-4_Rankings.py — the league-wide view: team rankings, deep dives and charts.
+5_Rankings.py — the league-wide view: team rankings, deep dives and charts.
 
 League-wide tabs:
   • Overview    — the source of truth. Results-only "Score" power ratings for
@@ -14,7 +14,7 @@ League-wide tabs:
                   volume — built from tracked-game events. A team filter takes
                   teams out of the graphs and a per-stat bar gallery covers the
                   headline team stats.
-  • Everything  — futuristic league-wide analytics over every team (landscape,
+  • League      — futuristic league-wide analytics over every team (landscape,
                   tiers, Pythagoras, momentum, win network). The whole-league
                   companion to the Tracked tab. (Matchup predictions + sims now
                   live on the War Room page.)
@@ -36,15 +36,35 @@ from database.db import query
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
-                        AWAY, gender_radio, gender_label, score_card)
+                        AWAY, gender_radio, score_card,
+                        page_header, empty_state, HEAT, DIVERGE)
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
+import helpers.predictor as PRED
 import helpers.team_analytics as TA
 import helpers.stats as S
 import helpers.league_analytics as LA
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("Rankings")
+
+
+def _paid_pool_lock():
+    """Lock reason for a LEAGUE-WIDE tracked surface (the whole pool's possession
+    data at once), or None if the viewer may see it. Needs Paid AND League-wide
+    (the per-coach Coaches' Co-op toggle) — a Solo coach gets an INVITE to share,
+    not a denial. See helpers.entitlement.viewer_is_league_wide."""
+    _ident = AUTH.current_user()
+    if not ENT.has_paid_plan(_ident):
+        return ("🔒 Tracked league analytics — possession ratings, four factors "
+                "and the advanced charts — are a **Paid** feature. Upgrade to "
+                "unlock.")
+    if not ENT.viewer_is_league_wide(_ident):
+        return (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_ident)
+                else ENT.MSG_COOP_INVITE)
+    return None
 
 # futuristic-lab palette (mirrors the Team Analytics advanced layer)
 GOOD = "#3fb950"
@@ -56,6 +76,13 @@ GREY = "#8b949e"
 PINK = "#ff5db1"
 GOLD = "#f0a500"
 TIER_PALETTE = ["#00e5ff", "#3fb950", "#58a6ff", "#f0a500", "#8b949e"]
+
+# tier ladder — single source for _tier() and the Power-tiers caption
+TIER_CUTS = [("S · ELITE", 70, "#00e5ff"),
+             ("A · CONTENDER", 62, "#3fb950"),
+             ("B · SOLID", 54, "#58a6ff"),
+             ("C · MIDDLING", 46, "#f0a500")]
+TIER_FLOOR = ("D · REBUILDING", "#e74c3c")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -132,20 +159,15 @@ def _lab_hdr(text):
 def _tier(power):
     """Power 0-100 → (tier name, color). 50 = league average on the z-scale.
 
-    Band edges (70/62/54/46) match the player OVERALL ladder (helpers.cards.tier)
+    Band edges (TIER_CUTS) match the player OVERALL ladder (helpers.cards.tier)
     so "elite/great/above-average/average" mean the same number on both scales.
     """
     if power is None:
         return "—", GREY
-    if power >= 70:
-        return "S · ELITE", "#00e5ff"
-    if power >= 62:
-        return "A · CONTENDER", "#3fb950"
-    if power >= 54:
-        return "B · SOLID", "#58a6ff"
-    if power >= 46:
-        return "C · MIDDLING", "#f0a500"
-    return "D · REBUILDING", "#e74c3c"
+    for name, cut, clr in TIER_CUTS:
+        if power >= cut:
+            return name, clr
+    return TIER_FLOOR
 
 
 def _pctile_color(pct):
@@ -177,16 +199,22 @@ def _pctile_bar(label, val_txt, pct):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _team_tracked_deep(team_id):
+def _team_tracked_deep(team_id, vis=None):
     """Possession-based tracked deep dive for one team — None if no tracked games.
 
     Mirrors (and extends) APP3's 'Team Deep Dive': pace-adjusted ratings, the
     four factors on both ends, a per-period PPG/PPP table and a per-game
     efficiency log that drives the win/loss pattern charts. Everything is built
     from tracked play-by-play, so it is a small, directional sample.
+
+    `vis` (tuple of game ids, or None) is the AXIS-2 read-filter: None for own
+    team / admin (full depth); a League-wide scout passes the team's POOLED games.
     """
     game_log = TA.team_game_log(team_id)
     tracked_ids = [g["game_id"] for g in game_log if g["tracked"]]
+    if vis is not None:
+        _vis = set(vis)
+        tracked_ids = [gid for gid in tracked_ids if gid in _vis]
     if not tracked_ids:
         return None
     events = S.fetch_events(tracked_ids)
@@ -240,7 +268,10 @@ def _team_tracked_deep(team_id):
 #  PAGE HEADER + GENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.title("Rankings")
+page_header("Rankings",
+            sub="Opponent-adjusted power, résumé and possession analytics "
+                "across the whole league — results power every team, tracked "
+                "games add the deep layer.")
 
 gender = gender_radio()
 
@@ -250,8 +281,12 @@ def _score_ratings(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_ratings(g):
-    return TR.tracked_ratings(gender=g)
+def _tracked_ratings(g, vis=None):
+    # `vis` (tuple of game ids, or None) is the AXIS-2 read-filter: the whole
+    # tracked surface here is league-wide, so it aggregates only games the viewer
+    # may see (None = admin/local = all; a League-wide coach = the pooled set).
+    return TR.tracked_ratings(gender=g,
+                              game_ids=(set(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -260,8 +295,9 @@ def _form_stats(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_pack(g, _tracked):
-    return LA.team_tracked_pack(gender=g, tracked=_tracked)
+def _tracked_pack(g, _tracked, vis=None):
+    return LA.team_tracked_pack(gender=g, tracked=_tracked,
+                                game_ids=(set(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -269,13 +305,22 @@ def _win_net(g, _scored):
     return LA.win_network(gender=g, scored=_scored)
 
 
+# AXIS-2 read-filter for every LEAGUE-WIDE tracked aggregation on this page: the
+# pooled set this viewer may aggregate (None = admin/local = all tracked games;
+# a League-wide coach = own ∪ pooled = pooled). Solo / Free coaches don't reach
+# the tracked tabs (the lock stops them); their visible set just yields a sparse
+# `tracked` used only for graceful "tracked rank" fallbacks.
+_VIS = ENT.visible_tracked_game_ids(AUTH.current_user())
+_VISK = None if _VIS is None else tuple(sorted(_VIS))
+
 scored = _score_ratings(gender)
-tracked = _tracked_ratings(gender)
+tracked = _tracked_ratings(gender, _VISK)
 form_stats = _form_stats(gender)
 
 if not scored:
-    st.info("No finished games for this league yet. Enter results in the Input Hub "
-            "and they'll rank here.")
+    empty_state("No finished games for this league yet",
+                "Enter results in the Input Hub and they'll rank here.",
+                cta="Open the Input Hub", page="pages/1_Input_Hub.py")
     st.stop()
 
 name_of = {tid: r["name"] for tid, r in scored.items()}
@@ -285,13 +330,15 @@ TOP5 = {tid for tid, r in scored.items() if r["Rank"] <= 5}
 TOP10 = {tid for tid, r in scored.items() if r["Rank"] <= 10}
 TOP25 = {tid for tid, r in scored.items() if r["Rank"] <= 25}
 
-# tracked advanced bundle (one cached box pass) — shared by League Lab tab
-pack = _tracked_pack(gender, tracked)
+# tracked advanced bundle (one cached box pass) — shared by League Lab tab.
+# Pool-scoped to the viewer (_VISK) so the league-wide charts never surface a
+# Solo coach's tracked depth.
+pack = _tracked_pack(gender, tracked, _VISK)
 
 (tab_over, tab_team, tab_cmp, tab_track, tab_chart, tab_evr,
  tab_gloss) = st.tabs(
     ["Overview", "Team", "Compare", "Tracked", "Team Charts",
-     "Everything", "Glossary"])
+     "League", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,15 +346,6 @@ pack = _tracked_pack(gender, tracked)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_over:
     all_rows = list(scored.values())
-
-    # ── futuristic league identity band ──────────────────────────────────────
-    _n_games = int(sum(r["GP"] for r in all_rows) // 2)
-    _trk_games = sum(1 for _ in TR._finished_games(gender=gender,
-                                                   tracked_only=True))
-    _avg_ppg = sum(r["PPG"] for r in all_rows) / len(all_rows)
-    _top = min(all_rows, key=lambda r: r["Rank"])
-    _best_off = max(all_rows, key=lambda r: r["PPG"])
-    _best_def = min(all_rows, key=lambda r: r["oPPG"])
 
     def _form_leader(metric, hi=True, need=None, pool=None):
         cand = [(t, form_stats[t]) for t in form_stats
@@ -317,25 +355,6 @@ with tab_over:
         if not cand:
             return None, None
         return (max if hi else min)(cand, key=lambda c: c[1][metric])
-
-    _hot_t, _hot = _form_leader("streak_len", need=lambda r: r["streak_type"] == "W")
-    _league_name = gender_label(gender)
-    _chips = "".join(
-        f"<span class='stat-chip'>{lbl} <b>{val}</b></span>"
-        for lbl, val in [
-            ("Teams", len(all_rows)), ("Games", _n_games),
-            ("Tracked", _trk_games), ("Avg PPG", f"{_avg_ppg:.1f}"),
-            ("#1", _top["name"]),
-        ])
-    st.markdown(
-        f"<div class='lab-hero'>"
-        f"<div class='lab-hero-name' style='color:{ACCENT}'>{_league_name} "
-        f"Basketball · Command Center</div>"
-        f"<div class='lab-hero-sub'>Opponent-adjusted power, résumé and "
-        f"possession analytics across the whole league — results power every "
-        f"team, tracked games add the deep layer.</div>"
-        f"<div class='lab-hero-chips'>{_chips}</div></div>",
-        unsafe_allow_html=True)
 
     st.caption(
         "**Source of truth.** Results-only power ratings for every team — built "
@@ -533,10 +552,11 @@ with tab_over:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 2 — TEAM  (per-team deep dive, moved out of Overview)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_team:
+@st.fragment
+def _fx_team():
     st.caption("One team, every angle — pick a team for its record, résumé "
                "splits, composites, league percentile profile and full schedule. "
-               "Both the everything ranking and (where tracked) the possession "
+               "Both the league ranking and (where tracked) the possession "
                "ranking are shown together.")
 
     # ── Team deep dive ───────────────────────────────────────────────────────
@@ -571,11 +591,11 @@ with tab_team:
     m[3].metric("Margin / game", f"{r['MOV']:+.1f}")
     m[4].metric("SOS / SOR", f"{r['SOS']:.1f} / {r['SOR']:.1f}")
 
-    # both rankings in one place: everything (this tab) + tracked (where possible)
+    # both rankings in one place: league (this tab) + tracked (where possible)
     rk = TR.team_rank(pick, scored=scored, tracked=tracked)
     _trk = rk["tracked"]
     st.caption(
-        f"**Everything ranking** #{r['Rank']} of {len(scored)}  ·  "
+        f"**League ranking** #{r['Rank']} of {len(scored)}  ·  "
         + (f"**Tracked ranking** #{_trk['rank']} of {_trk['of']} "
            f"(Power {_trk['power']}, Net {_trk['netrtg']:+.1f})"
            if _trk else "**Tracked ranking** — not tracked yet"))
@@ -677,6 +697,7 @@ with tab_team:
             """SELECT date, opponent_id, home_away, location
                FROM schedule
                WHERE team_id=? AND (opp_score IS NULL OR team_score IS NULL)
+                 AND date >= date('now', 'localtime')
                ORDER BY date""", (pick,))
         if upcoming:
             st.markdown("**Upcoming**")
@@ -729,11 +750,29 @@ with tab_team:
 
     # ── Tracked deep dive (possession-based, tracked games only) ─────────────
     _lab_hdr("Tracked deep dive")
-    _deep = _team_tracked_deep(pick)
+    # Single-team tracked depth (AXIS 1 + AXIS 2): own team (Paid) always; another
+    # team only when you're League-wide AND it has shared (pooled) tracked games —
+    # a Solo coach gets the co-op invite, a non-shared team a neutral note. This is
+    # the last section of _fx_team, so a locked viewer just gets the message + return.
+    _ident = AUTH.current_user()
+    _raw_trk = bool(query("SELECT 1 FROM games WHERE (team1_id=? OR team2_id=?) "
+                          "AND tracked=1 LIMIT 1", (pick, pick)))
+    _ok, _lock = ENT.tracked_gate(_ident, pick, _raw_trk)
+    if not _ok:
+        if _lock:
+            st.info(_lock)
+        else:
+            empty_state("No tracked games for this team yet",
+                        "Track a game in the Game Tracker to unlock the deep dive.")
+        return
+    _dv = ENT.team_visible_tracked_ids(_ident, pick)
+    _deep = _team_tracked_deep(pick, None if _dv is None else tuple(sorted(_dv)))
     if not _deep:
-        st.info("No tracked games for this team yet — track a game in the Game "
-                "Tracker to unlock possession ratings, the four factors, "
-                "quarter-by-quarter PPP and win/loss patterns.")
+        empty_state("No tracked games for this team yet",
+                    "Track a game in the Game Tracker to unlock possession "
+                    "ratings, the four factors, quarter-by-quarter PPP and "
+                    "win/loss patterns.",
+                    cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     else:
         st.caption(
             f"Possession-based over **{_deep['gp']} tracked game"
@@ -890,13 +929,18 @@ with tab_team:
                 _style(fdm, 300)
                 st.plotly_chart(fdm, width="stretch")
 
+
+with tab_team:
+    _fx_team()
+
+
 with tab_over:
     # ── Hot & cold (current streaks across the league) ───────────────────────
     streaks = []
     for tid in scored:
-        s = _team_streak(_team_results(tid))
-        if s and len(s) > 1:
-            streaks.append((tid, s[0], int(s[1:])))
+        f = form_stats.get(tid)
+        if f and f.get("streak_type") and f.get("streak_len"):
+            streaks.append((tid, f["streak_type"], int(f["streak_len"])))
     if streaks:
         st.markdown("<div class='section-hdr'>Hot &amp; cold</div>",
                     unsafe_allow_html=True)
@@ -910,7 +954,7 @@ with tab_over:
             for tid, _, n in hot:
                 st.markdown(
                     f"**{name_of[tid]}** `{class_of[tid]}`  "
-                    f"<span style='color:#2ecc71;font-weight:700'>W{n}</span>  "
+                    f"<span style='color:{GOOD};font-weight:700'>W{n}</span>  "
                     f"({scored[tid]['W']}-{scored[tid]['L']})",
                     unsafe_allow_html=True)
         with hc2:
@@ -929,8 +973,10 @@ with tab_over:
 @st.fragment
 def _fx_track():
     if not tracked:
-        st.info("No tracked games for this league yet. Track a game in the Game "
-                "Tracker and its advanced ratings appear here.")
+        empty_state("No tracked games for this league yet",
+                    "Track a game in the Game Tracker and its advanced ratings "
+                    "appear here.",
+                    cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     else:
         st.caption(
             "Possession-based ratings over **tracked games only** — a far smaller, "
@@ -963,11 +1009,13 @@ def _fx_track():
                     "PPP": st.column_config.NumberColumn("PPP", format="%.3f"),
                     "oPPP": st.column_config.NumberColumn("Opp PPP", format="%.3f"),
                     "Pace": st.column_config.NumberColumn("Pace", format="%.1f"),
-                    "eFG": st.column_config.NumberColumn("eFG%", format="%.3f"),
-                    "oeFG": st.column_config.NumberColumn("Opp eFG%", format="%.3f"),
-                    "FGpct": st.column_config.NumberColumn("FG%", format="%.3f"),
-                    "oFGpct": st.column_config.NumberColumn("Opp FG%", format="%.3f"),
-                    "TPpct": st.column_config.NumberColumn("3P%", format="%.3f"),
+                    "eFG": st.column_config.NumberColumn("eFG%", format="percent"),
+                    "oeFG": st.column_config.NumberColumn("Opp eFG%",
+                                                          format="percent"),
+                    "FGpct": st.column_config.NumberColumn("FG%", format="percent"),
+                    "oFGpct": st.column_config.NumberColumn("Opp FG%",
+                                                            format="percent"),
+                    "TPpct": st.column_config.NumberColumn("3P%", format="percent"),
                     "SOS": st.column_config.NumberColumn("SOS", format="%.2f"),
                     "SOR": st.column_config.NumberColumn("SOR", format="%.2f"),
                     "ClassAdj": st.column_config.NumberColumn(
@@ -1002,14 +1050,20 @@ def _fx_track():
 #  TAB 5 — TEAM CHARTS  (tracked-event driven, cross-team) + STAT LAB explorer
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_track:
-    _fx_track()
+    _trk_lock = _paid_pool_lock()
+    if _trk_lock:
+        st.info(_trk_lock)
+    else:
+        _fx_track()
 
 
 @st.fragment
 def _fx_chart():
     if not tracked:
-        st.info("Team charts are built from tracked-game events — none yet for "
-                "this league.")
+        empty_state("No tracked-game events yet",
+                    "Team charts are built from tracked-game events — none yet "
+                    "for this league.",
+                    cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     else:
         st.caption("How teams score, how they win, and who can shoot — across all "
                    "tracked games in this league. Built from per-game team boxes, "
@@ -1018,7 +1072,7 @@ def _fx_chart():
 
         # per-team advanced bundle — the single shared box pass from
         # helpers/league_analytics.team_tracked_pack (computed once, cached, and
-        # reused by the Everything tab). `ts[t]` carries the
+        # reused by the League tab). `ts[t]` carries the
         # derived keys this tab used inline, plus extras; 3P% is "TPpct".
         all_teams = pack["teams"]
         own, opp, gp, ts = pack["own"], pack["opp"], pack["gp"], pack["ts"]
@@ -1026,7 +1080,7 @@ def _fx_chart():
 
         # ── team filter — drives every chart on this tab ─────────────────────
         _csel = st.multiselect(
-            "Teams to show", all_teams, default=all_teams,
+            "Teams to show (empty = all)", all_teams, default=[],
             format_func=lambda t: name_of.get(t, str(t)), key="chart_team_filter")
         teams = [t for t in all_teams if t in set(_csel)] or all_teams
         labels = [name_of.get(t, str(t)) for t in teams]
@@ -1052,10 +1106,10 @@ def _fx_chart():
         # ════════════════ EVERY HEADLINE STAT — SORTED BARS ════════════════
         st.markdown("<div class='section-hdr'>Every headline team stat</div>",
                     unsafe_allow_html=True)
-        st.caption("Each headline team stat as a sorted bar — one bar per team, "
-                   "respecting the team filter. Four Factors, shooting, efficiency "
-                   "and the core box rates; the full stat set lives in the Stat "
-                   "Lab explorer further down.")
+        st.caption("Pick a headline stat to chart as a sorted bar — one bar per "
+                   "team, respecting the team filter. Four Factors, shooting, "
+                   "efficiency and the core box rates; the full stat set lives "
+                   "in the Stat Lab explorer further down.")
         _gallery = [
             ("eFG", "Effective FG%", "eFG%", True, False, 1),
             ("oeFG", "Opponent eFG% (lower better)", "Opp eFG%", True, True, 1),
@@ -1081,11 +1135,19 @@ def _fx_chart():
             ("stl_pg", "Steals / game", "STL/g", False, False, 1),
             ("blk_pg", "Blocks / game", "BLK/g", False, False, 1),
         ]
-        _gcols = st.columns(2)
-        for _i, (_mk, _ti, _ax, _pc, _as, _nn) in enumerate(_gallery):
-            if all(_mk in ts[t] for t in teams):
+        _avail = [g for g in _gallery if all(g[0] in ts[t] for t in teams)]
+        _by_ax = {g[2]: g for g in _avail}
+        _pick_ax = st.pills("Stat", list(_by_ax), default=next(iter(_by_ax), None),
+                            key="gal_pick")
+        if _pick_ax:
+            _mk, _ti, _ax, _pc, _as, _nn = _by_ax[_pick_ax]
+            _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn, key=f"gal_{_mk}")
+        if st.checkbox("Show all stats as a chart wall", key="gal_all"):
+            _gcols = st.columns(2)
+            for _i, (_mk, _ti, _ax, _pc, _as, _nn) in enumerate(_avail):
                 with _gcols[_i % 2]:
-                    _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn, key=f"gal_{_mk}")
+                    _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn,
+                          key=f"galw_{_mk}")
 
         # ════════════════ SCORING ════════════════
         st.markdown("<div class='section-hdr'>Scoring</div>",
@@ -1122,7 +1184,7 @@ def _fx_chart():
                 x=ortg, y=drtg, mode="markers+text", text=labels,
                 textposition="top center", textfont=dict(size=9),
                 marker=dict(size=[max(8, p / 2) for p in pace], color=ortg,
-                            colorscale="Viridis", showscale=False,
+                            colorscale=HEAT, showscale=False,
                             line=dict(width=1, color="#30363d"))))
             if ortg:
                 wfig.add_vline(x=sum(ortg) / len(ortg),
@@ -1142,7 +1204,7 @@ def _fx_chart():
                 mode="markers+text", text=labels, textposition="top center",
                 textfont=dict(size=9),
                 marker=dict(size=12, color=[ts[t]["ast_per_fgm"] for t in teams],
-                            colorscale="Tealgrn", showscale=True,
+                            colorscale=HEAT, showscale=True,
                             colorbar=dict(title="AST/<br>FGM", thickness=10),
                             line=dict(width=1, color="#30363d"))))
             mfig.update_xaxes(title="Turnovers / game →")
@@ -1385,7 +1447,11 @@ def _fx_chart():
 #  TAB 5 — EVERYTHING  (whole-league analytics + matchup predictor)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_chart:
-    _fx_chart()
+    _chart_lock = _paid_pool_lock()
+    if _chart_lock:
+        st.info(_chart_lock)
+    else:
+        _fx_chart()
 
 
 @st.fragment
@@ -1419,7 +1485,7 @@ def _fx_evr():
         land = go.Figure(go.Scatter(
             x=xs, y=ys, mode="markers",
             marker=dict(size=[max(7, p / 4) for p in powers], color=powers,
-                        colorscale="Turbo", showscale=True, cmin=0, cmax=100,
+                        colorscale=DIVERGE, showscale=True, cmin=0, cmax=100,
                         colorbar=dict(title="Power", thickness=12),
                         line=dict(width=0.5, color="#0d1117")),
             text=txt,
@@ -1445,7 +1511,7 @@ def _fx_evr():
                 x=ortg, y=drtg, mode="markers+text", text=lbl,
                 textposition="top center", textfont=dict(size=9),
                 marker=dict(size=[max(10, p / 2) for p in pace], color=net,
-                            colorscale="RdYlGn", cmid=0, showscale=True,
+                            colorscale=DIVERGE, cmid=0, showscale=True,
                             colorbar=dict(title="Net", thickness=12),
                             line=dict(width=1, color="#30363d")),
                 hovertemplate="%{text}<br>ORtg %{x:.1f} · DRtg %{y:.1f}"
@@ -1462,7 +1528,8 @@ def _fx_evr():
             st.caption("For a single team's gauges and Team-DNA radar, open that "
                        "team in **Team Analytics → Advanced → Efficiency & DNA**.")
         else:
-            st.info("Track games to unlock the possession-based KenPom map.")
+            empty_state("No tracked games yet",
+                        "Track games to unlock the possession-based KenPom map.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  POWER TIERS
@@ -1470,7 +1537,9 @@ def _fx_evr():
     with lab_tier:
         _lab_hdr("Power tiers")
         st.caption("Teams bucketed by Power (0-100, 50 = league average). "
-                   "S ≥ 68 · A ≥ 60 · B ≥ 52 · C ≥ 44 · D < 44.")
+                   + " · ".join(f"{name.split(' ')[0]} ≥ {cut:g}"
+                                for name, cut, _ in TIER_CUTS)
+                   + f" · {TIER_FLOOR[0].split(' ')[0]} < {TIER_CUTS[-1][1]:g}.")
         tier_order = ["S · ELITE", "A · CONTENDER", "B · SOLID",
                       "C · MIDDLING", "D · REBUILDING"]
         buckets = defaultdict(list)
@@ -1562,7 +1631,7 @@ def _fx_evr():
             colors.append(p)
         tree = go.Figure(go.Treemap(
             labels=labels, parents=parents, values=vals, branchvalues="total",
-            marker=dict(colors=colors, colorscale="Turbo", cmid=50, cmin=0,
+            marker=dict(colors=colors, colorscale=DIVERGE, cmid=50, cmin=0,
                         cmax=100, showscale=True,
                         colorbar=dict(title="Power", thickness=12)),
             hovertemplate="<b>%{label}</b><br>%{value} wins<extra></extra>",
@@ -1589,7 +1658,7 @@ def _fx_evr():
         nm = [name_of.get(t, str(t)) for t in fids]
         pyfig = go.Figure(go.Scatter(
             x=pw, y=aw, mode="markers",
-            marker=dict(size=9, color=lk, colorscale="RdYlGn", cmid=0,
+            marker=dict(size=9, color=lk, colorscale=DIVERGE, cmid=0,
                         showscale=True, colorbar=dict(title="Luck", thickness=12),
                         line=dict(width=0.5, color="#0d1117")),
             text=nm,
@@ -1665,7 +1734,7 @@ def _fx_evr():
         traj = go.Figure(go.Scatter(
             x=sx, y=sy, mode="markers",
             marker=dict(size=9, color=[form_stats[t]["mom_delta"] for t in fids],
-                        colorscale="RdYlGn", cmid=0, showscale=True,
+                        colorscale=DIVERGE, cmid=0, showscale=True,
                         colorbar=dict(title="Δ", thickness=12),
                         line=dict(width=0.5, color="#0d1117")),
             text=[name_of.get(t, str(t)) for t in fids],
@@ -1728,7 +1797,7 @@ def _fx_evr():
                 text=[n["name"] for n in nodes], textposition="top center",
                 textfont=dict(size=9),
                 marker=dict(size=[max(10, n["degree"] * 1.6) for n in nodes],
-                            color=[n["power"] for n in nodes], colorscale="Turbo",
+                            color=[n["power"] for n in nodes], colorscale=DIVERGE,
                             cmin=0, cmax=100, showscale=True,
                             colorbar=dict(title="Power", thickness=12),
                             line=dict(width=1, color="#0d1117")),
@@ -1788,7 +1857,8 @@ with tab_gloss:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — COMPARE  (two teams, head to head)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_cmp:
+@st.fragment
+def _fx_cmp():
     st.caption("Two teams head to head — power and results always; four factors "
                "and efficiency when both teams are tracked.")
     _cts = pack["ts"]
@@ -1819,8 +1889,8 @@ with tab_cmp:
                 bw = (not neutral) and ((b > a) if hib else (b < a))
             except TypeError:
                 aw = bw = False
-            ca = "color:#2ea043;font-weight:800" if aw else "color:#c9d1d9"
-            cb = "color:#2ea043;font-weight:800" if bw else "color:#c9d1d9"
+            ca = f"color:{GOOD};font-weight:800" if aw else "color:#c9d1d9"
+            cb = f"color:{GOOD};font-weight:800" if bw else "color:#c9d1d9"
             av = fmt.format(a) if a is not None else "—"
             bv = fmt.format(b) if b is not None else "—"
             return (f"<tr><td style='text-align:right;padding:4px 10px;{ca}'>{av}</td>"
@@ -1846,8 +1916,68 @@ with tab_cmp:
         ]), unsafe_allow_html=True)
         st.caption("Green = the better of the two · adj defense, lower is better.")
 
+        # ── head to head: what actually happened, then the model's call ──────
+        st.markdown("<div class='lab-hdr'>Head to head</div>",
+                    unsafe_allow_html=True)
+        _h2h = query("""
+            SELECT date, home_score, away_score, team1_id, team2_id
+            FROM games
+            WHERE home_score IS NOT NULL AND away_score IS NOT NULL
+              AND ((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))
+            ORDER BY date""", (cA, cB, cB, cA))
+        if _h2h:
+            # Strict comparisons per side — a tied score is neither team's win.
+            def _won_by(m, t):
+                if m["home_score"] == m["away_score"]:
+                    return False
+                home_won = m["home_score"] > m["away_score"]
+                return home_won == (m["team1_id"] == t)
+            _wa = sum(1 for m in _h2h if _won_by(m, cA))
+            _wb = sum(1 for m in _h2h if _won_by(m, cB))
+            _ties = len(_h2h) - _wa - _wb
+            st.markdown(f"**{team_short(name_of[cA])} {_wa} – "
+                        f"{_wb} {team_short(name_of[cB])}**"
+                        + (f" ({_ties} tie{'s' if _ties > 1 else ''})"
+                           if _ties else "")
+                        + " in actual meetings")
+            for m in _h2h:
+                _aw_won = m["away_score"] > m["home_score"]
+                _hm_won = m["home_score"] > m["away_score"]
+                st.caption(
+                    f"{m['date']} · {name_of[m['team2_id']]} "
+                    f"{'**' if _aw_won else ''}{m['away_score']}"
+                    f"{'**' if _aw_won else ''} @ {name_of[m['team1_id']]} "
+                    f"{'**' if _hm_won else ''}{m['home_score']}"
+                    f"{'**' if _hm_won else ''}")
+        else:
+            st.caption("These two haven't played each other yet.")
+
+        _pp = PRED.predict_game(cA, cB, scored=scored, tracked=tracked,
+                                home=None)
+        if _pp:
+            _pm = st.columns(3)
+            _pm[0].metric(team_short(name_of[cA]), f"{_pp['pf_a']:.0f}",
+                          f"{_pp['win_prob_a'] * 100:.0f}% win",
+                          delta_color="off")
+            _pm[1].metric("Neutral-floor spread",
+                          f"{team_short(name_of[_pp['favorite']])} "
+                          f"−{_pp['spread']:.1f}",
+                          _pp["confidence"], delta_color="off")
+            _pm[2].metric(team_short(name_of[cB]), f"{_pp['pf_b']:.0f}",
+                          f"{_pp['win_prob_b'] * 100:.0f}% win",
+                          delta_color="off")
+            st.caption("If they met on a neutral floor tonight — the full "
+                       "margin breakdown and simulation live in the War Room.")
+
         _ma, _mb = _cts.get(cA), _cts.get(cB)
-        if _ma and _mb:
+        # The tracked profile reveals BOTH teams' possession depth side by side, so
+        # require entitlement to each (own team Paid; another team needs you to be
+        # League-wide). The read-filter already strips non-pooled teams from `_cts`,
+        # so a missing _ma/_mb falls through to the neutral "both tracked" note.
+        _cmp_ident = AUTH.current_user()
+        _cmp_ok = (ENT.can_see_team_tracked(_cmp_ident, cA)
+                   and ENT.can_see_team_tracked(_cmp_ident, cB))
+        if _ma and _mb and _cmp_ok:
             st.markdown(_ttable("Tracked profile — four factors & efficiency", [
                 _trow("eFG%", _ma["eFG"], _mb["eFG"]),
                 _trow("Turnover %", _ma["TOVpct"], _mb["TOVpct"], hib=False),
@@ -1859,5 +1989,13 @@ with tab_cmp:
                 _trow("Pace", _ma["Pace"], _mb["Pace"], fmt="{:.0f}", neutral=True),
                 _trow("Points / poss", _ma["PPP"], _mb["PPP"], fmt="{:.2f}"),
             ]), unsafe_allow_html=True)
+        elif _ma and _mb and not _cmp_ok:
+            st.info("🔒 The tracked four-factor & efficiency compare is **Paid**. "
+                    "Join the **Coaches' Co-op** (Settings) to scout any team but "
+                    "your own — share to scout.")
         else:
             st.info("Four-factor & efficiency compare needs both teams tracked.")
+
+
+with tab_cmp:
+    _fx_cmp()

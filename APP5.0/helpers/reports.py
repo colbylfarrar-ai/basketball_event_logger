@@ -45,9 +45,9 @@ th{text-align:left;font-size:10.5px;letter-spacing:.6px;text-transform:uppercase
 td{padding:5px 8px;border-bottom:1px solid #e7ebf0}
 tr:nth-child(even) td{background:#f7f9fb}
 .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 4px}
-.kpi{flex:1;min-width:90px;background:#f7f9fb;border:1px solid #e7ebf0;border-radius:9px;
-  padding:9px 10px;text-align:center}
+table.kpis{width:100%;border-collapse:separate;border-spacing:5px 0;margin:6px 0 4px}
+td.kpi{background:#f7f9fb;border:1px solid #e7ebf0;border-radius:9px;
+  padding:9px 6px;text-align:center}
 .kpi .v{font-size:20px;font-weight:800;color:#16202c;font-variant-numeric:tabular-nums}
 .kpi .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:#5b6675}
 .bdg{display:inline-block;font-size:10px;font-weight:700;color:#6b4e00;background:#fff3d6;
@@ -74,7 +74,8 @@ def _doc(title, body):
 
 
 def _kpi(label, value):
-    return f"<div class='kpi'><div class='v'>{value}</div><div class='l'>{e(label)}</div></div>"
+    # A table cell, not a flex child — xhtml2pdf (the PDF engine) has no flexbox.
+    return f"<td class='kpi'><div class='v'>{value}</div><div class='l'>{e(label)}</div></td>"
 
 
 # ── per-player season report card ────────────────────────────────────────────────
@@ -124,10 +125,10 @@ def player_card_html(player_id, gender=None, table=None):
 
     ftline = ""
     if ff:
-        ftline = (f"<div class='kpis'>{_kpi('Fouls drawn', ff.get('drawn',0))}"
+        ftline = (f"<table class='kpis'><tr>{_kpi('Fouls drawn', ff.get('drawn',0))}"
                   f"{_kpi('Fouls', ff.get('PF',0))}"
                   f"{_kpi('FT', str(ff.get('FTM',0))+'/'+str(ff.get('FTA',0)))}"
-                  f"{_kpi('FT%', ('%.0f%%'%ff['FT%']) if ff.get('FTA') else '—')}</div>")
+                  f"{_kpi('FT%', ('%.0f%%'%ff['FT%']) if ff.get('FTA') else '—')}</tr></table>")
 
     lrows = ""
     for game in log[-15:][::-1]:
@@ -141,7 +142,7 @@ def player_card_html(player_id, gender=None, table=None):
 
     body = (
         f"{band}<div class='wrap'>"
-        f"<h2>Season averages</h2><div class='kpis'>{kpis}</div>"
+        f"<h2>Season averages</h2><table class='kpis'><tr>{kpis}</tr></table>"
         f"<h2>Badges</h2><div>{bdg}</div>"
         + (f"<h2>Fouls &amp; free throws</h2>{ftline}" if ff else "")
         + (f"<h2>Season highs</h2><table><tr><th>Stat</th><th class='num'>High</th>"
@@ -223,10 +224,12 @@ def game_recap_html(game_id):
     body = (
         f"{band}<div class='wrap'>"
         f"<h2>Team totals</h2>"
-        f"<div style='display:flex;gap:24px'>"
-        f"<div style='flex:1'><table><tr><th>{e(g['n1'])}</th><th></th></tr>{_tcol(tb,'')}</table></div>"
-        f"<div style='flex:1'><table><tr><th>{e(g['n2'])}</th><th></th></tr>{_tcol(ob,'')}</table></div>"
-        f"</div>"
+        f"<table style='width:100%;border-collapse:separate;border-spacing:12px 0'><tr>"
+        f"<td style='width:50%;vertical-align:top;border:none;padding:0'>"
+        f"<table><tr><th>{e(g['n1'])}</th><th></th></tr>{_tcol(tb,'')}</table></td>"
+        f"<td style='width:50%;vertical-align:top;border:none;padding:0'>"
+        f"<table><tr><th>{e(g['n2'])}</th><th></th></tr>{_tcol(ob,'')}</table></td>"
+        f"</tr></table>"
         f"<h2>Scoring breakdown</h2><table>"
         f"<tr><th class='num'>{e(g['n1'])}</th><th></th><th class='num'>{e(g['n2'])}</th></tr>"
         f"{bkrows}</table>"

@@ -34,7 +34,7 @@ def _games(gender=None):
                   g.home_score, g.away_score, t1.gender AS gender
            FROM games g
            JOIN teams t1 ON t1.id = g.team1_id
-           WHERE g.tracked = 1"""
+           WHERE g.tracked = 1 AND g.season = 'Current'"""
     )
     if gender:
         rows = [r for r in rows if r["gender"] == gender]

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12141e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<link rel="stylesheet" href="/static/style.css">
+<title>APP5 Tracker</title>
+</head>
+<body>
+
+<div id="ios-banner" hidden>
+  <span>Install: tap Share &rarr; Add to Home Screen</span>
+  <button id="ios-dismiss" aria-label="Dismiss">&#10005;</button>
+</div>
+
+<!-- Screen 1: Setup -->
+<section id="screen-setup" class="screen">
+  <header class="setup-head">
+    <h1>APP5 Tracker</h1>
+    <span id="net-dot" class="dot"></span>
+  </header>
+  <details id="token-box">
+    <summary>Server token</summary>
+    <div class="token-row">
+      <input id="token-input" type="password" placeholder="Bearer token (optional)" autocomplete="off">
+      <button id="token-save" class="btn">Save</button>
+    </div>
+  </details>
+  <p id="setup-status" class="status"></p>
+  <button id="btn-new-game" class="btn ghost" type="button">+ New game</button>
+  <div id="new-game-form" hidden></div>
+  <ul id="game-list" class="game-list"></ul>
+</section>
+
+<!-- Screen 2: Lineup -->
+<section id="screen-lineup" class="screen" hidden>
+  <header class="bar">
+    <button id="btn-lineup-back" class="btn ghost">&lsaquo; Games</button>
+    <h2>Lineup</h2>
+  </header>
+  <div class="lineup-group">
+    <h3 id="lineup-home-name"></h3>
+    <div id="chips-home" class="chips"></div>
+    <button id="btn-add-home" class="btn ghost small add-btn" type="button">+ Add player</button>
+    <div id="add-home-form" class="inline-form" hidden>
+      <input id="add-home-name" type="text" placeholder="Name" autocomplete="off">
+      <input id="add-home-number" type="number" placeholder="##" inputmode="numeric" min="0" max="999">
+      <button id="add-home-save" class="btn primary" type="button">Add</button>
+      <p id="add-home-status" class="status"></p>
+    </div>
+  </div>
+  <div class="lineup-group">
+    <h3 id="lineup-away-name"></h3>
+    <div id="chips-away" class="chips"></div>
+    <button id="btn-add-away" class="btn ghost small add-btn" type="button">+ Add player</button>
+    <div id="add-away-form" class="inline-form" hidden>
+      <input id="add-away-name" type="text" placeholder="Name" autocomplete="off">
+      <input id="add-away-number" type="number" placeholder="##" inputmode="numeric" min="0" max="999">
+      <button id="add-away-save" class="btn primary" type="button">Add</button>
+      <p id="add-away-status" class="status"></p>
+    </div>
+  </div>
+  <div class="lineup-group">
+    <h3 id="lineup-officials-name">Officials</h3>
+    <div id="chips-officials" class="chips"></div>
+    <button id="btn-add-official" class="btn ghost small add-btn" type="button">+ Add official</button>
+    <div id="add-official-form" class="inline-form" hidden>
+      <input id="add-official-name" type="text" placeholder="Name" autocomplete="off">
+      <input id="add-official-id" type="number" placeholder="Official ID" inputmode="numeric" min="0">
+      <button id="add-official-save" class="btn primary" type="button">Add</button>
+      <p id="add-official-status" class="status"></p>
+    </div>
+  </div>
+  <button id="btn-start" class="btn primary big">Start tracking</button>
+  <button id="btn-lineup-edit-log" class="btn ghost big" type="button">Edit log</button>
+</section>
+
+<!-- Screen 3: Tracker -->
+<section id="screen-tracker" class="screen" hidden>
+  <header id="track-head">
+    <div id="score-line">
+      <span id="score-home-name" class="score-name"></span>
+      <span id="score-home" class="score-num">0</span>
+      <span class="score-sep">&ndash;</span>
+      <span id="score-away" class="score-num">0</span>
+      <span id="score-away-name" class="score-name"></span>
+    </div>
+    <div id="track-controls">
+      <div class="q-stepper">
+        <button id="q-minus" class="btn sq" aria-label="Previous period">&minus;</button>
+        <span id="q-label">Q1</span>
+        <button id="q-plus" class="btn sq" aria-label="Next period">+</button>
+      </div>
+      <div class="clock">
+        <input id="clock-min" type="number" min="0" max="99" value="8" inputmode="numeric" aria-label="Minutes">
+        <span>:</span>
+        <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
+      </div>
+      <span id="sync-badge" class="badge ok" title="Queued events">0</span>
+      <span id="net-dot2" class="dot"></span>
+      <button id="btn-subs" class="btn ghost">Subs</button>
+    </div>
+  </header>
+
+  <div id="court-wrap"></div>
+  <p id="shot-caption" class="caption"></p>
+
+  <div id="mode-row">
+    <button class="btn mode active" data-mode="shot">SHOT</button>
+    <button class="btn mode" data-mode="ft">FT</button>
+    <button class="btn mode" data-mode="foul">FOUL</button>
+    <button class="btn mode" data-mode="tov">TOV</button>
+  </div>
+
+  <div id="flow"></div>
+
+  <div id="action-row">
+    <button id="btn-undo" class="btn warn">Undo</button>
+    <button id="btn-edit-log" class="btn ghost">Edit log</button>
+    <button id="btn-finish" class="btn danger">End game</button>
+  </div>
+
+  <p id="sync-status" class="status"></p>
+  <h3 class="pbp-h">Play-by-play</h3>
+  <ul id="pbp" class="pbp"></ul>
+</section>
+
+<!-- Screen 4: Event editor -->
+<section id="screen-editor" class="screen" hidden>
+  <header class="bar">
+    <button id="btn-editor-back" class="btn ghost">&lsaquo; Tracker</button>
+    <h2>Edit log</h2>
+  </header>
+  <div id="ed-score-row">
+    <button id="btn-rescore" class="btn ghost small" type="button">Recompute score</button>
+    <span id="ed-drift" class="status" hidden>Stored final score differs from the event log</span>
+  </div>
+  <div id="ed-filters" class="chips"></div>
+  <ul id="ed-list" class="ev-list"></ul>
+</section>
+
+<div id="toast" hidden></div>
+
+<script>
+/* One-time iOS install banner + service worker registration */
+(function () {
+  try {
+    var isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var standalone = window.navigator.standalone === true ||
+      window.matchMedia('(display-mode: standalone)').matches;
+    if (isiOS && !standalone && !localStorage.getItem('tracker_ios_banner_dismissed')) {
+      var b = document.getElementById('ios-banner');
+      b.hidden = false;
+      document.getElementById('ios-dismiss').addEventListener('click', function () {
+        b.hidden = true;
+        localStorage.setItem('tracker_ios_banner_dismissed', '1');
+      });
+    }
+  } catch (e) { /* ignore */ }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  }
+})();
+</script>
+<script src="/static/court.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -48,7 +48,10 @@ from database.db import query
 #: the default sample everywhere — an untracked game is one that was started but
 #: never fully logged (e.g. game 4, Adair vs Ketchum: 61 events, tracked=0), so
 #: its partial events must never leak into "all games" aggregates.
-_TRACKED_SUBQUERY = "ge.game_id IN (SELECT id FROM games WHERE tracked=1)"
+#: Season scope: the default sample is the ACTIVE season only ('Current' sentinel)
+#: so league/team event aggregates never blend seasons after a rollover. Viewing a
+#: past season passes explicit game_ids instead (see helpers/seasons.py).
+_TRACKED_SUBQUERY = "ge.game_id IN (SELECT id FROM games WHERE tracked=1 AND season='Current')"
 
 
 def _game_filter(game_ids):
@@ -870,9 +873,9 @@ def plus_minus(game_ids=None):
         marks = ",".join("?" * len(game_ids))
         clause, params = f" WHERE game_id IN ({marks})", tuple(game_ids)
     else:
-        # default sample = tracked games only (mirror _game_filter; this table
-        # has no `ge` alias so it can't reuse the shared subquery directly)
-        clause = " WHERE game_id IN (SELECT id FROM games WHERE tracked=1)"
+        # default sample = tracked games only, ACTIVE season (mirror _game_filter
+        # + _TRACKED_SUBQUERY; this table has no `ge` alias so it can't reuse them)
+        clause = " WHERE game_id IN (SELECT id FROM games WHERE tracked=1 AND season='Current')"
         params = ()
     rows = query(
         f"SELECT player_id pid, SUM(plus_minus) pm FROM game_lineup_players{clause} GROUP BY player_id",
@@ -1180,7 +1183,8 @@ def team_games(team_id, outcome=None, tracked_only=True):
         """SELECT id, team1_id, team2_id, home_score, away_score, tracked
            FROM games
            WHERE (team1_id=? OR team2_id=?)
-             AND home_score IS NOT NULL AND away_score IS NOT NULL""",
+             AND home_score IS NOT NULL AND away_score IS NOT NULL
+             AND season='Current'""",
         (team_id, team_id),
     )
     out = []
@@ -1243,9 +1247,9 @@ def team_summary(team_id, opp_id=None, outcome=None):
 #  gate on sample size.
 
 def _team_game_ids_all(team_id):
-    """All game ids the team appears in (tracked or not)."""
-    rows = query("SELECT id FROM games WHERE team1_id=? OR team2_id=?",
-                 (team_id, team_id))
+    """All game ids the team appears in (tracked or not), active season only."""
+    rows = query("SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
+                 "AND season='Current'", (team_id, team_id))
     return [r["id"] for r in rows]
 
 

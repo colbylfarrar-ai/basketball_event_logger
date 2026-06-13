@@ -15,11 +15,12 @@ data consistent:
   * recompute_final_score() re-freezes games.home/away_score from the events, so
     records & rankings line up with the corrected log.
 
-Pure data layer: database.db only, no streamlit.
+Pure data layer: database.db + court_geom (math only), no streamlit.
 """
 from __future__ import annotations
 
 from database.db import query, execute
+import helpers.court_geom as CG
 
 ZONES = ("LC", "LW", "C", "RW", "RC")
 EVENT_TYPES = ("shot", "free_throw", "foul", "turnover")
@@ -212,13 +213,97 @@ def update_event(game_id, ev_id, vals, pid2team):
                     pid2team.get(old["primary_player_id"]),
                     new_pts, pid2team.get(clean["primary_player_id"]))
 
+    # shot_x/shot_y aren't editor-managed fields, but they must not survive a
+    # type change: a stale tap location on a row later flipped back to "shot"
+    # would resurrect on every shot chart and override the user's zone/2-3.
     execute(
         "UPDATE game_events SET event_type=?, quarter=?, time=?, "
         + ", ".join(f"{f}=?" for f in _ALL_FIELDS)
+        + (", shot_x=NULL, shot_y=NULL" if etype != "shot" else "")
         + " WHERE id=?",
         (etype, int(vals.get("quarter") or old["quarter"]),
          str(vals.get("time") or old["time"]),
          *[clean[f] for f in _ALL_FIELDS], ev_id))
+
+
+def insert_missed_event(game_id, ev):
+    """Insert an after-the-fact event (the basket the scorekeeper missed).
+
+    Runs the NORMAL live write path (game_events.log_event → snapshot, +/-,
+    x/y→zone) with the floor cloned from the temporally adjacent event, then
+    repairs the clock bookkeeping that an out-of-order insert breaks:
+      * the new event's possession_secs is computed against its CHRONO
+        predecessor (log_event uses insertion order, which is wrong here);
+      * the chrono successor's possession_secs is re-split, so per-player
+        minutes don't double-count the elapsed time around the insert.
+    Returns (event_id, n_floor_players) — n_floor_players 0 means no adjacent
+    event existed to clone a lineup from (first event of the game)."""
+    import helpers.game_events as GE
+
+    q = int(ev.get("quarter") or 1)
+    tsec = GE.time_to_secs(str(ev.get("time") or "0:00"))
+    knew = (q, -tsec)
+
+    prev_ev = next_ev = None
+    for e in query("SELECT id, quarter, time FROM game_events WHERE game_id=?",
+                   (game_id,)):
+        k = (e["quarter"], -GE.time_to_secs(e["time"]))
+        if k <= knew and (prev_ev is None
+                          or k > (prev_ev["quarter"],
+                                  -GE.time_to_secs(prev_ev["time"]))):
+            prev_ev = e
+        if k > knew and (next_ev is None
+                         or k < (next_ev["quarter"],
+                                 -GE.time_to_secs(next_ev["time"]))):
+            next_ev = e
+
+    adjacent = prev_ev or next_ev
+    on_court = []
+    if adjacent:
+        on_court = [(r["player_id"], r["team_id"]) for r in query(
+            "SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?",
+            (adjacent["id"],))]
+    offs = [r["official_id"] for r in query(
+        "SELECT official_id FROM game_lineup_officials WHERE game_id=?",
+        (game_id,))]
+
+    eid = GE.log_event(game_id, ev, on_court, offs)
+
+    start = (GE.time_to_secs(prev_ev["time"])
+             if prev_ev and prev_ev["quarter"] == q
+             else GE.quarter_start_secs(q))
+    execute("UPDATE game_events SET possession_secs=? WHERE id=?",
+            (max(0.0, start - tsec), eid))
+    if next_ev and next_ev["quarter"] == q:
+        execute("UPDATE game_events SET possession_secs=? WHERE id=?",
+                (max(0.0, tsec - GE.time_to_secs(next_ev["time"])),
+                 next_ev["id"]))
+    return eid, len(on_court)
+
+
+def set_shot_location(game_id, ev_id, x, y, pid2team):
+    """Move a shot's tap-captured location (the mistap fixer). The x/y court-feet
+    are the source of truth for WHERE: zone and 2/3 are re-derived from them —
+    the same rule log_event applies — and +/- shifts when a made shot's value
+    flips 2<->3. Returns the (zone, shot_type) now stored, or None if the event
+    isn't a shot. Callers handle score drift the same way as other edits
+    (recompute_final_score / the editor's drift banner)."""
+    old = query("SELECT * FROM game_events WHERE id=? AND game_id=?",
+                (ev_id, game_id))
+    if not old or old[0]["event_type"] != "shot":
+        return None
+    old = old[0]
+    zone = CG.zone_from_xy(x, y)
+    val = CG.shot_value(x, y)
+    stid = pid2team.get(old["primary_player_id"])
+    old_pts = event_points(old)
+    new_pts = event_points({"event_type": "shot",
+                            "shot_result": old["shot_result"],
+                            "shot_type": val})
+    _apply_pm_delta(game_id, ev_id, old_pts, stid, new_pts, stid)
+    execute("UPDATE game_events SET shot_x=?, shot_y=?, zone=?, shot_type=? "
+            "WHERE id=?", (float(x), float(y), zone, val, ev_id))
+    return zone, val
 
 
 def delete_event(game_id, ev_id, pid2team):

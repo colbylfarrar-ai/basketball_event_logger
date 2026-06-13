@@ -233,7 +233,8 @@ def schedule_from_results(gender=None):
     team_a = home (team1). Each completed game contributes one matchup.
     """
     from database.db import query
-    clause = "WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL"
+    clause = ("WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL "
+              "AND g.season = 'Current'")   # active season only — never blend seasons
     params = []
     if gender:
         clause += " AND t1.gender = ?"

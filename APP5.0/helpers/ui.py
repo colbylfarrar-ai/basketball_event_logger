@@ -16,6 +16,7 @@ Page usage:
 """
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 
@@ -42,6 +43,14 @@ BAD     = "#e74c3c"
 PALETTE = ["#58a6ff", "#3fb950", "#f0a500", "#bc8cff", "#ff7b72", "#56d4dd",
            "#e3b341", "#ec6cb9", "#79c0ff", "#d29922", "#7ee787", "#ffa657"]
 
+# Shared Plotly colorscales, anchored to the constants above.
+# HEAT: sequential card-bg → GOOD — the default for more-is-better heatmaps
+# (zero/low cells fade into the card instead of shouting).
+HEAT = [[0.0, CARD_BG], [1.0, GOOD]]
+# DIVERGE: BAD → dark neutral → GOOD — for signed metrics centred on 0/average
+# (net rating, SMOE, +/-); pin the midpoint to the neutral value (e.g. zmid=0).
+DIVERGE = [[0.0, BAD], [0.5, GRID], [1.0, GOOD]]
+
 # Match the in-app system font stack so chart text reads as one with the UI.
 FONT_FAMILY = ("'Segoe UI Variable Display','Segoe UI',-apple-system,"
                "BlinkMacSystemFont,Inter,Roboto,sans-serif")
@@ -49,25 +58,103 @@ FONT_FAMILY = ("'Segoe UI Variable Display','Segoe UI',-apple-system,"
 _CSS_PATH = _ROOT / "assets" / "style.css"
 
 
+def _sync_external_writes():
+    """Mobile-tracker writes happen in another process, so they can't call
+    st.cache_data.clear() the way the Streamlit pages do. The tracker API bumps
+    app_settings.data_version instead; when this session sees the value move,
+    it clears the global data cache once. First sight in a session just records
+    the value — the ttl=600 on every cache bounds any staleness from before
+    the session started."""
+    from database.db import query
+    try:
+        row = query("SELECT value FROM app_settings WHERE key='data_version'")
+    except Exception:
+        return
+    ver = row[0]["value"] if row else "0"
+    seen = st.session_state.get("_data_version_seen")
+    if seen is not None and seen != ver:
+        st.cache_data.clear()
+    st.session_state["_data_version_seen"] = ver
+
+
 # ── Page boot ───────────────────────────────────────────────────────────────────
-def page_chrome():
+def page_chrome(title: str = None):
     """Standard page boot, returning ``(settings_dict, accent_hex)``.
 
     Runs DB init, applies the stored page config + theme, and injects the global
     stylesheet. ``apply_page_config`` is the first ``st.*`` call (Streamlit
     requires set_page_config to come first), so call this before any other
-    ``st.*`` on the page.
+    ``st.*`` on the page. ``title`` names the browser tab per page.
     """
     initialize_database()
+    _sync_external_writes()
     cfg = get_all_settings()
-    apply_page_config(cfg)
+    apply_page_config(cfg, title)
     if _CSS_PATH.exists():
         st.markdown(
             f"<style>{_CSS_PATH.read_text(encoding='utf-8')}</style>",
             unsafe_allow_html=True,
         )
     apply_theme_css(cfg)
+    from helpers.auth import require_login
+    require_login()
+    # Always-available data refresh — kept LAST in page_chrome. Clearing stamps
+    # a session time string; first run of a session shows no caption.
+    if st.sidebar.button("↻ Refresh data", key="_chrome_refresh"):
+        from datetime import datetime
+        st.cache_data.clear()
+        st.session_state["_data_refreshed_at"] = (
+            datetime.now().strftime("%I:%M %p").lstrip("0"))
+        st.rerun()
+    _refreshed = st.session_state.get("_data_refreshed_at")
+    if _refreshed:
+        st.sidebar.caption(f"Data refreshed at {_refreshed}")
     return cfg, get_setting("accent_color", "#f0a500")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _pdf_bytes(html_doc: str):
+    from helpers.pdf_export import html_to_pdf
+    return html_to_pdf(html_doc)
+
+
+def pdf_or_html_download(label: str, html_doc: str, basename: str, *, key: str):
+    """The one-click export pair: a real PDF (when an engine is installed —
+    xhtml2pdf ships in requirements) plus the HTML original; falls back to the
+    old HTML-only button with print instructions when no engine works."""
+    pdf = _pdf_bytes(html_doc)
+    if pdf:
+        c1, c2 = st.columns(2)
+        c1.download_button(f"⬇ {label} (PDF)", pdf,
+                           file_name=f"{basename}.pdf",
+                           mime="application/pdf", key=f"{key}_pdf")
+        c2.download_button("HTML version", html_doc,
+                           file_name=f"{basename}.html",
+                           mime="text/html", key=key)
+    else:
+        st.download_button(f"⬇ {label} (HTML — open & print to PDF)", html_doc,
+                           file_name=f"{basename}.html", mime="text/html",
+                           key=key)
+
+
+def page_header(title: str, sub: str = None, chips: list = None):
+    """Unified page header — a drop-in replacement for a bare ``st.title``.
+
+    ``sub`` renders as an ``st.caption`` line under the title. ``chips`` is an
+    optional list of short strings rendered as one compact row of ``.stat-chip``
+    pills (assets/style.css). With only ``title`` it is byte-for-byte
+    ``st.title``, so pages can adopt it with no layout surprises.
+    """
+    st.title(title)
+    if sub:
+        st.caption(sub)
+    if chips:
+        row = "".join(f"<span class='stat-chip'>{html.escape(str(c))}</span>"
+                      for c in chips)
+        st.markdown(
+            "<div style='display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 10px'>"
+            f"{row}</div>",
+            unsafe_allow_html=True)
 
 
 # ── Chart primitives ─────────────────────────────────────────────────────────────
@@ -89,17 +176,22 @@ def gender_label(g):
 
 
 def gender_radio(container=None, *, default="F", key=None, label="League",
-                 horizontal=True):
+                 horizontal=True, include_all=False):
     """Shared Girls/Boys league toggle. Returns 'F' or 'M'.
+
+    ``include_all=True`` prepends an "All" option which returns ``None`` —
+    matching the existing "All → no gender filter" convention (Officials page).
+    Pass ``default=None`` to start on "All".
 
     `container` is an st.columns slot (or st, the default). Single source for the
     st.radio(['F','M']) pattern repeated across Rankings / Team Dashboard /
     Players / War Room.
     """
     c = container if container is not None else st
-    opts = ["F", "M"]
+    opts = ([None, "F", "M"] if include_all else ["F", "M"])
     return c.radio(label, opts, index=opts.index(default),
-                   format_func=gender_label, horizontal=horizontal, key=key)
+                   format_func=lambda g: "All" if g is None else gender_label(g),
+                   horizontal=horizontal, key=key)
 
 
 def score_card(rows, *, footer="", footer_top=False, style_names=False):
@@ -117,7 +209,7 @@ def score_card(rows, *, footer="", footer_top=False, style_names=False):
         ncls = f" {cls}" if style_names else ""
         body += (
             "<div style='display:flex;justify-content:space-between;align-items:center'>"
-            f"<span class='score-card-team{ncls}'>{name}</span>"
+            f"<span class='score-card-team{ncls}'>{html.escape(str(name))}</span>"
             f"<span class='score-card-pts {cls}'>{pts}</span></div>")
     foot = f"<div class='score-card-date'>{footer}</div>" if footer else ""
     inner = (foot + body) if footer_top else (body + foot)
@@ -206,20 +298,34 @@ def kpi(col, label, value, delta=None, help=None, delta_color="normal"):
 # widget so no page breaks. Single source so the rich-table / chart-export look is
 # identical everywhere — the display mirror of the "degrade gracefully" rule.
 
-def grid(df, key, *, height=480, page_size=25, fit_columns=False):
+def grid(df, key, *, height=480, page_size=25, fit_columns=False, pin_first=True):
     """Sortable, per-column-filter table via streamlit-aggrid; native
     ``st.dataframe`` fallback. ``key`` must be unique per call. Use for any dense,
     explorable table (rankings, stat dumps) where the user benefits from in-grid
-    sort/filter the static dataframe can't give."""
+    sort/filter the static dataframe can't give.
+
+    Readability defaults (laptop + phone): headers WRAP instead of truncating to
+    "Abc…", a per-column minimum width keeps values from clipping to "1…" (the grid
+    scrolls horizontally past the viewport rather than squishing every column), and
+    the first column (the identity — name/team) is PINNED left so it stays visible
+    while you scroll the stat columns. Pass ``pin_first=False`` for a narrow /
+    single-entity table where pinning just wastes space."""
     try:
-        from st_aggrid import AgGrid, GridOptionsBuilder
+        from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
         gob = GridOptionsBuilder.from_dataframe(df)
-        gob.configure_default_column(filter=True, sortable=True, resizable=True)
+        gob.configure_default_column(
+            filter=True, sortable=True, resizable=True,
+            minWidth=74, wrapHeaderText=True, autoHeaderHeight=True)
+        if pin_first and len(df.columns):
+            # Identity column: pin left + a touch wider so names aren't clipped.
+            gob.configure_column(df.columns[0], pinned="left", minWidth=132)
         gob.configure_pagination(paginationAutoPageSize=False,
                                  paginationPageSize=page_size)
+        # NO_UPDATE: sort/filter/page clicks stay inside the grid iframe instead
+        # of rerunning the whole host page (nothing reads the grid's return).
         AgGrid(df, gridOptions=gob.build(), height=height, theme="streamlit",
                key=key, fit_columns_on_grid_load=fit_columns,
-               allow_unsafe_jscode=True)
+               update_mode=GridUpdateMode.NO_UPDATE)
     except Exception:
         st.dataframe(df, hide_index=True, width="stretch", key=f"{key}_native")
 
@@ -242,18 +348,22 @@ def chart(fig, *, data=None, key=None, export=("CSV",)):
 
 
 # ── Empty state / loading ───────────────────────────────────────────────────────
-def empty_state(title, body="", *, icon="🏀", cta=None):
+def empty_state(title, body="", *, icon="🏀", cta=None, page=None):
     """Branded empty-state card — the polished replacement for a bare ``st.info``.
 
     Use on any tab/section that has no data yet (e.g. an untracked team). Accent
     and theming come from the global ``.empty-state`` CSS (assets/style.css), so
-    it restyles with the chosen theme. ``cta`` is an optional next-step line."""
-    cta_html = f"<div class='empty-state-cta'>{cta}</div>" if cta else ""
+    it restyles with the chosen theme. ``cta`` is an optional next-step line;
+    pass ``page`` (an ``st.page_link`` target, e.g. ``"pages/1_Input_Hub.py"``)
+    to render the CTA as a real clickable link instead of the static pill."""
+    cta_html = f"<div class='empty-state-cta'>{cta}</div>" if cta and not page else ""
     st.markdown(
         f"<div class='empty-state'><div class='empty-state-icon'>{icon}</div>"
         f"<div class='empty-state-title'>{title}</div>"
         f"<div class='empty-state-body'>{body}</div>{cta_html}</div>",
         unsafe_allow_html=True)
+    if page:
+        st.page_link(page, label=cta or "Open")
 
 
 def loading(msg="Crunching the numbers…"):

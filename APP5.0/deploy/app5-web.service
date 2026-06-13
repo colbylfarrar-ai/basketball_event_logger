@@ -1,0 +1,29 @@
+[Unit]
+Description=APP5 Streamlit web app (Main.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5
+Environment=APP5_DATA_DIR=/var/lib/app5
+# Bind loopback only — Caddy is the public edge. Headless + no telemetry.
+# Same-origin behind Caddy: keep CORS default (true) + XSRF on. (Setting
+# enableCORS=false here is a no-op — Streamlit overrides it back when XSRF is on.)
+ExecStart=/home/app5/app5/.venv/bin/streamlit run Main.py \
+  --server.address 127.0.0.1 \
+  --server.port 8501 \
+  --server.headless true \
+  --server.enableXsrfProtection true \
+  --browser.gatherUsageStats false
+Restart=on-failure
+RestartSec=3
+# Light hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5
+
+[Install]
+WantedBy=multi-user.target

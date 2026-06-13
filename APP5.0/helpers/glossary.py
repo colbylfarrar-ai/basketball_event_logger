@@ -474,6 +474,7 @@ def render_glossary(key_prefix: str = "gloss", categories=None,
         cols[i % columns].markdown(_card_html(*d), unsafe_allow_html=True)
 
 
+@st.fragment
 def glossary_tab(key_prefix: str):
     """The app's one standard glossary surface — identical on every page.
 
@@ -481,6 +482,11 @@ def glossary_tab(key_prefix: str):
     glossary reads the same everywhere: the FULL searchable catalogue (no
     per-page category subset), one shared intro. The only per-page difference
     is `key_prefix`, which keeps the search/filter widget keys unique.
+
+    ``@st.fragment``: the search box / category filter live INSIDE this
+    function, so each keystroke reruns only the glossary — not the (often
+    multi-thousand-line) host page. Everything rendered here stays within the
+    fragment's own containers, per fragment rules.
     """
     st.subheader("Stat glossary")
     render_glossary(

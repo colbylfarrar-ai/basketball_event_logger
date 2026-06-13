@@ -559,3 +559,40 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "bestAST": ddtd["best_ast"], "PTSsd": pts_sd,
         }
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FREE / PAID GATING — which player_stat_table keys need tracked events
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Single source of truth for tier gating (see helpers.entitlement and the
+# app5-gating-taxonomy memory). A key is EVENT-DERIVED when it can't be computed
+# from a final score + manual box line: the five 0-100 ratings (+ Rank/2WAY that
+# ride on them), shot-creation/usage/impact (need lineups, minutes, possessions),
+# on-court rate stats (need game_event_lineup), shot quality/location (need the
+# court tap), assist-split and clutch (need event/quarter context). Everything
+# NOT listed here is box-derivable and stays Free — including eFG%/TS%, GS/G,
+# VERSATILITY, TOV%, PPP, AST/TOV and the per-game milestones.
+EVENT_DERIVED_STATS = frozenset({
+    # 0-100 ratings (gated wholesale) + the rank that rides on OVERALL
+    "OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING",
+    "Shooting", "Finishing", "2WAY", "Rank",
+    # shot-creation / usage / impact (lineups, minutes, possessions, events)
+    "SC", "SC/G", "SCShot%", "SCPass%", "SCCreated%", "SelfCr%", "Astd%",
+    "USG%", "MIN", "MPG", "+/-", "+/-/G", "STOCKS/32",
+    # on-court rate stats (need game_event_lineup)
+    "Guarded%", "REB%", "OREB%", "DREB%", "DSHOT%", "defFGA",
+    # shot quality / location (need tap-captured shot context)
+    "ShotRating", "xPPS", "xFG%", "SMOE", "RimFGA%", "MidFGA%",
+    "PaintM", "PaintA", "PaintPTS", "Paint%", "PRF", "PRF/G",
+    "AST2", "AST3",
+    # clutch (need quarter splits from events)
+    "Q4PTS", "Q4PPG", "Q4%",
+})
+
+
+def box_only_table(table):
+    """Strip every event-derived stat from a player_stat_table() result, leaving
+    only box-derivable (Free-tier) columns. See EVENT_DERIVED_STATS."""
+    return {pid: {k: v for k, v in row.items() if k not in EVENT_DERIVED_STATS}
+            for pid, row in table.items()}

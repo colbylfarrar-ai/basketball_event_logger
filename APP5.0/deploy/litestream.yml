@@ -1,0 +1,32 @@
+# Litestream — continuous streaming replication of the live SQLite DB.
+# WAL mode is already enabled by database/db.py (required by Litestream).
+# Pick ONE replica block. Backblaze B2 is the cheapest S3-compatible option.
+
+dbs:
+  - path: /var/lib/app5/analytics.db
+    replicas:
+      # ── Backblaze B2 (S3-compatible) ──────────────────────────────────────
+      - type: s3
+        bucket: YOUR_BUCKET
+        path: app5/analytics.db
+        endpoint: s3.us-west-002.backblazeb2.com   # your B2 region endpoint
+        access-key-id: YOUR_KEY_ID
+        secret-access-key: YOUR_APP_KEY
+        # snapshot cadence + retention (tune to taste)
+        snapshot-interval: 1h
+        retention: 168h        # keep 7 days of WAL + snapshots
+
+      # ── AWS S3 (alternative) — comment out the B2 block above if you use this
+      # - type: s3
+      #   bucket: YOUR_BUCKET
+      #   path: app5/analytics.db
+      #   region: us-east-1
+      #   access-key-id: YOUR_KEY_ID
+      #   secret-access-key: YOUR_SECRET
+
+# APP5 keeps ALL seasons in this single analytics.db (column-partitioned via the
+# games.season field — see helpers/seasons.py). There is no multi-file season
+# mechanism in use, so this one db entry covers everything. (db.py has a dormant
+# seasons.json->db_file read branch, but nothing writes seasons.json; if you ever
+# hand-create it with a custom db_file, add that file here AND to the restore
+# drill, or it goes un-backed-up.)

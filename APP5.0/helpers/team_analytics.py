@@ -116,20 +116,26 @@ def four_factors(team_box, opp_box):
 #  GAME LOG / SCHEDULE  (all completed games, not just tracked)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_game_log(team_id):
+def team_game_log(team_id, season="Current"):
     """
     Every completed game for the team, oldest first. Each row:
         game_id, date, location, site ('vs'/'@'), opp_id, opp, opp_class,
         pf, pa, margin, won, tracked, video_url.
+    `season` partitions to the active season by default (pass None for all).
     """
+    extra = ""
+    params = [team_id, team_id]
+    if season is not None:
+        extra = " AND g.season = ?"
+        params.append(season)
     rows = query(
-        """SELECT g.id, g.date, g.location, g.tracked, g.video_url,
+        f"""SELECT g.id, g.date, g.location, g.tracked, g.video_url,
                   g.team1_id, g.team2_id, g.home_score, g.away_score
            FROM games g
            WHERE (g.team1_id = ? OR g.team2_id = ?)
-             AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+             AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL{extra}
            ORDER BY g.date, g.id""",
-        (team_id, team_id),
+        tuple(params),
     )
     meta = {t["id"]: t for t in query("SELECT id, name, class FROM teams")}
     out = []
@@ -1714,7 +1720,7 @@ def strength_of_schedule(game_log, power_by_team, rank_by_team, n_teams):
 #  CONVENIENCE BUNDLE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_bundle(team_id, gender=None, min_games=1):
+def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None):
     """
     One call that assembles the team's analytics from tracked games:
         game_log, record (all games), tracked record/efficiency (S.team_summary),
@@ -1722,9 +1728,18 @@ def team_bundle(team_id, gender=None, min_games=1):
         event breakdown (creation + quarter + OREB), and the player rows.
     Ratings (Score/Tracked power) are NOT included — the page already computes
     the league-wide rating dicts and can index this team out of them.
+
+    `visible_game_ids` is the entitlement read-filter: None = unrestricted (own
+    team / admin → full tracked depth); a set restricts the tracked aggregation to
+    those games (a League-wide coach scouting another team passes that team's
+    POOLED games, so the team's own Solo-tracked games stay private). The full
+    `game_log` (box-score level, Free) is never filtered.
     """
     game_log = team_game_log(team_id)
     tracked_ids = [g["game_id"] for g in game_log if g["tracked"]]
+    if visible_game_ids is not None:
+        _vis = set(visible_game_ids)
+        tracked_ids = [gid for gid in tracked_ids if gid in _vis]
 
     events = S.fetch_events(tracked_ids) if tracked_ids else []
     tb, ob = team_and_opp_box(team_id, tracked_ids, events=events) if tracked_ids \

@@ -18,6 +18,8 @@ Two gauges, intentionally distinct:
 """
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -85,8 +87,8 @@ def pctile_bar(label, value_str, p):
     w = 0 if p is None else max(2, min(100, p))
     rank = f"{p}th" if p is not None else "—"
     return (f"<div class='pl-pct'><div class='pl-pct-top'>"
-            f"<span class='pl-pct-lbl'>{label}</span>"
-            f"<span class='pl-pct-val'>{value_str} · "
+            f"<span class='pl-pct-lbl'>{html.escape(str(label))}</span>"
+            f"<span class='pl-pct-val'>{html.escape(str(value_str))} · "
             f"<span style='color:{c}'>{rank}</span></span></div>"
             f"<div class='pl-pct-track'><div class='pl-pct-fill' "
             f"style='width:{w}%;background:{c}'></div></div></div>")
@@ -110,9 +112,9 @@ def tier(ovrl):
 # ── glass KPI tile + on/off comparison card ───────────────────────────────────
 def glass(label, value, sub="", color="#f0f6fc"):
     """Glassmorphism KPI tile (HTML string; uses the .pl-glass-* classes)."""
-    return (f"<div class='pl-glass'><div class='pl-glass-l'>{label}</div>"
-            f"<div class='pl-glass-v' style='color:{color}'>{value}</div>"
-            f"<div class='pl-glass-s'>{sub}</div></div>")
+    return (f"<div class='pl-glass'><div class='pl-glass-l'>{html.escape(str(label))}</div>"
+            f"<div class='pl-glass-v' style='color:{color}'>{html.escape(str(value))}</div>"
+            f"<div class='pl-glass-s'>{html.escape(str(sub))}</div></div>")
 
 
 def onoff_html(label, on_v, off_v, on_n, off_n, n_lbl="opps",
@@ -133,18 +135,18 @@ def onoff_html(label, on_v, off_v, on_n, off_n, n_lbl="opps",
         f"<div style='background:#161b22;border:1px solid #30363d;"
         f"border-radius:10px;padding:14px'>"
         f"<div style='font-size:11px;color:#8b949e;text-transform:uppercase;"
-        f"letter-spacing:1px;margin-bottom:8px'>{label}</div>"
+        f"letter-spacing:1px;margin-bottom:8px'>{html.escape(str(label))}</div>"
         f"<div style='display:flex;justify-content:space-around;"
         f"align-items:center;margin-bottom:8px'>"
         f"<div style='text-align:center'>"
         f"<div style='font-size:9px;color:#8b949e'>ON COURT</div>"
         f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{on_s}</div>"
-        f"<div style='font-size:10px;color:#484f58'>{n_lbl}={on_n}</div></div>"
+        f"<div style='font-size:10px;color:#484f58'>{html.escape(str(n_lbl))}={on_n}</div></div>"
         f"<div style='font-size:18px;color:#30363d'>vs</div>"
         f"<div style='text-align:center'>"
         f"<div style='font-size:9px;color:#8b949e'>OFF COURT</div>"
         f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{off_s}</div>"
-        f"<div style='font-size:10px;color:#484f58'>{n_lbl}={off_n}</div></div>"
+        f"<div style='font-size:10px;color:#484f58'>{html.escape(str(n_lbl))}={off_n}</div></div>"
         f"</div>"
         f"<div style='text-align:center;padding:6px;background:#0d1117;"
         f"border-radius:6px'><span style='font-weight:700;color:{dclr}'>{dstr}</span>"

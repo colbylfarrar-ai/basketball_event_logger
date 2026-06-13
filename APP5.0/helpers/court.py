@@ -158,6 +158,54 @@ def shot_map(shots, title="Shot chart", height=470, show_misses=True):
     return fig, len(shots)
 
 
+# Zone-leader bubble spots: midpoint of the zone's 2PT and 3PT bubble positions.
+_LEADER_XY = {z: ((ZONE_XY[(z, 2)][0] + ZONE_XY[(z, 3)][0]) / 2,
+                  (ZONE_XY[(z, 2)][1] + ZONE_XY[(z, 3)][1]) / 2)
+              for z in ZONE_FULLNAME}
+
+
+def zone_leader_map(leaders, title="Best shooter by zone", height=420,
+                    colorscale="RdYlGn", cmin=25, cmax=65):
+    """Half-court with each zone's best shooter as a labelled bubble.
+
+    ``leaders`` = {zone: {number, name, pct, FGM, FGA}}; a missing/None zone
+    renders as a grey "no qualifier" bubble. Returns ``(figure, any_leader)``."""
+    fig = go.Figure()
+    _draw_court(fig)
+    qz = [z for z in ZONE_FULLNAME if leaders.get(z)]
+    nz = [z for z in ZONE_FULLNAME if not leaders.get(z)]
+    if qz:
+        fig.add_trace(go.Scatter(
+            x=[_LEADER_XY[z][0] for z in qz], y=[_LEADER_XY[z][1] for z in qz],
+            mode="markers+text",
+            marker=dict(size=64, color=[leaders[z]["pct"] * 100 for z in qz],
+                        colorscale=colorscale, cmin=cmin, cmax=cmax,
+                        showscale=True,
+                        colorbar=dict(title="FG%", thickness=12, len=0.6, x=1.0),
+                        line=dict(color="#0d1117", width=2), opacity=0.95),
+            text=[f"#{leaders[z]['number']} {str(leaders[z]['name']).split()[-1]}"
+                  f"<br>{leaders[z]['pct'] * 100:.0f}% "
+                  f"({leaders[z]['FGM']}/{leaders[z]['FGA']})" for z in qz],
+            textfont=dict(size=10, color="#f0f6fc"), textposition="middle center",
+            hovertext=[f"{ZONE_FULLNAME[z]}<br>#{leaders[z]['number']} "
+                       f"{leaders[z]['name']}<br>{leaders[z]['FGM']}/"
+                       f"{leaders[z]['FGA']} · {leaders[z]['pct'] * 100:.0f}%"
+                       for z in qz],
+            hovertemplate="%{hovertext}<extra></extra>", showlegend=False))
+    if nz:
+        fig.add_trace(go.Scatter(
+            x=[_LEADER_XY[z][0] for z in nz], y=[_LEADER_XY[z][1] for z in nz],
+            mode="markers+text",
+            marker=dict(size=64, color="#30363d",
+                        line=dict(color="#0d1117", width=2)),
+            text=["—"] * len(nz), textposition="middle center",
+            textfont=dict(size=11, color="#8b949e"),
+            hovertext=[f"{ZONE_FULLNAME[z]}<br>no qualifier (<3 att)" for z in nz],
+            hovertemplate="%{hovertext}<extra></extra>", showlegend=False))
+    _court_layout(fig, title, height)
+    return fig, bool(qz)
+
+
 def _hex_centers(s):
     """Staggered (pointy-top) hex-grid centres covering the court, spacing `s` ft."""
     vy = s * np.sqrt(3) / 2.0

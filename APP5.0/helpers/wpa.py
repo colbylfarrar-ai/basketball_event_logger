@@ -289,8 +289,8 @@ def season_wpa(gender=None, mode="scoring"):
     """
     tg = query(
         """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
-           WHERE g.tracked=1 AND t.gender=?""", (gender,)) if gender else query(
-        "SELECT id FROM games WHERE tracked=1")
+           WHERE g.tracked=1 AND g.season='Current' AND t.gender=?""", (gender,)) if gender else query(
+        "SELECT id FROM games WHERE tracked=1 AND season='Current'")
     ep = league_ep() if mode == "possession" else None
     game_ids = [row["id"] for row in tg]
 

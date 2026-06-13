@@ -1,0 +1,32 @@
+[Unit]
+Description=APP5 mobile tracker API (FastAPI / tracker/api.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5
+Environment=APP5_DATA_DIR=/var/lib/app5
+# Master bootstrap token for the tracker — generate with:
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
+# (per-coach tokens issued on the Settings page also work; this is the fallback.)
+# MUST be changed: a literal CHANGE_ME is a known-credential backdoor (anyone who
+# guesses it gets admin/paid tracker write access). Edit the INSTALLED copy at
+# /etc/systemd/system/app5-tracker.service (or `systemctl edit app5-tracker`),
+# then `daemon-reload && systemctl restart app5-tracker` — editing this repo copy
+# after `sudo cp` has NO effect on the running service.
+Environment=TRACKER_TOKEN=CHANGE_ME
+# Bind loopback only — Caddy proxies track.yourdomain → here.
+ExecStart=/home/app5/app5/.venv/bin/uvicorn tracker.api:app \
+  --host 127.0.0.1 \
+  --port 8000
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5
+
+[Install]
+WantedBy=multi-user.target

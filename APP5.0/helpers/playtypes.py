@@ -88,7 +88,7 @@ def _tier(pct):
 
 # ── tracked game ids for a gender ────────────────────────────────────────────────
 def _tracked_game_ids(gender=None):
-    clause = "WHERE g.tracked = 1"
+    clause = "WHERE g.tracked = 1 AND g.season = 'Current'"
     params = []
     if gender:
         clause += " AND t1.gender = ?"

@@ -20,5 +20,15 @@ desktop.ini
 *.log
 *.tmp
 
-# NOTE: database/analytics.db is intentionally NOT ignored — it ships the
-# tracked data to Streamlit Cloud. Remove that data here if you want a clean deploy.
+# SQLite data — NEVER commit. The live DB lives outside the repo (%LOCALAPPDATA%\APP5
+# or $APP5_DATA_DIR); a committed copy is stale, leaks real data to anyone with repo
+# access, and — via db._migrate_legacy_db — would seed a fresh server from STALE data
+# on first boot. Deploys carry data by scp'ing the real DB to the data dir (see DEPLOY.md).
+database/*.db
+database/*.db-wal
+database/*.db-shm
+*.db-wal
+*.db-shm
+
+# Claude Code local config (machine-specific paths)
+.claude/

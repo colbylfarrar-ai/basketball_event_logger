@@ -19,3 +19,19 @@ streamlit-extras>=0.4
 # renders the half-court image the taps land on.
 streamlit-image-coordinates>=0.1.9
 matplotlib>=3.8
+# Pillow: `from PIL import Image` is a direct top-level import in Game Tracker +
+# Event Editor. Streamlit pulls it in transitively today, but pin it directly so
+# those pages can't break if Streamlit ever drops the dependency.
+Pillow>=10
+# Mobile tracker (tracker/api.py): FastAPI serves the offline-first courtside
+# PWA + JSON sync API over the same SQLite DB the Streamlit app uses.
+fastapi>=0.115
+uvicorn>=0.30
+# Coach login (helpers/auth.py): st.login native OIDC needs Authlib.
+# Gate activates only when .streamlit/secrets.toml has [auth] — see AUTH_SETUP.md.
+Authlib>=1.3.2
+# One-click PDF exports (helpers/pdf_export.py): xhtml2pdf is pure-pip and works
+# on Windows out of the box. WeasyPrint renders nicer PDFs but needs GTK/Pango
+# system libs — install it manually if you want it; the code prefers it when
+# importable and falls back to xhtml2pdf, then to plain HTML downloads.
+xhtml2pdf>=0.2.16

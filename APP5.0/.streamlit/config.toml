@@ -1,0 +1,9 @@
+# Lock the app to dark theme so OS-light-mode viewers don't get white widgets.
+# Hex values mirror the app's defaults: assets/style.css :root tokens and the
+# "Dark" preset in helpers/settings_utils.py STYLE_PRESETS.
+[theme]
+base = "dark"
+primaryColor = "#f0a500"
+backgroundColor = "#0d1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#f0f6fc"

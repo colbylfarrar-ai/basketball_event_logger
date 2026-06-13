@@ -1,0 +1,25 @@
+# APP5 reverse proxy — auto-HTTPS (Let's Encrypt), websockets handled natively.
+# Replace the domains + email. DNS A records must point both names at this box.
+
+{
+	email you@yourdomain
+}
+
+# ── Streamlit web app ─────────────────────────────────────────────────────────
+app.yourdomain {
+	encode zstd gzip
+	# Streamlit talks over a websocket; Caddy proxies it transparently.
+	reverse_proxy 127.0.0.1:8501
+}
+
+# ── Mobile tracker API + PWA (FastAPI) ────────────────────────────────────────
+track.yourdomain {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8000
+}
+
+# NOTE: use the TWO-SUBDOMAIN layout above (app. + track.). A single-domain
+# /tracker/* path-prefix deploy does NOT work as-is: the PWA serves its shell and
+# fetches its assets/API from absolute root paths (/static, /api, /sw.js,
+# /manifest.json) and registers the service worker at scope '/', all of which a
+# path prefix breaks. Add the second DNS A record instead.

@@ -25,18 +25,22 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from helpers.ui import (page_chrome, style_fig as _style, empty_state, team_color,
-                        chart as _chart, AWAY, GOOD, BAD, gender_radio, gender_label)
+                        chart as _chart, AWAY, GOOD, BAD, HEAT, gender_radio,
+                        gender_label)
 from helpers.cards import bar_h, team_short, style_df as _style_df
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
+import helpers.matchup_sheet as MS
 import helpers.predictor as PRED
 import helpers.simulation as SIM
 import helpers.player_ratings as PR
 import helpers.lineups as LU
 import helpers.team_analytics as TA
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 from database.db import query
 
-_cfg, ACCENT = page_chrome()
+_cfg, ACCENT = page_chrome("War Room")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -67,17 +71,17 @@ def _tracked(g):
     return TR.tracked_ratings(gender=g)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Simulating matchup…")
 def _sim_game(g, a, b, home, n):
     return SIM.simulate_game(_scored(g), a, b, home=home, n=n)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Simulating season…")
 def _sim_season(g, n):
     return SIM.simulate_season(_scored(g), SIM.schedule_from_results(g), n=n)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Simulating bracket…")
 def _sim_bracket(g, field, n):
     return SIM.simulate_tournament(_scored(g), list(field), n=n)
 
@@ -91,6 +95,18 @@ if not scored:
         "Enter game results in the Input Hub and track a few games — the War Room "
         "simulates straight from the league ratings.",
         cta="Start in the Input Hub")
+    st.stop()
+
+# Tier gate: the War Room is a premium planning tool — Monte-Carlo matchups,
+# season/bracket sims and the lineup creator. Plan-level entry (has_paid_plan);
+# inside, the tracked-possession projection and lineup chemistry add per-team /
+# pool checks (see below).
+if not ENT.has_paid_plan(AUTH.current_user()):
+    empty_state(
+        "The War Room is a Paid feature",
+        "Monte-Carlo matchups, season and bracket simulations, and the lineup "
+        "creator all unlock with a Paid plan. Upgrade to game-plan like the pros.",
+        icon="🔒")
     st.stop()
 
 name_of = {t: r["name"] for t, r in scored.items()}
@@ -145,6 +161,23 @@ def _wl_ctx(g):
     return TA.lineup_engine_context(g)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _lineup_net(g, team_id, lineup):
+    """NetRtg for one candidate five, cached on (gender, team, lineup tuple) —
+    the bench-swap search tries ~50 lineups and must not recompute each rerun."""
+    tbl = _wl_table(g)
+    rows = [dict(r, _pid=pid) for pid, r in tbl.items() if r["team_id"] == team_id]
+    return TA.lineup_prediction(rows, list(lineup), _wl_ctx(g), team_id)["NetRtg"]
+
+
+# Paid + Solo (not in the Coaches' Co-op) get ONLY the Lineup creator — building
+# your own team's lineup uses your own tracked data. Scouting other teams — the
+# matchup projection and the season/bracket sims (league-wide) — is Co-op only.
+# Lineup + Glossary stay open to any paid coach; the other three gate on league-wide.
+_wr_ident = AUTH.current_user()
+_wr_league_wide = ENT.viewer_is_league_wide(_wr_ident)
+_WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
+
 tab_match, tab_season, tab_bracket, tab_lineup, tab_gloss = st.tabs(
     ["Matchup", "Season sim", "Bracket", "Lineup", "Glossary"])
 
@@ -152,7 +185,8 @@ tab_match, tab_season, tab_bracket, tab_lineup, tab_gloss = st.tabs(
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 1 — MATCHUP
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_match:
+@st.fragment
+def _render_matchup():
     st.subheader("Matchup predictor")
     st.caption(
         f"Projected score, win probability, a line-by-line margin breakdown, and "
@@ -165,16 +199,21 @@ with tab_match:
     ta = pc[0].selectbox("Team A", order, index=0, format_func=_pfmt, key="wr_a")
     tb = pc[1].selectbox("Team B", order, index=min(1, len(order) - 1),
                          format_func=_pfmt, key="wr_b")
-    homep = pc[2].radio("Home court", ["Neutral", "Team A", "Team B"], key="wr_home")
+    homep = pc[2].radio("Home court", ["Neutral", name_of[ta], name_of[tb]],
+                        key="wr_home")
 
     if ta == tb:
-        st.info("Pick two different teams.")
+        empty_state("Pick two different teams",
+                    "Team A and Team B are the same — choose an opponent to "
+                    "project the matchup.")
     else:
-        home_arg = ta if homep == "Team A" else (tb if homep == "Team B" else None)
+        home_arg = ta if homep == name_of[ta] else (tb if homep == name_of[tb] else None)
         pred = PRED.predict_game(ta, tb, scored=scored, tracked=tracked,
                                  gender=gender, home=home_arg)
         if not pred:
-            st.info("One of these teams is unrated.")
+            empty_state("One of these teams is unrated",
+                        "Both teams need a rating — enter game results for them "
+                        "in the Input Hub first.")
         else:
             wa, wb = pred["win_prob_a"] * 100, pred["win_prob_b"] * 100
             ca, cb = _team_pair_colors(ta, tb)
@@ -239,7 +278,8 @@ with tab_match:
                                "Detail": c["note"]} for c in pred["components"]]),
                 hide_index=True, width="stretch")
 
-            if pred["tracked"]:
+            if pred["tracked"] and ENT.can_see_game_tracked(
+                    AUTH.current_user(), ta, tb):
                 tk = pred["tracked"]
                 st.markdown("**Tracked possession projection** — both teams have "
                             "tracked games")
@@ -249,11 +289,35 @@ with tab_match:
                 tcl[2].metric(f"{team_short(pred['b_name'])} pts", f"{tk['pf_b']:.0f}")
                 tcl[3].metric("ORtg A / B", f"{tk['ortg_a']:.0f} / {tk['ortg_b']:.0f}")
 
+            # ── the takeaway artifact: a print-ready matchup one-pager ───────
+            from datetime import datetime as _dt
+            import re as _re
+            _sheet = MS.matchup_html(
+                pred, sim=sim, n_sims=n,
+                home_label=("Neutral floor" if home_arg is None
+                            else f"Home court: {name_of[home_arg]}"),
+                generated=_dt.now().strftime("%B %d, %Y"))
+            _slug = _re.sub(r"[^A-Za-z0-9]+", "_",
+                            f"{pred['a_name']}_vs_{pred['b_name']}").strip("_")
+            from helpers.ui import pdf_or_html_download
+            pdf_or_html_download("Matchup one-pager", _sheet,
+                                 f"matchup_{_slug}", key="wr_sheet_dl")
+            st.caption("Print-ready scouting sheet — text it straight to the "
+                       "staff.")
+
+
+with tab_match:
+    if _wr_league_wide:
+        _render_matchup()
+    else:
+        st.info(_WR_LOCK)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 2 — SEASON SIM
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_season:
+@st.fragment
+def _render_season():
     st.subheader("Season simulation")
     st.caption(
         f"Replays every finished game {n:,} times from the ratings to get each "
@@ -329,10 +393,18 @@ with tab_season:
             st.plotly_chart(fig, width="stretch", key="wr_seas_dist")
 
 
+with tab_season:
+    if _wr_league_wide:
+        _render_season()
+    else:
+        st.info(_WR_LOCK)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 3 — BRACKET
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_bracket:
+@st.fragment
+def _render_bracket():
     st.subheader("Bracket / tournament odds")
     st.caption(
         f"Seed a single-elimination field by rating and roll the bracket {n:,} "
@@ -346,7 +418,13 @@ with tab_bracket:
     if len(field) < 2:
         empty_state("Pick at least two teams",
                     "Choose a tournament field above to simulate championship odds.")
+    elif (not st.session_state.get("wr_brk_ran")
+          and not st.button(f"Run bracket — roll the field {n:,} times",
+                            key="wr_brk_go", type="primary")):
+        st.caption("The bracket is the heaviest simulation on the page, so it "
+                   "waits for the button. Results stay loaded once run.")
     else:
+        st.session_state["wr_brk_ran"] = True
         res = _sim_bracket(gender, tuple(field), n)
         if not res:
             empty_state("Not enough rated teams in the field",
@@ -368,7 +446,7 @@ with tab_bracket:
                      for d in res]
                 yt = [f"{d['seed']}. {team_short(d['name'])}" for d in res]
                 hm = go.Figure(go.Heatmap(
-                    z=z, x=labels, y=yt, colorscale="Turbo", zmin=0, zmax=100,
+                    z=z, x=labels, y=yt, colorscale=HEAT, zmin=0, zmax=100,
                     colorbar=dict(title="%", thickness=12),
                     hovertemplate="%{y}<br>%{x}: %{z:.1f}%<extra></extra>"))
                 hm.update_yaxes(autorange="reversed")
@@ -385,8 +463,14 @@ with tab_bracket:
                 df, hide_index=True, width="stretch", key="wr_brk_tbl",
                 column_config={
                     "Champ %": st.column_config.ProgressColumn(
-                        "Champ %", format="%.1f", min_value=0,
-                        max_value=float(max(d["champ_pct"] for d in res) or 1))})
+                        "Champ %", format="%.1f%%", min_value=0, max_value=100)})
+
+
+with tab_bracket:
+    if _wr_league_wide:
+        _render_bracket()
+    else:
+        st.info(_WR_LOCK)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -394,14 +478,27 @@ with tab_bracket:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_lineup:
     st.subheader("Lineup creator")
-    _lmode = st.radio("Build from", ["One team", "Any team"],
-                      horizontal=True, key="wl_mode")
+    # Solo (not League-wide) coaches build ONLY their own team — no "Any team"
+    # mode and no cross-team selector. Admin / League-wide get every team.
+    _li = AUTH.current_user()
+    _li_any = ENT.viewer_is_league_wide(_li)
+    _my_team = _li.get("team_id")
+    _modes = ["One team", "Any team"] if _li_any else ["One team"]
+    _lmode = (st.radio("Build from", _modes, horizontal=True, key="wl_mode")
+              if len(_modes) > 1 else "One team")
 
     if _lmode == "One team":
         st.caption("Pick a team and a five for a possession-calibrated "
                    "projection (ORtg / DRtg / Net vs the league) plus the observed "
                    "on-court rating and the best bench swaps.")
-        _t = st.selectbox("Team", order,
+        _team_opts = order if _li_any else [t for t in order if t == _my_team]
+        if not _team_opts:
+            empty_state("No team to build for",
+                        "Ask the admin to assign you a team with tracked games, "
+                        "then build its lineup here. Go League-wide in Settings to "
+                        "build any team's lineups.")
+            st.stop()
+        _t = st.selectbox("Team", _team_opts,
                           format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
                           key="wl1_team")
         _tbl = _wl_table(gender)
@@ -421,7 +518,12 @@ with tab_lineup:
             _chosen = st.multiselect("Lineup (up to 5)", list(_lab), default=_def5,
                                      format_func=lambda pid: _lab[pid],
                                      max_selections=5, key="wl1_pick")
-            if _chosen:
+            if _chosen and not ENT.can_see_team_tracked(AUTH.current_user(), _t):
+                st.info("🔒 Lineup projections & observed-together ratings for "
+                        "another team are a **Coaches' Co-op** feature — your own "
+                        "team works on any Paid plan. Go **League-wide** in Settings "
+                        "to build & scout any team's lineups. Share to scout.")
+            elif _chosen:
                 _pred = TA.lineup_prediction(_rows, _chosen, _ctxd, _t)
                 _m = st.columns(5)
                 _m[0].metric("Proj ORtg", f"{_pred['ORtg']:.1f}"
@@ -438,7 +540,12 @@ with tab_lineup:
                              f"#{_pred['league']['rank']} / {_pred['league']['of']}")
                 _gids = [gr["id"] for gr in query(
                     "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
-                    "AND tracked=1", (_t, _t))]
+                    "AND tracked=1 AND season='Current'", (_t, _t))]
+                # AXIS-2 read-filter: a League-wide coach scouting another team
+                # sees its observed lineups only over that team's POOLED games.
+                _ovis = ENT.team_visible_tracked_ids(AUTH.current_user(), _t)
+                if _ovis is not None:
+                    _gids = [g for g in _gids if g in _ovis]
                 _obs = LU.custom_unit(_t, list(_chosen), game_ids=_gids) if _gids else None
                 if _obs and _obs.get("poss"):
                     st.markdown("**Observed together — tracked games**")
@@ -461,7 +568,7 @@ with tab_lineup:
                         marker=dict(
                             size=[max(12, c["usg_share"] * 90) for c in _cb],
                             color=[c["off_pts100"] for c in _cb],
-                            colorscale="Viridis", showscale=False,
+                            colorscale=HEAT, showscale=False,
                             line=dict(width=1, color="#30363d")),
                         hovertext=[c["name"] for c in _cb],
                         hovertemplate="%{hovertext}<br>Off/100 %{x:.1f} · "
@@ -478,7 +585,7 @@ with tab_lineup:
                     for _out in _chosen:
                         for _bp in _bench:
                             _nw = [_bp["_pid"] if x == _out else x for x in _chosen]
-                            _nn = TA.lineup_prediction(_rows, _nw, _ctxd, _t)["NetRtg"]
+                            _nn = _lineup_net(gender, _t, tuple(_nw))
                             if _nn is not None:
                                 _swaps.append((_nn - _base, _out, _bp))
                     _ups = sorted([sw for sw in _swaps if sw[0] > 0.05],
@@ -574,11 +681,19 @@ with tab_lineup:
             } for r in _sel]), hide_index=True, width="stretch", key="wl_tbl")
 
             _teams = {r["team_id"] for r in _sel}
-            if len(_teams) == 1 and len(_sel) >= 2:
-                _tid = next(iter(_teams))
+            # Observed-together = real on-court lineup chemistry for one team →
+            # own team (any Paid) or another team only via the league pool.
+            _one_tid = next(iter(_teams)) if len(_teams) == 1 else None
+            if (_one_tid is not None and len(_sel) >= 2
+                    and ENT.can_see_team_tracked(AUTH.current_user(), _one_tid)):
+                _tid = _one_tid
                 _gids = [g["id"] for g in query(
-                    "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1",
-                    (_tid, _tid))]
+                    "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
+                    "AND tracked=1 AND season='Current'", (_tid, _tid))]
+                # AXIS-2 read-filter: scouting another team → its pooled games only.
+                _ovis = ENT.team_visible_tracked_ids(AUTH.current_user(), _tid)
+                if _ovis is not None:
+                    _gids = [g for g in _gids if g in _ovis]
                 _obs = LU.custom_unit(_tid, [r["pid"] for r in _sel],
                                       game_ids=_gids) if _gids else None
                 if _obs and _obs.get("poss"):

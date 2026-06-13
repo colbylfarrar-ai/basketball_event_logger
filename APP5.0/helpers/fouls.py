@@ -7,8 +7,9 @@ secondary_player_id = the FOULER (the PF is charged here), official_id = the ref
 Free-throw rows are primary_player_id = shooter, shot_result = make/miss.
 
 This surfaces what the plain box score can't: fouls drawn per player, FT% split by
-half, team fouls by quarter and when a team put the opponent in the bonus (NFHS:
-7th team foul of a HALF = 1-and-1, 10th = double bonus). Streamlit-free.
+half, team fouls by quarter and when a team put the opponent in the bonus
+(NFHS since 2023-24: team fouls reset each quarter, two-shot bonus on the 5th
+team foul of the quarter; OT extends Q4 — no reset). Streamlit-free.
 """
 from __future__ import annotations
 

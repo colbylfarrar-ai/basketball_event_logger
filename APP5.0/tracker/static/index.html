@@ -98,13 +98,6 @@
         <span id="q-label">Q1</span>
         <button id="q-plus" class="btn sq" aria-label="Next period">+</button>
       </div>
-      <div class="clock">
-        <button id="clk-minus" class="btn sq" type="button" aria-label="Clock down one second">&minus;</button>
-        <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
-        <span>:</span>
-        <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
-        <button id="clk-plus" class="btn sq" type="button" aria-label="Clock up one second">+</button>
-      </div>
       <span id="sync-badge" class="badge ok" title="Queued events">0</span>
       <span id="net-dot2" class="dot"></span>
       <button id="btn-subs" class="btn ghost">Subs</button>
@@ -131,6 +124,19 @@
   </div>
 
   <p id="sync-status" class="status"></p>
+
+  <!-- Clock lives down here (not the header): it's the LAST thing updated after
+       logging an event, so it sits between the action row and the play-by-play. -->
+  <div class="clock" aria-label="Game clock">
+    <button id="clk-min-minus" class="btn sq" type="button" aria-label="Minute down">&minus;</button>
+    <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
+    <button id="clk-min-plus" class="btn sq" type="button" aria-label="Minute up">+</button>
+    <span class="clock-colon">:</span>
+    <button id="clk-sec-minus" class="btn sq" type="button" aria-label="Second down">&minus;</button>
+    <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
+    <button id="clk-sec-plus" class="btn sq" type="button" aria-label="Second up">+</button>
+  </div>
+
   <h3 class="pbp-h">Play-by-play</h3>
   <ul id="pbp" class="pbp"></ul>
 </section>

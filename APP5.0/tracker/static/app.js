@@ -721,13 +721,16 @@ function syncHeaderInputs() {
   }
 }
 
-// +/- clock nudge (operates on total seconds so it wraps minutes naturally).
-function nudgeClock(deltaSec) {
-  let total = S.clockMin * 60 + S.clockSec + deltaSec;
-  total = Math.max(0, Math.min(20 * 60 + 59, total));   // HS periods ≤20 min; guards a fat-finger
-  S.clockMin = Math.floor(total / 60);
-  S.clockSec = total % 60;
+// +/- steppers adjust minute and second INDEPENDENTLY (no borrow) — the point is
+// to drop just the minute between possessions without retyping. Each field clamps
+// to its own range (minutes ≤20 = HS ceiling, seconds ≤59).
+function nudgeMin(delta) {
+  S.clockMin = Math.max(0, Math.min(20, S.clockMin + delta));
   $('clock-min').value = S.clockMin;
+  savePrefs();
+}
+function nudgeSec(delta) {
+  S.clockSec = Math.max(0, Math.min(59, S.clockSec + delta));
   $('clock-sec').value = S.clockSec;
   savePrefs();
 }
@@ -1503,8 +1506,10 @@ function bindUI() {
     this.value = S.clockSec;
     savePrefs();
   });
-  $('clk-minus').addEventListener('click', function () { nudgeClock(-1); });
-  $('clk-plus').addEventListener('click', function () { nudgeClock(1); });
+  $('clk-min-minus').addEventListener('click', function () { nudgeMin(-1); });
+  $('clk-min-plus').addEventListener('click', function () { nudgeMin(1); });
+  $('clk-sec-minus').addEventListener('click', function () { nudgeSec(-1); });
+  $('clk-sec-plus').addEventListener('click', function () { nudgeSec(1); });
 
   // modes / actions
   document.querySelectorAll('#mode-row .mode').forEach(function (b) {

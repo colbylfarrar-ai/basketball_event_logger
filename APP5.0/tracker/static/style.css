@@ -250,7 +250,8 @@ button {
 .q-stepper { display: flex; align-items: center; gap: 4px; }
 .q-stepper span { min-width: 38px; text-align: center; font-weight: 700; }
 
-.clock { display: flex; align-items: center; gap: 2px; }
+.clock { display: flex; align-items: center; justify-content: center; gap: 3px; margin: 8px 0; }
+.clock-colon { margin: 0 4px; font-weight: 700; }
 .clock input {
   width: 54px;
   min-height: 44px;

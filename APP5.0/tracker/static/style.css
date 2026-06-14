@@ -126,6 +126,7 @@ button {
 .gender-filter { margin: 4px 0 10px; }
 
 /* "New version available" update banner (controlled SW update) */
+.update-banner[hidden] { display: none; }   /* must beat the `display: flex` below */
 .update-banner {
   position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
   z-index: 999; display: flex; align-items: center; gap: 12px;

@@ -2,7 +2,7 @@
    so a new deploy reaches installed phones on the next open); icons are
    cache-first; /api/* is network only (never cached — the offline queue is the
    source of truth). Bump CACHE on every release to purge the old shell. */
-const CACHE = 'tracker-v9';
+const CACHE = 'tracker-v10';
 const ASSETS = [
   '/',
   '/static/app.js',

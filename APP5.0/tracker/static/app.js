@@ -292,6 +292,12 @@ async function loadGames() {
       allGames = games;
       applyGameFilter();
       $('setup-status').textContent = '';
+    } else if (res.status === 401) {
+      // No / wrong token (iOS keeps the installed app's storage separate from
+      // Safari, and can evict it after ~7 idle days). Open the box and say so
+      // plainly instead of a scary "server error".
+      const tb = $('token-box'); if (tb) tb.open = true;
+      $('setup-status').textContent = 'Enter your tracker token above to load games.';
     } else {
       $('setup-status').textContent = games ? 'Server error — showing cached games' : 'Server error loading games';
     }

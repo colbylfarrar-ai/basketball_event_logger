@@ -256,6 +256,44 @@ else:
             st.dataframe(_arows, hide_index=True, width="stretch")
     st.divider()
 
+    # ── Resolve duplicate tracked games — canonical pick for the pool ─────────
+    import helpers.game_dedup as GD
+    _dups = GD.duplicate_matchups()
+    with st.expander(f"🔀 Resolve duplicate tracked games ({len(_dups)})"):
+        if not _dups:
+            st.caption("No game is tracked twice right now. When two coaches track "
+                       "the same game, the pool automatically shows the more detailed "
+                       "one (most fields filled — not just the most events); come here "
+                       "to pin a specific track instead.")
+        else:
+            st.caption("Two coaches tracked the same game. The pool shows ONE — by "
+                       "default the most detailed (✓). Pin a specific track to force it.")
+            for _d in _dups:
+                st.markdown(f"**{_d['team1']} vs {_d['team2']}** · {_d['date']}")
+                _opts = [None] + [c["game_id"] for c in _d["candidates"]]
+                _auto = _d["candidates"][0]["game_id"]
+
+                def _clabel(gid, _d=_d, _auto=_auto):
+                    if gid is None:
+                        return f"Auto — most detailed (now game #{_auto})"
+                    _c = next(x for x in _d["candidates"] if x["game_id"] == gid)
+                    _star = " ✓" if gid == _auto else ""
+                    return (f"Game #{gid} · {_c['tracked_by']} · detail "
+                            f"{_c['score']:.1f} · {_c['events']} events{_star}")
+
+                _cur = _d["override"] if _d["override"] in _opts else None
+                _pick = st.radio("Show in pool", _opts, index=_opts.index(_cur),
+                                 format_func=_clabel, key=f"dup_{_d['key']}")
+                if _pick != _d["override"]:
+                    if _pick is None:
+                        GD.clear_override(_d["key"])
+                    else:
+                        GD.set_override(_d["key"], _pick)
+                    st.cache_data.clear()
+                    st.rerun()
+                st.divider()
+    st.divider()
+
     _team_rows = query("SELECT id, name FROM teams ORDER BY name")
     _team_opts = [None] + [r["id"] for r in _team_rows]
     _team_name = {r["id"]: r["name"] for r in _team_rows}

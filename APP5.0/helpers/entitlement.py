@@ -41,6 +41,7 @@ from __future__ import annotations
 from datetime import date
 
 from database.db import query, execute
+import helpers.game_dedup as GD
 
 
 # ── lock / invite copy (one source so it stays consistent across surfaces) ──────
@@ -105,8 +106,11 @@ viewer_in_pool = viewer_is_league_wide
 
 def pooled_game_ids() -> set[int]:
     """Tracked game ids in the shared pool (games.in_pool = 1) — the read-filter
-    candidate set for every LEAGUE-WIDE tracked aggregation."""
-    return {r["id"] for r in query("SELECT id FROM games WHERE in_pool=1")}
+    candidate set for every LEAGUE-WIDE tracked aggregation. Duplicate tracks of
+    the same real game are collapsed to one canonical (most-detailed / admin-pinned)
+    row so the pool never double-counts or shows two stat lines — see game_dedup."""
+    return GD.representative_game_ids(
+        {r["id"] for r in query("SELECT id FROM games WHERE in_pool=1")})
 
 
 def pool_team_ids() -> set[int]:
@@ -193,7 +197,7 @@ def visible_tracked_game_ids(ident: dict | None) -> set[int] | None:
             f"AND (team1_id IN ({ph}) OR team2_id IN ({ph}))", params)}
     if viewer_is_league_wide(ident):
         ids |= pooled_game_ids()
-    return ids
+    return GD.representative_game_ids(ids)   # one canonical row per double-tracked game
 
 
 def team_visible_tracked_ids(ident: dict | None, team_id) -> set[int] | None:
@@ -206,10 +210,11 @@ def team_visible_tracked_ids(ident: dict | None, team_id) -> set[int] | None:
         return None
     if team_id is not None and int(team_id) in _own_teams(ident):
         return None                      # own team → full depth, always
-    # league-wide scout of another team → that team's pooled games only
-    return {r["id"] for r in query(
+    # league-wide scout of another team → that team's pooled games only, with
+    # duplicate tracks collapsed to the canonical (most-detailed / pinned) row.
+    return GD.representative_game_ids({r["id"] for r in query(
         "SELECT id FROM games WHERE in_pool=1 AND tracked=1 "
-        "AND (team1_id=? OR team2_id=?)", (team_id, team_id))}
+        "AND (team1_id=? OR team2_id=?)", (team_id, team_id))})
 
 
 def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None):

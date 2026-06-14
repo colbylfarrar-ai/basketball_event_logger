@@ -34,6 +34,7 @@
   <p id="setup-status" class="status"></p>
   <button id="btn-new-game" class="btn ghost" type="button">+ New game</button>
   <div id="new-game-form" hidden></div>
+  <input id="game-search" class="game-search" type="search" placeholder="Search team or date…" autocomplete="off">
   <ul id="game-list" class="game-list"></ul>
 </section>
 
@@ -97,9 +98,11 @@
         <button id="q-plus" class="btn sq" aria-label="Next period">+</button>
       </div>
       <div class="clock">
+        <button id="clk-minus" class="btn sq" type="button" aria-label="Clock down one second">&minus;</button>
         <input id="clock-min" type="number" min="0" max="99" value="8" inputmode="numeric" aria-label="Minutes">
         <span>:</span>
         <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
+        <button id="clk-plus" class="btn sq" type="button" aria-label="Clock up one second">+</button>
       </div>
       <span id="sync-badge" class="badge ok" title="Queued events">0</span>
       <span id="net-dot2" class="dot"></span>
@@ -122,6 +125,7 @@
   <div id="action-row">
     <button id="btn-undo" class="btn warn">Undo</button>
     <button id="btn-edit-log" class="btn ghost">Edit log</button>
+    <button id="btn-leave" class="btn ghost">← Leave</button>
     <button id="btn-finish" class="btn danger">End game</button>
   </div>
 

@@ -1,5 +1,5 @@
 /* sw.js — cache-first app shell; /api/* is network only */
-const CACHE = 'tracker-v3';
+const CACHE = 'tracker-v4';
 const ASSETS = [
   '/',
   '/static/app.js',

@@ -323,6 +323,27 @@ def printable_html(sc, opponent_label, hidden=None):
                      "<th class='n'>APG</th><th class='n'>FG%</th>"
                      f"<th class='n'>3P%</th></tr>{pers}</table>")
 
+    # ── strengths & exploit (top / bottom factors by league percentile) ──
+    edges_html = ""
+    if _show("edges") and (sc["strengths"] or sc["weaknesses"]):
+        st_li = "".join(f"<li>{e(f['label'])} — {(f['value'] or 0):.1f} "
+                        f"({f['pct']:.0f}th)</li>"
+                        for f in sc["strengths"]) or "<li>—</li>"
+        wk_li = "".join(f"<li>{e(f['label'])} — {(f['value'] or 0):.1f} "
+                        f"({f['pct']:.0f}th)</li>"
+                        for f in sc["weaknesses"]) or "<li>—</li>"
+        edges_html = (f"<table class='cols'><tr>"
+                      f"<td class='col'><h2>Strengths (&ge;70th)</h2><ul>{st_li}</ul></td>"
+                      f"<td class='col'><h2>Exploit (&le;30th)</h2><ul>{wk_li}</ul></td>"
+                      f"</tr></table>")
+
+    # ── scoring leaders (top 3 by PPG; personnel is pre-sorted) ──
+    leaders_html = ""
+    if _show("leaders") and sc["personnel"]:
+        _lead = " · ".join(f"#{p['num']} {e(p['name'])} {(p['ppg'] or 0):.1f} ppg"
+                           for p in sc["personnel"][:3])
+        leaders_html = f"<h2>Scoring leaders</h2><p class='lead'>{_lead}</p>"
+
     return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
 <title>Scout · {e(sc['name'])}</title>
 <style>
@@ -355,7 +376,9 @@ td.two-col{{width:50%;vertical-align:top;border:none;padding:0}}
   Power #{sc['rank']}/{sc['of']}</div>
 <div class='rng'>{e(rng)}</div>
 {keys_html}
+{edges_html}
 {two_html}
+{leaders_html}
 {pers_html}
 <div class='foot'>Analytics Hub{(' · ' + today) if today else ''}</div>
 </div></body></html>"""

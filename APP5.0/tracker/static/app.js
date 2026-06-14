@@ -242,16 +242,29 @@ function showScreen(name) {
 
 /* ----- setup screen ----- */
 
+let allGames = [];
+
+function applyGameFilter() {
+  const el = $('game-search');
+  const q = ((el && el.value) || '').trim().toLowerCase();
+  const list = !q ? allGames : allGames.filter(function (g) {
+    return ((g.home || '') + ' ' + (g.away || '') + ' ' + (g.date || ''))
+      .toLowerCase().indexOf(q) !== -1;
+  });
+  renderGames(list);
+}
+
 async function loadGames() {
   let games = lsGet(LS.games, null);
-  if (games) renderGames(games);
+  if (games) { allGames = games; applyGameFilter(); }
   try {
     const res = await api('/api/games');
     if (res.ok) {
       const data = await res.json();
       games = data.games || [];
       lsSet(LS.games, games);
-      renderGames(games);
+      allGames = games;
+      applyGameFilter();
       $('setup-status').textContent = '';
     } else {
       $('setup-status').textContent = games ? 'Server error — showing cached games' : 'Server error loading games';
@@ -667,6 +680,17 @@ function syncHeaderInputs() {
   }
 }
 
+// +/- clock nudge (operates on total seconds so it wraps minutes naturally).
+function nudgeClock(deltaSec) {
+  let total = S.clockMin * 60 + S.clockSec + deltaSec;
+  total = Math.max(0, Math.min(99 * 60 + 59, total));
+  S.clockMin = Math.floor(total / 60);
+  S.clockSec = total % 60;
+  $('clock-min').value = S.clockMin;
+  $('clock-sec').value = S.clockSec;
+  savePrefs();
+}
+
 function renderScore() {
   if ($('screen-tracker').hidden) return;
   const t = localTotals();
@@ -1010,6 +1034,18 @@ async function finishGame() {
   } catch (e) {
     toast('Offline — try again when connected');
   }
+}
+
+// Leave a game WITHOUT finishing it. Queued events stay in IndexedDB (per game),
+// so the game can be reopened later from the list with no data loss.
+async function leaveGame() {
+  if (!window.confirm('Leave this game? Your tracked events are saved — reopen it '
+                      + 'any time from the games list.')) return;
+  try { await flush(); } catch (e) { /* offline: events stay queued locally */ }
+  S.gameId = null;
+  S.game = null;
+  showScreen('setup');
+  loadGames();
 }
 
 /* ----- play-by-play ----- */
@@ -1378,6 +1414,7 @@ function bindUI() {
 
   // setup: new game / new team
   $('btn-new-game').addEventListener('click', toggleNewGame);
+  $('game-search').addEventListener('input', applyGameFilter);
 
   // lineup
   $('btn-lineup-back').addEventListener('click', function () { showScreen('setup'); loadGames(); });
@@ -1424,6 +1461,8 @@ function bindUI() {
     this.value = S.clockSec;
     savePrefs();
   });
+  $('clk-minus').addEventListener('click', function () { nudgeClock(-1); });
+  $('clk-plus').addEventListener('click', function () { nudgeClock(1); });
 
   // modes / actions
   document.querySelectorAll('#mode-row .mode').forEach(function (b) {
@@ -1431,6 +1470,7 @@ function bindUI() {
   });
   $('btn-undo').addEventListener('click', undo);
   $('btn-edit-log').addEventListener('click', openEditor);
+  $('btn-leave').addEventListener('click', leaveGame);
   $('btn-finish').addEventListener('click', finishGame);
 
   // event editor

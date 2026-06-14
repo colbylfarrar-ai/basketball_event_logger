@@ -34,6 +34,7 @@ import helpers.reports as RP
 import helpers.court as court
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.seasons as SEAS
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
@@ -276,8 +277,12 @@ def render_box_score(game_id: int):
     # who can't see this game's tracked depth — Free, or a Paid coach who is Solo
     # (not in the Coaches' Co-op) viewing a game that isn't their own, or a game
     # that simply isn't pooled (in_pool drives the per-game check).
-    if not ENT.can_see_game_tracked(AUTH.current_user(), t1id, t2id,
-                                    in_pool=g["in_pool"]):
+    # Previous seasons are an OPEN ARCHIVE — free, full tracked depth to everyone
+    # (last year's roster has turned over, so there's no edge left to protect; it's
+    # a funnel, not a leak — see helpers/seasons.py). Only the CURRENT season's
+    # tracked depth is gated.
+    if SEAS.is_current(g["season"]) and not ENT.can_see_game_tracked(
+            AUTH.current_user(), t1id, t2id, in_pool=g["in_pool"]):
         # Mirror the other gate sites' branched copy so each locked viewer gets the
         # right reason: Free -> Paid feature; banned -> suspension; Solo scouting ->
         # co-op invite; League-wide but this game isn't pooled -> neutral not-shared.

@@ -1720,7 +1720,8 @@ def strength_of_schedule(game_log, power_by_team, rank_by_team, n_teams):
 #  CONVENIENCE BUNDLE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None):
+def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None,
+                season="Current"):
     """
     One call that assembles the team's analytics from tracked games:
         game_log, record (all games), tracked record/efficiency (S.team_summary),
@@ -1735,7 +1736,7 @@ def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None):
     POOLED games, so the team's own Solo-tracked games stay private). The full
     `game_log` (box-score level, Free) is never filtered.
     """
-    game_log = team_game_log(team_id)
+    game_log = team_game_log(team_id, season=season)
     tracked_ids = [g["game_id"] for g in game_log if g["tracked"]]
     if visible_game_ids is not None:
         _vis = set(visible_game_ids)

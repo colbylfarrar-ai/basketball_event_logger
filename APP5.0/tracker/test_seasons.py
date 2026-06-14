@@ -68,6 +68,17 @@ ok(len(log_cur) == 1 and log_cur[0]["game_id"] == g_cur and log_cur[0]["won"],
 ok(len(TA.team_game_log(A, season=None)) == 2, "team log season=None = all seasons")
 ok(len(TA.team_game_log(A, season="2099-2100")) == 1, "team log reaches the archive")
 
+print("entry points forward season (archive viewing)")
+tb_old = TA.team_bundle(A, season="2099-2100")
+ok(any(r["game_id"] == g_old for r in tb_old["game_log"]),
+   "team_bundle(season=archive) surfaces the archived game")
+ok(all(r["game_id"] != g_old for r in TA.team_bundle(A)["game_log"]),
+   "team_bundle default (Current) excludes the archive")
+ok(A in TR.score_ratings(gender="F", season="2099-2100"),
+   "score_ratings accepts + forwards season")
+ok(isinstance(TR.tracked_ratings(gender="F", season="2099-2100"), dict),
+   "tracked_ratings accepts season without error")
+
 print("rollover SQL partitions seasons")
 execute("UPDATE games SET season=? WHERE season='Current'", ("2025-2026",))
 execute("INSERT OR REPLACE INTO app_settings (key,value) VALUES ('active_season','2026-2027')")

@@ -48,6 +48,12 @@ for email, team, plan, share in [("a@x", A, "paid", 0), ("b@x", B, "paid", 1),
     execute("INSERT INTO app_users (email, role, name, team_id, plan, shares_pool) "
             "VALUES (?,?,?,?,?,?)", (email, "coach", "", team, plan, share))
 
+# coach_teams is the source of truth for membership / pooling (multi-team). Seed
+# it to mirror each coach's single team here (tests insert app_users directly).
+for email, team in [("a@x", A), ("b@x", B), ("d@x", D), ("f@x", A)]:
+    execute("INSERT INTO coach_teams (coach_email, team_id) VALUES (?,?)",
+            (email, team))
+
 # Team-level co-op is the canonical flag: a team is League-wide iff any of its
 # coaches opted in. Here teams B and D are League-wide (b@x / d@x); A and C/E Solo.
 execute("UPDATE teams SET shares_pool=1 WHERE id IN (?,?)", (B, D))
@@ -190,5 +196,32 @@ ok(g3 in E.pooled_game_ids(), "another coach's pooled game is unaffected by the 
 execute("UPDATE app_users SET pool_banned=0 WHERE email='b@x'")
 E.recompute_game_pool()
 ok(g2 in E.pooled_game_ids(), "unban re-shares the coach's games")
+
+print("multi-team staffing + dual-staff coupling")
+import helpers.auth as AU                                       # noqa: E402
+PB = execute("INSERT INTO teams (name,class,gender) VALUES ('ZZTest Boys','3A','M')")
+PG = execute("INSERT INTO teams (name,class,gender) VALUES ('ZZTest Girls','3A','F')")
+execute("INSERT INTO app_users (email, role, name, plan) "
+        "VALUES ('p@x','coach','','paid')")
+AU.set_teams("p@x", [PB, PG])
+ok(sorted(AU.get_teams("p@x")) == sorted([PB, PG]),
+   "coach can staff BOTH teams of one school")
+p_ident = {"role": "coach", "plan": "paid", "team_ids": [PB, PG], "shares_pool": 0}
+ok(E.can_see_team_tracked(p_ident, PB) and E.can_see_team_tracked(p_ident, PG),
+   "dual coach sees OWN depth for BOTH teams")
+ok(not AU.get_team_shares_pool(PB) and not AU.get_team_shares_pool(PG),
+   "dual coach's teams start Solo")
+AU.set_team_shares_pool(PB, True)
+ok(AU.get_team_shares_pool(PB) and AU.get_team_shares_pool(PG),
+   "coupling: one gender in the pool -> BOTH in the pool")
+gPG = _game(PG, C, "p@x")
+E.recompute_game_pool(gPG)
+ok(gPG in E.pooled_game_ids(),
+   "dual coach's girls game pools once the school is coupled League-wide")
+AU.set_shares_pool("p@x", False)
+ok(not AU.get_team_shares_pool(PB) and not AU.get_team_shares_pool(PG),
+   "turning the coach Solo moves BOTH teams to Solo")
+# a single-gender coach is unaffected by coupling (only their own team)
+ok(not AU.get_team_shares_pool(C), "an unrelated team is untouched by coupling")
 
 print(f"\nALL {PASS} CHECKS PASSED")

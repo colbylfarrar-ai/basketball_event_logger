@@ -165,26 +165,30 @@ _me = AUTH.current_user()
 # games AND unlocks scouting of every other league-wide team.
 if AUTH.auth_enabled() and _me.get("email"):
     st.markdown("### 🤝 Coaches' Co-op")
-    _my_team = _me.get("team_id")
-    if _my_team is None:
+    _my_teams = AUTH.get_teams(_me["email"])
+    if not _my_teams:
         st.caption("Join the **Coaches' Co-op** to share tracked games and scout "
                    "every league-wide team — but the opt-in is per **team**, so "
                    "ask the admin to assign you a team first.")
     else:
         _lw = AUTH.get_shares_pool(_me["email"])
-        st.caption(f"Your team is currently "
+        _plural = len(_my_teams) > 1
+        st.caption(f"Your {'teams are' if _plural else 'team is'} currently "
                    f"**{'League-wide' if _lw else 'Solo (private)'}**.")
         _new_lw = st.toggle(
             "League-wide — share to scout", value=_lw, key="me_shares_pool",
-            help="On (League-wide): your TEAM's tracked games join the shared pool "
+            help="On (League-wide): your team's tracked games join the shared pool "
                  "AND every coach on your team scouts every other league-wide team. "
                  "Off (Solo): full depth on your own games only; your tracked data "
                  "stays private (others see just your box scores).")
-        st.caption("**Team-level, private by default.** This switch is for your "
-                   "whole team — turn it on and *all* coaches on your team share "
-                   "and scout. Flipping back to **Solo** stops sharing *future* "
-                   "games; games already shared stay in the pool until the season "
-                   "ends. The trade is reciprocal: share to scout.")
+        if _plural:
+            st.caption("You staff **both** teams at your school, so this switch "
+                       "moves them **together** — if one is in the pool, both are.")
+        else:
+            st.caption("**Team-level, private by default.** Turn it on and *all* "
+                       "coaches on your team share and scout. Flipping back to "
+                       "**Solo** stops sharing *future* games; already-shared games "
+                       "stay in the pool until the season ends. Share to scout.")
         if _new_lw != _lw:
             AUTH.set_shares_pool(_me["email"], _new_lw)
             st.rerun()
@@ -263,11 +267,13 @@ else:
         _email = _u["email"]
         _is_self = _email == _me["email"]
         _plan = _u["plan"] if _u["plan"] in AUTH.PLANS else "free"
-        _team_lw = AUTH.get_team_shares_pool(_u["team_id"])
+        _my_tids = AUTH.get_teams(_email)
+        _team_lw = AUTH.get_shares_pool(_email)
         _coop = ("🚫 BANNED" if _u.get("pool_banned")
                  else ("League-wide" if _team_lw else "Solo"))
+        _teams_lbl = " + ".join(_team_label(t) for t in _my_tids) if _my_tids else ""
         _hdr = (f"{_email} · {_u['role']} · {_plan} · {_coop}"
-                + (f" · {_team_label(_u['team_id'])}" if _u["team_id"] else ""))
+                + (f" · {_teams_lbl}" if _teams_lbl else ""))
         with st.expander(_hdr):
             mc1, mc2 = st.columns(2)
             _role = mc1.selectbox(
@@ -284,30 +290,34 @@ else:
             if _newplan != _plan:
                 AUTH.set_plan(_email, _newplan)
                 st.rerun()
-            _curteam = _u["team_id"] if _u["team_id"] in _team_opts else None
-            _newteam = st.selectbox(
-                "Team", _team_opts, index=_team_opts.index(_curteam),
+            _team_ids_only = [r["id"] for r in _team_rows]
+            _cur_tids = [t for t in _my_tids if t in _team_ids_only]
+            _newteams = st.multiselect(
+                "Teams", _team_ids_only, default=_cur_tids,
                 format_func=_team_label, key=f"team_{_email}",
-                help="The coach's own team — defines their own-data scope.")
-            if _newteam != _u["team_id"]:
-                AUTH.set_team(_email, _newteam)
+                help="The coach's own team(s) — their own-data scope. Assign BOTH "
+                     "the boys and girls team if they staff both at one school; "
+                     "those two then share the co-op together.")
+            if sorted(_newteams) != sorted(_cur_tids):
+                AUTH.set_teams(_email, _newteams)
                 st.rerun()
 
-            if _u["team_id"] is None:
+            if not _my_tids:
                 st.caption("🤝 Coaches' Co-op: assign a team above first — the "
                            "opt-in is per team.")
             else:
-                _coop_on = AUTH.get_team_shares_pool(_u["team_id"])
+                _coop_on = AUTH.get_shares_pool(_email)
                 _new_coop = st.toggle(
-                    "Coaches' Co-op: League-wide (team)", value=_coop_on,
+                    "Coaches' Co-op: League-wide", value=_coop_on,
                     key=f"coop_{_email}",
-                    help=("TEAM-LEVEL: on = this coach's whole team shares tracked "
-                          "games to the pool and every coach on it scouts every "
-                          f"league-wide team (reciprocal). Affects ALL coaches on "
-                          f"{_team_label(_u['team_id'])}. Off = Solo/private. Comp a "
-                          "founding cohort League-wide so the pool isn't empty."))
+                    help=("On = this coach's team(s) share tracked games to the pool "
+                          "and every coach on them scouts every league-wide team "
+                          f"(reciprocal). Affects ALL coaches on {_teams_lbl}. A "
+                          "coach who staffs both teams shares them together. Off = "
+                          "Solo/private. Comp a founding cohort League-wide so the "
+                          "pool isn't empty."))
                 if _new_coop != _coop_on:
-                    AUTH.set_team_shares_pool(_u["team_id"], _new_coop)
+                    AUTH.set_shares_pool(_email, _new_coop)
                     st.rerun()
 
             _banned = bool(_u.get("pool_banned"))

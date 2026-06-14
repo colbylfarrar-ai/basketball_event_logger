@@ -118,8 +118,16 @@ def pool_team_ids() -> set[int]:
         "ON g.in_pool=1 AND (g.team1_id=t.id OR g.team2_id=t.id)")}
 
 
-def _own_team(ident: dict | None):
-    return ident.get("team_id") if ident else None
+def _own_teams(ident: dict | None) -> set:
+    """Every team the viewer staffs (multi-team). Reads identity['team_ids'] (set
+    by auth.require_login), falling back to the legacy single team_id."""
+    if not ident:
+        return set()
+    ids = ident.get("team_ids")
+    if ids:
+        return {int(t) for t in ids if t is not None}
+    t = ident.get("team_id")
+    return {int(t)} if t is not None else set()
 
 
 def team_has_pooled_tracked(team_id) -> bool:
@@ -141,8 +149,7 @@ def can_see_team_tracked(ident: dict | None, team_id, pool=None) -> bool:
         return False
     if ident.get("role") == "admin":
         return True
-    own = _own_team(ident)
-    if own is not None and team_id is not None and int(own) == int(team_id):
+    if team_id is not None and int(team_id) in _own_teams(ident):
         return True
     return viewer_is_league_wide(ident)
 
@@ -158,8 +165,9 @@ def can_see_game_tracked(ident: dict | None, team1_id, team2_id,
         return False
     if ident.get("role") == "admin":
         return True
-    own = _own_team(ident)
-    if own is not None and own in (team1_id, team2_id):
+    own = _own_teams(ident)
+    if (team1_id is not None and int(team1_id) in own) or \
+       (team2_id is not None and int(team2_id) in own):
         return True
     if not viewer_is_league_wide(ident):
         return False
@@ -176,11 +184,13 @@ def visible_tracked_game_ids(ident: dict | None) -> set[int] | None:
     if ident and ident.get("role") == "admin":
         return None
     ids: set[int] = set()
-    own = _own_team(ident)
-    if own is not None:
+    own = _own_teams(ident)
+    if own:
+        ph = ",".join("?" * len(own))
+        params = tuple(own) + tuple(own)
         ids |= {r["id"] for r in query(
-            "SELECT id FROM games WHERE tracked=1 AND (team1_id=? OR team2_id=?)",
-            (own, own))}
+            f"SELECT id FROM games WHERE tracked=1 "
+            f"AND (team1_id IN ({ph}) OR team2_id IN ({ph}))", params)}
     if viewer_is_league_wide(ident):
         ids |= pooled_game_ids()
     return ids
@@ -194,8 +204,7 @@ def team_visible_tracked_ids(ident: dict | None, team_id) -> set[int] | None:
     team's own Solo games stay private). Used to scope the team dashboard bundle."""
     if ident and ident.get("role") == "admin":
         return None
-    own = _own_team(ident)
-    if own is not None and team_id is not None and int(own) == int(team_id):
+    if team_id is not None and int(team_id) in _own_teams(ident):
         return None                      # own team → full depth, always
     # league-wide scout of another team → that team's pooled games only
     return {r["id"] for r in query(
@@ -217,8 +226,7 @@ def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None):
         return False, MSG_PAID
     if ident.get("role") == "admin":
         return True, None
-    own = _own_team(ident)
-    if own is not None and team_id is not None and int(own) == int(team_id):
+    if team_id is not None and int(team_id) in _own_teams(ident):
         return True, None               # own team → always
     # Paid coach scouting ANOTHER team:
     if not viewer_is_league_wide(ident):
@@ -253,8 +261,10 @@ def recompute_game_pool(game_id=None) -> None:
     #    (teams.shares_pool=1) and the coach isn't banned (never clears).
     share = ("UPDATE games SET in_pool=1 WHERE in_pool=0 AND season='Current' "
              "AND tracked_by != '' AND tracked_by IN "
-             "(SELECT u.email FROM app_users u JOIN teams t ON u.team_id = t.id "
-             "WHERE t.shares_pool=1 AND u.pool_banned=0)")
+             "(SELECT ct.coach_email FROM coach_teams ct "
+             " JOIN teams t ON ct.team_id = t.id "
+             " JOIN app_users u ON u.email = ct.coach_email "
+             " WHERE t.shares_pool=1 AND u.pool_banned=0)")
     if game_id is not None:
         execute(purge + " AND id=?", (game_id,))
         execute(share + " AND id=?", (game_id,))

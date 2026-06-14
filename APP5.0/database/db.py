@@ -319,6 +319,17 @@ def initialize_database():
             # tracker by plan and stamping games.tracked_by. Issued/rotated from
             # the Settings page.
             "ALTER TABLE app_users ADD COLUMN tracker_token TEXT NOT NULL DEFAULT ''",
+            # Multi-team staffing: a coach may staff MORE THAN ONE team — the boys
+            # AND girls teams of one school. coach_teams is the source of truth for
+            # membership; app_users.team_id is kept as the coach's PRIMARY/default
+            # team (the first one) for legacy readers + default_team. A dual-staff
+            # coach's two teams are coupled for the co-op (one in pool -> both in),
+            # enforced in helpers/auth._apply_pool_coupling.
+            """CREATE TABLE IF NOT EXISTS coach_teams (
+                   coach_email TEXT    NOT NULL,
+                   team_id     INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                   PRIMARY KEY (coach_email, team_id)
+               )""",
             # Scouting: per-team game-plan notes. (The play-drawing board was
             # dropped — streamlit-drawable-canvas is incompatible with Streamlit
             # 1.53 — so scout_plays is removed.) DEPRECATED: notes are now
@@ -447,6 +458,24 @@ def initialize_database():
                 conn.execute(
                     "INSERT OR REPLACE INTO app_settings (key, value) "
                     "VALUES ('mig_team_shares_v1','1')")
+                conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # One-time: seed coach_teams (multi-team membership) from the single
+        # app_users.team_id each coach had, so existing coaches keep their team.
+        # Idempotent (INSERT OR IGNORE) + guarded so it never fights later edits.
+        try:
+            done = conn.execute(
+                "SELECT value FROM app_settings WHERE key='mig_coach_teams_v1'"
+            ).fetchone()
+            if not done:
+                conn.execute(
+                    "INSERT OR IGNORE INTO coach_teams (coach_email, team_id) "
+                    "SELECT email, team_id FROM app_users WHERE team_id IS NOT NULL")
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_settings (key, value) "
+                    "VALUES ('mig_coach_teams_v1','1')")
                 conn.commit()
         except sqlite3.OperationalError:
             pass

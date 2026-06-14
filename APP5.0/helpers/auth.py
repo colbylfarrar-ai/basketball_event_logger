@@ -29,7 +29,7 @@ ROLES = ("admin", "coach")
 # single-coach behavior) — admin role + paid plan so every gate passes.
 _LOCAL_IDENTITY = {"email": "", "name": "Local", "role": "admin",
                    "plan": "paid", "paid_until": "", "team_id": None,
-                   "shares_pool": 1, "pool_banned": 0}
+                   "team_ids": [], "shares_pool": 1, "pool_banned": 0}
 
 
 def auth_enabled() -> bool:
@@ -115,18 +115,73 @@ def set_plan(email: str, plan: str):
             (plan, (email or "").strip().lower()))
 
 
-def set_team(email: str, team_id):
-    """Assign the coach's own team (their own-data scope). team_id int or None.
-    Also points their PER-COACH default_team at the assigned team so it's the
-    pre-selected team for them across the app. Unassigning (None) leaves any
-    default they've set alone."""
+def get_teams(email: str):
+    """All team ids a coach staffs (multi-team). Source of truth = coach_teams;
+    falls back to the legacy single app_users.team_id if there are no rows yet."""
     email = (email or "").strip().lower()
-    execute("UPDATE app_users SET team_id=? WHERE email=?", (team_id, email))
-    if team_id is not None:
-        rows = query("SELECT name FROM teams WHERE id=?", (team_id,))
+    rows = query("SELECT team_id FROM coach_teams WHERE coach_email=? "
+                 "ORDER BY team_id", (email,))
+    if rows:
+        return [r["team_id"] for r in rows]
+    t = _team_of(email)
+    return [t] if t is not None else []
+
+
+def set_teams(email: str, team_ids):
+    """Assign the coach's team(s) — one team, or BOTH genders of one school.
+    coach_teams is the source of truth; app_users.team_id is kept as the PRIMARY
+    (first) team for legacy readers + the per-coach default_team. Applies the
+    dual-staff co-op coupling and recomputes the pool."""
+    email = (email or "").strip().lower()
+    ids = []
+    for t in (team_ids or []):
+        if t is None:
+            continue
+        t = int(t)
+        if t not in ids:
+            ids.append(t)
+    execute("DELETE FROM coach_teams WHERE coach_email=?", (email,))
+    for t in ids:
+        execute("INSERT OR IGNORE INTO coach_teams (coach_email, team_id) "
+                "VALUES (?,?)", (email, t))
+    primary = ids[0] if ids else None
+    execute("UPDATE app_users SET team_id=? WHERE email=?", (primary, email))
+    if primary is not None:
+        rows = query("SELECT name FROM teams WHERE id=?", (primary,))
         if rows:
             from helpers.settings_utils import set_setting
             set_setting("default_team", rows[0]["name"], email=email)
+    _apply_pool_coupling()
+    from helpers.entitlement import recompute_game_pool
+    recompute_game_pool()
+
+
+def set_team(email: str, team_id):
+    """Back-compat single-team assignment → delegates to set_teams."""
+    set_teams(email, [team_id] if team_id is not None else [])
+
+
+def _apply_pool_coupling():
+    """Dual-staff coupling: if a coach staffs >=2 teams and ANY is League-wide,
+    set ALL of that coach's teams League-wide (the rule — one gender in the pool
+    -> both in). Iterates to a fixpoint so it propagates through shared coaches.
+    Only ever turns sharing ON."""
+    for _ in range(20):
+        before = {r["id"] for r in
+                  query("SELECT id FROM teams WHERE shares_pool=1")}
+        rows = query("SELECT coach_email, team_id FROM coach_teams")
+        by_coach = {}
+        for r in rows:
+            by_coach.setdefault(r["coach_email"], []).append(r["team_id"])
+        for tids in by_coach.values():
+            if len(tids) >= 2 and any(t in before for t in tids):
+                ph = ",".join("?" * len(tids))
+                execute(f"UPDATE teams SET shares_pool=1 WHERE id IN ({ph})",
+                        tuple(tids))
+        after = {r["id"] for r in
+                 query("SELECT id FROM teams WHERE shares_pool=1")}
+        if after == before:
+            break
 
 
 def get_team_shares_pool(team_id) -> bool:
@@ -146,6 +201,7 @@ def set_team_shares_pool(team_id, on: bool):
     if team_id is None:
         return
     execute("UPDATE teams SET shares_pool=? WHERE id=?", (1 if on else 0, team_id))
+    _apply_pool_coupling()
     from helpers.entitlement import recompute_game_pool
     recompute_game_pool()
 
@@ -157,14 +213,25 @@ def _team_of(email: str):
 
 
 def set_shares_pool(email: str, on: bool):
-    """Flip the co-op toggle for the coach's TEAM (team-level opt-in) — applies to
-    every coach on that team. No-op if the coach has no team assigned."""
-    set_team_shares_pool(_team_of(email), on)
+    """Flip the co-op toggle for ALL teams a coach staffs — a dual-staff coach's
+    boys + girls teams move TOGETHER (the rule: one in the pool -> both in). No-op
+    if the coach staffs no team."""
+    email = (email or "").strip().lower()
+    ids = get_teams(email)
+    if not ids:
+        return
+    ph = ",".join("?" * len(ids))
+    execute(f"UPDATE teams SET shares_pool=? WHERE id IN ({ph})",
+            tuple([1 if on else 0] + ids))
+    _apply_pool_coupling()
+    from helpers.entitlement import recompute_game_pool
+    recompute_game_pool()
 
 
 def get_shares_pool(email: str) -> bool:
-    """A coach's effective co-op status = their TEAM's flag (team-level opt-in)."""
-    return get_team_shares_pool(_team_of(email))
+    """A coach's effective co-op status = ANY team they staff is League-wide
+    (dual-staff teams are coupled, so a coach's teams agree anyway)."""
+    return any(get_team_shares_pool(t) for t in get_teams(email))
 
 
 def set_pool_banned(email: str, banned: bool):
@@ -215,12 +282,14 @@ def require_login() -> dict:
         st.stop()
 
     u = lookup_user(email) or {}
+    _teams = get_teams(email)
     ident = {"email": email, "name": name, "role": role,
              "plan": u.get("plan", "free"),
              "paid_until": u.get("paid_until", ""),
-             "team_id": u.get("team_id"),
-             # team-level co-op: effective sharing = the coach's TEAM flag
-             "shares_pool": 1 if get_team_shares_pool(u.get("team_id")) else 0,
+             "team_id": u.get("team_id"),          # PRIMARY team (legacy / default)
+             "team_ids": _teams,                    # every team this coach staffs
+             # team-level co-op: League-wide if ANY of the coach's teams shares
+             "shares_pool": 1 if any(get_team_shares_pool(t) for t in _teams) else 0,
              "pool_banned": u.get("pool_banned", 0)}
     st.session_state["auth_user"] = ident
     set_audit_actor(email)               # attribute this run's writes to this coach

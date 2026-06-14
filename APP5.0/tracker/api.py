@@ -170,7 +170,7 @@ def list_games():
     games = query("""
         SELECT g.id, g.date, g.tracked,
                g.team1_id AS home_id, g.team2_id AS away_id,
-               t1.name AS home, t2.name AS away
+               t1.name AS home, t2.name AS away, t1.gender AS gender
         FROM games g
         JOIN teams t1 ON t1.id=g.team1_id
         JOIN teams t2 ON t2.id=g.team2_id

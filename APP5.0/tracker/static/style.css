@@ -123,6 +123,7 @@ button {
 .chip.away { border-left: 3px solid var(--muted); }
 .chip.sel { background: var(--gold); border-color: var(--gold); color: var(--bg); font-weight: 700; }
 .chip.archived { opacity: 0.55; }
+.gender-filter { margin: 4px 0 10px; }
 
 /* compact horizontally scrollable chip rows (always-on detail pickers) */
 .chips.scroll {

@@ -7,6 +7,7 @@
 const LS = {
   token: 'tracker_token',
   games: 'tracker_games',
+  genderFilter: 'tracker_gender_filter',   // '' = All, 'M' = Boys, 'F' = Girls
   state: 'tracker_state',
   roster: function (gid) { return 'tracker_roster_' + gid; },
   game: function (gid) { return 'tracker_game_' + gid; },   // per-game lineup/quarter/clock
@@ -244,10 +245,35 @@ function showScreen(name) {
 
 let allGames = [];
 
+// Boys/Girls/All filter for the setup screen — narrows the resume-game list AND
+// the new-game team picker for coaches who staff both genders. Persisted; '' = All.
+const GENDERS = [['', 'All'], ['M', 'Boys'], ['F', 'Girls']];
+
+function genderFilter() { return lsGet(LS.genderFilter, ''); }
+
+function renderGenderFilter() {
+  const box = $('gender-filter');
+  if (!box) return;
+  box.innerHTML = '';
+  const cur = genderFilter();
+  GENDERS.forEach(function (g) {
+    box.appendChild(flowBtn(g[1], 'chip' + (cur === g[0] ? ' sel' : ''), function () {
+      lsSet(LS.genderFilter, g[0]);
+      renderGenderFilter();
+      applyGameFilter();
+      if (NG.open) renderNewGame();    // refilter the new-game team chips too
+    }));
+  });
+}
+
 function applyGameFilter() {
   const el = $('game-search');
   const q = ((el && el.value) || '').trim().toLowerCase();
-  const list = !q ? allGames : allGames.filter(function (g) {
+  const gf = genderFilter();
+  const list = allGames.filter(function (g) {
+    // stale-cache games may lack gender — never hide those.
+    if (gf && g.gender && g.gender !== gf) return false;
+    if (!q) return true;
     return ((g.home || '') + ' ' + (g.away || '') + ' ' + (g.date || ''))
       .toLowerCase().indexOf(q) !== -1;
   });
@@ -439,7 +465,10 @@ function teamPicker(side) {
 function fillTeamChips(side, box) {
   box.innerHTML = '';
   const q = NG.search[side].trim().toLowerCase();
-  NG.teams.filter(function (t) { return !q || t.name.toLowerCase().indexOf(q) >= 0; })
+  const gf = genderFilter();
+  NG.teams.filter(function (t) {
+    return (!gf || t.gender === gf) && (!q || t.name.toLowerCase().indexOf(q) >= 0);
+  })
     .forEach(function (t) {
       box.appendChild(flowBtn(t.name, 'chip' + (NG.sel[side] === t.id ? ' sel' : ''), function () {
         NG.sel[side] = NG.sel[side] === t.id ? null : t.id;
@@ -1421,6 +1450,7 @@ function bindUI() {
   // setup: new game / new team
   $('btn-new-game').addEventListener('click', toggleNewGame);
   $('game-search').addEventListener('input', applyGameFilter);
+  renderGenderFilter();
 
   // lineup
   $('btn-lineup-back').addEventListener('click', function () { showScreen('setup'); loadGames(); });

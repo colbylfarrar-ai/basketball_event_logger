@@ -5,6 +5,9 @@ Game-day scouting report: keys to guard / attack, four-factor tendencies,
 the 2s-vs-3s breakeven, personnel cards, shot chart / zones and a printable
 sheet. Extracted from pages/6_Team_Dashboard.py (see
 helpers/dashboard/__init__.py for the ctx convention).
+
+Coaches pick what shows via the "Customize sheet" panel — choices persist
+per-coach and gate both this tab and the printable hand-out (see SCOUT_SECTIONS).
 """
 from __future__ import annotations
 
@@ -21,6 +24,28 @@ import helpers.stats as S
 import helpers.scoutboard as SB
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.settings_utils as SU
+
+
+# Sections a coach can include / exclude on their scout sheet. Applies to BOTH
+# this interactive tab and the printable hand-out. Stored per-coach as a CSV of
+# HIDDEN keys in app_settings ("scout_hidden_sections", namespaced u:<email>:);
+# default = everything on. Keep keys in sync with the _show() guards below and
+# the same keys honoured in helpers/scout.py:printable_html().
+SCOUT_SECTIONS = [
+    ("keys", "Keys to the game (guard / attack)"),
+    ("four_factors", "Four factors & tendencies"),
+    ("breakeven", "Should they shoot 2s or 3s?"),
+    ("three_profile", "Per-player 3-point profile"),
+    ("auto_report", "Auto scouting report"),
+    ("efficiency", "Efficiency summary"),
+    ("personnel", "Personnel (player breakdown)"),
+    ("shot_source", "Shot source — SC / Pass / Screen / Both"),
+    ("shot_chart", "Shot chart"),
+    ("zones", "Shooting by zone"),
+    ("poss_length", "Scoring by possession length"),
+    ("notes", "Game-plan notes"),
+]
 
 
 @st.fragment
@@ -56,6 +81,26 @@ def render(ctx):
             st.caption("Off the scouting list: "
                        + ", ".join(_names[p] for p in _hide if p in _names) + ".")
 
+    # ── per-coach: pick what shows (this tab + the printable sheet) ───────────
+    _hidden = set(filter(None,
+                  (SU.get_setting("scout_hidden_sections", "") or "").split(",")))
+    with st.expander("⚙ Customize sheet — pick what shows"):
+        st.caption("Your picks save automatically and apply to this tab AND the "
+                   "printable hand-out. Coach it your way.")
+        _cc = st.columns(2)
+        _new_hidden = set()
+        for _i, (_k, _lbl) in enumerate(SCOUT_SECTIONS):
+            _on = _cc[_i % 2].checkbox(_lbl, value=(_k not in _hidden),
+                                       key=f"scout_sec_{_k}")
+            if not _on:
+                _new_hidden.add(_k)
+        if _new_hidden != _hidden:
+            SU.set_setting("scout_hidden_sections", ",".join(sorted(_new_hidden)))
+            _hidden = _new_hidden
+
+    def _show(key):
+        return key not in _hidden
+
     # Tier gate: the entire scouting report below is tracked-depth. ctx.has_tracked
     # is already gated for this team (Free -> off; Paid -> own team / pooled
     # opponents only), so blank the tracked header metrics and stop early when
@@ -77,20 +122,21 @@ def render(ctx):
         return
 
     # ── keys to the game ─────────────────────────────────────────────────────
-    k1, k2 = st.columns(2)
-    with k1:
-        st.markdown("<div class='lab-hdr'>How to guard them</div>",
-                    unsafe_allow_html=True)
-        for gtip in sc["guard"]:
-            st.markdown(f"- {gtip}")
-    with k2:
-        st.markdown("<div class='lab-hdr'>How to attack them</div>",
-                    unsafe_allow_html=True)
-        for atip in sc["attack"]:
-            st.markdown(f"- {atip}")
+    if _show("keys"):
+        k1, k2 = st.columns(2)
+        with k1:
+            st.markdown("<div class='lab-hdr'>How to guard them</div>",
+                        unsafe_allow_html=True)
+            for gtip in sc["guard"]:
+                st.markdown(f"- {gtip}")
+        with k2:
+            st.markdown("<div class='lab-hdr'>How to attack them</div>",
+                        unsafe_allow_html=True)
+            for atip in sc["attack"]:
+                st.markdown(f"- {atip}")
 
     # ── four factors & tendencies (the single four-factors block) ────────────
-    if sc["factors"]:
+    if _show("four_factors") and sc["factors"]:
         st.markdown("<div class='lab-hdr'>Team profile — four factors & "
                     "tendencies</div>", unsafe_allow_html=True)
         ffx = [f for f in sc["factors"] if f["value"] is not None]
@@ -153,8 +199,8 @@ def render(ctx):
                         "off a pass. Speeding them up or walling the paint attacks "
                         "the profile above.")
 
-    if ctx.has_tracked:
-
+    # ── should they shoot more 3s or 2s? ─────────────────────────────────────
+    if _show("breakeven"):
         st.markdown("<div class='lab-hdr'>Should they shoot more 3s or 2s?"
                     "</div>", unsafe_allow_html=True)
         bm = st.columns(4)
@@ -197,7 +243,8 @@ def render(ctx):
                 f"especially in the paint ({ctx.soff['pct_paint']*100:.0f}% of points "
                 "come there).")
 
-        # ── per-player 3-point profile ───────────────────────────────────────
+    # ── per-player 3-point profile ───────────────────────────────────────────
+    if _show("three_profile"):
         st.markdown("<div class='lab-hdr'>Per-player 3-point profile</div>",
                     unsafe_allow_html=True)
         three_p = [p for p in ctx.players if p["3PA"] and p["3PA"] >= 4]
@@ -227,7 +274,8 @@ def render(ctx):
         else:
             st.caption("Not enough 3-point volume to profile shooters yet.")
 
-        # ── auto scouting report ─────────────────────────────────────────────
+    # ── auto scouting report ──────────────────────────────────────────────────
+    if _show("auto_report"):
         st.markdown("<div class='lab-hdr'>Scouting report</div>",
                     unsafe_allow_html=True)
         tips = []
@@ -292,6 +340,8 @@ def render(ctx):
             st.caption("A balanced profile — no single factor stands out as a "
                        "scouting key.")
 
+    # ── efficiency summary ────────────────────────────────────────────────────
+    if _show("efficiency"):
         st.markdown("<div class='lab-hdr'>Efficiency summary</div>",
                     unsafe_allow_html=True)
         st.markdown(
@@ -310,7 +360,7 @@ def render(ctx):
                else "a slow, grind-it-out pace."))
 
     # ── personnel ────────────────────────────────────────────────────────────
-    if sc["personnel"]:
+    if _show("personnel") and sc["personnel"]:
         st.markdown("<div class='lab-hdr'>Personnel</div>", unsafe_allow_html=True)
         sc_arch = ctx.archetypes(ctx.gender)
         prow_by_name = {p["name"]: p for p in ctx.players}
@@ -330,6 +380,16 @@ def render(ctx):
                 extra.append(f"Q4 {q4:.1f} ppg")
             extra_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
                           f"{' · '.join(extra)}</span>" if extra else "")
+            # how the player gets their shots (SC / Pass / Screen / Both)
+            cm = p.get("creation")
+            src_html = ""
+            if _show("shot_source") and cm:
+                _src = " · ".join(f"{lbl} {cm[k]:.0f}%" for k, lbl in
+                                  (("self", "SC"), ("pass", "Pass"),
+                                   ("screen", "Screen"), ("both", "Both"))
+                                  if k in cm)
+                src_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
+                            f"▦ Shots: {_src}</span>")
             arch_html = (f" <span class='stat-chip' style='font-size:11px'>"
                          f"{html.escape(archlbl)}</span>" if archlbl else "")
             st.markdown(
@@ -341,7 +401,7 @@ def render(ctx):
                 f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
                 f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "
                 f"TS {('%.0f%%'%p['ts']) if p['ts'] is not None else '—'}</span>"
-                f"{extra_html}<br>"
+                f"{extra_html}{src_html}<br>"
                 f"<span style='color:{ctx.ACCENT};font-size:13px'>▶ "
                 f"{html.escape(p['note'])}</span>"
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"
@@ -349,7 +409,7 @@ def render(ctx):
                 + "</div>", unsafe_allow_html=True)
 
     # ── where they shoot from (real x/y chart when tap data exists) ──────────
-    if ctx.has_tracked:
+    if _show("shot_chart"):
         _sc_shots = ctx.located_team(ctx.team_id, tuple(ctx.bundle["tracked_ids"]))
         if _sc_shots:
             st.markdown("<div class='lab-hdr'>Shot chart</div>",
@@ -361,7 +421,7 @@ def render(ctx):
                        "take away.")
 
     # ── shooting by zone (2s vs 3s) ─────────────────────────────────────────
-    if ctx.has_tracked and ctx.bundle.get("zones_by_type"):
+    if _show("zones") and ctx.bundle.get("zones_by_type"):
         st.markdown("<div class='lab-hdr'>Shooting by zone — 2s vs 3s</div>",
                     unsafe_allow_html=True)
         zbt_sc = ctx.bundle["zones_by_type"]["off"]
@@ -381,7 +441,7 @@ def render(ctx):
                 text_fn=lambda a: f"{a['FG%']*100:.0f}%" if a["FGA"] else "—"),
                 width="stretch", key="scout_zones_fg")
         st.caption("Where they shoot and how they finish, split by shot value.")
-    elif sc["zones"] and any(z["FGA"] for z in sc["zones"].values()):
+    elif _show("zones") and sc["zones"] and any(z["FGA"] for z in sc["zones"].values()):
         st.markdown("<div class='lab-hdr'>Shooting by zone</div>",
                     unsafe_allow_html=True)
         zfig = go.Figure(go.Bar(
@@ -396,7 +456,7 @@ def render(ctx):
         st.plotly_chart(zfig, width="stretch", key="scout_zones")
 
     # ── scoring by possession length (when tracked) ──────────────────────────
-    if ctx.has_tracked and ctx.bundle.get("poss_length"):
+    if _show("poss_length") and ctx.bundle.get("poss_length"):
         _plen = [r for r in ctx.bundle["poss_length"]
                  if r["label"] != "Untimed" and r["FGA"]]
         if _plen:
@@ -415,15 +475,15 @@ def render(ctx):
                        "defense; if half-court is weak, make them play in a crowd.")
 
     # ── game-plan notes (opponent scout) ─────────────────────────────────────
-    if not _self:
+    if not _self and _show("notes"):
         st.markdown("<div class='lab-hdr'>Game-plan notes</div>",
                     unsafe_allow_html=True)
         SB.render_notes(ctx.team_id)
 
-    # ── printable export ─────────────────────────────────────────────────────
+    # ── printable export (always available; honours the section picks above) ──
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)
-    html_doc = SC.printable_html(sc, opp_label)
+    html_doc = SC.printable_html(sc, opp_label, hidden=_hidden)
     from helpers.ui import pdf_or_html_download
     pdf_or_html_download("Scout sheet", html_doc,
                          f"scout_{sc['name'].replace(' ', '_')}",

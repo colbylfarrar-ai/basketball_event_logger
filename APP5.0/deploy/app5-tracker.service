@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=app5
 Group=app5
-WorkingDirectory=/home/app5/app5
+WorkingDirectory=/home/app5/app5/APP5.0
 Environment=APP5_DATA_DIR=/var/lib/app5
 # Master bootstrap token for the tracker — generate with:
 #   python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -19,7 +19,7 @@ Environment=APP5_DATA_DIR=/var/lib/app5
 # after `sudo cp` has NO effect on the running service.
 Environment=TRACKER_TOKEN=CHANGE_ME
 # Bind loopback only — Caddy proxies track.yourdomain → here.
-ExecStart=/home/app5/app5/.venv/bin/uvicorn tracker.api:app \
+ExecStart=/home/app5/app5/APP5.0/.venv/bin/uvicorn tracker.api:app \
   --host 127.0.0.1 \
   --port 8000
 Restart=on-failure

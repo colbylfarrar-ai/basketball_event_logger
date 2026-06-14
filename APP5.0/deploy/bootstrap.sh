@@ -8,7 +8,7 @@
 # Read DEPLOY.md for the full story.
 set -euo pipefail
 
-REPO="${REPO:-$HOME/app5}"
+REPO="${REPO:-$HOME/app5/APP5.0}"
 DATA_DIR="${APP5_DATA_DIR:-/var/lib/app5}"
 
 echo "==> System prereqs (python venv/pip, git, build tools)"

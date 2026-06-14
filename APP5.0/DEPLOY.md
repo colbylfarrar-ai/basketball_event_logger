@@ -110,7 +110,8 @@ the prereqs first or `python3 -m venv` errors with "ensurepip is not available":
 sudo apt update
 sudo apt install -y python3-venv python3-pip git build-essential
 sudo -iu app5
-git clone <YOUR_REPO_URL> ~/app5 && cd ~/app5
+git clone https://github.com/colbylfarrar-ai/basketball_event_logger.git ~/app5
+cd ~/app5/APP5.0          # ← the app lives in this subfolder; every step below runs here
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
@@ -190,16 +191,16 @@ app5-tracker`; editing the repo copy post-copy has no effect on the running serv
 
 ## 6. systemd services
 
-Both units hard-code `WorkingDirectory` + `ExecStart` at `/home/app5/app5` (the
-default for `git clone ... ~/app5` as user `app5`). If you cloned elsewhere, fix
-those paths first. Edit the **repo copies**, *then* copy them in — so the installed
-units carry your edits:
+Both units hard-code `WorkingDirectory` + `ExecStart` at `/home/app5/app5/APP5.0`
+(the app lives in the `APP5.0/` subfolder of the clone). If you cloned elsewhere,
+fix those paths first. Edit the **repo copies**, *then* copy them in — so the
+installed units carry your edits:
 
 ```bash
-nano ~/app5/deploy/app5-tracker.service    # set a real TRACKER_TOKEN (not CHANGE_ME)
-nano ~/app5/deploy/app5-web.service        # confirm paths
-sudo cp ~/app5/deploy/app5-web.service      /etc/systemd/system/
-sudo cp ~/app5/deploy/app5-tracker.service  /etc/systemd/system/
+nano ~/app5/APP5.0/deploy/app5-tracker.service  # set a real TRACKER_TOKEN (not CHANGE_ME)
+nano ~/app5/APP5.0/deploy/app5-web.service      # confirm paths
+sudo cp ~/app5/APP5.0/deploy/app5-web.service      /etc/systemd/system/
+sudo cp ~/app5/APP5.0/deploy/app5-tracker.service  /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now app5-web app5-tracker
 systemctl status app5-web app5-tracker     # both → active (running)
@@ -216,7 +217,7 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --d
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
 sudo apt update && sudo apt install -y caddy
 
-sudo cp ~/app5/deploy/Caddyfile /etc/caddy/Caddyfile
+sudo cp ~/app5/APP5.0/deploy/Caddyfile /etc/caddy/Caddyfile
 sudo nano /etc/caddy/Caddyfile           # set your real domains + email
 sudo systemctl reload caddy
 ```
@@ -229,9 +230,9 @@ becomes the admin (you).** Then add coaches on Settings → Account & users.
 ```bash
 curl -sL https://github.com/benbjohnson/litestream/releases/latest/download/litestream-linux-amd64.deb -o /tmp/ls.deb
 sudo dpkg -i /tmp/ls.deb
-sudo cp ~/app5/deploy/litestream.yml /etc/litestream.yml
+sudo cp ~/app5/APP5.0/deploy/litestream.yml /etc/litestream.yml
 sudo nano /etc/litestream.yml            # set bucket + credentials (B2/S3/…)
-sudo cp ~/app5/deploy/app5-litestream.service /etc/systemd/system/
+sudo cp ~/app5/APP5.0/deploy/app5-litestream.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now app5-litestream
 ```
 
@@ -265,7 +266,7 @@ env on `app5-web.service` — small code change, not done here.)*
 ## Updates / operations
 
 ```bash
-cd ~/app5 && git pull && . .venv/bin/activate && pip install -r requirements.txt
+cd ~/app5/APP5.0 && git pull && . .venv/bin/activate && pip install -r requirements.txt
 sudo systemctl restart app5-web app5-tracker
 ```
 

@@ -419,6 +419,7 @@ function teamPicker(side) {
   const search = document.createElement('input');
   search.type = 'search';
   search.placeholder = 'Search teams';
+  search.autocomplete = 'off';          // no saved-names autofill bar over the chips
   search.value = NG.search[side];
   search.addEventListener('input', function () {
     NG.search[side] = search.value;
@@ -457,7 +458,10 @@ function newTeamForm(side) {
   const name = document.createElement('input');
   name.type = 'text';
   name.placeholder = 'Team name';
+  name.autocomplete = 'off';            // no autofill bar over the inline form
+  name.autocapitalize = 'words';
   const cls = document.createElement('select');
+  cls.setAttribute('aria-label', 'Class');
   TEAM_CLASSES.forEach(function (c) {
     const o = document.createElement('option');
     o.value = c; o.textContent = c;
@@ -465,9 +469,11 @@ function newTeamForm(side) {
     cls.appendChild(o);
   });
   const gen = document.createElement('select');
-  ['M', 'F'].forEach(function (g) {
+  gen.setAttribute('aria-label', 'Gender');
+  // value stays 'M'/'F' for the API; label reads Boys/Girls (app convention).
+  [['M', 'Boys'], ['F', 'Girls']].forEach(function (g) {
     const o = document.createElement('option');
-    o.value = g; o.textContent = g;
+    o.value = g[0]; o.textContent = g[1];
     gen.appendChild(o);
   });
   const stat = document.createElement('p');
@@ -683,7 +689,7 @@ function syncHeaderInputs() {
 // +/- clock nudge (operates on total seconds so it wraps minutes naturally).
 function nudgeClock(deltaSec) {
   let total = S.clockMin * 60 + S.clockSec + deltaSec;
-  total = Math.max(0, Math.min(99 * 60 + 59, total));
+  total = Math.max(0, Math.min(20 * 60 + 59, total));   // HS periods ≤20 min; guards a fat-finger
   S.clockMin = Math.floor(total / 60);
   S.clockSec = total % 60;
   $('clock-min').value = S.clockMin;
@@ -1452,7 +1458,7 @@ function bindUI() {
     savePrefs();
   });
   $('clock-min').addEventListener('change', function () {
-    S.clockMin = Math.max(0, Math.min(99, parseInt(this.value, 10) || 0));
+    S.clockMin = Math.max(0, Math.min(20, parseInt(this.value, 10) || 0));
     this.value = S.clockMin;
     savePrefs();
   });

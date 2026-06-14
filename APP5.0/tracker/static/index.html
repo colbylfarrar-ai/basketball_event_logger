@@ -27,7 +27,7 @@
   <details id="token-box">
     <summary>Server token</summary>
     <div class="token-row">
-      <input id="token-input" type="password" placeholder="Bearer token (optional)" autocomplete="off">
+      <input id="token-input" type="password" placeholder="Bearer token (optional)" autocomplete="off" aria-label="Server token">
       <button id="token-save" class="btn">Save</button>
     </div>
   </details>
@@ -99,7 +99,7 @@
       </div>
       <div class="clock">
         <button id="clk-minus" class="btn sq" type="button" aria-label="Clock down one second">&minus;</button>
-        <input id="clock-min" type="number" min="0" max="99" value="8" inputmode="numeric" aria-label="Minutes">
+        <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
         <span>:</span>
         <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
         <button id="clk-plus" class="btn sq" type="button" aria-label="Clock up one second">+</button>

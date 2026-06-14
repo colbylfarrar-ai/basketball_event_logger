@@ -1,5 +1,8 @@
-/* sw.js — cache-first app shell; /api/* is network only */
-const CACHE = 'tracker-v4';
+/* sw.js — app shell is stale-while-revalidate (instant load + background refresh
+   so a new deploy reaches installed phones on the next open); icons are
+   cache-first; /api/* is network only (never cached — the offline queue is the
+   source of truth). Bump CACHE on every release to purge the old shell. */
+const CACHE = 'tracker-v5';
 const ASSETS = [
   '/',
   '/static/app.js',
@@ -28,11 +31,40 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// App-shell assets get fresh code on every open: navigations ('/'), the JS, and
+// the CSS. Icons + everything else stay cache-first (they rarely change).
+function isShell(url, request) {
+  return request.mode === 'navigate' ||
+    url.pathname === '/' ||
+    url.pathname === '/manifest.json' ||
+    /\/static\/(app|court)\.js$/.test(url.pathname) ||
+    /\/static\/style\.css$/.test(url.pathname);
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;        // passthrough cross-origin
   if (url.pathname.startsWith('/api/')) return;      // network only, never cached
   if (e.request.method !== 'GET') return;
+
+  if (isShell(url, e.request)) {
+    // stale-while-revalidate: serve cache instantly, refresh in the background,
+    // fall back to cache when offline so courtside use never breaks.
+    e.respondWith(
+      caches.open(CACHE).then((cache) =>
+        cache.match(e.request).then((hit) => {
+          const fetching = fetch(e.request).then((res) => {
+            if (res.ok) cache.put(e.request, res.clone());
+            return res;
+          }).catch(() => hit);
+          return hit || fetching;
+        })
+      )
+    );
+    return;
+  }
+
+  // icons + other static: cache-first
   e.respondWith(
     caches.match(e.request).then((hit) =>
       hit ||

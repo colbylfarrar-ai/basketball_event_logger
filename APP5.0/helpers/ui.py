@@ -194,6 +194,30 @@ def gender_radio(container=None, *, default="F", key=None, label="League",
                    horizontal=horizontal, key=key)
 
 
+def season_picker(container=None, *, key=None, label="Season"):
+    """Shared season selector. Returns the season VALUE to pass to season-scoped
+    engines: ``'Current'`` for the active season or an archive label like
+    ``'2025-2026'``.
+
+    Renders nothing and returns ``seasons.ACTIVE`` when there are no archived
+    seasons yet (pre-rollover) — so the picker stays invisible until there is an
+    archive to switch to. Previous seasons are an OPEN ARCHIVE (free, full depth to
+    everyone); see ``helpers/seasons.py``. NOTE: this is the single-source picker —
+    wiring each page to actually switch its data + bypass gating on the returned
+    value is the remaining integration step (kept out of the live gated pages until
+    it can be verified against real archive data at season rollover).
+    """
+    import helpers.seasons as SEAS
+    opts = SEAS.season_options()                 # [(value, label)], active first
+    if len(opts) <= 1:
+        return SEAS.ACTIVE                        # no archives → nothing to pick
+    c = container if container is not None else st
+    labels = dict(opts)
+    values = [v for v, _ in opts]
+    return c.selectbox(label, values, index=0,
+                       format_func=lambda v: labels.get(v, v), key=key)
+
+
 def score_card(rows, *, footer="", footer_top=False, style_names=False):
     """Return HTML for the standard score card (CSS in assets/style.css).
 

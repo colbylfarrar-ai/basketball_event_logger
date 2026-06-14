@@ -39,6 +39,15 @@ def is_current(season) -> bool:
     return season in (None, "", ACTIVE)
 
 
+def archive_open(season) -> bool:
+    """True when ``season`` is a past (archived) season — an OPEN ARCHIVE: free,
+    full tracked depth, visible to everyone regardless of plan/pool. False for the
+    active ('Current') season, where the normal entitlement gating applies. Pages
+    use this to decide whether to bypass the paid/pool gates for the chosen season.
+    """
+    return not is_current(season)
+
+
 def season_options() -> list[tuple[str, str]]:
     """[(value, label)] for a season picker — active first, then archives.
     The value is what you pass to the season-scoped engines ('Current' or a label).

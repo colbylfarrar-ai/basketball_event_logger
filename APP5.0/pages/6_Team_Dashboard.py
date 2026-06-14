@@ -414,8 +414,9 @@ def _tracked_ratings(g):
     return TR.tracked_ratings(gender=g)
 
 
-scored = _score_ratings(gender)
-tracked = _tracked_ratings(gender)
+with st.spinner("Crunching team ratings…"):
+    scored = _score_ratings(gender)
+    tracked = _tracked_ratings(gender)
 
 
 def _rank(t):

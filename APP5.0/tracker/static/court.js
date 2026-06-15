@@ -45,14 +45,12 @@
       class: 'court-svg',
       'aria-label': 'half court'
     });
-    // Orient the way a coach reads it: half-court at the BOTTOM, rim at the TOP,
-    // and screen-left = court-left (tap left -> LW/LC, tap right -> RW/RC). This is
-    // the natural feet frame with NO y-flip: svg-y grows downward, so feet y=0
-    // (baseline) sits at the top and y grows toward half-court at the bottom — and
-    // feet-x maps straight to screen-x. Because there's no reflection, the arcs
-    // below use sweep-flag 1 (the un-flipped bulge direction). Tap->feet is direct:
-    // getScreenCTM().inverse() with no group transform yields feet coordinates.
-    group = el('g', {});
+    // View: half-court at the bottom, rim at the top (180° of the old baseline-up
+    // view). Arcs keep their authored sweep flags because rotate() is a pure
+    // rotation, not a reflection. The left/right *logic* (tap left = LW) is handled
+    // in app.js onCourtTap, NOT here — the drawn court is left/right symmetric, so
+    // the view stays put and only the stored coordinate is flipped.
+    group = el('g', { transform: 'rotate(180, 0, 18.5) scale(1,-1) translate(0,-37)' });
 
     const line = (x1, y1, x2, y2, cls) =>
       group.appendChild(el('line', { x1: x1, y1: y1, x2: x2, y2: y2, class: cls || 'court-line' }));
@@ -67,10 +65,9 @@
     group.appendChild(el('rect', { x: -LANE_HW, y: 0, width: LANE_HW * 2, height: LANE_D, class: 'court-line' }));
     group.appendChild(el('circle', { cx: 0, cy: LANE_D, r: FT_R, class: 'court-line' }));
 
-    // restricted-area semicircle opening away from the baseline toward half-court
-    // (+y bulge => sweep 1 in the un-flipped frame)
+    // restricted-area semicircle opening away from the baseline (+y bulge => sweep 0 in flipped coords)
     group.appendChild(el('path', {
-      d: 'M ' + (-RA_R) + ' ' + HOOP_Y + ' A ' + RA_R + ' ' + RA_R + ' 0 0 1 ' + RA_R + ' ' + HOOP_Y,
+      d: 'M ' + (-RA_R) + ' ' + HOOP_Y + ' A ' + RA_R + ' ' + RA_R + ' 0 0 0 ' + RA_R + ' ' + HOOP_Y,
       class: 'court-line'
     }));
 
@@ -83,7 +80,7 @@
     line(-CORNER_X, 0, -CORNER_X, joinY);
     line(CORNER_X, 0, CORNER_X, joinY);
     group.appendChild(el('path', {
-      d: 'M ' + (-CORNER_X) + ' ' + joinY + ' A ' + THREE_R + ' ' + THREE_R + ' 0 0 1 ' + CORNER_X + ' ' + joinY,
+      d: 'M ' + (-CORNER_X) + ' ' + joinY + ' A ' + THREE_R + ' ' + THREE_R + ' 0 0 0 ' + CORNER_X + ' ' + joinY,
       class: 'court-line'
     }));
 

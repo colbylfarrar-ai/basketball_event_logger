@@ -782,12 +782,16 @@ function setMode(m) {
 function onCourtTap(x, y) {
   if (S.flow.mode !== 'shot') setMode('shot'); // a court tap always means a shot
   S.flow.noLoc = false; // a tap always reverts to tap-derived value/zone
-  S.flow.x = x;
+  // The court is drawn from the coach's half-court->rim angle (left/right symmetric),
+  // so flip x for the STORED coordinate + zone only: tap left -> LW/LC, tap right ->
+  // RW/RC. The marker keeps the raw tapped x so it lands exactly where you touched.
+  const sx = -x;
+  S.flow.x = sx;
   S.flow.y = y;
   Court.setMarker(x, y);
-  const v = Court.shotValue(x, y);
-  const z = Court.zoneFromXY(x, y);
-  const d = Math.round(Court.shotDistance(x, y));
+  const v = Court.shotValue(sx, y);
+  const z = Court.zoneFromXY(sx, y);
+  const d = Math.round(Court.shotDistance(sx, y));
   $('shot-caption').textContent = (v === 3 ? '3PT' : '2PT') + ' · ' + z + ' · ' + d + ' ft';
   renderFlow();
 }

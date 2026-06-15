@@ -157,11 +157,6 @@
 
 <div id="toast" hidden></div>
 
-<div id="update-banner" class="update-banner" hidden>
-  <span>New version available</span>
-  <button id="update-refresh" class="btn" type="button">Refresh</button>
-</div>
-
 <script>
 /* One-time iOS install banner + service worker registration */
 (function () {
@@ -180,35 +175,17 @@
     }
   } catch (e) { /* ignore */ }
   if ('serviceWorker' in navigator) {
-    // Controlled update: a new SW installs but WAITS; we surface a "Refresh"
-    // banner, and only the tap activates it + reloads. No reinstall, no
-    // kill-and-reopen, and never mid-possession.
-    var doReload = false;
+    // Auto-update: the SW activates immediately (skipWaiting in sw.js). When a NEW
+    // worker takes over an already-controlled page, reload once so a reopen lands
+    // on the latest version. `hadController` skips the reload on the first install.
+    var hadController = !!navigator.serviceWorker.controller;
+    var refreshing = false;
     navigator.serviceWorker.addEventListener('controllerchange', function () {
-      // Fires for the first-install claim too — only reload when WE asked for it.
-      if (doReload) window.location.reload();
+      if (refreshing || !hadController) return;
+      refreshing = true;
+      window.location.reload();
     });
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function (reg) {
-      function showBanner(worker) {
-        var ub = document.getElementById('update-banner');
-        if (!ub || !worker) return;
-        ub.hidden = false;
-        document.getElementById('update-refresh').onclick = function () {
-          doReload = true;
-          worker.postMessage({ type: 'SKIP_WAITING' });
-        };
-      }
-      // A new version already waiting from a previous visit?
-      if (reg.waiting && navigator.serviceWorker.controller) showBanner(reg.waiting);
-      reg.addEventListener('updatefound', function () {
-        var sw = reg.installing;
-        if (!sw) return;
-        sw.addEventListener('statechange', function () {
-          // 'installed' + an existing controller = an UPDATE (not first install).
-          if (sw.state === 'installed' && navigator.serviceWorker.controller) showBanner(sw);
-        });
-      });
-    }).catch(function () {});
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
   }
 })();
 </script>

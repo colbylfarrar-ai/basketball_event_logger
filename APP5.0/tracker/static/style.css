@@ -125,18 +125,6 @@ button {
 .chip.archived { opacity: 0.55; }
 .gender-filter { margin: 4px 0 10px; }
 
-/* "New version available" update banner (controlled SW update) */
-.update-banner[hidden] { display: none; }   /* must beat the `display: flex` below */
-.update-banner {
-  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
-  z-index: 999; display: flex; align-items: center; gap: 12px;
-  max-width: calc(100vw - 24px);
-  padding: 10px 14px; border-radius: 12px;
-  background: var(--bg3); border: 1px solid var(--gold);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-.update-banner .btn { min-height: 36px; padding: 6px 14px; }
-
 /* compact horizontally scrollable chip rows (always-on detail pickers) */
 .chips.scroll {
   flex-wrap: nowrap;

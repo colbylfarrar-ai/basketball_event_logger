@@ -1,8 +1,14 @@
-/* sw.js — app shell is stale-while-revalidate (instant load + background refresh
-   so a new deploy reaches installed phones on the next open); icons are
-   cache-first; /api/* is network only (never cached — the offline queue is the
-   source of truth). Bump CACHE on every release to purge the old shell. */
-const CACHE = 'tracker-v11';
+/* sw.js — reliability over cleverness:
+   - install auto-activates (skipWaiting) so a new version never gets stuck
+     "waiting" behind an open tab (iOS especially never reliably activated it);
+   - activate purges old caches + claims clients;
+   - app shell (navigations, app.js, court.js, style.css, manifest) is NETWORK-FIRST
+     so an open of the app always pulls the latest when online, with a cache
+     fallback so courtside offline still works;
+   - icons are cache-first; /api/* and /sw.js are never cached.
+   The page reloads once when a NEW worker takes over (see index.html), so a reopen
+   lands on the latest — no banner, no kill-and-reopen, no reinstall. */
+const CACHE = 'tracker-v12';
 const ASSETS = [
   '/',
   '/static/app.js',
@@ -15,13 +21,11 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  // No skipWaiting() here — a new SW WAITS until the app tells it to activate
-  // (the user taps "Refresh" on the update banner), so we never swap code out
-  // from under a coach mid-possession.
   e.waitUntil(
     caches.open(CACHE)
       // add each asset individually so a missing icon can't brick the install
       .then((cache) => Promise.all(ASSETS.map((url) => cache.add(url).catch(() => {}))))
+      .then(() => self.skipWaiting())          // activate immediately, never wait
   );
 });
 
@@ -33,14 +37,7 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// The page posts this when the user taps "Refresh" on the update banner — that's
-// the only thing that activates a waiting new version.
-self.addEventListener('message', (e) => {
-  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
-});
-
-// App-shell assets get fresh code on every open: navigations ('/'), the JS, and
-// the CSS. Icons + everything else stay cache-first (they rarely change).
+// Shell assets we always want fresh when online.
 function isShell(url, request) {
   return request.mode === 'navigate' ||
     url.pathname === '/' ||
@@ -53,22 +50,19 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;        // passthrough cross-origin
   if (url.pathname.startsWith('/api/')) return;      // network only, never cached
-  if (url.pathname === '/sw.js') return;             // never cache the SW script itself
+  if (url.pathname === '/sw.js') return;             // never cache the SW script
   if (e.request.method !== 'GET') return;
 
   if (isShell(url, e.request)) {
-    // stale-while-revalidate: serve cache instantly, refresh in the background,
-    // fall back to cache when offline so courtside use never breaks.
+    // network-first: freshest shell when online, cache fallback when offline.
     e.respondWith(
-      caches.open(CACHE).then((cache) =>
-        cache.match(e.request).then((hit) => {
-          const fetching = fetch(e.request).then((res) => {
-            if (res.ok) cache.put(e.request, res.clone());
-            return res;
-          }).catch(() => hit);
-          return hit || fetching;
-        })
-      )
+      fetch(e.request).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
+        return res;
+      }).catch(() => caches.match(e.request))
     );
     return;
   }

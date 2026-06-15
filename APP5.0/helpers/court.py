@@ -77,10 +77,13 @@ def _draw_court(fig):
 
 def _court_layout(fig, title, height):
     """Apply the shared half-court axes / theme."""
+    # Reversed axes = view the court the way coaches read it and the way the mobile
+    # tracker now draws it: half-court at the bottom, rim at the TOP, with left/right
+    # mirrored so a shot shows on the side it was tapped. (180° of the old view.)
     fig.update_layout(
         title=dict(text=title, font=dict(size=13, color="#c9d1d9"), x=0.02),
-        xaxis=dict(range=[-26, 26], visible=False),
-        yaxis=dict(range=[-2, CG.Y_MAX], visible=False, scaleanchor="x", scaleratio=1),
+        xaxis=dict(range=[26, -26], visible=False),
+        yaxis=dict(range=[CG.Y_MAX, -2], visible=False, scaleanchor="x", scaleratio=1),
         height=height, margin=dict(l=5, r=5, t=42, b=5),
         plot_bgcolor="rgba(18,20,30,1)", paper_bgcolor="rgba(0,0,0,0)")
 

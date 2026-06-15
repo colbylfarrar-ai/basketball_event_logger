@@ -45,9 +45,13 @@
       class: 'court-svg',
       'aria-label': 'half court'
     });
-    // Flip so feet-y grows UP from the baseline at the bottom: svgY = 37 - feetY
-    // (feet y=-1 -> svg 38 (bottom edge), feet y=38 -> svg -1 (top edge))
-    group = el('g', { transform: 'scale(1,-1) translate(0,-37)' });
+    // Orient the way a coach reads it: looking from HALF-COURT (bottom) toward the
+    // RIM (top). That's a 180° rotation of the old baseline-up view — which also
+    // mirrors left/right, so the right wing as the coach sees it records on the
+    // correct side. The rotate() is a pure rotation (not another reflection) so the
+    // 3pt / restricted-area arcs keep their curvature instead of turning inside-out.
+    // Tap->feet still works: getScreenCTM().inverse() inverts the full transform.
+    group = el('g', { transform: 'rotate(180, 0, 18.5) scale(1,-1) translate(0,-37)' });
 
     const line = (x1, y1, x2, y2, cls) =>
       group.appendChild(el('line', { x1: x1, y1: y1, x2: x2, y2: y2, class: cls || 'court-line' }));

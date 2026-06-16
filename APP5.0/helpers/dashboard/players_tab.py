@@ -16,9 +16,42 @@ import streamlit as st
 
 from database.db import query
 from helpers.court import zone_leader_map as _zone_leader_map
-from helpers.ui import DIVERGE, HEAT
+from helpers.ui import DIVERGE, HEAT, grid as _grid
 import helpers.team_analytics as TA
 import helpers.player_ratings as PR
+
+
+# Format precision per leaderboard `fmt` kind (pct values already sit on a 0-100
+# scale in the player_stat_table rows, so just round).
+_FMT_DEC = {"f0": 0, "f1": 1, "f2": 2, "pct": 1}
+
+
+def _full_stat_df(ctx):
+    """Every per-player stat for the roster in ONE flat DataFrame. Columns are
+    sourced from ctx.PLAYER_LEADER_GROUPS (the single every-stat catalogue the
+    leaderboards use), so this table never re-curates its own column set. Event-
+    derived columns are dropped for viewers without tracked access (ctx.has_tracked),
+    matching the rest of the tab's gating. Data comes straight from ctx.players
+    (already computed for the page) — no new query."""
+    seen, spec = set(), []
+    for _cat, items in ctx.PLAYER_LEADER_GROUPS:
+        for label, key, fmt in items:
+            if key in seen:
+                continue
+            seen.add(key)
+            spec.append((label, key, fmt))
+    if not ctx.has_tracked:
+        spec = [s for s in spec if s[1] not in PR.EVENT_DERIVED_STATS]
+    rows = []
+    for p in ctx.players:
+        row = {"Player": p["name"], "#": p["number"], "GP": p["GP"]}
+        for label, key, fmt in spec:
+            v = p.get(key)
+            row[label] = (round(v, _FMT_DEC.get(fmt, 1))
+                          if isinstance(v, (int, float)) and not isinstance(v, bool)
+                          else v)
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 @st.fragment
@@ -60,44 +93,71 @@ def render(ctx):
             st.caption("➕ Set player positions on the **Setup** page to unlock the "
                        "depth chart (with height / wingspan / weight).")
 
-        # Tier gate: the 0-100 ratings, archetype and shot-creation mix are
-        # event-derived. ctx.has_tracked already folds in the per-team
-        # entitlement (tracked_gate), so a Free viewer / non-pool scout sees only
-        # the box columns (#/Player/GP/PPG/RPG/APG/TS%).
-        arch = ctx.archetypes(ctx.gender) if ctx.has_tracked else {}
-        rdf_rows = []
-        for p in ctx.players:
-            row = {"#": p["number"], "Player": p["name"], "GP": p["GP"]}
-            if ctx.has_tracked:
-                for c in ctx.RATING_COLS_ALL:
-                    row[c] = p.get(c)
-                row["Archetype"] = arch.get(p["_pid"], "—")
-            row.update({
-                "PPG": p["PPG"], "RPG": p["RPG"], "APG": p["APG"], "TS%": p["TS%"],
-            })
-            if ctx.has_tracked:
-                row.update({
-                    "USG%": p["USG%"], "+/-": p["+/-"],
-                    "SC Shot%": p.get("SCShot%"), "SC Pass%": p.get("SCPass%"),
-                    "SC Created%": p.get("SCCreated%"),
-                })
-            rdf_rows.append(row)
-        rdf = pd.DataFrame(rdf_rows)
-        st.dataframe(
-            rdf, hide_index=True, width="stretch",
-            height=min(620, 60 + 35 * len(rdf)),
-            column_config={c: st.column_config.ProgressColumn(
-                c, format="%.0f", min_value=0, max_value=100)
-                for c in (ctx.RATING_COLS_ALL if ctx.has_tracked else [])})
-        if ctx.has_tracked:
-            st.caption("Every per-player rating in the glossary (0–100, 50 = league "
-                       "average) plus the data-driven Archetype, and shot-creation "
-                       "mix: SC Shot% (own shots), SC Pass% (passes into shots) and "
-                       "SC Created% (screens that freed a shooter) — shares of the "
-                       "player's total shot creation.")
+        # Top table — a quick toggle between the compact ratings view (default)
+        # and ONE scrollable grid of every per-player stat. Default off so the
+        # tab stays light; the full grid is wide (every glossary stat) and is
+        # built/rendered only on demand.
+        _show_all = st.checkbox(
+            "📋 Show every stat in one table",
+            value=False, key="pl_full_table_toggle",
+            help="Swap the ratings table for a single sortable/filterable grid of "
+                 "every per-player stat — no need to scroll to the leaderboards.")
+
+        if _show_all:
+            _full = _full_stat_df(ctx)
+            if _full.empty:
+                st.info("No players to show.")
+            else:
+                _grid(_full, "pl_full_stat_grid", height=560)
+                st.download_button(
+                    "Every stat (CSV)", _full.to_csv(index=False),
+                    file_name=f"players_team{ctx.team_id}.csv", mime="text/csv",
+                    key="pl_full_stat_csv")
+                st.caption(
+                    "Every per-player stat in one grid — sort or filter any column. "
+                    + ("Ratings (0–100), shooting, playmaking, rebounding, defense "
+                       "and advanced/impact stats." if ctx.has_tracked else
+                       "Box-score stats only — tracked ratings and advanced stats "
+                       "unlock with a Paid plan."))
         else:
-            st.caption("Box-score lines. Tracked ratings, archetypes and "
-                       "shot-creation mix unlock with a Paid plan.")
+            # Tier gate: the 0-100 ratings, archetype and shot-creation mix are
+            # event-derived. ctx.has_tracked already folds in the per-team
+            # entitlement (tracked_gate), so a Free viewer / non-pool scout sees only
+            # the box columns (#/Player/GP/PPG/RPG/APG/TS%).
+            arch = ctx.archetypes(ctx.gender) if ctx.has_tracked else {}
+            rdf_rows = []
+            for p in ctx.players:
+                row = {"#": p["number"], "Player": p["name"], "GP": p["GP"]}
+                if ctx.has_tracked:
+                    for c in ctx.RATING_COLS_ALL:
+                        row[c] = p.get(c)
+                    row["Archetype"] = arch.get(p["_pid"], "—")
+                row.update({
+                    "PPG": p["PPG"], "RPG": p["RPG"], "APG": p["APG"], "TS%": p["TS%"],
+                })
+                if ctx.has_tracked:
+                    row.update({
+                        "USG%": p["USG%"], "+/-": p["+/-"],
+                        "SC Shot%": p.get("SCShot%"), "SC Pass%": p.get("SCPass%"),
+                        "SC Created%": p.get("SCCreated%"),
+                    })
+                rdf_rows.append(row)
+            rdf = pd.DataFrame(rdf_rows)
+            st.dataframe(
+                rdf, hide_index=True, width="stretch",
+                height=min(620, 60 + 35 * len(rdf)),
+                column_config={c: st.column_config.ProgressColumn(
+                    c, format="%.0f", min_value=0, max_value=100)
+                    for c in (ctx.RATING_COLS_ALL if ctx.has_tracked else [])})
+            if ctx.has_tracked:
+                st.caption("Every per-player rating in the glossary (0–100, 50 = league "
+                           "average) plus the data-driven Archetype, and shot-creation "
+                           "mix: SC Shot% (own shots), SC Pass% (passes into shots) and "
+                           "SC Created% (screens that freed a shooter) — shares of the "
+                           "player's total shot creation.")
+            else:
+                st.caption("Box-score lines. Tracked ratings, archetypes and "
+                           "shot-creation mix unlock with a Paid plan.")
 
         if ctx.has_tracked:
             st.markdown("<div class='lab-hdr'>Ratings compared</div>",

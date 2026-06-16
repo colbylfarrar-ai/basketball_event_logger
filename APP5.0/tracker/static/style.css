@@ -344,6 +344,9 @@ button {
   color: var(--bg);
   font-weight: 600;
 }
+/* the [hidden] attr must beat the display:flex above (else the banner shows in
+   standalone and the dismiss X can't hide it) — id+attr outspecifies plain id */
+#ios-banner[hidden] { display: none; }
 #ios-banner button { background: none; border: none; color: var(--bg); font-size: 1rem; min-width: 44px; min-height: 44px; }
 
 #toast {

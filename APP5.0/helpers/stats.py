@@ -1495,6 +1495,85 @@ def shot_location_summary(shots):
     }
 
 
+# Shot-length buckets — the single source for every "by shot distance" breakdown.
+# Top edge = court_geom.THREE_R (NFHS HS 3-pt arc, 19.75 ft); kept as a literal
+# here so stats.py never imports court_geom's matplotlib stack at module load.
+# These are PURE distance bands, independent of the 2/3 value: a corner three
+# (~19 ft) lands in the 10-19.75 band by *length*, not the 19.75+ band — by design,
+# since this answers "from how far" not "how many threes".
+DIST_EDGES = (5.0, 10.0, 19.75)
+DIST_LABELS = ("<5 ft", "5-10 ft", "10-19.75 ft", "19.75+ ft")
+
+
+def distance_buckets(shots, edges=DIST_EDGES, labels=DIST_LABELS):
+    """
+    Roll a list of located_shots()/mapped_shots() (each carrying `dist`, `make`,
+    `value`) into shot-length bands. `edges` are the inner cut points (feet); the
+    bands are [0,e0) [e0,e1) … [e_last,∞) — len(edges)+1 buckets, labelled by
+    `labels`. Right-edge exclusive, so a shot exactly on an edge falls in the
+    upper band.
+
+    Returns an ordered list (one dict per band, empties included so every caller
+    shows the same columns):
+        {label, lo, hi, n, fgm, fg, pps, share}
+      fg    = make rate (0-1) or None for an empty band
+      pps   = points per attempt (make×value averaged over the band's attempts)
+      share = band attempts / total attempts (0-1)
+    Returns [] for no shots.
+    """
+    if not shots:
+        return []
+
+    def _idx(dist):
+        i = 0
+        for e in edges:
+            if dist < e:
+                break
+            i += 1
+        return i
+
+    nb = len(edges) + 1
+    acc = [{"n": 0, "fgm": 0, "pts": 0} for _ in range(nb)]
+    for s in shots:
+        b = acc[_idx(s["dist"])]
+        b["n"] += 1
+        if s["make"]:
+            b["fgm"] += 1
+            b["pts"] += s["value"]
+    total = len(shots)
+    bounds = (0.0,) + tuple(edges) + (None,)   # lo/hi per band; hi None = open top
+    out = []
+    for i, b in enumerate(acc):
+        n = b["n"]
+        out.append({
+            "label": labels[i] if i < len(labels) else f"band{i}",
+            "lo": bounds[i], "hi": bounds[i + 1],
+            "n": n, "fgm": b["fgm"],
+            "fg": _safe(b["fgm"], n) if n else None,
+            "pps": _safe(b["pts"], n) if n else None,
+            "share": _safe(n, total),
+        })
+    return out
+
+
+def distance_buckets_caption(buckets, *, show_pps=False):
+    """One-line '· '-joined caption for distance_buckets(), matching the
+    shot_location_summary captions ('label: n · fg%'). Empty bands render as '—'.
+    Returns '' when there are no shots, so callers can `if cap: st.caption(cap)`."""
+    if not buckets:
+        return ""
+    parts = []
+    for b in buckets:
+        if b["n"]:
+            seg = f"{b['label']}: {b['n']} · {b['fg'] * 100:.0f}%"
+            if show_pps and b["pps"] is not None:
+                seg += f" · {b['pps']:.2f} PPS"
+        else:
+            seg = f"{b['label']}: —"
+        parts.append(seg)
+    return "  ·  ".join(parts)
+
+
 def mapped_shots(game_ids=None, events=None, player_id=None, team_id=None,
                  include_approx=True):
     """

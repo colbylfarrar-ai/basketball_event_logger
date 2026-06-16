@@ -455,3 +455,152 @@ def team_tracked_pack(gender=None, tracked=None, game_ids=None):
             "tqbox": {t: {q: dict(b) for q, b in tqbox.get(t, {}).items()}
                       for t in teams},
             "name_of": name_of, "class_of": class_of}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  EVERY-STAT TEAM TABLE  (the team analog of player_ratings.player_stat_table)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Display spec for the comprehensive team table: (label, source, key, round[, pct]).
+#   source ∈ {'trk' (tracked_ratings), 'ts' (tracked_pack['ts']),
+#             'form' (team_form_stats), 'scored' (score_ratings)}
+#   round  = decimal places (None = leave as-is / int)
+#   pct    = optional multiplier applied before rounding (1-scale → 0-100)
+# Column ORDER is this list's order (hand-curated, identity first), NOT alphabetical.
+# Shooting/rate columns are pulled from `ts` (already on a 0-100 scale) so the
+# table never mixes fraction-scale (tracked_ratings.eFG) with percent-scale values.
+_TEAM_STAT_SPEC = [
+    # identity
+    ("Team",      "trk",    "name",        None),
+    ("Rank",      "trk",    "Rank",        None),
+    ("Class",     "trk",    "class",       None),
+    ("Trk GP",    "trk",    "GP",          None),
+    # power / rating
+    ("Power",     "trk",    "Power",       1),
+    ("Rating",    "trk",    "Rating",      2),
+    ("Rating pts", "trk",   "RatingPts",   2),
+    # record (results-only)
+    ("W",         "form",   "W",           None),
+    ("L",         "form",   "L",           None),
+    ("Win%",      "form",   "win_pct",     1, 100),
+    ("MOV",       "form",   "MOV",         1),
+    # efficiency
+    ("ORtg",      "ts",     "ORtg",        1),
+    ("DRtg",      "ts",     "DRtg",        1),
+    ("NetRtg",    "ts",     "NetRtg",      1),
+    ("Pace",      "ts",     "Pace",        1),
+    ("PPP",       "ts",     "PPP",         3),
+    ("Opp PPP",   "ts",     "oPPP",        3),
+    ("PPS",       "ts",     "PPS",         2),
+    ("SCE",       "ts",     "SCE",         1),
+    # shooting — offense
+    ("eFG%",      "ts",     "eFG",         1),
+    ("TS%",       "ts",     "TS",          1),
+    ("FG%",       "ts",     "FGpct",       1),
+    ("3P%",       "ts",     "TPpct",       1),
+    ("FT%",       "ts",     "FTpct",       1),
+    ("3PAr",      "ts",     "TPAr",        1),
+    ("FTr",       "ts",     "FTr",         2),
+    # shooting — defense
+    ("Opp eFG%",  "ts",     "oeFG",        1),
+    ("Opp FG%",   "ts",     "oFGpct",      1),
+    ("Opp 3P%",   "ts",     "oTPpct",      1),
+    # scoring mix (share of points)
+    ("Paint pt%", "ts",     "paint_share", 1),
+    ("3PT pt%",   "ts",     "three_share", 1),
+    ("FT pt%",    "ts",     "ft_share",    1),
+    ("Paint/G",   "ts",     "paint_pg",    1),
+    # rebounding
+    ("ORB%",      "ts",     "ORBpct",      1),
+    ("DRB%",      "ts",     "DRBpct",      1),
+    ("REB%",      "ts",     "REBpct",      1),
+    ("OREB/G",    "ts",     "oreb_pg",     1),
+    ("DREB/G",    "ts",     "dreb_pg",     1),
+    ("REB/G",     "ts",     "reb_pg",      1),
+    # playmaking / ball security
+    ("AST/G",     "ts",     "ast_pg",      1),
+    ("TOV/G",     "ts",     "tov_pg",      1),
+    ("AST/TO",    "ts",     "ast_to",      2),
+    ("AST%",      "ts",     "Astpct",      1),
+    ("TOV%",      "ts",     "TOVpct",      1),
+    # defense (counting + rate)
+    ("STL/G",     "ts",     "stl_pg",      1),
+    ("BLK/G",     "ts",     "blk_pg",      1),
+    ("Stocks/G",  "ts",     "stocks_pg",   1),
+    ("STL/100",   "ts",     "stl_r",       1),
+    ("BLK/100",   "ts",     "blk_r",       1),
+    ("PF/G",      "ts",     "pf_pg",       1),
+    # volume
+    ("FGA/G",     "ts",     "fga_pg",      1),
+    ("3PA/G",     "ts",     "tpa_pg",      1),
+    ("Poss/G",    "ts",     "poss_pg",     1),
+    # results-only composites (made-up indices, 0-100 / signed)
+    ("Dominance", "form",   "Dominance",   1),
+    ("Consistency", "form", "Consistency", 1),
+    ("Clutch",    "form",   "Clutch",      1),
+    ("Momentum",  "form",   "Momentum",    1),
+    ("Luck%",     "form",   "Luck",        1, 100),
+    ("Pyth W%",   "form",   "Pyth_wpct",   1, 100),
+    ("Volatility", "form",  "Volatility",  1),
+    # schedule
+    ("SOS",       "trk",    "SOS",         2),
+    ("SOR",       "trk",    "SOR",         2),
+    ("ClassAdj",  "trk",    "ClassAdj",    2),
+]
+
+
+def _fmt_cell(val, ndigits, pct):
+    """Round one cell for display; pass None / non-numeric straight through."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        if pct is not None:
+            val = val * pct
+        if ndigits is None:
+            return val
+        return round(val, ndigits)
+    return val
+
+
+def team_stat_table(gender=None, tracked=None, pack=None, form=None,
+                    game_ids=None):
+    """
+    The team analog of player_ratings.player_stat_table: ONE flat row per TRACKED
+    team holding every team stat (power, efficiency, shooting on both ends,
+    rebounding, playmaking, defense, volume, results-only composites and
+    schedule), in a hand-curated column order.
+
+    Rows cover only teams with at least one tracked game (the tracked plane),
+    ordered by tracked Rank. Pass the already-computed `tracked`
+    (team_ratings.tracked_ratings), `pack` (team_tracked_pack) and `form`
+    (team_form_stats) dicts to reuse the page's caches — any left None is built
+    here for `gender`. `game_ids` is the entitlement read-filter threaded into the
+    tracked aggregations (League-wide pool scoping); results-only `form` columns
+    are league-wide regardless.
+
+    Returns a list of ordered dicts (display labels as keys, insertion order =
+    column order), so a caller can `pd.DataFrame(rows)` directly. Display floats
+    are pre-rounded and percents pre-scaled to 0-100 — the grid does no
+    formatting. None = undefined for this sample (never coerced to 0).
+    """
+    if tracked is None:
+        tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids)
+    if pack is None:
+        pack = team_tracked_pack(gender=gender, tracked=tracked, game_ids=game_ids)
+    if form is None:
+        form = team_form_stats(gender=gender)
+
+    ts = pack.get("ts", {})
+    teams = pack.get("teams", sorted(tracked, key=lambda t: tracked[t]["Rank"]))
+    sources = {"trk": tracked, "ts": ts, "form": form}
+
+    rows = []
+    for t in teams:
+        row = {}
+        for label, src, key, *rest in _TEAM_STAT_SPEC:
+            ndigits = rest[0] if rest else None
+            pct = rest[1] if len(rest) > 1 else None
+            row[label] = _fmt_cell(sources.get(src, {}).get(t, {}).get(key),
+                                   ndigits, pct)
+        rows.append(row)
+    return rows

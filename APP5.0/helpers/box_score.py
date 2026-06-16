@@ -862,6 +862,10 @@ def render_box_score(game_id: int):
                 st.caption(f"{n_real}/{len(shots)} shots are tap-located; the rest "
                            "sit at their zone centroid. Sharper as you tap shots in "
                            "the Game Tracker.")
+            # length breakdown — tap-located shots only (centroids have no true dist)
+            _dbl = S.distance_buckets([s for s in shots if not s["approx"]])
+            if _dbl:
+                st.caption("By length — " + S.distance_buckets_caption(_dbl))
         else:
             # legacy zone-only game → 5-zone heat tiles (no x/y captured yet)
             st.caption("Zone-only data for this game — tap shots in the Game "

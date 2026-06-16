@@ -282,3 +282,7 @@ with t_shots:
             st.caption(f"Avg distance **{_ls['avg_dist']:.1f} ft** · FG "
                        f"{_ls['fg'] * 100:.0f}% · rim {_ls['rim_n']} · "
                        f"mid {_ls['mid_n']} · three {_ls['three_n']}")
+        _dbl = S.distance_buckets([s for s in shots if not s["approx"]])
+        if _dbl:
+            st.caption("By length (tap-located only) — "
+                       + S.distance_buckets_caption(_dbl, show_pps=True))

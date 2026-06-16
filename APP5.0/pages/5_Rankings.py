@@ -36,7 +36,7 @@ from database.db import query
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
-                        AWAY, gender_radio, score_card,
+                        AWAY, gender_radio, score_card, grid as _grid,
                         page_header, empty_state, HEAT, DIVERGE)
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
@@ -303,6 +303,15 @@ def _tracked_pack(g, _tracked, vis=None):
 @st.cache_data(ttl=600, show_spinner=False)
 def _win_net(g, _scored):
     return LA.win_network(gender=g, scored=_scored)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _team_stat_rows(g, _tracked, _pack, _form, vis=None):
+    # Every-team-stat table (the Tracked tab's full stat grid). `_tracked/_pack/
+    # _form` are passed-in caches (underscore = not hashed); the key is (g, vis),
+    # and `vis` keeps the tracked columns pool-scoped to this viewer.
+    return LA.team_stat_table(gender=g, tracked=_tracked, pack=_pack, form=_form,
+                              game_ids=(set(vis) if vis is not None else None))
 
 
 # AXIS-2 read-filter for every LEAGUE-WIDE tracked aggregation on this page: the
@@ -1024,6 +1033,27 @@ def _fx_track():
             st.download_button("Tracked ratings (CSV)", df.to_csv(index=False),
                                file_name=f"tracked_ratings_{gender}.csv",
                                mime="text/csv", key="dl_tracked")
+
+            # ── full team stat table — every tracked-team stat in one grid ────
+            st.markdown("<div class='section-hdr'>Full team stat table</div>",
+                        unsafe_allow_html=True)
+            full_rows = _team_stat_rows(gender, tracked, pack, form_stats, _VISK)
+            _keep = {r["name"] for r in rows}          # same Class / min-games filter
+            full = pd.DataFrame([fr for fr in full_rows if fr["Team"] in _keep])
+            if full.empty:
+                st.info("No tracked teams match the current Class / games filter.")
+            else:
+                _grid(full, "trk_full", height=560)
+                st.download_button(
+                    "Full team stats (CSV)", full.to_csv(index=False),
+                    file_name=f"team_stats_{gender}.csv", mime="text/csv",
+                    key="dl_team_full")
+                st.caption(
+                    "Every team stat in one grid — sort or filter any column. "
+                    "Efficiency, shooting and rate columns (0-100 scale) come from "
+                    "**tracked games only** (Trk GP); record, MOV and the composites "
+                    "(Dominance / Clutch / Luck …) are **full-season results**. "
+                    "Pool-scoped to you.")
 
         st.markdown("<div class='section-hdr'>Tracked schedule & box scores</div>",
                     unsafe_allow_html=True)

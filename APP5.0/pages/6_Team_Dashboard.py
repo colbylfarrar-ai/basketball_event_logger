@@ -1270,6 +1270,9 @@ with tab_charts:
                 st.caption("Hexagon size = attempts, color = points per shot "
                            "vs league average. Dots are individual shots — "
                            "green make, red ✕ miss.")
+                _td_db = S.distance_buckets(_td_shots)
+                if _td_db:
+                    st.caption("By length — " + S.distance_buckets_caption(_td_db))
             else:
                 st.markdown("**Hot zone maps** — size = volume, color = FG%")
                 hz1, hz2 = st.columns(2)

@@ -901,6 +901,9 @@ def _fx_shot():
                     + _seg("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
                     + _seg("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
                     + _seg("Three", _ls["three_n"], _ls["three_fg"]))
+            _dbl = S.distance_buckets(pl_shots)
+            if _dbl:
+                st.caption("By length — " + S.distance_buckets_caption(_dbl))
         else:
             fig, ok = _shot_chart(pl_zone, f"{PL['name']} — shot chart (zones)")
             if ok:
@@ -1336,6 +1339,9 @@ def _fx_prof():
                         + _seg("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
                         + _seg("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
                         + _seg("Three", _ls["three_n"], _ls["three_fg"]))
+                _dbl = S.distance_buckets(p_shots)
+                if _dbl:
+                    st.caption("By length — " + S.distance_buckets_caption(_dbl))
             else:
                 fig, ok = _shot_chart(zsplits.get(pid, {}),
                                       f"{P['name']} — FG% by zone")

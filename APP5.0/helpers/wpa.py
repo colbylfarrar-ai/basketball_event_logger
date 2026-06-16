@@ -82,12 +82,19 @@ def league_ep(game_ids=None, events=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
-             events=None, names=None, ginfo=None):
+             events=None, names=None, ginfo=None, pregame_edge=0.0):
     """
     Per-player WPA + clutch WPA + a win-probability timeline for one game.
 
     `mode` = "scoring" (made-basket WP jumps) or "possession" (value-over-
     expected over every shot/turnover possession; see module docstring).
+
+    `pregame_edge` = the pre-game expected margin (home − away = team1 − team2, in
+    points) so the win-probability model knows the matchup wasn't even. 0.0 treats
+    the teams as evenly matched (the historical default; leaves every existing
+    number unchanged). season_wpa fills this from the opponent-adjusted ratings so
+    a comeback or a defensive stop earned as the underdog is weighted UP and
+    padding a blowout is weighted DOWN — the opponent-strength dimension of value.
 
     `events` / `names` / `ginfo` are optional pre-fetched inputs so a season-wide
     caller can fetch them ONCE and avoid re-querying per game (see season_wpa):
@@ -133,16 +140,18 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
             elif e["shooter_team_id"] == t2:
                 a += pts
             t = _elapsed(e["quarter"], e["time"])
-            wp = WP.win_prob(h - a, max(end - t, 0), end, 0.0, sd_full)
+            wp = WP.win_prob(h - a, max(end - t, 0), end, pregame_edge, sd_full)
             timeline.append((t, h - a, wp))
 
     players = defaultdict(lambda: {"wpa": 0.0, "clutch_wpa": 0.0,
                                    "off_wpa": 0.0, "def_wpa": 0.0, "plays": 0})
 
-    def li_at(margin, secs_left):
-        """Leverage = WP swing of a 2-pt basket here (un-normalized)."""
-        return abs(WP.win_prob(margin + 2, secs_left, end, 0.0, sd_full)
-                   - WP.win_prob(margin - 2, secs_left, end, 0.0, sd_full))
+    def li_at(margin, secs_left, edge=0.0):
+        """Leverage = WP swing of a 2-pt basket here (un-normalized). `edge` is
+        the pre-game spread in the SAME perspective as `margin` — home for the
+        scoring/timeline path, the offense's perspective for a possession."""
+        return abs(WP.win_prob(margin + 2, secs_left, end, edge, sd_full)
+                   - WP.win_prob(margin - 2, secs_left, end, edge, sd_full))
 
     if mode == "possession":
         if ep is None:
@@ -165,14 +174,17 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
             t = _elapsed(e["quarter"], e["time"])
             secs_left = max(end - t, 0)
             mo = (h - a) if off_team == t1 else (a - h)   # offense's margin
+            # pre-game spread from the OFFENSE's perspective — flip it when the
+            # offense is the away team, since `mo` is then an away-margin.
+            off_edge = pregame_edge if off_team == t1 else -pregame_edge
             pts = (3 if e["shot_type"] == 3 else 2) if (
                 et == "shot" and e["shot_result"] == "make") else 0
 
-            wp_actual = WP.win_prob(mo + pts, secs_left, end, 0.0, sd_full)
-            wp_expect = WP.win_prob(mo + ep, secs_left, end, 0.0, sd_full)
+            wp_actual = WP.win_prob(mo + pts, secs_left, end, off_edge, sd_full)
+            wp_expect = WP.win_prob(mo + ep, secs_left, end, off_edge, sd_full)
             off_wpa = wp_actual - wp_expect
             def_wpa = -off_wpa
-            li = li_at(mo, secs_left)
+            li = li_at(mo, secs_left, off_edge)
             li_list.append(li)
 
             # offense credit
@@ -233,12 +245,12 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
             elif e["shooter_team_id"] == t2:
                 a += pts
             ma = h - a
-            d_home = (WP.win_prob(ma, secs_left, end, 0.0, sd_full)
-                      - WP.win_prob(mb, secs_left, end, 0.0, sd_full))
+            d_home = (WP.win_prob(ma, secs_left, end, pregame_edge, sd_full)
+                      - WP.win_prob(mb, secs_left, end, pregame_edge, sd_full))
             wpa_team = d_home if e["shooter_team_id"] == t1 else -d_home
             rows.append((e["primary_player_id"],
                          e["pass_from_id"] if e["event_type"] == "shot" else None,
-                         wpa_team, li_at(mb, secs_left)))
+                         wpa_team, li_at(mb, secs_left, pregame_edge)))
         li_mean = (sum(r[3] for r in rows) / len(rows)) if rows else 1.0
         li_mean = li_mean or 1.0
         for pid, passer, wpa_team, li in rows:
@@ -279,9 +291,15 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
 #  SEASON WPA  (aggregate across tracked games)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def season_wpa(gender=None, mode="scoring"):
+def season_wpa(gender=None, mode="scoring", opp_adjust=True):
     """
     Aggregate WPA across every tracked game for a gender, in the chosen mode.
+
+    `opp_adjust` (default True) feeds each game's pre-game spread — from the
+    opponent-adjusted score ratings (helpers.team_ratings) — into the win-
+    probability model, so value created against a stronger opponent (as the
+    underdog) is weighted up and padding a blowout is weighted down. Set False for
+    the legacy even-teams behaviour. Unrated matchups fall back to even teams.
 
     Returns {player_id: {"wpa","clutch_wpa","off_wpa","def_wpa","plays","games",
     "wpa_per_game","name","team"}}. In possession mode off_wpa/def_wpa split a
@@ -313,13 +331,25 @@ def season_wpa(gender=None, mode="scoring"):
                          JOIN teams t2 ON t2.id=g.team2_id
                          WHERE g.id IN ({_ph})""", tuple(game_ids))}
 
+    # Opponent-strength edge per game: the neutral-floor pre-game spread (team1 −
+    # team2) from the opponent-adjusted score ratings, fed to the WP model so the
+    # underdog's value is weighted up. Computed once; unrated matchups → edge 0.
+    TR = scored = None
+    if opp_adjust:
+        import helpers.team_ratings as TR
+        scored = TR.score_ratings(gender=gender)
+
     agg = defaultdict(lambda: {"wpa": 0.0, "clutch_wpa": 0.0, "off_wpa": 0.0,
                                "def_wpa": 0.0, "plays": 0, "games": 0,
                                "name": "", "team": ""})
     for row in tg:
         gid = row["id"]
+        gi = ginfo.get(gid)
+        edge = 0.0
+        if scored and gi:
+            edge = TR.predict_spread(scored, gi["t1"], gi["t2"]) or 0.0
         res = game_wpa(gid, mode=mode, ep=ep, events=ev_by_game.get(gid, []),
-                       names=names, ginfo=ginfo.get(gid))
+                       names=names, ginfo=gi, pregame_edge=edge)
         if not res:
             continue
         for pid, r in res["players"].items():

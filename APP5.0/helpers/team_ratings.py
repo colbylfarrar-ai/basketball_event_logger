@@ -56,6 +56,17 @@ DEFAULT_ITERS      = 25    # SRS iterations (converges well before this)
 DEFAULT_HCA        = 3.0   # home-court advantage, points (predict_spread only)
 DEFAULT_REG        = 4.0   # phantom average-games per team (shrinkage strength)
 _SOR_MARGIN_CAP    = 20    # margin credited to a result is clamped to ±this
+DEFAULT_SOS_WEIGHT = 0.4   # slight schedule-strength nudge, in RATING POINTS PER
+                           # STANDARD DEVIATION of SOS. The SRS opponent-adjustment
+                           # already accounts for who you played, but its shrinkage
+                           # (DEFAULT_REG phantom games) and the sparsely-connected
+                           # HS schedule graph under-credit teams that played a
+                           # brutal slate. SOS is standardized within the field
+                           # (z-score) before this weight is applied, so the median
+                           # team gets ~0, the bump is independent of the league's
+                           # SOS scale, and the extreme tails are bounded at ~±2.5
+                           # SD (~±0.9 pts here). A team one SD tougher than average
+                           # gains 0.4 pts. Set 0 for pure AdjNet+Class.
 
 
 _safe = S._safe   # shared definition lives in helpers.stats
@@ -228,12 +239,27 @@ def _sos_sor(team_games, adj_net):
     return sos, sor
 
 
+def _sos_bump(sos, pts_per_sd):
+    """Standardized schedule-strength nudge in rating points: `pts_per_sd` points
+    per standard deviation of SOS above/below the field mean. Self-centering (the
+    median team gets ~0) and independent of the league's SOS scale, so the same
+    weight behaves sanely whether SOS spans ±10 or ±30. 0 disables it."""
+    if not sos or not pts_per_sd:
+        return {t: 0.0 for t in sos}
+    vals = list(sos.values())
+    mean = sum(vals) / len(vals)
+    sd = _safe(sum((v - mean) ** 2 for v in vals), len(vals)) ** 0.5
+    if sd <= 0:
+        return {t: 0.0 for t in sos}
+    return {t: pts_per_sd * (sos[t] - mean) / sd for t in sos}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SCORE VERSION  (results-only, all teams)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                  reg=DEFAULT_REG, season="Current"):
+                  reg=DEFAULT_REG, season="Current", sos_weight=DEFAULT_SOS_WEIGHT):
     """
     Results-only power ratings for every team in `gender` (None = all).
     Returns {team_id: {...}} with, per team:
@@ -243,9 +269,11 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
         AdjNet,                             xPPG - xoPPG (neutral-floor margin)
         SOS, SOR,                           schedule difficulty / résumé
         ClassAdj,                           cross-cluster bridge bump
-        Rating,                             AdjNet + ClassAdj  (THE one number)
+        Rating,            AdjNet + ClassAdj + slight SOS nudge (THE one number)
         Power,                              Rating on a 0-100 scale (50 = avg)
         Rank                                1 = best (by Rating, within gender)
+    `sos_weight` is the points-per-SD schedule-strength nudge folded into Rating
+    (standardized; see DEFAULT_SOS_WEIGHT); 0 reproduces pure AdjNet+Class.
     """
     games = _finished_games(gender=gender, season=season)
     meta = _team_meta(gender=gender)
@@ -272,8 +300,9 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
     adj_net = {t: adjO[t] - adjD[t] for t in tg}
     sos, sor = _sos_sor(tg, adj_net)
     cadj = _class_adj(meta, list(tg.keys()), class_step)
+    sbump = _sos_bump(sos, sos_weight)
 
-    rating = {t: adj_net[t] + cadj[t] for t in tg}
+    rating = {t: adj_net[t] + cadj[t] + sbump[t] for t in tg}
     power = _power_scale(rating)
 
     out = {}
@@ -323,7 +352,8 @@ def _tracked_team_game_boxes(games):
 
 
 def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                    reg=DEFAULT_REG, game_ids=None, season="Current"):
+                    reg=DEFAULT_REG, game_ids=None, season="Current",
+                    sos_weight=DEFAULT_SOS_WEIGHT):
     """
     Advanced, possession-based power ratings over tracked games only.
     `game_ids` is the entitlement read-filter (see _finished_games): a League-wide
@@ -335,7 +365,7 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
         PPP, oPPP,                          adjusted points per possession
         eFG, oeFG, FGpct, oFGpct, TPpct,    shooting (own / allowed)
         SOS, SOR, ClassAdj,                 schedule (in per-100 units)
-        Rating,                             NetRtg + class bump (THE one number)
+        Rating,            NetRtg + class bump + slight SOS nudge (THE one number)
         RatingPts,                          Rating expressed as pts/game (for spreads)
         Power, Rank
     Efficiency uses authoritative final scores for points and stats-engine
@@ -396,8 +426,9 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
     adj_net = {t: adjO[t] - adjD[t] for t in tg}
     sos, sor = _sos_sor(tg, adj_net)
     cadj = _class_adj(meta, list(tg.keys()), class_step)
+    sbump = _sos_bump(sos, sos_weight)
 
-    rating = {t: adj_net[t] + cadj[t] for t in tg}
+    rating = {t: adj_net[t] + cadj[t] + sbump[t] for t in tg}
     power = _power_scale(rating)
 
     out = {}
@@ -406,7 +437,7 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
         pace = _safe(pace_acc[t], n)
         sh, osh = shoot[t], o_shoot[t]
         # rating expressed as points/game so spreads land in real points
-        rating_pts = adj_net[t] / 100 * pace + cadj[t]
+        rating_pts = adj_net[t] / 100 * pace + cadj[t] + sbump[t]
         out[t] = {
             "name": meta.get(t, {}).get("name", f"#{t}"),
             "class": meta.get(t, {}).get("class", "N/A"),

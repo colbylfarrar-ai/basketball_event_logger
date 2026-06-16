@@ -3298,6 +3298,10 @@ if True:
                 help="Scoring = win-prob swing on made baskets. Possession = value "
                      "over an average possession on every shot AND turnover, split "
                      "into offense and defense (credits stops, steals, blocks).")
+            st.caption("Opponent-adjusted: each game's pre-game spread feeds the "
+                       "win-probability model, so a stop or comeback earned as the "
+                       "underdog (vs a stronger team) is worth more, and padding a "
+                       "blowout is worth less.")
             sw = _season_wpa(gender, "scoring" if wmode == "Scoring" else "possession")
             wrows = sorted([dict(v, _pid=pid) for pid, v in sw.items()
                             if pid in my_pids],

@@ -108,11 +108,14 @@ def player_card_html(player_id, gender=None, table=None):
         v = r.get(k)
         return f.format(v) if v is not None else "—"
 
+    _bio = query("SELECT height, wingspan, weight, handedness FROM players WHERE id=?",
+                 (player_id,))
+    meas = S.fmt_measurables(_bio[0]) if _bio else None
     band = (
         f"<div class='band'><div class='mark'>Analytics Hub · Player Card</div>"
         f"<h1>#{r.get('number','')} {e(r['name'])}</h1>"
         f"<div class='meta'>{e(r['team'])} · {e(r.get('class','N/A'))} · "
-        f"{r.get('GP',0)} games</div>"
+        f"{r.get('GP',0)} games" + (f" · {e(meas)}" if meas else "") + "</div>"
         f"<div class='chips'>"
         f"<span class='chip'><b>{g('OVERALL','{:.0f}')}</b> OVR</span>"
         f"<span class='chip'><b>{g('OFFENSE','{:.0f}')}</b> OFF</span>"
@@ -201,7 +204,8 @@ def game_recap_html(game_id):
     events = S.fetch_events([game_id])
     tb, ob = TA.team_and_opp_box(t1id, [game_id], events=events)
     sb = GF.scoring_buckets([game_id], events=events)
-    meta = {r["id"]: r for r in query("SELECT id, name, number, team_id FROM players")}
+    meta = {r["id"]: r for r in
+            query("SELECT id, name, number, team_id, handedness FROM players")}
     boxes = {pid: S.finalize_box(b)
              for pid, b in S.aggregate_player_boxes([game_id], events=events).items()}
 
@@ -233,7 +237,9 @@ def game_recap_html(game_id):
         out = ""
         for pid, b in rs:
             m = meta.get(pid, {})
-            out += (f"<tr><td>#{m.get('number','')} {e(m.get('name','?'))}</td>"
+            hand = S.fmt_hand(m.get("handedness"))
+            out += (f"<tr><td>#{m.get('number','')} {e(m.get('name','?'))} "
+                    f"<span style='color:#8a94a2;font-size:11px'>{hand}</span></td>"
                     f"<td class='num'>{b.get('PTS',0)}</td>"
                     f"<td class='num'>{b.get('TRB',0)}</td><td class='num'>{b.get('AST',0)}</td>"
                     f"<td class='num'>{b.get('STL',0)}</td><td class='num'>{b.get('BLK',0)}</td>"

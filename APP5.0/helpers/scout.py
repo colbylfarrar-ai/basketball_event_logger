@@ -29,32 +29,6 @@ def _mean(pool):
     return sum(pool) / len(pool) if pool else 0.0
 
 
-def _fmt_height(inches):
-    """Inches → feet-inches string (e.g. 74 → 6'2\"); None / 0 → None."""
-    if not inches:
-        return None
-    ft, inch = divmod(int(round(inches)), 12)
-    return f"{ft}'{inch}\""
-
-
-def _fmt_bio(row):
-    """Compact measurables line for a personnel card from a players row:
-    height · weight · wingspan · handedness. Handedness shows as RH/LH, but
-    only tags onto a line that already has a real measurable (a lone "RH" is
-    noise) — except a lefty is always flagged since that's the scouting read.
-    None when nothing worth printing is set."""
-    if not row:
-        return None
-    ht = _fmt_height(row["height"])
-    wt = f"{row['weight']:g} lb" if row["weight"] else None
-    ws = _fmt_height(row["wingspan"])
-    lefty = row["handedness"] == "left"
-    meas = [x for x in (ht, wt, (f"{ws} wing" if ws else None)) if x]
-    if not meas:
-        return "LH" if lefty else None
-    return " · ".join(meas + ["LH" if lefty else "RH"])
-
-
 def team_zone(game_ids, team_pids):
     """Team shooting by zone over the given games (team's own shots only)."""
     if not game_ids:
@@ -229,7 +203,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     bio = {r["id"]: r for r in _proster}
     for p in personnel:
         _b = bio.get(p["pid"])
-        p["bio"] = _fmt_bio(_b)
+        p["bio"] = S.fmt_measurables(_b)
         p["pos"] = (_b["position"].strip() or None) if (_b and _b["position"]) else None
     zones = team_zone(tuple(gids), team_pids)
     ev = S.fetch_events(list(gids)) if gids else []

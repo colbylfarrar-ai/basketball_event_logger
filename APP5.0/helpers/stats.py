@@ -250,6 +250,49 @@ def percentile(value, pool, higher_better=True):
     return round(100 * below / len(vals), 0)
 
 
+# ── player measurables formatting (single source for every printable sheet) ─────
+def fmt_height(inches):
+    """Inches → feet-inches string (74 → 6'2\"); None / 0 / non-numeric → None."""
+    try:
+        n = int(round(float(inches)))
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    ft, inch = divmod(n, 12)
+    return f"{ft}'{inch}\""
+
+
+def fmt_hand(handedness):
+    """'left' → 'LH'; anything else (incl None, the default 'right') → 'RH'."""
+    return "LH" if handedness == "left" else "RH"
+
+
+def fmt_measurables(row, include_hand=True):
+    """Compact one-line measurables for a player row (dict OR sqlite Row) carrying
+    height / weight / wingspan / handedness. Handedness ALWAYS shows (RH/LH) when
+    include_hand — coaches want it on every sheet, so the line is never empty for a
+    known player even with no height/weight/wingspan on file. None only when row is
+    falsy."""
+    if not row:
+        return None
+
+    def _get(k):
+        try:
+            return row[k]
+        except (KeyError, IndexError, TypeError):
+            return None
+
+    ht = fmt_height(_get("height"))
+    wt = _get("weight")
+    wt = f"{wt:g} lb" if wt else None
+    ws = fmt_height(_get("wingspan"))
+    parts = [p for p in (ht, wt, (f"{ws} wing" if ws else None)) if p]
+    if include_hand:
+        parts.append(fmt_hand(_get("handedness")))
+    return " · ".join(parts) if parts else None
+
+
 # ── game-clock helpers (regulation 8:00 quarters, 4:00 OT) ──────────────────────
 def clock_secs(t):
     """Seconds shown on the game clock for an 'M:S' string. Tolerant of bad input."""

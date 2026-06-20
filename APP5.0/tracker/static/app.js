@@ -18,6 +18,19 @@ function $(id) { return document.getElementById(id); }
 function lsGet(k, fb) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch (e) { return fb; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 
+/* "Assistant scorer" deep link: ?t=<token> saves the token (raw string, same as
+   the manual token field), then strips it from the URL so it isn't left in the
+   address bar or bookmarked. Runs at load, before the first API call. */
+(function () {
+  try {
+    var t = new URLSearchParams(location.search).get('t');
+    if (t) {
+      localStorage.setItem(LS.token, t);
+      history.replaceState(null, '', location.pathname);
+    }
+  } catch (e) {}
+})();
+
 function uuid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -117,7 +130,7 @@ function qDelete(uuids) {
 const SERVER_FIELDS = ['uuid', 'event_type', 'quarter', 'time', 'primary_player_id', 'shot_result',
   'shot_x', 'shot_y', 'shot_type', 'zone', 'pass_from_id', 'shot_created_by_id', 'rebound_by_id',
   'blocked_by_id', 'guarded_by_id', 'secondary_player_id', 'official_id', 'stolen_by_id',
-  'on_court', 'officials_on'];
+  'play_type', 'on_court', 'officials_on'];
 
 function toServer(item) {
   const o = {};
@@ -762,7 +775,7 @@ function resetFlow(mode) {
     x: null, y: null,
     noLoc: false, manualType: 2, manualZone: null,  // location-less shot entry
     shooter: null,
-    details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null },
+    details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
     fouled: null, fouler: null, official: null,
     player: null, stolen: null
   };
@@ -859,6 +872,17 @@ const SHOT_DETAILS = [
   ['guarded_by_id', 'Guarded by']
 ];
 
+// Optional one-tap "play call" tag — the literal set call (nullable). Separate
+// from the inferred tempo/creation play types computed in helpers/playtypes.py.
+const PLAY_TYPES = [
+  ['pnr', 'Pick & roll'], ['iso', 'Isolation'], ['post', 'Post-up'],
+  ['spot', 'Spot-up'], ['cut', 'Cut'], ['offscreen', 'Off screen'],
+  ['transition', 'Transition'], ['putback', 'Putback'], ['other', 'Other']
+];
+const PLAY_TYPE_KEYS = PLAY_TYPES.map(function (p) { return p[0]; });
+const PLAY_TYPE_LABEL = PLAY_TYPES.reduce(function (m, p) { m[p[0]] = p[1]; return m; }, {});
+function ptLabel(k) { return PLAY_TYPE_LABEL[k] || k; }
+
 function renderFlow() {
   const wrap = $('flow');
   if (!wrap) return;
@@ -891,6 +915,9 @@ function renderFlow() {
         wrap.appendChild(chipRow(d[1], players, f.details[d[0]],
           function (id) { f.details[d[0]] = id; renderFlow(); }, { allowNone: true, scroll: true }));
       });
+      wrap.appendChild(chipRow('Play type', PLAY_TYPE_KEYS, f.details.play_type,
+        function (k) { f.details.play_type = k; renderFlow(); },
+        { allowNone: true, scroll: true, labelFn: ptLabel }));
       wrap.appendChild(makeMissRow(logShot));
     }
 
@@ -939,7 +966,7 @@ function baseEvent(type) {
     shot_result: null,
     shot_x: null, shot_y: null, shot_type: null, zone: null,
     pass_from_id: null, shot_created_by_id: null, rebound_by_id: null,
-    blocked_by_id: null, guarded_by_id: null,
+    blocked_by_id: null, guarded_by_id: null, play_type: null,
     secondary_player_id: null, official_id: null, stolen_by_id: null,
     on_court: onCourtIds(),
     officials_on: S.lineup.officials.slice()
@@ -1548,8 +1575,27 @@ function bindUI() {
   setInterval(flush, 20000);
 }
 
+// Controls whose endpoints a guest "assistant scorer" link can't call.
+const GUEST_HIDE_IDS = ['btn-new-game', 'btn-add-home', 'btn-add-away',
+  'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log'];
+
+async function applyGuestMode() {
+  // A guest link is log-only — hide create/finish/edit/add controls so the
+  // assistant only sees logging. The server enforces this regardless.
+  try {
+    const r = await api('/api/me');
+    if (!r.ok) return;
+    S.isGuest = !!(await r.json()).guest;
+  } catch (e) { return; }
+  if (!S.isGuest) return;
+  GUEST_HIDE_IDS.forEach(function (id) { const el = $(id); if (el) el.hidden = true; });
+  const s = $('setup-status');
+  if (s) s.textContent = 'Assistant mode — log events only.';
+}
+
 async function init() {
   bindUI();
+  await applyGuestMode();
   updateNetUI();
 
   // restore mid-game state after reload

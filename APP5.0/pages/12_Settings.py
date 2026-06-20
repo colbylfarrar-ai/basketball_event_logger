@@ -8,6 +8,7 @@ Three controls, all persisted to the app_settings key/value table:
 
 All read/write goes through helpers/settings_utils.py.
 """
+import os
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -385,6 +386,28 @@ else:
                     AUTH.set_tracker_token(_email)
                     st.rerun()
                 st.caption("The coach pastes this into the mobile tracker (Paid/admin only).")
+
+            st.markdown("**Assistant scorer link** (log-only)")
+            _glinks = AUTH.list_guest_tokens(_email)
+            _trk = os.environ.get("APP5_TRACKER_URL", "").rstrip("/")
+            for _g in _glinks:
+                _url = f"{_trk}/?t={_g['token']}" if _trk else f"?t={_g['token']}"
+                st.code(_url, language=None)
+                if st.button("Revoke link", key=f"glrm_{_g['token'][:10]}"):
+                    AUTH.revoke_guest_token(_g["token"])
+                    st.rerun()
+            _can_glink = (_newplan == "paid") or (_role == "admin")
+            if st.button("Generate assistant link", key=f"glgen_{_email}",
+                         disabled=not _can_glink,
+                         help=None if _can_glink else "Paid/admin only."):
+                AUTH.issue_guest_token(_email)
+                st.rerun()
+            st.caption(
+                "Reusable, revocable link that lets an assistant LOG events into "
+                "your live games with no account. Can't finish/create games, edit, "
+                "or change settings. Anyone with the link can log — revoke to kill "
+                "it." + ("" if _trk else " Append the shown ?t=<token> to your "
+                "tracker URL."))
 
             if st.button("Remove user", key=f"rm_{_email}", disabled=_is_self,
                          help="You can't remove yourself." if _is_self else None):

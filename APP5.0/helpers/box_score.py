@@ -1251,6 +1251,25 @@ def render_box_score(game_id: int):
                                file_name=f"box_{game_id}_{nm}.csv", mime="text/csv",
                                key=f"dl_box_{game_id}_{tid}")
 
+        # MaxPreps-friendly combined export: both teams, one row per player, with
+        # a Team column and no TOTAL/derived-only cols — so a coach reporting to
+        # MaxPreps doesn't have to re-enter the box by hand.
+        mp_cols = ["Team", "#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%",
+                   "FT", "FT%", "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF"]
+        mp_rows = []
+        for tid, nm in [(t1id, t1name), (t2id, t2name)]:
+            for _, rr in make_df(tid).iterrows():
+                if rr["Player"] == "TOTAL":
+                    continue
+                row = {"Team": nm}
+                row.update({c: rr[c] for c in mp_cols if c != "Team"})
+                mp_rows.append(row)
+        mp_df = pd.DataFrame(mp_rows, columns=mp_cols)
+        st.download_button(
+            "⬇ MaxPreps box — both teams (CSV)", mp_df.to_csv(index=False),
+            file_name=f"maxpreps_box_{game_id}_{t1name}_vs_{t2name}.csv",
+            mime="text/csv", key=f"dl_maxpreps_{game_id}")
+
     with tabs[5]:
         _tab_box()
 

@@ -56,6 +56,16 @@ def _resolve_user(request: Request):
                  "WHERE tracker_token=? AND tracker_token<>''", (tok,))
     if rows:
         return dict(rows[0])
+    # "assistant scorer" guest link — its own stored token; resolves to the owner
+    # coach (inherits their plan so the tracker works) but flagged guest, so
+    # require_full_user blocks it from anything past logging/undoing events.
+    grow = query("SELECT u.email, u.role, u.plan, u.team_id "
+                 "FROM tracker_guest_tokens g JOIN app_users u ON u.email=g.owner_email "
+                 "WHERE g.token=? AND g.revoked=0", (tok,))
+    if grow:
+        u = dict(grow[0])
+        u["guest"] = True
+        return u
     env_tok = os.environ.get("TRACKER_TOKEN")
     if env_tok and tok == env_tok:
         return {"email": os.environ.get("TRACKER_OWNER_EMAIL", "").strip().lower(),
@@ -74,6 +84,17 @@ def current_api_user(request: Request) -> dict:
         raise HTTPException(status_code=403, detail="tracker requires a Paid plan")
     # attribute every tracker write this request to this coach (router-wide Depends)
     set_audit_actor(user.get("email", ""))
+    return user
+
+
+def require_full_user(request: Request) -> dict:
+    """current_api_user + a guest block: rejects "assistant scorer" guest links so
+    they can only log/undo events — never create/finish/edit/delete or change
+    setup. (The router-wide current_api_user already validated the token.)"""
+    user = current_api_user(request)
+    if user.get("guest"):
+        raise HTTPException(status_code=403,
+                            detail="assistant scorer link is log-only")
     return user
 
 
@@ -103,6 +124,7 @@ class EventIn(BaseModel):
     secondary_player_id: int | None = None
     official_id: int | None = None
     stolen_by_id: int | None = None
+    play_type: str | None = None
     on_court: list[int] = Field(default_factory=list)
     officials_on: list[int] = Field(default_factory=list)
 
@@ -256,7 +278,7 @@ def undo(game_id: int):
 
 
 @api.post("/games/{game_id}/finish")
-def finish(game_id: int, user: dict = Depends(current_api_user)):
+def finish(game_id: int, user: dict = Depends(require_full_user)):
     if not query("SELECT id FROM games WHERE id=?", (game_id,)):
         raise HTTPException(status_code=404, detail="no such game")
     hp, ap = GE.finish_game(game_id)
@@ -271,6 +293,14 @@ def finish(game_id: int, user: dict = Depends(current_api_user)):
     return {"ok": True, "home": hp, "away": ap}
 
 
+@api.get("/me")
+def whoami(user: dict = Depends(current_api_user)):
+    """The resolved identity — lets the PWA hide full-coach-only controls for a
+    guest "assistant scorer" link (log-only). Guest-allowed (read only)."""
+    return {"email": user.get("email", ""), "role": user.get("role", ""),
+            "plan": user.get("plan", ""), "guest": bool(user.get("guest"))}
+
+
 # ── courtside setup: create game / team, quick-add player / official ───────────
 @api.get("/teams")
 def list_teams():
@@ -278,7 +308,7 @@ def list_teams():
 
 
 @api.post("/teams")
-def create_team(t: NewTeam):
+def create_team(t: NewTeam, _: dict = Depends(require_full_user)):
     existing = query("SELECT id FROM teams WHERE name=?", (t.name.strip(),))
     if existing:
         return {"id": existing[0]["id"], "created": False}
@@ -294,7 +324,7 @@ def create_team(t: NewTeam):
 
 
 @api.post("/games")
-def create_game(g: NewGame, user: dict = Depends(current_api_user)):
+def create_game(g: NewGame, user: dict = Depends(require_full_user)):
     if g.team1_id == g.team2_id:
         raise HTTPException(status_code=422, detail="home and away must differ")
     date = normalize_date(g.date)
@@ -313,7 +343,8 @@ def create_game(g: NewGame, user: dict = Depends(current_api_user)):
 
 
 @api.post("/games/{game_id}/players")
-def quick_add_player(game_id: int, p: NewPlayer):
+def quick_add_player(game_id: int, p: NewPlayer,
+                     _: dict = Depends(require_full_user)):
     g = query("SELECT team1_id, team2_id FROM games WHERE id=?", (game_id,))
     if not g:
         raise HTTPException(status_code=404, detail="no such game")
@@ -337,7 +368,7 @@ def quick_add_player(game_id: int, p: NewPlayer):
 
 
 @api.post("/officials")
-def quick_add_official(o: NewOfficial):
+def quick_add_official(o: NewOfficial, _: dict = Depends(require_full_user)):
     if not o.name.strip():
         raise HTTPException(status_code=422, detail="name required")
     execute("INSERT OR IGNORE INTO officials (name, official_id) VALUES (?,?)",
@@ -386,7 +417,8 @@ def list_events(game_id: int, quarter: int | None = None):
 
 
 @api.put("/games/{game_id}/events/{event_id}")
-def edit_event(game_id: int, event_id: int, vals: EventEdit):
+def edit_event(game_id: int, event_id: int, vals: EventEdit,
+               _: dict = Depends(require_full_user)):
     ev = query("SELECT * FROM game_events WHERE id=? AND game_id=?",
                (event_id, game_id))
     if not ev:
@@ -408,7 +440,8 @@ def edit_event(game_id: int, event_id: int, vals: EventEdit):
 
 
 @api.delete("/games/{game_id}/events/{event_id}")
-def remove_event(game_id: int, event_id: int):
+def remove_event(game_id: int, event_id: int,
+                 _: dict = Depends(require_full_user)):
     ev = query("SELECT id FROM game_events WHERE id=? AND game_id=?",
                (event_id, game_id))
     if not ev:
@@ -421,7 +454,7 @@ def remove_event(game_id: int, event_id: int):
 
 
 @api.post("/games/{game_id}/rescore")
-def rescore(game_id: int):
+def rescore(game_id: int, _: dict = Depends(require_full_user)):
     """Explicit re-freeze of games.home/away_score from the event stream —
     the PWA's equivalent of the Event Editor page's recompute button. Works
     for tracked AND in-progress games, same as the old page."""

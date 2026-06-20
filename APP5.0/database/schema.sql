@@ -92,5 +92,16 @@ CREATE TABLE IF NOT EXISTS game_events (
     zone                TEXT    CHECK(zone IN ('LC','LW','C','RW','RC')),
     secondary_player_id INTEGER REFERENCES players(id),
     official_id         INTEGER REFERENCES officials(id),
-    stolen_by_id        INTEGER REFERENCES players(id)
+    stolen_by_id        INTEGER REFERENCES players(id),
+    play_type           TEXT
+);
+
+-- "Assistant scorer" guest links: each row is one standing, revocable token (the
+-- link IS the token). Resolves to the owner coach but flagged guest (log-only).
+CREATE TABLE IF NOT EXISTS tracker_guest_tokens (
+    token       TEXT PRIMARY KEY,
+    owner_email TEXT NOT NULL,
+    label       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    revoked     INTEGER NOT NULL DEFAULT 0
 );

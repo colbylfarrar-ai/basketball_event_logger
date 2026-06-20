@@ -110,13 +110,15 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
         eid = execute("""INSERT INTO game_events
             (game_id,event_type,quarter,time,possession_secs,primary_player_id,
              shot_type,shot_result,pass_from_id,shot_created_by_id,
-             rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y,
+             play_type,client_uuid)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (game_id, "shot", q, t, poss,
              g("primary_player_id"), shot_type, g("shot_result"),
              g("pass_from_id"), g("shot_created_by_id"),
              g("rebound_by_id"), g("blocked_by_id"),
-             g("guarded_by_id"), zone, sx, sy, client_uuid))
+             g("guarded_by_id"), zone, sx, sy,
+             g("play_type"), client_uuid))
         pts = shot_type if g("shot_result") == "make" else 0
 
     elif etype == "free_throw":

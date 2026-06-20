@@ -967,6 +967,33 @@ with tab_charts:
                            "rank against the league — check back after more "
                            "tracked games.")
 
+            # ── explicit one-tap play-call tags (the coach's literal set call) ──
+            _npt = PT.team_named_playtypes(team_id, gender=gender, offense=_ptoff)
+            st.markdown("<div class='pl-hdr'>Tagged play calls</div>",
+                        unsafe_allow_html=True)
+            if _npt["rows"]:
+                st.caption(
+                    f"Your one-tap play-call tags on {'own' if _ptoff else 'opponent'} "
+                    f"shots ({_npt['total_tagged']} tagged · {_npt['untagged']} "
+                    f"untagged) — PPP by the literal set call you logged, separate "
+                    f"from the inferred view above.")
+                st.dataframe(pd.DataFrame([{
+                    "Play call": r["label"], "Poss": r["poss"],
+                    "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
+                    "Share": round(r["share"] * 100, 0),
+                } for r in _npt["rows"]]), hide_index=True, width="stretch",
+                    column_config={
+                        "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                        "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+                        "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                    }, key="pt_named_tbl")
+            else:
+                st.caption(
+                    "No play-call tags yet — add an optional one-tap **Play type** "
+                    "to a shot in the Game Tracker (Pick & roll, Iso, Post-up…) and "
+                    "this fills in. Tags are the literal set call, separate from the "
+                    "inferred tempo/creation view above.")
+
     with ch_play:
         _fx_chplay()
 

@@ -180,3 +180,64 @@ def team_playtype_percentiles(team_id, gender=None, game_ids=None, events=None,
             "lg_ppp": (sum(pool) / len(pool)) if pool else None,
         })
     return {"rows": rows, "total": pt["total"], "offense": offense}
+
+
+# ── explicit one-tap play-call tags (the coach's literal set call) ────────────────
+# The companion to the INFERRED team_playtypes above: this reads the optional
+# `play_type` a coach taps on a shot in the tracker, so it stays empty until
+# tagging begins. These are the literal set calls inference can't derive.
+NAMED_PLAY_TYPES = [
+    ("pnr", "Pick & roll"), ("iso", "Isolation"), ("post", "Post-up"),
+    ("spot", "Spot-up"), ("cut", "Cut"), ("offscreen", "Off screen"),
+    ("transition", "Transition"), ("putback", "Putback"), ("other", "Other"),
+]
+_NAMED_KEYS = {k for k, _ in NAMED_PLAY_TYPES}
+
+
+def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
+                         offense=True):
+    """
+    PPP by the EXPLICIT one-tap `play_type` tag, for the team's own shots
+    (offense) or the shots it allowed (defense). Self-contained: with no events
+    it does one tracked-game pass for the gender (same scoping as
+    team_playtype_percentiles). A shot ends a possession, so PPP == PPS.
+
+    Returns {'rows': [{key,label,poss,FGM,PPP,FG%,share}], 'total_tagged': n,
+    'untagged': n}. Rows with no attempts are dropped; rows are sorted by PPP.
+    Unknown/legacy labels fold into 'other'.
+    """
+    if events is None:
+        gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    agg = {k: {"FGA": 0, "FGM": 0, "PTS": 0} for k, _ in NAMED_PLAY_TYPES}
+    tagged = untagged = 0
+    for e in events:
+        if e["event_type"] != "shot" or e["shooter_team_id"] is None:
+            continue
+        if offense != (e["shooter_team_id"] == team_id):
+            continue
+        pt = e.get("play_type")
+        if not pt:
+            untagged += 1
+            continue
+        if pt not in _NAMED_KEYS:
+            pt = "other"
+        tagged += 1
+        cell = agg[pt]
+        cell["FGA"] += 1
+        if e["shot_result"] == "make":
+            cell["FGM"] += 1
+            cell["PTS"] += 3 if e["shot_type"] == 3 else 2
+    total_fga = sum(c["FGA"] for c in agg.values())
+    rows = []
+    for key, label in NAMED_PLAY_TYPES:
+        c = agg[key]
+        if c["FGA"] == 0:
+            continue
+        rows.append({
+            "key": key, "label": label, "poss": c["FGA"], "FGM": c["FGM"],
+            "PPP": _safe(c["PTS"], c["FGA"]), "FG%": _safe(c["FGM"], c["FGA"]),
+            "share": _safe(c["FGA"], total_fga),
+        })
+    rows.sort(key=lambda r: r["PPP"], reverse=True)
+    return {"rows": rows, "total_tagged": tagged, "untagged": untagged}

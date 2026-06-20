@@ -19,6 +19,7 @@ import helpers.gameflow as GF
 import helpers.trends as TRD
 import helpers.fouls as FL
 import helpers.badges as BG
+import helpers.court_png as CPNG
 
 e = _html.escape
 
@@ -54,6 +55,7 @@ td.kpi{background:#f7f9fb;border:1px solid #e7ebf0;border-radius:9px;
   border:1px solid #f0d692;border-radius:5px;padding:2px 7px;margin:3px 5px 0 0}
 .foot{margin-top:20px;padding-top:10px;border-top:1px solid #e7ebf0;color:#8a94a2;font-size:11px}
 @media print{.break{page-break-before:always}}
+.court-img{display:block;margin:8px auto;border:1px solid #e7ebf0;border-radius:8px}
 """
 
 
@@ -76,6 +78,18 @@ def _doc(title, body):
 def _kpi(label, value):
     # A table cell, not a flex child — xhtml2pdf (the PDF engine) has no flexbox.
     return f"<td class='kpi'><div class='v'>{value}</div><div class='l'>{e(label)}</div></td>"
+
+
+def _pctile(val, key, pool):
+    """Percentile rank (0-100) of ``val`` for stat ``key`` within ``pool`` (a list
+    of player rows). Mirrors helpers.cards.pctile without the Streamlit import so
+    this printable module stays Streamlit-free."""
+    vals = [row.get(key) for row in pool if row.get(key) is not None]
+    if val is None or not vals:
+        return None
+    below = sum(1 for v in vals if v < val)
+    eq = sum(1 for v in vals if v == val)
+    return round((below + 0.5 * eq) / len(vals) * 100)
 
 
 # ── per-player season report card ────────────────────────────────────────────────
@@ -140,10 +154,28 @@ def player_card_html(player_id, gender=None, table=None):
                   f"<td class='num'>{b.get('FGM',0)}/{b.get('FGA',0)}</td>"
                   f"<td class='num'>{b.get('FTM',0)}/{b.get('FTA',0)}</td></tr>")
 
+    pool = list(table.values())
+    prows = ""
+    for key, lbl in (("PPG", "PPG"), ("RPG", "RPG"), ("APG", "APG"),
+                     ("TS%", "TS%"), ("USG%", "USG%"), ("OVERALL", "Overall")):
+        p = _pctile(r.get(key), key, pool)
+        if p is None:
+            continue
+        prows += (f"<tr><td>{e(lbl)}</td><td class='num'>{g(key)}</td>"
+                  f"<td class='num'>{p}th</td></tr>")
+    pct_html = (f"<h2>Percentile ranks</h2><table><tr><th>Stat</th>"
+                f"<th class='num'>Value</th><th class='num'>Percentile</th></tr>"
+                f"{prows}</table>") if prows else ""
+
+    shots = S.located_shots(player_id=player_id)
+    chart_html = (f"<h2>Shot chart</h2>{CPNG.shot_chart_png(shots, width=320)}"
+                  if shots else "")
+
     body = (
         f"{band}<div class='wrap'>"
         f"<h2>Season averages</h2><table class='kpis'><tr>{kpis}</tr></table>"
-        f"<h2>Badges</h2><div>{bdg}</div>"
+        + pct_html + chart_html
+        + f"<h2>Badges</h2><div>{bdg}</div>"
         + (f"<h2>Fouls &amp; free throws</h2>{ftline}" if ff else "")
         + (f"<h2>Season highs</h2><table><tr><th>Stat</th><th class='num'>High</th>"
            f"<th>vs</th><th class='num'>Date</th></tr>{hrows}</table>" if hrows else "")

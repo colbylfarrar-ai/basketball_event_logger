@@ -104,6 +104,29 @@ def get_tracker_token(email: str) -> str:
     return rows[0]["tracker_token"] if rows else ""
 
 
+# ── assistant "scorer" guest links (the link IS the token; log-only) ────────────
+def issue_guest_token(email: str, label: str = "") -> str:
+    """Create a standing, revocable assistant-scorer link token for this coach and
+    return it. The tracker API resolves it to this coach but flagged guest, so it
+    can only log/undo events — never finish/create/edit. Separate from the coach's
+    own tracker_token, so revoking an assistant never touches the coach."""
+    tok = secrets.token_urlsafe(24)
+    execute("INSERT INTO tracker_guest_tokens (token, owner_email, label) "
+            "VALUES (?,?,?)", (tok, (email or "").strip().lower(), label or ""))
+    return tok
+
+
+def list_guest_tokens(email: str):
+    """Active (non-revoked) assistant links for this coach, oldest first."""
+    return query("SELECT token, label, created_at FROM tracker_guest_tokens "
+                 "WHERE owner_email=? AND revoked=0 ORDER BY created_at",
+                 ((email or "").strip().lower(),))
+
+
+def revoke_guest_token(token: str):
+    execute("UPDATE tracker_guest_tokens SET revoked=1 WHERE token=?", (token,))
+
+
 # ── plan + team (tier management, set from the Settings page) ───────────────────
 PLANS = ("free", "paid")
 

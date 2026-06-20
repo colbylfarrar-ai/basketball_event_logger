@@ -758,6 +758,28 @@ def games_played(game_ids=None):
     return {r["pid"]: r["g"] for r in rows}
 
 
+def games_started(game_ids=None, events=None):
+    """{player_id: # distinct games they were in the STARTING five}.
+
+    Starters are INFERRED as the five on the floor at each game's first event
+    (no starter flag is tracked — see helpers.gameflow.infer_starters), so this
+    is an inference. Pair with games_played() to get a games-started rate (GS%):
+    GS% = 100 * games_started / games_played. `events` may be passed to reuse an
+    already-fetched event stream (gameflow is imported lazily to avoid a cycle)."""
+    from helpers.gameflow import infer_starters
+    if events is None:
+        events = fetch_events(game_ids)
+    by_game = defaultdict(list)
+    for e in events:
+        by_game[e["game_id"]].append(e)
+    started = defaultdict(int)
+    for g_events in by_game.values():
+        for _team, pids in infer_starters(g_events).items():
+            for pid in pids:
+                started[pid] += 1
+    return dict(started)
+
+
 def oncourt_rate_stats(game_ids=None, events=None):
     """
     Per-player on-court rate stats, in one pass over the events + lineups:

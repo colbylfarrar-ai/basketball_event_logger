@@ -17,6 +17,7 @@ from database.db import query
 import helpers.league_analytics as LA
 import helpers.badges as BG
 import helpers.stats as S
+import helpers.court_png as CP
 
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
@@ -177,6 +178,9 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
             "fg": r.get("FG%"), "tp": r.get("3P%"), "ts": r.get("TS%"),
             "rim": r.get("RimFGA%"), "three": r.get("3PR"),
             "ovr": r.get("OVERALL"), "note": "; ".join(notes),
+            # 0-100 category breakdown behind the OVERALL (player_ratings)
+            "off": r.get("OFFENSE"), "def": r.get("DEFENSE"),
+            "ply": r.get("PLAYMAKING"), "reb": r.get("REBOUNDING"),
             "badges": [f"{b['emoji']} {b['name']}" for b in bl],
         })
 
@@ -214,6 +218,24 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         tot = sum(c.values()) if c else 0
         p["creation"] = {k: 100 * c[k] / tot for k in c} if tot else None
 
+    # ── GS% (games started ÷ games played) — who normally starts ──────────────
+    # Starters are inferred (five on the floor at each game's first event); see
+    # stats.games_started. Scoped to this team's visible tracked games (gids).
+    gp = S.games_played(list(gids)) if gids else {}
+    gs = S.games_started(list(gids), events=ev) if gids else {}
+    for p in personnel:
+        played = gp.get(p["pid"], 0)
+        p["gs_pct"] = (100 * gs.get(p["pid"], 0) / played) if played else None
+
+    # ── located (x,y) shots: one team pull, bucketed per player for mini charts ─
+    team_shots = (S.located_shots(game_ids=list(gids), events=ev, team_id=team_id)
+                  if gids else [])
+    shots_by_pid = {}
+    for sh in team_shots:
+        shots_by_pid.setdefault(sh["player_id"], []).append(sh)
+    for p in personnel:
+        p["shots"] = shots_by_pid.get(p["pid"], [])
+
     return {
         "name": name, "class": s.get("class", "N/A"),
         "record": f"{s.get('W',0)}-{s.get('L',0)}",
@@ -222,6 +244,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         "factors": factors, "strengths": strengths, "weaknesses": weaknesses,
         "guard": guard, "attack": attack, "personnel": personnel,
         "zones": zones, "zones_by_type": zones_by_type,
+        "team_shots": team_shots,
         "has_tracked": me is not None,
     }
 
@@ -230,12 +253,35 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
 #  PRINTABLE HTML
 # ══════════════════════════════════════════════════════════════════════════════
 
-def printable_html(sc, opponent_label, hidden=None):
-    """A compact, print-ready ONE-PAGE scouting sheet (browser → Print → PDF).
-    Zero dependencies; intentionally small and simple — no branding band, bars or
-    badges, four factors and zones sit side by side to keep it to a page."""
+def _md_bold(s):
+    """Convert a `**bold**` markdown tip to escaped HTML with <b> spans."""
+    parts = s.split("**")
+    out = ""
+    for i, seg in enumerate(parts):
+        seg = html.escape(seg)
+        out += f"<b>{seg}</b>" if i % 2 == 1 else seg
+    return out
+
+
+def _pf(frac, dp=0):
+    """Format a 0–1 fraction as a percent string, or em-dash for None."""
+    return f"{frac * 100:.{dp}f}%" if frac is not None else "—"
+
+
+def printable_html(sc, opponent_label, hidden=None, extra=None):
+    """A print-ready scouting sheet (browser → Print → PDF, or the in-app
+    preview). Zero hard dependencies — table-based so the xhtml2pdf fallback
+    renders it; inline-SVG shot charts / blank courts print from the browser and
+    WeasyPrint (xhtml2pdf simply omits the vector art, keeping every table).
+
+    `extra` carries the page-derived blocks the build_scout engine doesn't own
+    (breakeven, efficiency, auto-report, 3-pt profile, possession length, notes,
+    diagram layout); each section is independently guarded so the sheet still
+    renders if a block is missing. Honours the same per-coach `hidden` toggles as
+    the on-screen tab."""
     import datetime
     e = html.escape
+    extra = extra or {}
     try:
         _d = datetime.date.today()
         today = f"{_d.strftime('%b')} {_d.day}, {_d.year}"
@@ -295,54 +341,175 @@ def printable_html(sc, opponent_label, hidden=None):
     two_html = (f"<table class='two'><tr>{ff_cell}{z_cell}</tr></table>"
                 if (ff_cell or z_cell) else "")
 
-    # ── personnel: stats row + a full-width second line (shot source + note) ──
+    # ── should they shoot 2s or 3s? (breakeven) ──
+    breakeven_html = ""
+    bk = extra.get("breakeven")
+    if _show("breakeven") and bk:
+        edge = bk.get("edge", 0)
+        if abs(edge) < 0.03:
+            verdict = ("Their 2s and 3s pay off about equally — shot selection is "
+                       "balanced.")
+        elif edge > 0:
+            verdict = (f"Shoot more 3s — a three returns {bk['ev3']:.2f} pts vs "
+                       f"{bk['ev2']:.2f} for a two (+{edge:.2f} edge); they clear the "
+                       f"{_pf(bk['be3'])} breakeven at {_pf(bk['3P%'])}.")
+        else:
+            verdict = (f"Shoot more 2s — a two returns {bk['ev2']:.2f} pts vs "
+                       f"{bk['ev3']:.2f} for a three ({edge:.2f}); their {_pf(bk['3P%'])} "
+                       f"from deep is below the {_pf(bk['be3'])} breakeven.")
+        breakeven_html = (
+            "<h2>Should they shoot 2s or 3s?</h2><table><tr>"
+            "<th class='n'>2P%</th><th class='n'>3P%</th>"
+            "<th class='n'>Breakeven 3P%</th><th class='n'>3PA rate</th>"
+            "<th class='n'>Pts/2</th><th class='n'>Pts/3</th></tr>"
+            f"<tr><td class='n'>{_pf(bk['2P%'])}</td><td class='n'>{_pf(bk['3P%'])}</td>"
+            f"<td class='n'>{_pf(bk['be3'])}</td><td class='n'>{_pf(bk['3PAr'])}</td>"
+            f"<td class='n'>{bk['ev2']:.2f}</td><td class='n'>{bk['ev3']:.2f}</td></tr>"
+            f"</table><p class='note'>{e(verdict)}</p>")
+
+    # ── efficiency summary ──
+    eff_html = ""
+    ef = extra.get("efficiency")
+    if _show("efficiency") and ef:
+        pace = ef.get("POSS_pg", 0)
+        tempo = ("an up-tempo team." if pace >= 70 else
+                 "a controlled pace." if pace >= 60 else "a slow, grind-it-out pace.")
+        eff_html = (
+            "<h2>Efficiency summary</h2><ul>"
+            f"<li><b>Offense:</b> {ef['ORtg']:.1f} pts / 100 poss on "
+            f"{_pf(ef['off_eFG'])} eFG; turns it over on {_pf(ef['off_TOV'])} of trips "
+            f"and rebounds {_pf(ef['off_ORB'])} of its own misses.</li>"
+            f"<li><b>Defense:</b> {ef['DRtg']:.1f} pts / 100 poss allowed on "
+            f"{_pf(ef['def_eFG'])} eFG; forces a turnover on {_pf(ef['def_TOV'])} of "
+            "opponent trips.</li>"
+            f"<li><b>Tempo:</b> {pace:.1f} possessions/game — {tempo}</li></ul>")
+
+    # ── auto scouting report ──
+    report_html = ""
+    tips = extra.get("auto_report")
+    if _show("auto_report") and tips:
+        li = "".join(f"<li>{_md_bold(t)}</li>" for t in tips)
+        report_html = f"<h2>Scouting report</h2><ul>{li}</ul>"
+
+    # ── team shot chart (inline SVG from tap-captured x/y) ──
+    shot_html = ""
+    team_shots = sc.get("team_shots") or []
+    if _show("shot_chart") and team_shots:
+        fga = len(team_shots)
+        fgm = sum(1 for s in team_shots if s.get("make"))
+        pct = 100 * fgm / fga if fga else 0
+        shot_html = (
+            "<h2>Shot chart</h2>"
+            f"<div class='chart'>{CP.shot_chart_png(team_shots, width=330)}</div>"
+            f"<p class='note'>{fga} located attempts · {fgm}/{fga} · {pct:.0f}% "
+            "— the spots to take away. ● make · ✕ miss.</p>")
+
+    # ── personnel cards: identity + OVR & breakdown + GS% + shots + mini chart ──
     pers_html = ""
-    if _show("personnel"):
+    if _show("personnel") and sc["personnel"]:
         _SRC = (("self", "SC"), ("pass", "Pass"), ("screen", "Screen"),
                 ("both", "Both"))
-        pers = ""
+        mini_on = _show("shot_chart")
+        cards = []
         for p in sc["personnel"]:
-            fgp = f"{p['fg']:.0f}" if p.get("fg") is not None else "—"
-            tp = f"{p['tp']:.0f}" if p["tp"] is not None else "—"
-            pers += (f"<tr><td><b>#{p['num']} {e(p['name'])}</b></td>"
-                     f"<td class='n'>{(p['ppg'] or 0):.1f}</td>"
-                     f"<td class='n'>{(p['rpg'] or 0):.1f}</td>"
-                     f"<td class='n'>{(p['apg'] or 0):.1f}</td>"
-                     f"<td class='n'>{fgp}</td><td class='n'>{tp}</td></tr>")
+            ovr = f"OVR {p['ovr']}" if p.get("ovr") is not None else ""
+            gs = (f"Starts {p['gs_pct']:.0f}%"
+                  if p.get("gs_pct") is not None else "")
+            head_bits = " · ".join(x for x in (ovr, gs) if x)
+            head = (f"<div class='phead'><b>#{p['num']} {e(p['name'])}</b>"
+                    + (f" <span class='ovr'>{e(head_bits)}</span>" if head_bits else "")
+                    + "</div>")
+            # 0-100 category breakdown
+            br = [(lbl, p.get(k)) for k, lbl in
+                  (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))]
+            br = [f"{lbl} {v}" for lbl, v in br if v is not None]
+            brk = f"<div class='brk'>{e(' · '.join(br))}</div>" if br else ""
+            tp = f"{p['tp']:.0f}%" if p.get("tp") is not None else "—"
+            ts = f"{p['ts']:.0f}%" if p.get("ts") is not None else "—"
+            stat = (f"<div class='pstat'>{(p['ppg'] or 0):.1f} ppg · "
+                    f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
+                    f"3P {tp} · TS {ts}</div>")
             cm = p.get("creation")
             src = ""
             if _show("shot_source") and cm:
-                src = "Shots: " + " · ".join(f"{lbl} {cm[k]:.0f}%"
-                                             for k, lbl in _SRC if k in cm)
-            note = e(p["note"]) if p.get("note") else ""
-            line2 = " — ".join(x for x in (src, note) if x)
-            if line2:
-                pers += f"<tr><td colspan='6' class='note'>{line2}</td></tr>"
-        pers_html = ("<h2>Personnel</h2><table><tr><th>Player</th>"
-                     "<th class='n'>PPG</th><th class='n'>RPG</th>"
-                     "<th class='n'>APG</th><th class='n'>FG%</th>"
-                     f"<th class='n'>3P%</th></tr>{pers}</table>")
+                src = ("<div class='brk'>Shots: " + e(" · ".join(
+                    f"{lbl} {cm[k]:.0f}%" for k, lbl in _SRC if k in cm)) + "</div>")
+            note = (f"<div class='pnote'>▶ {e(p['note'])}</div>"
+                    if p.get("note") else "")
+            shots = p.get("shots") or []
+            mini = (f"<div class='mini'>"
+                    f"{CP.shot_chart_png(shots, width=132)}</div>"
+                    if mini_on and len(shots) >= 5 else "")
+            cards.append(f"<td class='pcard'>{head}{brk}{stat}{src}{note}{mini}</td>")
+        # two cards per row
+        rows = ""
+        for i in range(0, len(cards), 2):
+            pair = cards[i:i + 2]
+            if len(pair) == 1:
+                pair.append("<td class='pcard empty'></td>")
+            rows += f"<tr>{''.join(pair)}</tr>"
+        pers_html = f"<h2>Personnel</h2><table class='cards'>{rows}</table>"
 
-    # ── strengths & exploit (top / bottom factors by league percentile) ──
-    edges_html = ""
-    if _show("edges") and (sc["strengths"] or sc["weaknesses"]):
-        st_li = "".join(f"<li>{e(f['label'])} — {(f['value'] or 0):.1f} "
-                        f"({f['pct']:.0f}th)</li>"
-                        for f in sc["strengths"]) or "<li>—</li>"
-        wk_li = "".join(f"<li>{e(f['label'])} — {(f['value'] or 0):.1f} "
-                        f"({f['pct']:.0f}th)</li>"
-                        for f in sc["weaknesses"]) or "<li>—</li>"
-        edges_html = (f"<table class='cols'><tr>"
-                      f"<td class='col'><h2>Strengths (&ge;70th)</h2><ul>{st_li}</ul></td>"
-                      f"<td class='col'><h2>Exploit (&le;30th)</h2><ul>{wk_li}</ul></td>"
-                      f"</tr></table>")
+    # ── per-player 3-point profile ──
+    three_html = ""
+    tpr = extra.get("three_profile")
+    if _show("three_profile") and tpr and tpr.get("players"):
+        be3 = tpr.get("be3_pct", 0)
+        rows3 = ""
+        for pl in tpr["players"]:
+            tag = "above" if pl["above"] else "below"
+            rows3 += (f"<tr><td>{e(pl['label'])}</td>"
+                      f"<td class='n'>{pl['p3']:.0f}%</td>"
+                      f"<td class='n'>{pl['att']}</td><td>{tag} breakeven</td></tr>")
+        three_html = (
+            "<h2>Per-player 3-point profile</h2><table><tr><th>Player</th>"
+            "<th class='n'>3P%</th><th class='n'>3PA</th><th>vs breakeven</th></tr>"
+            f"{rows3}</table><p class='note'>Breakeven {be3:.0f}% — above = their "
+            "threes beat their twos. Min 4 attempts.</p>")
 
-    # ── scoring leaders (top 3 by PPG; personnel is pre-sorted) ──
-    leaders_html = ""
-    if _show("leaders") and sc["personnel"]:
-        _lead = " · ".join(f"#{p['num']} {e(p['name'])} {(p['ppg'] or 0):.1f} ppg"
-                           for p in sc["personnel"][:3])
-        leaders_html = f"<h2>Scoring leaders</h2><p class='lead'>{_lead}</p>"
+    # ── scoring by possession length ──
+    plen_html = ""
+    pl = extra.get("poss_length")
+    if _show("poss_length") and pl:
+        rowsp = "".join(
+            f"<tr><td>{e(r['label'])}</td><td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{r['FGA']}</td><td class='n'>{r['FG%'] * 100:.0f}%</td></tr>"
+            for r in pl)
+        plen_html = (
+            "<h2>Scoring by possession length</h2><table><tr><th>Length</th>"
+            "<th class='n'>Pts/shot</th><th class='n'>FGA</th>"
+            f"<th class='n'>FG%</th></tr>{rowsp}</table>")
+
+    # ── game-plan notes (coach prose) ──
+    notes_html = ""
+    ntext = (extra.get("notes") or "").strip()
+    if _show("notes") and ntext:
+        notes_html = (f"<h2>Game-plan notes</h2>"
+                      f"<div class='notes-box'>{e(ntext)}</div>")
+
+    # ── blank play diagrams (hand-draw after printing) ──
+    diag_html = ""
+    if _show("play_diagrams"):
+        legend = ("<p class='note'>○ offense · ✕ defense · → cut · "
+                  "⇢ pass · ⊢ screen · ∿ dribble</p>")
+        layout = extra.get("diagram_layout", "4 small")
+        if layout == "1 big":
+            ruled = "".join("<div class='rule'></div>" for _ in range(4))
+            diag_html = (
+                "<h2>Play diagram — draw by hand</h2>" + legend +
+                "<table class='diag'><tr>"
+                f"<td>{CP.blank_halfcourt_png(width=300)}"
+                "<div class='diaglabel'>Top set / ATO</div></td>"
+                f"<td class='lines'>{ruled}</td></tr></table>")
+        else:
+            labels = ["Top set", "BLOB", "SLOB", "Press break"]
+            cell = [
+                f"<td>{CP.blank_halfcourt_png(width=160)}"
+                f"<div class='diaglabel'>{e(lbl)}</div></td>" for lbl in labels]
+            diag_html = (
+                "<h2>Play diagrams — draw by hand</h2>" + legend +
+                "<table class='diag'>"
+                f"<tr>{cell[0]}{cell[1]}</tr><tr>{cell[2]}{cell[3]}</tr></table>")
 
     return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
 <title>Scout · {e(sc['name'])}</title>
@@ -365,20 +532,44 @@ th{{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;
   color:#666;border-bottom:1px solid #111;padding:2px 6px}}
 td{{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}}
 .n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
-.note{{color:#555;font-size:10px}}
+.note{{color:#555;font-size:10px;margin:3px 0}}
 table.two{{width:100%;border-collapse:separate;border-spacing:10px 0;font-size:11px}}
 td.two-col{{width:50%;vertical-align:top;border:none;padding:0}}
+.chart{{text-align:center;margin:4px 0}}
+img.court-img{{max-width:100%;height:auto}}
+table.cards{{border-collapse:separate;border-spacing:8px 8px;width:100%}}
+td.pcard{{width:50%;border:1px solid #ccc;padding:6px 8px;vertical-align:top}}
+td.pcard.empty{{border:none}}
+.phead{{font-size:12px;margin-bottom:1px}}
+.ovr{{color:#444;font-size:10px;font-weight:700}}
+.brk{{color:#555;font-size:10px}}
+.pstat{{font-size:11px;margin:1px 0}}
+.pnote{{color:#b25e00;font-size:10px;margin-top:1px}}
+.mini{{text-align:center;margin-top:4px}}
+.notes-box{{white-space:pre-wrap;border:1px solid #ddd;padding:6px;font-size:11px;
+  min-height:46px}}
+table.diag{{border-collapse:separate;border-spacing:8px;width:100%}}
+table.diag td{{border:none;text-align:center;vertical-align:top;padding:2px}}
+.diaglabel{{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#666;
+  margin-top:2px}}
+.rule{{border-bottom:1px solid #bbb;height:16px;margin:6px 4px}}
 .foot{{margin-top:12px;color:#999;font-size:9px}}
-@media print{{.wrap{{padding:8px 12px}}}}
+@media print{{.wrap{{padding:8px 12px}} td.pcard,table.diag td{{page-break-inside:avoid}}}}
 </style></head><body><div class='wrap'>
 <h1>SCOUT — {e(sc['name'])}</h1>
 <div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
   Power #{sc['rank']}/{sc['of']}</div>
 <div class='rng'>{e(rng)}</div>
 {keys_html}
-{edges_html}
 {two_html}
-{leaders_html}
+{breakeven_html}
+{eff_html}
+{report_html}
+{shot_html}
 {pers_html}
+{three_html}
+{plen_html}
+{notes_html}
+{diag_html}
 <div class='foot'>Analytics Hub{(' · ' + today) if today else ''}</div>
 </div></body></html>"""

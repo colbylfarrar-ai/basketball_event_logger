@@ -35,19 +35,87 @@ import helpers.settings_utils as SU
 SCOUT_SECTIONS = [
     ("keys", "Keys to the game (guard / attack)"),
     ("four_factors", "Four factors & tendencies"),
-    ("edges", "Strengths & exploit (printout)"),
     ("breakeven", "Should they shoot 2s or 3s?"),
     ("three_profile", "Per-player 3-point profile"),
     ("auto_report", "Auto scouting report"),
     ("efficiency", "Efficiency summary"),
     ("personnel", "Personnel (player breakdown)"),
     ("shot_source", "Shot source — SC / Pass / Screen / Both"),
-    ("leaders", "Scoring leaders (printout)"),
     ("shot_chart", "Shot chart"),
     ("zones", "Shooting by zone"),
     ("poss_length", "Scoring by possession length"),
     ("notes", "Game-plan notes"),
+    ("play_diagrams", "Blank play diagrams (draw by hand)"),
 ]
+
+
+def _auto_report_tips(ctx):
+    """The rule-based auto scouting tips (markdown **bold**). Shared by the
+    on-screen 'Scouting report' block and the printable sheet so they never drift."""
+    tips = []
+    if ctx.ff["off"]["eFG"] >= 0.50:
+        tips.append("**Efficient shooting team** — eFG% "
+                    f"{ctx.pctf(ctx.ff['off']['eFG'])}; contest everything and keep "
+                    "them off the offensive glass.")
+    elif ctx.ff["off"]["eFG"] <= 0.42:
+        tips.append("**Below-average shooting** — eFG% "
+                    f"{ctx.pctf(ctx.ff['off']['eFG'])}; pack the paint and live with "
+                    "contested jumpers.")
+    if ctx.ff["off"]["TOV"] >= 0.18:
+        tips.append("**Turnover-prone** — gives it away on "
+                    f"{ctx.pctf(ctx.ff['off']['TOV'])} of trips; pressure the ball "
+                    "to force live-ball turnovers.")
+    if ctx.ff["off"]["ORB"] >= 0.33:
+        tips.append("**Crashes the offensive glass** — OREB% "
+                    f"{ctx.pctf(ctx.ff['off']['ORB'])}; box out and secure the "
+                    "first rebound.")
+    if ctx.soff["pct_paint"] >= 0.50:
+        tips.append("**Paint-heavy offense** — "
+                    f"{ctx.pctf(ctx.soff['pct_paint'])} of points in the paint; wall "
+                    "up the rim and make them prove the jumper.")
+    elif ctx.brk["3PAr"] >= 0.40:
+        tips.append("**Lives behind the arc** — "
+                    f"{ctx.pctf(ctx.brk['3PAr'])} of shots are threes; run them off "
+                    "the line.")
+    if ctx.ff["def"]["TOV"] >= 0.18:
+        tips.append("**Forces turnovers** — takes it away on "
+                    f"{ctx.pctf(ctx.ff['def']['TOV'])} of opponent trips; value "
+                    "every possession and limit careless passes.")
+    if ctx.ff["def"]["eFG"] <= 0.44:
+        tips.append("**Locks down shots** — holds opponents to "
+                    f"{ctx.pctf(ctx.ff['def']['eFG'])} eFG; attack early before the "
+                    "defense sets.")
+    pace = ctx.summ.get("POSS_pg", 0)
+    if pace >= 70:
+        tips.append("**Plays fast** — "
+                    f"{pace:.0f} possessions/game; control tempo to shorten "
+                    "the game if you're the underdog.")
+    elif pace and pace < 60:
+        tips.append("**Slow, deliberate pace** — "
+                    f"{pace:.0f} possessions/game; speed them up to drag them "
+                    "out of their comfort zone.")
+    rated_pl = [p for p in ctx.players if p["PPG"] is not None]
+    if rated_pl:
+        top = max(rated_pl, key=lambda p: p["PPG"])
+        share = top["PTS"] / max(ctx.tb["PTS"], 1)
+        if share >= 0.28:
+            tips.append(f"**Star-dependent** — #{top['number']} "
+                        f"{top['name']} scores {share*100:.0f}% of the team's "
+                        "points; key on them and force someone else to beat you.")
+    return tips
+
+
+def _three_profile(ctx):
+    """{be3_pct, players:[{label,p3,att,above}]} for the printable 3-pt profile, or
+    None when there isn't enough 3-point volume (min 4 attempts)."""
+    three_p = [p for p in ctx.players if p["3PA"] and p["3PA"] >= 4]
+    if not three_p:
+        return None
+    be3_pct = ctx.brk["be3"] * 100
+    three_p = sorted(three_p, key=lambda p: p["3PA"], reverse=True)
+    return {"be3_pct": be3_pct, "players": [
+        {"label": f"#{p['number']} {p['name']}", "p3": p["3P%"] or 0,
+         "att": p["3PA"], "above": (p["3P%"] or 0) >= be3_pct} for p in three_p]}
 
 
 @st.fragment
@@ -99,6 +167,17 @@ def render(ctx):
         if _new_hidden != _hidden:
             SU.set_setting("scout_hidden_sections", ",".join(sorted(_new_hidden)))
             _hidden = _new_hidden
+        _dl_saved = SU.get_setting("scout_diagram_layout", "4 small") or "4 small"
+        _dl = st.radio(
+            "Blank play-diagram layout",
+            ["4 small (BLOB / SLOB / sets)", "1 big court + note lines"],
+            index=(0 if _dl_saved == "4 small" else 1), horizontal=True,
+            key="scout_diag_layout",
+            help="Half-courts printed blank on the sheet so you can draw plays by "
+                 "hand. Toggle the section itself with 'Blank play diagrams' above.")
+        _diag_layout = "4 small" if _dl.startswith("4") else "1 big"
+        if _diag_layout != _dl_saved:
+            SU.set_setting("scout_diagram_layout", _diag_layout)
 
     def _show(key):
         return key not in _hidden
@@ -155,20 +234,8 @@ def render(ctx):
         ffig.update_xaxes(title="League percentile", range=[0, 100])
         ctx.style(ffig, max(300, 40*len(ffx)))
         st.plotly_chart(ffig, width="stretch", key="scout_factors")
-
-        scs1, scs2 = st.columns(2)
-        with scs1:
-            if sc["strengths"]:
-                st.markdown("**Strengths (≥70th pctl)**")
-                for f in sc["strengths"]:
-                    st.markdown(f"- {f['label']} — {f['value']:.1f} "
-                                f"({f['pct']:.0f}th)")
-        with scs2:
-            if sc["weaknesses"]:
-                st.markdown("**Exploit (≤30th pctl)**")
-                for f in sc["weaknesses"]:
-                    st.markdown(f"- {f['label']} — {f['value']:.1f} "
-                                f"({f['pct']:.0f}th)")
+        st.caption("Green bars ≥60th percentile (a strength); red ≤40th (exploit). "
+                   "The percentile bar replaces the old strengths/exploit lists.")
 
         # ── identity & tendencies (a couple meaningful extra reads) ─────────
         if ctx.has_tracked:
@@ -280,61 +347,7 @@ def render(ctx):
     if _show("auto_report"):
         st.markdown("<div class='lab-hdr'>Scouting report</div>",
                     unsafe_allow_html=True)
-        tips = []
-        # offense
-        if ctx.ff["off"]["eFG"] >= 0.50:
-            tips.append("**Efficient shooting team** — eFG% "
-                        f"{ctx.pctf(ctx.ff['off']['eFG'])}; contest everything and keep "
-                        "them off the offensive glass.")
-        elif ctx.ff["off"]["eFG"] <= 0.42:
-            tips.append("**Below-average shooting** — eFG% "
-                        f"{ctx.pctf(ctx.ff['off']['eFG'])}; pack the paint and live with "
-                        "contested jumpers.")
-        if ctx.ff["off"]["TOV"] >= 0.18:
-            tips.append("**Turnover-prone** — gives it away on "
-                        f"{ctx.pctf(ctx.ff['off']['TOV'])} of trips; pressure the ball "
-                        "to force live-ball turnovers.")
-        if ctx.ff["off"]["ORB"] >= 0.33:
-            tips.append("**Crashes the offensive glass** — OREB% "
-                        f"{ctx.pctf(ctx.ff['off']['ORB'])}; box out and secure the "
-                        "first rebound.")
-        if ctx.soff["pct_paint"] >= 0.50:
-            tips.append("**Paint-heavy offense** — "
-                        f"{ctx.pctf(ctx.soff['pct_paint'])} of points in the paint; wall "
-                        "up the rim and make them prove the jumper.")
-        elif ctx.brk["3PAr"] >= 0.40:
-            tips.append("**Lives behind the arc** — "
-                        f"{ctx.pctf(ctx.brk['3PAr'])} of shots are threes; run them off "
-                        "the line.")
-        # defense
-        if ctx.ff["def"]["TOV"] >= 0.18:
-            tips.append("**Forces turnovers** — takes it away on "
-                        f"{ctx.pctf(ctx.ff['def']['TOV'])} of opponent trips; value "
-                        "every possession and limit careless passes.")
-        if ctx.ff["def"]["eFG"] <= 0.44:
-            tips.append("**Locks down shots** — holds opponents to "
-                        f"{ctx.pctf(ctx.ff['def']['eFG'])} eFG; attack early before the "
-                        "defense sets.")
-        # tempo
-        pace = ctx.summ.get("POSS_pg", 0)
-        if pace >= 70:
-            tips.append("**Plays fast** — "
-                        f"{pace:.0f} possessions/game; control tempo to shorten "
-                        "the game if you're the underdog.")
-        elif pace and pace < 60:
-            tips.append("**Slow, deliberate pace** — "
-                        f"{pace:.0f} possessions/game; speed them up to drag them "
-                        "out of their comfort zone.")
-        # leaning on a star
-        rated_pl = [p for p in ctx.players if p["PPG"] is not None]
-        if rated_pl:
-            top = max(rated_pl, key=lambda p: p["PPG"])
-            share = top["PTS"] / max(ctx.tb["PTS"], 1)
-            if share >= 0.28:
-                tips.append(f"**Star-dependent** — #{top['number']} "
-                            f"{top['name']} scores {share*100:.0f}% of the team's "
-                            "points; key on them and force someone else to beat "
-                            "you.")
+        tips = _auto_report_tips(ctx)
         if tips:
             for t in tips:
                 st.markdown(f"- {t}")
@@ -394,11 +407,21 @@ def render(ctx):
                             f"▦ Shots: {_src}</span>")
             arch_html = (f" <span class='stat-chip' style='font-size:11px'>"
                          f"{html.escape(archlbl)}</span>" if archlbl else "")
+            # who normally starts + the 0-100 category breakdown behind OVERALL
+            gs_txt = (f" · Starts {p['gs_pct']:.0f}%"
+                      if p.get("gs_pct") is not None else "")
+            _bd = " · ".join(
+                f"{lbl} {p.get(k)}" for k, lbl in
+                (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))
+                if p.get(k) is not None)
+            bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd}</span>"
+                       if _bd else "")
             st.markdown(
                 f"<div class='glass-tile' style='margin-bottom:8px'>"
                 f"<b>#{p['num']} {html.escape(p['name'])}</b> "
                 f"<span style='color:#8b949e'>OVR "
-                f"{p['ovr'] if p['ovr'] is not None else '—'}</span>{arch_html}<br>"
+                f"{p['ovr'] if p['ovr'] is not None else '—'}{gs_txt}</span>"
+                f"{arch_html}{bd_html}<br>"
                 f"<span style='font-size:13px'>{(p['ppg'] or 0):.1f} ppg · "
                 f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
                 f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "
@@ -486,9 +509,32 @@ def render(ctx):
         SB.render_notes(ctx.team_id)
 
     # ── printable export (always available; honours the section picks above) ──
+    # Page-derived blocks the build_scout engine doesn't own, fed to the printable
+    # sheet so it reaches parity with this tab (breakeven, efficiency, auto-report,
+    # 3-pt profile, possession length, notes) + the blank-diagram layout choice.
+    _extra = {
+        "breakeven": {
+            "2P%": ctx.brk["2P%"], "3P%": ctx.brk["3P%"], "be3": ctx.brk["be3"],
+            "3PAr": ctx.brk["3PAr"], "ev2": ctx.brk["ev2"], "ev3": ctx.brk["ev3"],
+            "edge": ctx.brk["edge"], "pct_paint": ctx.soff["pct_paint"],
+        },
+        "efficiency": {
+            "ORtg": ctx.summ.get("ORtg", 0), "DRtg": ctx.summ.get("DRtg", 0),
+            "POSS_pg": ctx.summ.get("POSS_pg", 0),
+            "off_eFG": ctx.ff["off"]["eFG"], "off_TOV": ctx.ff["off"]["TOV"],
+            "off_ORB": ctx.ff["off"]["ORB"], "def_eFG": ctx.ff["def"]["eFG"],
+            "def_TOV": ctx.ff["def"]["TOV"],
+        },
+        "auto_report": _auto_report_tips(ctx),
+        "three_profile": _three_profile(ctx),
+        "poss_length": [r for r in (ctx.bundle.get("poss_length") or [])
+                        if r["label"] != "Untimed" and r["FGA"]],
+        "notes": ("" if _self else SB.get_note(ctx.team_id)),
+        "diagram_layout": _diag_layout,
+    }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)
-    html_doc = SC.printable_html(sc, opp_label, hidden=_hidden)
+    html_doc = SC.printable_html(sc, opp_label, hidden=_hidden, extra=_extra)
     from helpers.ui import pdf_or_html_download
     pdf_or_html_download("Scout sheet", html_doc,
                          f"scout_{sc['name'].replace(' ', '_')}",

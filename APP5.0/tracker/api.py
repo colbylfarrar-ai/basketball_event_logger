@@ -173,6 +173,11 @@ class NewPlayer(BaseModel):
     height: float | None = None
     wingspan: float | None = None
     weight: float | None = None
+    handedness: str = "right"
+
+
+class HandednessUpdate(BaseModel):
+    handedness: str
 
 
 class NewOfficial(BaseModel):
@@ -213,7 +218,7 @@ def game_detail(game_id: int):
     # re-assign them — the lineup screen filters archived=1 out client-side.
     # Mirrors event_log.game_people(), which includes archived by design.
     players = query(
-        "SELECT id, name, number, team_id, archived FROM players "
+        "SELECT id, name, number, team_id, archived, handedness FROM players "
         "WHERE team_id IN (?,?) ORDER BY team_id, number, name",
         (g["team1_id"], g["team2_id"]))
     # archived included (flagged) like players: the editor must resolve a ref on an
@@ -361,12 +366,29 @@ def quick_add_player(game_id: int, p: NewPlayer,
                      (p.team_id, name))
     if existing:
         return {"id": existing[0]["id"], "created": False}
+    hand = "left" if p.handedness == "left" else "right"
     pid = execute(
-        "INSERT INTO players (team_id, name, number, height, wingspan, weight) "
-        "VALUES (?,?,?,?,?,?)",
-        (p.team_id, name, int(p.number or 0), p.height, p.wingspan, p.weight))
+        "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (p.team_id, name, int(p.number or 0), p.height, p.wingspan, p.weight, hand))
     GE.bump_data_version()
     return {"id": pid, "created": True}
+
+
+@api.post("/games/{game_id}/players/{player_id}/handedness")
+def set_player_handedness(game_id: int, player_id: int, body: HandednessUpdate,
+                          _: dict = Depends(require_full_user)):
+    """Flip an existing player's shooting hand from the tracker roster screen."""
+    g = query("SELECT team1_id, team2_id FROM games WHERE id=?", (game_id,))
+    if not g:
+        raise HTTPException(status_code=404, detail="no such game")
+    row = query("SELECT team_id FROM players WHERE id=?", (player_id,))
+    if not row or row[0]["team_id"] not in (g[0]["team1_id"], g[0]["team2_id"]):
+        raise HTTPException(status_code=404, detail="player not in this game")
+    hand = "left" if body.handedness == "left" else "right"
+    execute("UPDATE players SET handedness=? WHERE id=?", (hand, player_id))
+    GE.bump_data_version()
+    return {"id": player_id, "handedness": hand}
 
 
 @api.post("/officials")

@@ -203,6 +203,11 @@ def initialize_database():
             "ALTER TABLE teams          ADD COLUMN notes       TEXT    NOT NULL DEFAULT ''",
             "ALTER TABLE players        ADD COLUMN position     TEXT    NOT NULL DEFAULT ''",
             "ALTER TABLE players        ADD COLUMN availability TEXT    NOT NULL DEFAULT 'Active'",
+            # Shooting hand ('right'/'left', default right). Drives dominant- vs
+            # weak-hand-side shot splits (helpers/handedness.py: righty -> right
+            # floor side = dominant). No CHECK here — a bad ALTER would abort the
+            # whole migration loop; the app only ever writes 'right'/'left'.
+            "ALTER TABLE players        ADD COLUMN handedness   TEXT    NOT NULL DEFAULT 'right'",
             "ALTER TABLE teams          ADD COLUMN district     TEXT    NOT NULL DEFAULT ''",
             "ALTER TABLE games          ADD COLUMN game_type    TEXT    NOT NULL DEFAULT 'Regular'",
             "ALTER TABLE games          ADD COLUMN video_url    TEXT    NOT NULL DEFAULT ''",
@@ -590,18 +595,24 @@ _PLAYER_EVENT_COLS = (
 
 
 def player_has_history(pid) -> bool:
-    """True if a player carries data a hard-delete would lose: a tracked game event
-    (game_events / game_event_lineup — FK without cascade) OR a hand-entered box
-    score (manual_player_box — cascades, so a plain DELETE would silently wipe it)."""
+    """True if a player has ANY game footprint a hard-delete would lose. Covers
+    every table that references players(id):
+      - game_events (8 cols) + game_event_lineup — FK without cascade (delete would
+        FK-fail), and they hold the player's tracked play-by-play.
+      - manual_player_box — ON DELETE CASCADE, so a plain delete would silently wipe
+        a hand-entered box score.
+      - game_lineup_players — ON DELETE CASCADE; holds per-game roster + plus_minus.
+    The two cascade tables are the silent-data-loss risks; the rest FK-fail loudly.
+    Any hit → caller archives (archived=1) instead of hard-deleting."""
     pid = int(pid)
     where = " OR ".join(f"{c}=?" for c in _PLAYER_EVENT_COLS)
     if query(f"SELECT 1 FROM game_events WHERE {where} LIMIT 1",
              (pid,) * len(_PLAYER_EVENT_COLS)):
         return True
-    if query("SELECT 1 FROM game_event_lineup WHERE player_id=? LIMIT 1", (pid,)):
-        return True
-    return bool(query("SELECT 1 FROM manual_player_box WHERE player_id=? LIMIT 1",
-                      (pid,)))
+    for tbl in ("game_event_lineup", "manual_player_box", "game_lineup_players"):
+        if query(f"SELECT 1 FROM {tbl} WHERE player_id=? LIMIT 1", (pid,)):
+            return True
+    return False
 
 
 def delete_or_archive_player(pid) -> str:

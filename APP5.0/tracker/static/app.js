@@ -623,6 +623,7 @@ function renderLineup() {
         box.appendChild(lineupChip('#' + p.number + ' ' + p.name,
           S.lineup[side].indexOf(p.id) >= 0,
           function () { toggleSel(S.lineup[side], p.id, 5, 'players'); }));
+        box.appendChild(handToggle(p));
       });
   });
 
@@ -637,6 +638,34 @@ function renderLineup() {
     });
 }
 
+/* ----- per-player shooting-hand toggle (lineup roster) ----- */
+
+function handToggle(p) {
+  const hand = (p.handedness === 'left') ? 'left' : 'right';
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'chip hand-toggle';
+  b.textContent = hand === 'left' ? '✋L' : '✋R';
+  b.title = 'Shooting hand: ' + hand + ' — tap to flip';
+  b.addEventListener('click', function () { flipHandedness(p); });
+  return b;
+}
+
+async function flipHandedness(p) {
+  if (!navigator.onLine) { toast('Needs connection to change hand'); return; }
+  const next = (p.handedness === 'left') ? 'right' : 'left';
+  try {
+    const res = await api('/api/games/' + S.gameId + '/players/' + p.id + '/handedness', {
+      method: 'POST', body: JSON.stringify({ handedness: next })
+    });
+    if (!res.ok) { toast('Failed to update hand'); return; }
+    p.handedness = next;
+    lsSet(LS.roster(S.gameId), S.game);
+    toast('#' + p.number + ' ' + p.name + ' is now ' + next + '-handed');
+    renderLineup();
+  } catch (e) { toast('Needs connection'); }
+}
+
 /* ----- quick-add player / official (lineup, online-only) ----- */
 
 async function quickAddPlayer(side) {
@@ -647,23 +676,26 @@ async function quickAddPlayer(side) {
   st.textContent = '';
   const name = nameIn.value.trim();
   const num = parseInt(numIn.value, 10) || 0;
+  const handIn = $('add-' + side + '-hand');
+  const hand = (handIn && handIn.value === 'left') ? 'left' : 'right';
   if (!name) { st.textContent = 'Name required'; return; }
   if (!navigator.onLine) { st.textContent = 'Needs connection'; return; }
   try {
     const res = await api('/api/games/' + S.gameId + '/players', {
       method: 'POST',
-      body: JSON.stringify({ team_id: S.game[side].id, name: name, number: num })
+      body: JSON.stringify({ team_id: S.game[side].id, name: name, number: num, handedness: hand })
     });
     if (!res.ok) { st.textContent = 'Failed (HTTP ' + res.status + ')'; return; }
     const d = await res.json();
     if (!playerById(d.id)) {
       S.game.players = (S.game.players || []).concat([
-        { id: d.id, name: name, number: num, team_id: S.game[side].id }
+        { id: d.id, name: name, number: num, team_id: S.game[side].id, handedness: hand }
       ]);
     }
     lsSet(LS.roster(S.gameId), S.game);  // cached roster includes the new player
     nameIn.value = '';
     numIn.value = '';
+    if (handIn) handIn.value = 'right';
     $('add-' + side + '-form').hidden = true;
     toast('Added #' + num + ' ' + name);
     renderLineup();

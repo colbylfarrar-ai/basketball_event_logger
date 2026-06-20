@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS players (
     height    REAL,
     wingspan  REAL,
     weight    REAL,
+    handedness TEXT   NOT NULL DEFAULT 'right' CHECK(handedness IN ('left','right')),
     archived  INTEGER NOT NULL DEFAULT 0,
     season    TEXT    NOT NULL DEFAULT 'Current'
 );

@@ -864,6 +864,45 @@ def guarded_splits(team_id, game_ids=None, events=None, offense=True):
             "all": agg_shots(shots), "guard_share": _safe(len(g), len(shots))}
 
 
+def hand_splits(team_id, game_ids=None, events=None, hand=None, offense=True):
+    """
+    Dominant vs weak hand-side shooting for the team's own shots (offense=True),
+    classified by each shooter's handedness (see helpers/handedness.py): a true
+    half-court split about the center line — a righty's right-half shots are
+    dominant, left-half weak; lefties mirrored; dead-center shots are ignored.
+
+    Each bucket carries an agg_shots line plus guarded/open and 2/3 sub-splits, so
+    the dashboard can mirror the guarded/zone tables on the hand-side axis:
+      {bucket: {'all': agg, 'guarded': agg, 'open': agg, '2': agg, '3': agg}}
+    for bucket in ('dominant','weak'), plus 'dom_share' = dominant FGA /
+    (dominant + weak) FGA — the team's side lean.
+    """
+    import helpers.handedness as HD
+    if events is None:
+        events = S.fetch_events(game_ids)
+    if hand is None:
+        hand = HD.hand_map()
+    shots = _team_shots(team_id, events, offense=offense)
+    buckets = {b: [] for b in HD.HAND_BUCKETS}
+    for s in shots:
+        b = HD.hand_bucket(s.get("shot_x"), s["zone"], hand.get(s["primary_player_id"], "right"))
+        if b is None:                       # dead-center / unclassifiable -> ignore
+            continue
+        buckets[b].append(s)
+    out = {}
+    for b, sh in buckets.items():
+        out[b] = {
+            "all":     agg_shots(sh),
+            "guarded": agg_shots([s for s in sh if s["guarded_by_id"] is not None]),
+            "open":    agg_shots([s for s in sh if s["guarded_by_id"] is None]),
+            "2":       agg_shots([s for s in sh if s["shot_type"] != 3]),
+            "3":       agg_shots([s for s in sh if s["shot_type"] == 3]),
+        }
+    dom_fga, weak_fga = out["dominant"]["all"]["FGA"], out["weak"]["all"]["FGA"]
+    out["dom_share"] = _safe(dom_fga, dom_fga + weak_fga)
+    return out
+
+
 def creation_breakdown(team_id, game_ids=None, events=None):
     """
     Four creation buckets for the team's own shots:
@@ -1776,6 +1815,8 @@ def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None,
         "guarded": guarded_splits(team_id, tracked_ids, events=events)
         if tracked_ids else None,
         "guarded_detail": guarded_detail(team_id, tracked_ids, events=events)
+        if tracked_ids else None,
+        "hand_splits": hand_splits(team_id, tracked_ids, events=events)
         if tracked_ids else None,
         "creation_breakdown": creation_breakdown(team_id, tracked_ids, events=events)
         if tracked_ids else None,

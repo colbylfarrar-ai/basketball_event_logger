@@ -64,11 +64,11 @@ def load_teams():
 
 def load_players_for(team_id):
     rows = query(
-        "SELECT id, name, number, height, wingspan, weight FROM players WHERE team_id=? AND archived=0 ORDER BY name",
+        "SELECT id, name, number, height, wingspan, weight, handedness FROM players WHERE team_id=? AND archived=0 ORDER BY name",
         (team_id,)
     )
     return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","name","number","height","wingspan","weight"])
+        columns=["id","name","number","height","wingspan","weight","handedness"])
 
 def load_games_for_team(team_id):
     """Load all games involving team_id from the games table, presented from that team's POV."""
@@ -280,7 +280,7 @@ with tab_players:
         st.caption(EDITOR_HELP)
         orig = get_orig("_players_orig", lambda: load_players_for(team_id))
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
-            columns=["name","number","height","wingspan","weight"])
+            columns=["name","number","height","wingspan","weight","handedness"])
 
         st.data_editor(
             display,
@@ -293,6 +293,9 @@ with tab_players:
                 "height":   st.column_config.NumberColumn("Height (in)", min_value=0.0, step=0.5),
                 "wingspan": st.column_config.NumberColumn("Wingspan (in)", min_value=0.0, step=0.5),
                 "weight":   st.column_config.NumberColumn("Weight (lbs)", min_value=0.0, step=1.0),
+                "handedness": st.column_config.SelectboxColumn(
+                    "Hand", options=["right", "left"], default="right",
+                    help="Shooting hand — drives dominant- vs weak-side shot splits."),
             },
         )
 
@@ -300,15 +303,17 @@ with tab_players:
             def ins_player(r):
                 if r.get("name","").strip():
                     execute(
-                        "INSERT INTO players (team_id, name, number, height, wingspan, weight) VALUES (?,?,?,?,?,?)",
+                        "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness) VALUES (?,?,?,?,?,?,?)",
                         (team_id, r["name"].strip(), int(r.get("number") or 0),
-                         r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None)
+                         r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
+                         "left" if r.get("handedness") == "left" else "right")
                     )
             def upd_player(r):
                 execute(
-                    "UPDATE players SET team_id=?, name=?, number=?, height=?, wingspan=?, weight=? WHERE id=?",
+                    "UPDATE players SET team_id=?, name=?, number=?, height=?, wingspan=?, weight=?, handedness=? WHERE id=?",
                     (team_id, r["name"].strip(), int(r.get("number") or 0),
                      r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
+                     "left" if r.get("handedness") == "left" else "right",
                      r["id"])
                 )
             def del_player(r):

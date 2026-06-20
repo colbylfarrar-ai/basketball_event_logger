@@ -778,7 +778,7 @@ with st.expander("＋ Quick Add Player / Official"):
         qa_tnames  = [t1name, t2name]
 
         qa_p_orig = st.session_state.get("_qa_players_orig",
-                        pd.DataFrame(columns=["team","name","number","height","wingspan","weight"]))
+                        pd.DataFrame(columns=["team","name","number","height","wingspan","weight","handedness"]))
 
         st.data_editor(
             qa_p_orig,
@@ -792,6 +792,7 @@ with st.expander("＋ Quick Add Player / Official"):
                 "height":   st.column_config.NumberColumn("Height (in)",      min_value=0.0, step=0.5),
                 "wingspan": st.column_config.NumberColumn("Wingspan (in)",    min_value=0.0, step=0.5),
                 "weight":   st.column_config.NumberColumn("Weight (lbs)",     min_value=0.0, step=1.0),
+                "handedness": st.column_config.SelectboxColumn("Hand", options=["right","left"], default="right"),
             },
         )
         if st.button("Save Players", key="qa_save_players", type="primary"):
@@ -817,9 +818,10 @@ with st.expander("＋ Quick Add Player / Official"):
                     skipped += 1
                     continue
                 execute(
-                    "INSERT INTO players (team_id, name, number, height, wingspan, weight) VALUES (?,?,?,?,?,?)",
+                    "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness) VALUES (?,?,?,?,?,?,?)",
                     (tid, name, int(r.get("number") or 0),
-                     r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None)
+                     r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
+                     "left" if r.get("handedness") == "left" else "right")
                 )
                 saved += 1
             if saved or skipped:
@@ -835,6 +837,37 @@ with st.expander("＋ Quick Add Player / Official"):
                 st.rerun()
             else:
                 st.warning("Fill in at least one player row.")
+
+        # Flip handedness on existing players without leaving the tracker.
+        st.markdown("**Edit shooting hand**")
+        _hand_rows = query(
+            "SELECT id, name, number, team_id, handedness FROM players "
+            "WHERE team_id IN (?,?) AND archived=0 ORDER BY team_id, number, name",
+            (t1id, t2id))
+        if not _hand_rows:
+            st.caption("No players yet.")
+        else:
+            _tname_by = {t1id: t1name, t2id: t2name}
+            _hdf = pd.DataFrame([{"id": r["id"], "team": _tname_by.get(r["team_id"], ""),
+                                  "player": f"#{r['number']} {r['name']}",
+                                  "handedness": r["handedness"] or "right"} for r in _hand_rows])
+            _hed = st.data_editor(
+                _hdf, hide_index=True, width="stretch", key="gt_hand_editor",
+                column_config={
+                    "id": None,
+                    "team": st.column_config.TextColumn("Team", disabled=True),
+                    "player": st.column_config.TextColumn("Player", disabled=True),
+                    "handedness": st.column_config.SelectboxColumn(
+                        "Hand", options=["right", "left"], default="right"),
+                })
+            if st.button("Save hands", key="gt_save_hands"):
+                for _, r in _hed.iterrows():
+                    execute("UPDATE players SET handedness=? WHERE id=?",
+                            ("left" if r["handedness"] == "left" else "right", int(r["id"])))
+                st.session_state.pop("_players_orig", None)
+                st.cache_data.clear()
+                st.success("Shooting hands saved.")
+                st.rerun()
 
     with qa_r:
         st.markdown("**Add Officials**")

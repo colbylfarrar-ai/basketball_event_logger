@@ -43,7 +43,7 @@ with t_roster:
         tsel = st.selectbox("Team", teams, format_func=lambda r: r["name"],
                             key="su_team")
         pl = query(
-            """SELECT id, number, name, position, availability,
+            """SELECT id, number, name, position, availability, handedness,
                       height, wingspan, weight
                FROM players WHERE team_id=? AND archived=0 ORDER BY number""",
             (tsel["id"],))
@@ -60,14 +60,18 @@ with t_roster:
                         "Position", options=POSITIONS),
                     "availability": st.column_config.SelectboxColumn(
                         "Status", options=AVAIL),
+                    "handedness": st.column_config.SelectboxColumn(
+                        "Hand", options=["right", "left"], default="right",
+                        help="Shooting hand — drives dominant- vs weak-side shot splits."),
                     "height": st.column_config.NumberColumn("Ht", disabled=True),
                     "wingspan": st.column_config.NumberColumn("Wing", disabled=True),
                     "weight": st.column_config.NumberColumn("Wt", disabled=True),
                 })
             if st.button("Save roster", key="su_roster_save"):
                 for _, r in ed.iterrows():
-                    execute("UPDATE players SET position=?, availability=? WHERE id=?",
+                    execute("UPDATE players SET position=?, availability=?, handedness=? WHERE id=?",
                             (r["position"] or "", r["availability"] or "Active",
+                             "left" if r["handedness"] == "left" else "right",
                              int(r["id"])))
                 st.cache_data.clear()   # depth chart & co. read these via cached queries
                 st.success("Roster saved.")

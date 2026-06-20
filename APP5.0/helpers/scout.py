@@ -218,6 +218,18 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         tot = sum(c.values()) if c else 0
         p["creation"] = {k: 100 * c[k] / tot for k in c} if tot else None
 
+    # dominant- vs weak-hand-side shooting per player (helpers/handedness.py:
+    # righty's right-side shots = dominant; center = straightaway, kept apart).
+    hsplits = S.player_hand_splits(events=ev) if ev else {}
+    for p in personnel:
+        hb = hsplits.get(p["pid"])
+        if hb and (hb["dominant"]["all"]["FGA"] or hb["weak"]["all"]["FGA"]):
+            dom, wk = hb["dominant"]["all"], hb["weak"]["all"]
+            p["hand"] = {"dom_fga": dom["FGA"], "dom_pct": dom["pct"],
+                         "weak_fga": wk["FGA"], "weak_pct": wk["pct"]}
+        else:
+            p["hand"] = None
+
     # ── GS% (games started ÷ games played) — who normally starts ──────────────
     # Starters are inferred (five on the floor at each game's first event); see
     # stats.games_started. Scoped to this team's visible tracked games (gids).
@@ -434,13 +446,19 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             if _show("shot_source") and cm:
                 src = ("<div class='brk'>Shots: " + e(" · ".join(
                     f"{lbl} {cm[k]:.0f}%" for k, lbl in _SRC if k in cm)) + "</div>")
+            hd = p.get("hand")
+            hand_html = ""
+            if hd:
+                hand_html = ("<div class='brk'>Hand side: " + e(
+                    f"Dom {hd['dom_pct'] * 100:.0f}% ({hd['dom_fga']}) · "
+                    f"Weak {hd['weak_pct'] * 100:.0f}% ({hd['weak_fga']})") + "</div>")
             note = (f"<div class='pnote'>▶ {e(p['note'])}</div>"
                     if p.get("note") else "")
             shots = p.get("shots") or []
             mini = (f"<div class='mini'>"
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
-            cards.append(f"<td class='pcard'>{head}{brk}{stat}{src}{note}{mini}</td>")
+            cards.append(f"<td class='pcard'>{head}{brk}{stat}{src}{hand_html}{note}{mini}</td>")
         # two cards per row
         rows = ""
         for i in range(0, len(cards), 2):

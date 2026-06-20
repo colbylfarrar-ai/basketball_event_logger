@@ -289,9 +289,10 @@ def _stat_table(g, mg):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _zone_tables():
-    """Per-player zone splits + guarded/open splits (whole tracked sample)."""
+    """Per-player zone + guarded/open + hand-side splits (whole tracked sample)."""
     ev = S.fetch_events()
-    return S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev)
+    return (S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev),
+            S.player_hand_splits(events=ev))
 
 
 def _agg_zone(pids, zsplits):
@@ -334,7 +335,7 @@ st.markdown(
     "</div>", unsafe_allow_html=True)
 
 # per-player zone splits + guarded/open (shared by Shot Lab, Compare, Profile)
-zsplits, zguard = _zone_tables()
+zsplits, zguard, hsplits = _zone_tables()
 
 
 # ── full-pool data for the Lab tab (badges/archetypes/stabilized/matchups all
@@ -935,6 +936,14 @@ def _fx_shot():
                          help=f"{gu['FGM']}/{gu['FGA']}")
             mm[1].metric("Open FG%", f"{op['pct']*100:.0f}%" if op["FGA"] else "—",
                          help=f"{op['FGM']}/{op['FGA']}")
+        hb = hsplits.get(pl_pid, {})
+        if hb and (hb["dominant"]["all"]["FGA"] or hb["weak"]["all"]["FGA"]):
+            st.caption("**Hand side** — dominant vs weak half (dead-center ignored)")
+            dom, wk = hb["dominant"]["all"], hb["weak"]["all"]
+            hh = st.columns(2)
+            for col, lbl, c in ((hh[0], "Dominant FG%", dom), (hh[1], "Weak FG%", wk)):
+                col.metric(lbl, f"{c['pct']*100:.0f}%" if c["FGA"] else "—",
+                           help=f"{c['FGM']}/{c['FGA']} FGA")
     st.markdown("**Hot zones**")
     if pl_zone:
         _hot_zones(pl_zone)

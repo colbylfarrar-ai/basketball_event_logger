@@ -488,28 +488,22 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
                       f"<div class='notes-box'>{e(ntext)}</div>")
 
     # ── blank play diagrams (hand-draw after printing) ──
+    # A dense grid of blank half-courts with a write-your-own name line on top of
+    # each (no pre-set BLOB/SLOB labels) — coaches name plays themselves. 4-across
+    # × 2 rows = 8 courts in the same footprint the old 2×2 used; extra/unused
+    # courts are intentional (better to have spare than run short).
     diag_html = ""
     if _show("play_diagrams"):
-        legend = ("<p class='note'>○ offense · ✕ defense · → cut · "
-                  "⇢ pass · ⊢ screen · ∿ dribble</p>")
-        layout = extra.get("diagram_layout", "4 small")
-        if layout == "1 big":
-            ruled = "".join("<div class='rule'></div>" for _ in range(4))
-            diag_html = (
-                "<h2>Play diagram — draw by hand</h2>" + legend +
-                "<table class='diag'><tr>"
-                f"<td>{CP.blank_halfcourt_png(width=300)}"
-                "<div class='diaglabel'>Top set / ATO</div></td>"
-                f"<td class='lines'>{ruled}</td></tr></table>")
-        else:
-            labels = ["Top set", "BLOB", "SLOB", "Press break"]
-            cell = [
-                f"<td>{CP.blank_halfcourt_png(width=160)}"
-                f"<div class='diaglabel'>{e(lbl)}</div></td>" for lbl in labels]
-            diag_html = (
-                "<h2>Play diagrams — draw by hand</h2>" + legend +
-                "<table class='diag'>"
-                f"<tr>{cell[0]}{cell[1]}</tr><tr>{cell[2]}{cell[3]}</tr></table>")
+        legend = ("<p class='note'>Write each play's name on the line, draw below. "
+                  "○ offense · ✕ defense · → cut · ⇢ pass · ⊢ screen · "
+                  "∿ dribble</p>")
+        court = CP.blank_halfcourt_png(width=165)   # cached; reuse the one string
+        cell = f"<td><div class='diagname'></div>{court}</td>"
+        per_row, n_courts = 4, 8
+        rows = "".join(f"<tr>{cell * per_row}</tr>"
+                       for _ in range(n_courts // per_row))
+        diag_html = ("<h2>Play diagrams — draw by hand</h2>" + legend +
+                     f"<table class='diag'>{rows}</table>")
 
     return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
 <title>Scout · {e(sc['name'])}</title>
@@ -548,11 +542,9 @@ td.pcard.empty{{border:none}}
 .mini{{text-align:center;margin-top:4px}}
 .notes-box{{white-space:pre-wrap;border:1px solid #ddd;padding:6px;font-size:11px;
   min-height:46px}}
-table.diag{{border-collapse:separate;border-spacing:8px;width:100%}}
-table.diag td{{border:none;text-align:center;vertical-align:top;padding:2px}}
-.diaglabel{{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#666;
-  margin-top:2px}}
-.rule{{border-bottom:1px solid #bbb;height:16px;margin:6px 4px}}
+table.diag{{border-collapse:separate;border-spacing:7px;width:100%}}
+table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
+.diagname{{border-bottom:1px solid #999;height:13px;margin:0 3px 3px}}
 .foot{{margin-top:12px;color:#999;font-size:9px}}
 @media print{{.wrap{{padding:8px 12px}} td.pcard,table.diag td{{page-break-inside:avoid}}}}
 </style></head><body><div class='wrap'>

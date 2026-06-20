@@ -167,17 +167,8 @@ def render(ctx):
         if _new_hidden != _hidden:
             SU.set_setting("scout_hidden_sections", ",".join(sorted(_new_hidden)))
             _hidden = _new_hidden
-        _dl_saved = SU.get_setting("scout_diagram_layout", "4 small") or "4 small"
-        _dl = st.radio(
-            "Blank play-diagram layout",
-            ["4 small (BLOB / SLOB / sets)", "1 big court + note lines"],
-            index=(0 if _dl_saved == "4 small" else 1), horizontal=True,
-            key="scout_diag_layout",
-            help="Half-courts printed blank on the sheet so you can draw plays by "
-                 "hand. Toggle the section itself with 'Blank play diagrams' above.")
-        _diag_layout = "4 small" if _dl.startswith("4") else "1 big"
-        if _diag_layout != _dl_saved:
-            SU.set_setting("scout_diagram_layout", _diag_layout)
+        st.caption("The printable sheet ends with a grid of blank half-courts — "
+                   "write each play's name on the line and draw it by hand.")
 
     def _show(key):
         return key not in _hidden
@@ -530,7 +521,6 @@ def render(ctx):
         "poss_length": [r for r in (ctx.bundle.get("poss_length") or [])
                         if r["label"] != "Untimed" and r["FGA"]],
         "notes": ("" if _self else SB.get_note(ctx.team_id)),
-        "diagram_layout": _diag_layout,
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)

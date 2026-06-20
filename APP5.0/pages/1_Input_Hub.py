@@ -34,7 +34,9 @@ CLASS_OPTIONS  = ["B2", "B1", "A", "2A", "3A", "4A", "5A", "6A", "N/A"]
 GENDER_OPTIONS = ["M", "F"]
 HA_OPTIONS     = ["Home", "Away"]
 
-EDITOR_HELP = "**Click any cell to edit.** Hover a row and click to delete. Use the **＋** row at the bottom to add."
+EDITOR_HELP = ("**Click any cell to edit.** Add with the **＋** row at the bottom. "
+               "To delete: tick a row's checkbox and press the **Delete** key, then **Save Changes** "
+               "(no Delete key on a tablet? use the **Remove** control below).")
 
 
 def sort_by_date(df: pd.DataFrame, col: str = "date", ascending: bool = False) -> pd.DataFrame:
@@ -323,6 +325,29 @@ with tab_players:
                 invalidate("_players_orig", "players_editor")
                 st.cache_data.clear()
                 st.rerun()
+
+        # Explicit delete — the data_editor's row-delete needs a keyboard Delete key
+        # (absent on tablets), so give a discoverable button path too.
+        st.divider()
+        with st.expander("🗑️ Remove a player"):
+            if orig.empty:
+                st.caption("No players on this team yet.")
+            else:
+                del_opts = {f"#{int(r['number'])} {r['name']}": int(r["id"])
+                            for _, r in orig.iterrows()}
+                pick = st.selectbox("Player to remove", list(del_opts.keys()),
+                                    key="del_player_pick")
+                st.caption("A player with tracked game history is archived (stats kept), "
+                           "not permanently deleted.")
+                if st.button("Delete player", key="del_player_btn"):
+                    pid = del_opts[pick]
+                    if _gated_delete("players", pid, f"player '{pick}'"):
+                        outcome = delete_or_archive_player(pid)
+                        flash("success", f"{pick} archived (tracked history kept)."
+                              if outcome == "archived" else f"{pick} deleted.")
+                    invalidate("_players_orig", "players_editor")
+                    st.cache_data.clear()
+                    st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

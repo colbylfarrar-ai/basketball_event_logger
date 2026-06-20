@@ -748,9 +748,10 @@ st.markdown(f"""
 
 @st.cache_data(ttl=600, show_spinner="Computing league shot tables…")
 def _pp_zone_tables():
-    """Per-player zone splits + guarded/open splits over the whole tracked sample."""
+    """Per-player zone + guarded/open + hand-side splits over the whole tracked sample."""
     ev = S.fetch_events()
-    return S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev)
+    return (S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev),
+            S.player_hand_splits(events=ev))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -3915,8 +3916,14 @@ with tab_gloss:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — PLAYER PROFILE  (ported from 6_Players.py; scoped to this team's roster)
 # ══════════════════════════════════════════════════════════════════════════════
-def _render_profile(P, pid, rows, zsplits, zguard):
+def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
     hue, tier = _tier(P["OVERALL"])
+    # dominant- vs weak-hand-side shooting (half-court split; see helpers/handedness)
+    _hand = (hsplits or {}).get(pid, {})
+    _hand_dom = _hand.get("dominant", {}).get("all") if _hand else None
+    _hand_weak = _hand.get("weak", {}).get("all") if _hand else None
+    _hand_tot = (_hand_dom["FGA"] if _hand_dom else 0) + (_hand_weak["FGA"] if _hand_weak else 0)
+    _dom_share = (_hand_dom["FGA"] / _hand_tot) if _hand_tot else None
     badges = "".join(
         f"<div style='background:#0d1117;border:1px solid {hue}55;border-radius:8px;"
         f"padding:6px 14px;text-align:center'>"
@@ -4017,10 +4024,39 @@ def _render_profile(P, pid, rows, zsplits, zguard):
          f"{_fmt(P['Q4%'], 'pct')} of points", "#ff7b72"),
         ("SELF-CR%", _fmt(P["SelfCr%"], "pct"), "shot independence", "#d2a8ff"),
         ("STOCKS/32", _fmt(P["STOCKS/32"], "f1"), "defensive disruption", "#3fb950"),
+        ("DOM-SIDE%", f"{_dom_share*100:.0f}%" if _dom_share is not None else "—",
+         "strong-hand shot share", "#f0a500"),
     ]
-    tiles = st.columns(6)
+    tiles = st.columns(len(tile_specs))
     for col, (lbl, val, sub, clr) in zip(tiles, tile_specs):
         col.markdown(_glass(lbl, val, sub, clr), unsafe_allow_html=True)
+
+    # ── dominant vs weak hand side ────────────────────────────────────────────
+    if _hand_dom and _hand_weak and (_hand_dom["FGA"] or _hand_weak["FGA"]):
+        st.markdown("<div class='pl-hdr'>Dominant vs weak hand side</div>",
+                    unsafe_allow_html=True)
+        dom, wk = _hand_dom, _hand_weak
+        hm = st.columns(4)
+        hm[0].metric("Dominant FG%", f"{dom['pct']*100:.0f}%" if dom["FGA"] else "—",
+                     help=f"{dom['FGM']}/{dom['FGA']} on the strong-hand half")
+        hm[1].metric("Weak FG%", f"{wk['pct']*100:.0f}%" if wk["FGA"] else "—",
+                     help=f"{wk['FGM']}/{wk['FGA']} on the off-hand half")
+        hm[2].metric("Dominant share",
+                     f"{_dom_share*100:.0f}%" if _dom_share is not None else "—",
+                     help=f"{dom['FGA']} dominant / {wk['FGA']} weak attempts")
+        hm[3].metric("FG% edge",
+                     f"{(dom['pct']-wk['pct'])*100:+.0f}pp" if (dom["FGA"] and wk["FGA"]) else "—",
+                     help="Dominant minus weak FG% — how much better on the strong side")
+
+        def _po(c):
+            return f"{c['pct']*100:.0f}% ({c['FGM']}/{c['FGA']})" if c["FGA"] else "—"
+        dg, do = _hand["dominant"]["guarded"], _hand["dominant"]["open"]
+        wg, wo = _hand["weak"]["guarded"], _hand["weak"]["open"]
+        st.caption(
+            f"Dominant — guarded {_po(dg)} · open {_po(do)}   ·   "
+            f"Weak — guarded {_po(wg)} · open {_po(wo)}.  "
+            "Right-handers' right half = dominant (lefties mirrored); "
+            "dead-center shots ignored.")
 
     # ── shot chart + hot zones ────────────────────────────────────────────────
     st.markdown("<div class='pl-hdr'>Shot chart</div>", unsafe_allow_html=True)

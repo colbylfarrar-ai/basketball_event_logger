@@ -39,5 +39,5 @@ def render(ctx):
         _ppick = st.selectbox("Player", range(len(_porder)),
                               format_func=lambda i: _plabels[i], key="td_prof_pick")
         _ppid = _porder[_ppick]
-        _zs, _zg = ctx.pp_zone_tables()
-        ctx.render_profile(_ppool[_ppid], _ppid, _prows, _zs, _zg)
+        _zs, _zg, _hs = ctx.pp_zone_tables()
+        ctx.render_profile(_ppool[_ppid], _ppid, _prows, _zs, _zg, _hs)

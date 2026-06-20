@@ -216,7 +216,9 @@ def game_detail(game_id: int):
         "SELECT id, name, number, team_id, archived FROM players "
         "WHERE team_id IN (?,?) ORDER BY team_id, number, name",
         (g["team1_id"], g["team2_id"]))
-    officials = query("SELECT id, name FROM officials ORDER BY name")
+    # archived included (flagged) like players: the editor must resolve a ref on an
+    # existing foul; the client filters archived out of the lineup picker.
+    officials = query("SELECT id, name, archived FROM officials ORDER BY name")
     return {
         "id": g["id"], "date": g["date"],
         "home": {"id": g["team1_id"], "name": g["n1"]},
@@ -371,7 +373,10 @@ def quick_add_player(game_id: int, p: NewPlayer,
 def quick_add_official(o: NewOfficial, _: dict = Depends(require_full_user)):
     if not o.name.strip():
         raise HTTPException(status_code=422, detail="name required")
-    execute("INSERT OR IGNORE INTO officials (name, official_id) VALUES (?,?)",
+    # Re-adding a previously-archived ref (same official_id) revives them. Keep the
+    # STORED name on collision (the caller displays it back) — only un-archive.
+    execute("INSERT INTO officials (name, official_id) VALUES (?,?) "
+            "ON CONFLICT(official_id) DO UPDATE SET archived=0",
             (o.name.strip(), int(o.official_id)))
     row = query("SELECT id, name FROM officials WHERE official_id=?",
                 (o.official_id,))

@@ -12,7 +12,8 @@ what helpers.auth.current_user() returns.
 """
 from __future__ import annotations
 
-from database.db import query, execute
+from database.db import (query, execute,
+                         delete_or_archive_player, delete_or_archive_official)
 
 # The table name is interpolated into SQL on accept, so it MUST be whitelisted.
 # These are the Input-Hub-reachable deletes; never widen without auditing the
@@ -64,7 +65,15 @@ def accept(req_id, decider: str) -> bool:
     r = rows[0]
     if r["op"] != "delete" or r["table_name"] not in ALLOWED_TABLES:
         return False
-    execute(f"DELETE FROM {r['table_name']} WHERE id=?", (r["target_id"],))
+    # players(id) and officials(id) have FK refs without cascade (game_events) — a
+    # row with tracked history can't be hard-deleted, so archive instead. teams /
+    # games cascade clean, so a plain DELETE is right for them.
+    if r["table_name"] == "players":
+        delete_or_archive_player(r["target_id"])
+    elif r["table_name"] == "officials":
+        delete_or_archive_official(r["target_id"])
+    else:
+        execute(f"DELETE FROM {r['table_name']} WHERE id=?", (r["target_id"],))
     execute(
         "UPDATE change_requests SET status='accepted', decided_by=?, "
         "decided_at=datetime('now') WHERE id=?",

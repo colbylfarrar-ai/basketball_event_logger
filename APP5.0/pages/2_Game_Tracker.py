@@ -473,7 +473,7 @@ else:
     with st.expander("Floor — on-court five & officials", expanded=False):
         t1_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t1id,))
         t2_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t2id,))
-        all_offs = query("SELECT id, name FROM officials ORDER BY name")
+        all_offs = query("SELECT id, name FROM officials WHERE archived=0 ORDER BY name")
 
         t1_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t1_db]
         t2_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t2_db]

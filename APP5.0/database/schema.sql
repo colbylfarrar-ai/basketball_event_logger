@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS schedule (
 CREATE TABLE IF NOT EXISTS officials (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
-    official_id INTEGER NOT NULL UNIQUE
+    official_id INTEGER NOT NULL UNIQUE,
+    archived    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS game_lineup_players (

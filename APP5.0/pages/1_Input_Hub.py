@@ -4,7 +4,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
-from database.db import query, execute, normalize_date
+from database.db import (query, execute, normalize_date,
+                         delete_or_archive_player, delete_or_archive_official)
 from helpers.ui import page_chrome, page_header
 import helpers.seasons as SZ
 import helpers.auth as AUTH
@@ -90,7 +91,7 @@ def load_games_for_team(team_id):
     return sort_by_date(df, ascending=False)
 
 def load_officials():
-    rows = query("SELECT id, name, official_id FROM officials ORDER BY name")
+    rows = query("SELECT id, name, official_id FROM officials WHERE archived=0 ORDER BY name")
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","official_id"])
 
 def load_games():
@@ -310,7 +311,9 @@ with tab_players:
                 )
             def del_player(r):
                 if _gated_delete("players", r["id"], f"player '{r.get('name','?')}'"):
-                    execute("DELETE FROM players WHERE id=?", (r["id"],))
+                    if delete_or_archive_player(r["id"]) == "archived":
+                        st.toast(f"{r.get('name','Player')} has tracked game "
+                                 "history — archived (stats kept), not deleted.")
 
             errs = apply_delta("players_editor", orig, ins_player, upd_player, del_player)
             if errs:
@@ -558,14 +561,20 @@ with tab_officials:
     if st.button("Save Changes", key="save_officials", type="primary"):
         def ins_official(r):
             if r.get("name", "").strip() and r.get("official_id") is not None:
-                execute("INSERT OR IGNORE INTO officials (name, official_id) VALUES (?,?)",
-                        (r["name"].strip(), int(r["official_id"])))
+                # Re-adding a previously-archived ref (same official_id) revives them
+                # (un-archive); the stored name is kept, matching the tracker API.
+                execute(
+                    "INSERT INTO officials (name, official_id) VALUES (?,?) "
+                    "ON CONFLICT(official_id) DO UPDATE SET archived=0",
+                    (r["name"].strip(), int(r["official_id"])))
         def upd_official(r):
             execute("UPDATE officials SET name=?, official_id=? WHERE id=?",
                     (r["name"].strip(), int(r["official_id"]), r["id"]))
         def del_official(r):
             if _gated_delete("officials", r["id"], f"official '{r.get('name','?')}'"):
-                execute("DELETE FROM officials WHERE id=?", (r["id"],))
+                if delete_or_archive_official(r["id"]) == "archived":
+                    st.toast(f"{r.get('name','Official')} has game history — "
+                             "archived (stats kept), not deleted.")
 
         errs = apply_delta("officials_editor", orig, ins_official, upd_official, del_official)
         if errs:

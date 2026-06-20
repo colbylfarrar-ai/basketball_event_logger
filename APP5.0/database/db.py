@@ -250,6 +250,11 @@ def initialize_database():
             "CREATE INDEX IF NOT EXISTS idx_games_team2        ON games(team2_id)",
             "CREATE INDEX IF NOT EXISTS idx_players_team_arch  ON players(team_id, archived)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo ON game_lineup_officials(game_id, official_id)",
+            # Soft-delete for refs, mirroring players.archived. game_events.official_id
+            # (foul calls) references officials(id) WITHOUT cascade, so a ref who
+            # called any logged foul can't be hard-deleted — archive instead.
+            "ALTER TABLE officials ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            "CREATE INDEX IF NOT EXISTS idx_officials_archived ON officials(archived)",
             """CREATE TABLE IF NOT EXISTS app_settings (
                    key   TEXT PRIMARY KEY,
                    value TEXT NOT NULL DEFAULT ''
@@ -569,6 +574,69 @@ def executemany(sql: str, seq_of_params: list) -> int:
         return _rc
     finally:
         conn.close()
+
+
+# ── Player removal (delete-or-archive) ─────────────────────────────────────────
+# game_events points at players(id) through these 8 columns, and NONE of them
+# carry ON DELETE CASCADE (only game_lineup_players does). So a player who appears
+# in any tracked event can't be hard-deleted — DELETE FROM players raises
+# "FOREIGN KEY constraint failed". Such players are archived instead, which keeps
+# the box scores that reference them intact and hides them from every roster
+# (all roster reads filter archived=0).
+_PLAYER_EVENT_COLS = (
+    "primary_player_id", "rebound_by_id", "pass_from_id", "shot_created_by_id",
+    "blocked_by_id", "guarded_by_id", "secondary_player_id", "stolen_by_id",
+)
+
+
+def player_has_history(pid) -> bool:
+    """True if a player carries data a hard-delete would lose: a tracked game event
+    (game_events / game_event_lineup — FK without cascade) OR a hand-entered box
+    score (manual_player_box — cascades, so a plain DELETE would silently wipe it)."""
+    pid = int(pid)
+    where = " OR ".join(f"{c}=?" for c in _PLAYER_EVENT_COLS)
+    if query(f"SELECT 1 FROM game_events WHERE {where} LIMIT 1",
+             (pid,) * len(_PLAYER_EVENT_COLS)):
+        return True
+    if query("SELECT 1 FROM game_event_lineup WHERE player_id=? LIMIT 1", (pid,)):
+        return True
+    return bool(query("SELECT 1 FROM manual_player_box WHERE player_id=? LIMIT 1",
+                      (pid,)))
+
+
+def delete_or_archive_player(pid) -> str:
+    """Remove a player from active rosters. Hard-deletes when they have no tracked
+    history; otherwise archives (archived=1) so the game_events / box scores that
+    reference them survive. Returns 'deleted' or 'archived'."""
+    pid = int(pid)
+    if player_has_history(pid):
+        execute("UPDATE players SET archived=1 WHERE id=?", (pid,))
+        return "archived"
+    execute("DELETE FROM players WHERE id=?", (pid,))
+    return "deleted"
+
+
+def official_has_history(oid) -> bool:
+    """True if a ref is referenced by any logged foul (game_events.official_id) or
+    has worked a game (game_lineup_officials) — i.e. hard-deleting them would
+    violate an FK or drop a games-worked record."""
+    oid = int(oid)
+    if query("SELECT 1 FROM game_events WHERE official_id=? LIMIT 1", (oid,)):
+        return True
+    return bool(query("SELECT 1 FROM game_lineup_officials WHERE official_id=? LIMIT 1",
+                      (oid,)))
+
+
+def delete_or_archive_official(oid) -> str:
+    """Remove a ref from active selection lists. Hard-deletes when they have no
+    history; otherwise archives (archived=1) so the foul calls / games-worked rows
+    that reference them survive. Returns 'deleted' or 'archived'."""
+    oid = int(oid)
+    if official_has_history(oid):
+        execute("UPDATE officials SET archived=1 WHERE id=?", (oid,))
+        return "archived"
+    execute("DELETE FROM officials WHERE id=?", (oid,))
+    return "deleted"
 
 
 # ── Auto-init ──────────────────────────────────────────────────────────────────

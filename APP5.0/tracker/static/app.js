@@ -628,11 +628,13 @@ function renderLineup() {
 
   const ob = $('chips-officials');
   ob.innerHTML = '';
-  (S.game.officials || []).forEach(function (o) {
-    ob.appendChild(lineupChip(o.name,
-      S.lineup.officials.indexOf(o.id) >= 0,
-      function () { toggleSel(S.lineup.officials, o.id, 3, 'officials'); }));
-  });
+  // archived refs can't be assigned — editor pickers still resolve them via oLabel
+  (S.game.officials || []).filter(function (o) { return !o.archived; })
+    .forEach(function (o) {
+      ob.appendChild(lineupChip(o.name,
+        S.lineup.officials.indexOf(o.id) >= 0,
+        function () { toggleSel(S.lineup.officials, o.id, 3, 'officials'); }));
+    });
 }
 
 /* ----- quick-add player / official (lineup, online-only) ----- */
@@ -934,7 +936,8 @@ function renderFlow() {
     wrap.appendChild(chipRow('Fouler', players, f.fouler, function (id) { f.fouler = id; renderFlow(); }));
     const offIds = S.lineup.officials.length
       ? S.lineup.officials
-      : ((S.game.officials || []).map(function (o) { return o.id; }));
+      : ((S.game.officials || []).filter(function (o) { return !o.archived; })
+          .map(function (o) { return o.id; }));
     if (offIds.length) {
       wrap.appendChild(chipRow('Official', offIds, f.official,
         function (id) { f.official = id; renderFlow(); }, { allowNone: true, labelFn: oLabel }));

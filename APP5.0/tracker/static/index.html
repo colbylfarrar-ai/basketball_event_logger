@@ -48,7 +48,10 @@
   <div class="lineup-group">
     <h3 id="lineup-home-name"></h3>
     <div id="chips-home" class="chips"></div>
-    <button id="btn-add-home" class="btn ghost small add-btn" type="button">+ Add player</button>
+    <div class="lineup-actions">
+      <button id="btn-add-home" class="btn ghost small add-btn" type="button">+ Add player</button>
+      <button id="btn-hands-home" class="btn ghost small" type="button">✋ Hands</button>
+    </div>
     <div id="add-home-form" class="inline-form" hidden>
       <input id="add-home-name" type="text" placeholder="Name" autocomplete="off">
       <input id="add-home-number" type="number" placeholder="##" inputmode="numeric" min="0" max="999">
@@ -59,11 +62,15 @@
       <button id="add-home-save" class="btn primary" type="button">Add</button>
       <p id="add-home-status" class="status"></p>
     </div>
+    <div id="hands-home" class="hands-table" hidden></div>
   </div>
   <div class="lineup-group">
     <h3 id="lineup-away-name"></h3>
     <div id="chips-away" class="chips"></div>
-    <button id="btn-add-away" class="btn ghost small add-btn" type="button">+ Add player</button>
+    <div class="lineup-actions">
+      <button id="btn-add-away" class="btn ghost small add-btn" type="button">+ Add player</button>
+      <button id="btn-hands-away" class="btn ghost small" type="button">✋ Hands</button>
+    </div>
     <div id="add-away-form" class="inline-form" hidden>
       <input id="add-away-name" type="text" placeholder="Name" autocomplete="off">
       <input id="add-away-number" type="number" placeholder="##" inputmode="numeric" min="0" max="999">
@@ -74,6 +81,7 @@
       <button id="add-away-save" class="btn primary" type="button">Add</button>
       <p id="add-away-status" class="status"></p>
     </div>
+    <div id="hands-away" class="hands-table" hidden></div>
   </div>
   <div class="lineup-group">
     <h3 id="lineup-officials-name">Officials</h3>

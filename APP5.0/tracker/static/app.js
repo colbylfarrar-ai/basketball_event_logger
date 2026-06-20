@@ -623,7 +623,6 @@ function renderLineup() {
         box.appendChild(lineupChip('#' + p.number + ' ' + p.name,
           S.lineup[side].indexOf(p.id) >= 0,
           function () { toggleSel(S.lineup[side], p.id, 5, 'players'); }));
-        box.appendChild(handToggle(p));
       });
   });
 
@@ -636,33 +635,65 @@ function renderLineup() {
         S.lineup.officials.indexOf(o.id) >= 0,
         function () { toggleSel(S.lineup.officials, o.id, 3, 'officials'); }));
     });
+
+  renderHands('home');
+  renderHands('away');
 }
 
-/* ----- per-player shooting-hand toggle (lineup roster) ----- */
+/* ----- per-team shooting-hand editor (revealed table; keeps the roster
+   chips clean — each player is one row name + an R/L segmented toggle) ----- */
 
-function handToggle(p) {
-  const hand = (p.handedness === 'left') ? 'left' : 'right';
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'chip hand-toggle';
-  b.textContent = hand === 'left' ? '✋L' : '✋R';
-  b.title = 'Shooting hand: ' + hand + ' — tap to flip';
-  b.addEventListener('click', function () { flipHandedness(p); });
-  return b;
+function renderHands(side) {
+  const box = $('hands-' + side);
+  if (!box || !S.game) return;
+  box.innerHTML = '';
+  const teamId = S.game[side].id;
+  const players = (S.game.players || [])
+    .filter(function (p) { return p.team_id === teamId && !p.archived; });
+  if (!players.length) {
+    const e = document.createElement('p');
+    e.className = 'status';
+    e.textContent = 'No players yet.';
+    box.appendChild(e);
+    return;
+  }
+  players.forEach(function (p) { box.appendChild(handRow(p, side)); });
 }
 
-async function flipHandedness(p) {
+function handRow(p, side) {
+  const row = document.createElement('div');
+  row.className = 'hand-row';
+  const nm = document.createElement('span');
+  nm.className = 'hand-row-name';
+  nm.textContent = '#' + p.number + ' ' + p.name;
+  row.appendChild(nm);
+  const cur = (p.handedness === 'left') ? 'left' : 'right';
+  const seg = document.createElement('div');
+  seg.className = 'hand-seg';
+  [['right', 'R'], ['left', 'L']].forEach(function (opt) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip hand-opt' + (cur === opt[0] ? ' sel' : '');
+    b.textContent = opt[1];
+    b.addEventListener('click', function () { setHandedness(p, opt[0], side); });
+    seg.appendChild(b);
+  });
+  row.appendChild(seg);
+  return row;
+}
+
+async function setHandedness(p, value, side) {
+  if (((p.handedness === 'left') ? 'left' : 'right') === value) return;  // no-op
   if (!navigator.onLine) { toast('Needs connection to change hand'); return; }
-  const next = (p.handedness === 'left') ? 'right' : 'left';
   try {
     const res = await api('/api/games/' + S.gameId + '/players/' + p.id + '/handedness', {
-      method: 'POST', body: JSON.stringify({ handedness: next })
+      method: 'POST', body: JSON.stringify({ handedness: value })
     });
     if (!res.ok) { toast('Failed to update hand'); return; }
-    p.handedness = next;
+    p.handedness = value;
     lsSet(LS.roster(S.gameId), S.game);
-    toast('#' + p.number + ' ' + p.name + ' is now ' + next + '-handed');
-    renderLineup();
+    toast('#' + p.number + ' ' + p.name + ' → ' + value + '-handed');
+    renderHands(side);
   } catch (e) { toast('Needs connection'); }
 }
 
@@ -1537,6 +1568,11 @@ function bindUI() {
       f.hidden = !f.hidden;
     });
     $('add-' + side + '-save').addEventListener('click', function () { quickAddPlayer(side); });
+    $('btn-hands-' + side).addEventListener('click', function () {
+      const t = $('hands-' + side);
+      t.hidden = !t.hidden;
+      if (!t.hidden) renderHands(side);
+    });
   });
   $('btn-add-official').addEventListener('click', function () {
     const f = $('add-official-form');
@@ -1612,7 +1648,8 @@ function bindUI() {
 
 // Controls whose endpoints a guest "assistant scorer" link can't call.
 const GUEST_HIDE_IDS = ['btn-new-game', 'btn-add-home', 'btn-add-away',
-  'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log'];
+  'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log',
+  'btn-hands-home', 'btn-hands-away'];
 
 async function applyGuestMode() {
   // A guest link is log-only — hide create/finish/edit/add controls so the

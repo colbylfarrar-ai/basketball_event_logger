@@ -123,15 +123,25 @@ button {
 .chip.away { border-left: 3px solid var(--muted); }
 .chip.sel { background: var(--gold); border-color: var(--gold); color: var(--bg); font-weight: 700; }
 .chip.archived { opacity: 0.55; }
-/* per-player shooting-hand toggle: small pill that sits next to a player chip */
-.chip.hand-toggle {
-  min-height: 44px;
-  padding: 8px 10px;
-  font-size: 0.78rem;
-  background: var(--bg2);
-  color: var(--muted);
-  margin-left: -4px;
+/* ---- lineup action row: '+ Add player' and '✋ Hands' sit side by side ---- */
+.lineup-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.lineup-actions .add-btn { margin-top: 0; }
+
+/* ---- per-team shooting-hand editor (revealed table; clean roster) ---- */
+.hands-table { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 6px; }
+.hands-table[hidden] { display: none; }
+.hand-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 6px 10px;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px;
 }
+.hand-row-name { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hand-seg { display: flex; gap: 4px; flex: none; }
+.chip.hand-opt {
+  min-height: 40px; min-width: 44px; padding: 6px 0; text-align: center;
+  font-size: 0.85rem; background: var(--bg3); color: var(--muted);
+}
+.chip.hand-opt.sel { background: var(--gold); border-color: var(--gold); color: var(--bg); font-weight: 700; }
 .gender-filter { margin: 4px 0 10px; }
 
 /* compact horizontally scrollable chip rows (always-on detail pickers) */

@@ -75,6 +75,17 @@ def _draw_court(fig):
                   line=dict(color=GOLD, width=2.5), fillcolor="rgba(0,0,0,0)")
 
 
+def _court_bg():
+    """The court floor colour, routed through the active theme's body background
+    so the court reskins with the chosen preset instead of a baked navy."""
+    try:
+        from helpers.settings_utils import get_setting, STYLE_PRESETS
+        return STYLE_PRESETS.get(get_setting("app_style", "Dark"),
+                                 STYLE_PRESETS["Dark"]).get("body_bg", "#0d1117")
+    except Exception:
+        return "#0d1117"
+
+
 def _court_layout(fig, title, height):
     """Apply the shared half-court axes / theme."""
     # Match the mobile tracker: half-court at the bottom, rim at the TOP (reversed
@@ -85,7 +96,7 @@ def _court_layout(fig, title, height):
         xaxis=dict(range=[-26, 26], visible=False),
         yaxis=dict(range=[CG.Y_MAX, -2], visible=False, scaleanchor="x", scaleratio=1),
         height=height, margin=dict(l=5, r=5, t=42, b=5),
-        plot_bgcolor="rgba(18,20,30,1)", paper_bgcolor="rgba(0,0,0,0)")
+        plot_bgcolor=_court_bg(), paper_bgcolor="rgba(0,0,0,0)")
 
 
 def shot_chart(zone_data, title="Shot chart", height=430):
@@ -225,11 +236,14 @@ def _hex_centers(s):
 
 
 def shot_hexbin(shots, title="Shot hexbin", height=480, hex_ft=2.6, min_count=1,
-                league_pps=None):
+                league_pps=None, model=None, mode="pps"):
     """NBA-style hexbin: hexagon size ∝ shot volume, colour = points-per-shot.
 
     `league_pps` centres the diverging colour scale (red below league, green
-    above). Returns ``(figure, n_hexes)``; 0 means nothing met `min_count`."""
+    above). With ``mode="poe"`` and a league make-rate ``model``, the colour
+    instead encodes points-OVER-expected (actual pts/shot − the model's expected
+    pts/shot at that spot) on a scale centred at 0 — shot quality vs difficulty.
+    Returns ``(figure, n_hexes)``; 0 means nothing met `min_count`."""
     fig = go.Figure()
     _draw_court(fig)
     centers = _hex_centers(hex_ft)
@@ -252,32 +266,89 @@ def shot_hexbin(shots, title="Shot hexbin", height=480, hex_ft=2.6, min_count=1,
     pps = [pts[i] / cnt[i] for i in sel]
     # marker size 12→34 by sqrt(volume)
     sizes = [12 + 22 * (cnt[i] / cmax) ** 0.5 for i in sel]
-    mid = league_pps if league_pps is not None else (sum(pps) / len(pps))
+    if mode == "poe" and model is not None:
+        # points OVER expected: actual pts/shot minus the league make-rate model's
+        # expected pts/shot at each hex centre. Diverging scale centred on 0 —
+        # green = scoring above the shot's difficulty, red = below.
+        from helpers.stats import expected_points_at
+        exp = [expected_points_at(float(cx[i]), float(cy[i]), model) for i in sel]
+        vals = [pps[k] - exp[k] for k in range(len(sel))]
+        cabs = max(0.30, max(abs(v) for v in vals))
+        marker = dict(symbol="hexagon", size=sizes, color=vals,
+                      colorscale="RdYlGn", cmid=0, cmin=-cabs, cmax=cabs,
+                      showscale=True,
+                      colorbar=dict(title="vs xPts", thickness=12, len=0.6, x=1.0),
+                      line=dict(width=0.5, color="#0d1117"))
+        hov = [f"{int(cnt[i])} shots · {pps[k]:.2f} pps · "
+               f"{'+' if vals[k] >= 0 else ''}{vals[k]:.2f} vs expected"
+               for k, i in enumerate(sel)]
+    else:
+        mid = league_pps if league_pps is not None else (sum(pps) / len(pps))
+        marker = dict(symbol="hexagon", size=sizes, color=pps, colorscale="RdYlGn",
+                      cmid=mid, showscale=True,
+                      colorbar=dict(title="PPS", thickness=12, len=0.6, x=1.0),
+                      line=dict(width=0.5, color="#0d1117"))
+        hov = [f"{int(cnt[i])} shots · {pts[i] / cnt[i]:.2f} pts/shot"
+               for i in sel]
     fig.add_trace(go.Scatter(
         x=[cx[i] for i in sel], y=[cy[i] for i in sel], mode="markers",
-        marker=dict(symbol="hexagon", size=sizes, color=pps, colorscale="RdYlGn",
-                    cmid=mid, showscale=True,
-                    colorbar=dict(title="PPS", thickness=12, len=0.6, x=1.0),
-                    line=dict(width=0.5, color="#0d1117")),
-        hovertext=[f"{int(cnt[i])} shots · {pts[i] / cnt[i]:.2f} pts/shot" for i in sel],
-        hoverinfo="text", showlegend=False))
+        marker=marker, hovertext=hov, hoverinfo="text", showlegend=False))
     _court_layout(fig, title, height)
     return fig, len(sel)
 
 
-def expected_points_surface(model, shots=None, title="Expected points / shot",
-                            height=480, grid_ft=1.0, overlay=False):
-    """Filled contour of expected points per shot across the court (from the
-    distance×value make-rate model). Optionally overlays the given shots.
-    Returns the figure."""
+def _model_key(model):
+    """A small hashable fingerprint of the league make-rate ``model`` so the
+    expensive expected-points grid can be cached. None if the model can't be
+    fingerprinted (caller then computes uncached)."""
+    try:
+        return (round(float(model.get("bin_ft", 0)), 4),
+                round(float(model.get("overall", 0)), 6),
+                tuple(sorted((k, round(float(v), 6))
+                             for k, v in model.get("by_value", {}).items())),
+                tuple(sorted((k, round(float(v), 6))
+                             for k, v in model.get("bins", {}).items())))
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _xpoints_grid_cached(model_key, grid_ft, _model):
+    """Cached expected-points grid. ``_model`` is skip-hashed (leading underscore);
+    the hashable ``model_key`` fingerprint is the real cache key, so the ~2k
+    expected_points_at calls run once per (model, grid) instead of every render —
+    avoiding both the UnhashableParamError trap and the per-rerun recompute."""
+    return _xpoints_grid_compute(grid_ft, _model)
+
+
+def _xpoints_grid_compute(grid_ft, model):
     from helpers.stats import expected_points_at
-    fig = go.Figure()
     xs = np.arange(CG.X_MIN, CG.X_MAX + grid_ft, grid_ft)
     ys = np.arange(0.0, CG.Y_MAX + grid_ft, grid_ft)
     Z = np.empty((len(ys), len(xs)))
     for j, y in enumerate(ys):
         for i, x in enumerate(xs):
             Z[j, i] = expected_points_at(float(x), float(y), model)
+    return xs, ys, Z
+
+
+def expected_points_grid(model, grid_ft=1.0):
+    """(xs, ys, Z) expected-points grid for ``model`` — cached when the model can
+    be fingerprinted, else computed directly. Shared by the contour surface and
+    any caller that needs the raw field."""
+    mk = _model_key(model)
+    if mk is None:
+        return _xpoints_grid_compute(grid_ft, model)
+    return _xpoints_grid_cached(mk, grid_ft, model)
+
+
+def expected_points_surface(model, shots=None, title="Expected points / shot",
+                            height=480, grid_ft=1.0, overlay=False):
+    """Filled contour of expected points per shot across the court (from the
+    distance×value make-rate model). Optionally overlays the given shots.
+    Returns the figure. The grid is cached via ``expected_points_grid``."""
+    fig = go.Figure()
+    xs, ys, Z = expected_points_grid(model, grid_ft)
     fig.add_trace(go.Contour(
         x=xs, y=ys, z=Z, colorscale="YlOrRd", zmin=0.0,
         zmax=float(max(1.5, np.nanmax(Z))), opacity=0.85,

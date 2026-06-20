@@ -219,8 +219,37 @@ def render(ctx):
                 sca.update_xaxes(title="Offense →")
                 sca.update_yaxes(title="Defense →")
                 ctx.style(sca, 340)
-                st.plotly_chart(sca, width="stretch", key="pl_map")
-                st.caption("Bubble size = points/game. Top-right = two-way.")
+                # Chart-as-input: tap a dot → inspect that player below. Lives
+                # inside this @st.fragment so the rerun is scoped + cheap.
+                from helpers.ui import (chart_select as _csel,
+                                        selected_xy as _sxy)
+                from helpers.cards import stat_kpi as _skpi
+                _sel = _csel(sca, key="pl_map")
+                st.caption("Bubble size = points/game. Top-right = two-way. "
+                           "Tap a dot to inspect a player.")
+                _hits = _sxy(_sel)
+                if _hits:
+                    _tx, _ty = _hits[0]
+                    _hit = min(mp, key=lambda p: ((p["OFFENSE"] or 50) - _tx) ** 2
+                               + ((p["DEFENSE"] or 50) - _ty) ** 2)
+                    _ov = _hit.get("OVERALL")
+                    _dc = st.columns(4)
+                    _dc[0].markdown(
+                        _skpi("Selected", f"#{_hit['number']} {_hit['name']}"),
+                        unsafe_allow_html=True)
+                    _dc[1].markdown(
+                        _skpi("Overall",
+                              f"{_ov:.0f}" if _ov is not None else "—", ovrl=_ov),
+                        unsafe_allow_html=True)
+                    _dc[2].markdown(
+                        _skpi("Off / Def",
+                              f"{(_hit['OFFENSE'] or 0):.0f} / "
+                              f"{(_hit['DEFENSE'] or 0):.0f}"),
+                        unsafe_allow_html=True)
+                    _dc[3].markdown(
+                        _skpi("PPG", f"{_hit['PPG']:.1f}"
+                              if _hit.get('PPG') is not None else "—"),
+                        unsafe_allow_html=True)
 
         # ── shot selection: who shoots where (most) & best where, by 2s/3s ──
         st.markdown("<div class='lab-hdr'>Shot selection — who shoots where</div>",

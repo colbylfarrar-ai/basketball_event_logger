@@ -857,7 +857,27 @@ def render_box_score(game_id: int):
                 cfig, _ = court.shot_map(shots, title=f"{who} · shot chart")
             else:
                 cfig, _ = court.shot_hexbin(shots, title=f"{who} · shot hexbin")
-            st.plotly_chart(cfig, width="stretch", key=f"bs{game_id}_courtmap")
+            # Chart-as-input: tap a spot on the court → filter the located shots
+            # to that zone and summarise them. Scoped to this @st.fragment.
+            from helpers.ui import court_panel as _cpanel, selected_xy as _sxy
+            _csel = _cpanel(cfig, key=f"bs{game_id}_courtmap")
+            _chits = _sxy(_csel)
+            if _chits:
+                from helpers.court_geom import zone_from_xy as _zfx
+                _tz = _zfx(*_chits[0])
+                _zs = [s for s in shots
+                       if (not s["approx"]) and _zfx(s["x"], s["y"]) == _tz]
+                if _zs:
+                    _zm = sum(1 for s in _zs if s["make"])
+                    _zp = sum((s["value"] if s["make"] else 0) for s in _zs)
+                    st.markdown(
+                        f"<span class='badge accent'>Zone {_tz}</span> &nbsp; "
+                        f"<b>{_zm}/{len(_zs)}</b> "
+                        f"({_zm / len(_zs) * 100:.0f}%) · "
+                        f"{_zp / len(_zs):.2f} pts/shot "
+                        f"<span style='color:var(--subtext)'>"
+                        f"(tap-located shots in this zone)</span>",
+                        unsafe_allow_html=True)
             if n_real < len(shots):
                 st.caption(f"{n_real}/{len(shots)} shots are tap-located; the rest "
                            "sit at their zone centroid. Sharper as you tap shots in "

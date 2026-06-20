@@ -29,7 +29,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
-from helpers.ui import (page_chrome, page_header, empty_state, rgb as _rgb,
+from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
+                        empty_state, rgb as _rgb,
                         style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
                         gender_radio, grid as _grid)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
@@ -271,9 +272,9 @@ def _spotlight(num, label, sub=""):
 #  HEADER + CONTROLS
 # ══════════════════════════════════════════════════════════════════════════════
 
-page_header("Player Analytics Lab",
-            sub="Every tracked stat · shot charts · 0-100 ratings · "
-                "invented metrics — all built from play-by-play events.")
+_lab_hero("Player Analytics Lab", phase="ANALYZE",
+          sub="Every tracked stat · shot charts · 0-100 ratings · "
+              "invented metrics — all built from play-by-play events.")
 
 c1, c2 = st.columns([1, 2])
 gender = gender_radio(c1)
@@ -1158,6 +1159,19 @@ with tab_cmp:
 def _fx_prof():
     order = sorted(rows, key=lambda r: (r["Rank"] or 1e9))
     labels = [f"#{r['Rank']}  {r['name']}  ·  {r['team']}" for r in order]
+    # Deep-link preselect: a ?player=<id> link (from a landing/search leaderboard)
+    # opens this profile already scoped to that player. Applied once per distinct
+    # id so the user can still change the picker afterward; ids not in the current
+    # gender pool fall through to the default.
+    _qp = st.query_params.get("player")
+    if _qp and st.session_state.get("_prof_deeplink") != _qp:
+        _idx = next(
+            (i for i, r in enumerate(order)
+             if str(next((k for k, v in by_pid.items() if v is r), "")) == str(_qp)),
+            None)
+        if _idx is not None:
+            st.session_state["prof_pick"] = _idx
+        st.session_state["_prof_deeplink"] = _qp
     pick = st.selectbox("Player", range(len(order)),
                         format_func=lambda i: labels[i], key="prof_pick")
     P = order[pick]

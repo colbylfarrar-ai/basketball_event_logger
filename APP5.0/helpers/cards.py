@@ -109,8 +109,99 @@ def tier(ovrl):
     return ("#8b949e", "DEVELOPING")
 
 
+def tier_class(ovrl):
+    """OVERALL rating → the assets/style.css ``.v-*`` tint class (Phase 0 0.2).
+
+    The CSS counterpart to ``tier()`` — use it on FRESH markup so the headline
+    number's colour is theme-reactive (``.v-elite`` reskins with the accent)
+    instead of a baked hex. Same 70/62/54/46 ladder. ``""`` when unrated, so a
+    caller can fall back to the default text colour."""
+    if ovrl is None:
+        return "v-dev"
+    if ovrl >= 70:
+        return "v-elite"
+    if ovrl >= 62:
+        return "v-great"
+    if ovrl >= 54:
+        return "v-above"
+    if ovrl >= 46:
+        return "v-avg"
+    return "v-dev"
+
+
+# ── confidence affordance (how firmly the sample backs a number) ──────────────
+def conf_level(n, k=3.0, sig=None):
+    """Classify how trustworthy a stat is → ``"stable" | "fair" | "weak"``.
+
+    Two evidence models, matching what the engine already computes:
+      • ``sig`` given (RAPM significance bool, rapm.py): True → stable, False → weak.
+      • else volume ``n`` vs prior weight ``k`` (the shrinkage stabilizer's
+        games-/attempts-equivalent, helpers/shrinkage.py): the shrink fraction
+        ``n/(n+k)`` ≥0.8 → stable, ≥0.55 → fair, else weak (directional).
+    """
+    if sig is not None:
+        return "stable" if sig else "weak"
+    if n is None:
+        return "weak"
+    frac = n / (n + k) if (n + k) else 0.0
+    return "stable" if frac >= 0.8 else "fair" if frac >= 0.55 else "weak"
+
+
+_CONF_CLS = {"stable": "conf-stable", "fair": "conf-fair", "weak": "conf-weak"}
+_CONF_WORD = {"stable": "stable", "fair": "fair", "weak": "directional"}
+
+
+def conf_dot(n, k=3.0, sig=None, *, title=None):
+    """A bare confidence dot (HTML span; ``.conf-dot`` classes in style.css).
+
+    Drop next to a headline value so tier-colour never ships without telling the
+    coach how firmly the sample backs it. ``title`` overrides the hover text."""
+    lvl = conf_level(n, k, sig)
+    tip = title or {"stable": "Stable — well-sampled",
+                    "fair": "Fair — moderate sample",
+                    "weak": "Directional — small sample"}[lvl]
+    return (f"<span class='conf-dot {_CONF_CLS[lvl]}' "
+            f"title='{html.escape(str(tip))}'></span>")
+
+
+def conf_chip(n, k=3.0, sig=None, *, label=None):
+    """Confidence dot + word as a pill (``.conf-chip``). Use where there's room
+    for a labelled affordance (rating tiles, RAPM rows). ``label`` overrides the
+    word (e.g. 'n=4')."""
+    lvl = conf_level(n, k, sig)
+    word = label or _CONF_WORD[lvl]
+    return (f"<span class='conf-chip'><span class='conf-dot {_CONF_CLS[lvl]}'>"
+            f"</span>{html.escape(str(word))}</span>")
+
+
+def stat_kpi(label, value, *, ovrl=None, pct=None, conf_n=None, conf_k=3.0,
+             sig=None, sub=""):
+    """The Phase-0 headline KPI tile: a number that knows its RANK and its
+    CONFIDENCE (HTML string; ``.mini-tile`` + ``.v-*`` + ``.pl-pct-*`` classes).
+
+    ``ovrl`` tints the value by tier (``tier_class``); ``pct`` draws a percentile
+    bar; ``conf_n``/``conf_k`` or ``sig`` append a confidence dot. The fix for
+    "every st.metric looks the same" — drop into a column with st.markdown."""
+    vcls = tier_class(ovrl) if ovrl is not None else "v-avg"
+    dot = (conf_dot(conf_n, conf_k, sig)
+           if (conf_n is not None or sig is not None) else "")
+    bar = ""
+    if pct is not None:
+        c = pctile_color(pct)
+        w = max(2, min(100, pct))
+        bar = (f"<div class='pl-pct-track' style='margin-top:8px'>"
+               f"<div class='pl-pct-fill' style='width:{w}%;background:{c}'>"
+               f"</div></div>")
+    return (f"<div class='mini-tile' style='text-align:left'>"
+            f"<div class='mini-lbl'>{html.escape(str(label))}{dot}</div>"
+            f"<div class='mini-val {vcls}'>{html.escape(str(value))}</div>"
+            + (f"<div class='mini-sub'>{html.escape(str(sub))}</div>"
+               if sub else "")
+            + bar + "</div>")
+
+
 # ── glass KPI tile + on/off comparison card ───────────────────────────────────
-def glass(label, value, sub="", color="#f0f6fc"):
+def glass(label, value, sub="", color="var(--text)"):
     """Glassmorphism KPI tile (HTML string; uses the .pl-glass-* classes)."""
     return (f"<div class='pl-glass'><div class='pl-glass-l'>{html.escape(str(label))}</div>"
             f"<div class='pl-glass-v' style='color:{color}'>{html.escape(str(value))}</div>"
@@ -132,23 +223,23 @@ def onoff_html(label, on_v, off_v, on_n, off_n, n_lbl="opps",
         dstr = f"{d:+.1f}%"
         impact = "↑ Positive" if good else "↓ Negative" if bad else "~ Neutral"
     return (
-        f"<div style='background:#161b22;border:1px solid #30363d;"
+        f"<div style='background:var(--card-bg);border:1px solid var(--card-border);"
         f"border-radius:10px;padding:14px'>"
-        f"<div style='font-size:11px;color:#8b949e;text-transform:uppercase;"
+        f"<div style='font-size:11px;color:var(--subtext);text-transform:uppercase;"
         f"letter-spacing:1px;margin-bottom:8px'>{html.escape(str(label))}</div>"
         f"<div style='display:flex;justify-content:space-around;"
         f"align-items:center;margin-bottom:8px'>"
         f"<div style='text-align:center'>"
-        f"<div style='font-size:9px;color:#8b949e'>ON COURT</div>"
-        f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{on_s}</div>"
+        f"<div style='font-size:9px;color:var(--subtext)'>ON COURT</div>"
+        f"<div style='font-size:24px;font-weight:800;color:var(--text)'>{on_s}</div>"
         f"<div style='font-size:10px;color:#484f58'>{html.escape(str(n_lbl))}={on_n}</div></div>"
-        f"<div style='font-size:18px;color:#30363d'>vs</div>"
+        f"<div style='font-size:18px;color:var(--card-border)'>vs</div>"
         f"<div style='text-align:center'>"
-        f"<div style='font-size:9px;color:#8b949e'>OFF COURT</div>"
-        f"<div style='font-size:24px;font-weight:800;color:#f0f6fc'>{off_s}</div>"
+        f"<div style='font-size:9px;color:var(--subtext)'>OFF COURT</div>"
+        f"<div style='font-size:24px;font-weight:800;color:var(--text)'>{off_s}</div>"
         f"<div style='font-size:10px;color:#484f58'>{html.escape(str(n_lbl))}={off_n}</div></div>"
         f"</div>"
-        f"<div style='text-align:center;padding:6px;background:#0d1117;"
+        f"<div style='text-align:center;padding:6px;background:var(--card-bg-2);"
         f"border-radius:6px'><span style='font-weight:700;color:{dclr}'>{dstr}</span>"
         f"<span style='font-size:11px;color:{dclr};margin-left:6px'>{impact}</span>"
         f"</div></div>")

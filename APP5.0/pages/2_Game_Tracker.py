@@ -306,7 +306,7 @@ def _render_command_center():
     sc2.markdown(
         f"<div style='text-align:center;padding-top:8px'>"
         f"<div style='font-size:1.3em'>{q_label(cur_q)}</div>"
-        f"<div style='color:#888;font-size:0.85em'>poss {ls['home_poss']}–{ls['away_poss']}</div>"
+        f"<div style='color:var(--subtext);font-size:0.85em'>poss {ls['home_poss']}–{ls['away_poss']}</div>"
         f"</div>", unsafe_allow_html=True)
     sc3.metric(t2name, ap)
 
@@ -319,11 +319,67 @@ def _render_command_center():
         # OT extends Q4 for team fouls — no reset, the count carries over.
         n = (sum(by_q.get(q, 0) for q in range(4, cur_q + 1)) if cur_q > 4
              else by_q.get(cur_q, 0))
-        bonus = (" &nbsp;<span style='background:#d73027;color:white;padding:1px 8px;"
-                 "border-radius:8px;font-size:0.8em;font-weight:700'>BONUS</span>"
-                 if n >= 5 else "")
+        bonus = (" &nbsp;<span style='background:var(--bad);color:white;"
+                 "padding:1px 8px;border-radius:8px;font-size:0.8em;"
+                 "font-weight:700'>BONUS</span>" if n >= 5 else "")
         col.markdown(f"**{tname}** — {q_label(cur_q)} team fouls: {n}{bonus}",
                      unsafe_allow_html=True)
+
+    # ── live win-probability strip — the cutting-edge moment the live command
+    #    center was missing. Builds an (elapsed, margin) walk from the scoring
+    #    events and renders the shared wp_ribbon. Fully guarded: any failure
+    #    silently skips so live tracking is never put at risk. ──────────────────
+    try:
+        import helpers.win_probability as _WP
+        from helpers.ui import wp_ribbon as _wp_ribbon, mini_tile as _mini
+        from helpers.settings_utils import get_setting as _get_setting
+        _acc = _get_setting("accent_color", "#f0a500")
+        _QSEC = 480   # 8-min HS quarters (win_probability.GAME_SECONDS / 4)
+        _mc, _s1, _s2 = [(0.0, 0)], 0, 0
+        for _ev in sorted(events_asc,
+                          key=lambda e: (e["quarter"],
+                                         -GE.time_to_secs(e["time"]), e["id"])):
+            _p = 0
+            if _ev["event_type"] == "shot" and _ev["shot_result"] == "make":
+                _p = _ev["shot_type"]
+            elif (_ev["event_type"] == "free_throw"
+                  and _ev["shot_result"] == "make"):
+                _p = 1
+            if not _p:
+                continue
+            _tm = pid_team.get(_ev["primary_player_id"])
+            if _tm == t1id:
+                _s1 += _p
+            elif _tm == t2id:
+                _s2 += _p
+            _q = _ev["quarter"]
+            _rem = GE.time_to_secs(_ev["time"])
+            _el = ((_q - 1) * _QSEC + (_QSEC - _rem) if _q <= 4
+                   else 4 * _QSEC + (_q - 5) * 240 + (240 - _rem))
+            _mc.append((float(_el), _s1 - _s2))
+        if len(_mc) >= 2:
+            _curve = _WP.wp_curve(_mc)
+            _summ = _WP.summarize(_curve)
+            _wpfig = _wp_ribbon(_curve, home_name=t1name, accent=_acc,
+                                height=160)
+            if _wpfig is not None:
+                st.markdown("<div class='lab-hdr' style='margin-top:4px'>"
+                            "Live win probability</div>", unsafe_allow_html=True)
+                st.plotly_chart(_wpfig, width="stretch",
+                                key=f"live_wp_{game_id}")
+                _cwp = _curve[-1][2] * 100
+                _lnm = t1name if _cwp >= 50 else t2name
+                _lwp = _cwp if _cwp >= 50 else 100 - _cwp
+                _wcl = st.columns(3)
+                _wcl[0].markdown(_mini("Excitement (GEI)",
+                                       f"{_summ['gei']:.1f}"),
+                                 unsafe_allow_html=True)
+                _wcl[1].markdown(_mini("Lead changes", _summ["lead_changes"]),
+                                 unsafe_allow_html=True)
+                _wcl[2].markdown(_mini(f"{_lnm} win odds", f"{_lwp:.0f}%"),
+                                 unsafe_allow_html=True)
+    except Exception:
+        pass
 
     # ── quarter scores ──────────────────────────────────────────────────────────
     qs = ls["quarters"]

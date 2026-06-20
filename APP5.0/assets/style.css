@@ -6,32 +6,32 @@
 
 /* ── Dashboard stat card ─────────────────────────────────────────────────── */
 .dash-card {
-    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-    border: 1px solid #30363d;
+    background: linear-gradient(135deg, #0d1117 0%, var(--card-bg) 100%);
+    border: 1px solid var(--card-border);
     border-radius: 14px;
     padding: 20px 22px;
     margin-bottom: 14px;
 }
 .dash-card-title {
     font-size: 10px;
-    color: #8b949e;
+    color: var(--subtext);
     text-transform: uppercase;
     letter-spacing: 1.2px;
     margin-bottom: 6px;
 }
 .dash-card-value {
-    font-size: 34px;
+    font-size: var(--fs-stat);
     font-weight: 800;
     color: #f0a500;
     line-height: 1.1;
 }
 .dash-card-sub  { font-size: 13px; color: #c9d1d9; margin-top: 6px; }
-.dash-card-meta { font-size: 11px; color: #8b949e;  margin-top: 2px; }
+.dash-card-meta { font-size: 11px; color: var(--subtext);  margin-top: 2px; }
 
 /* ── KPI hero tile ────────────────────────────────────────────────────────── */
 .kpi-tile {
-    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-    border: 1px solid #30363d;
+    background: linear-gradient(135deg, #0d1117 0%, var(--card-bg) 100%);
+    border: 1px solid var(--card-border);
     border-radius: 14px;
     padding: 16px 20px;
     text-align: center;
@@ -39,45 +39,45 @@
 }
 .kpi-label {
     font-size: 10px;
-    color: #8b949e;
+    color: var(--subtext);
     text-transform: uppercase;
     letter-spacing: 1.2px;
     font-weight: 600;
     margin-bottom: 6px;
 }
-.kpi-value { font-size: 32px; font-weight: 900; color: #f0a500; line-height: 1.1; }
+.kpi-value { font-size: var(--fs-stat); font-weight: 900; color: #f0a500; line-height: 1.1; }
 .kpi-sub   { font-size: 12px; color: #c9d1d9; margin-top: 5px; }
 
 /* ── Advanced metric tile ─────────────────────────────────────────────────── */
 .adv-tile {
-    background: #161b22;
-    border: 1px solid #30363d;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
     border-radius: 10px;
     padding: 12px 16px;
     text-align: center;
 }
-.adv-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-.adv-value { font-size: 22px; font-weight: 800; color: #58a6ff; }
+.adv-label { font-size: 10px; color: var(--subtext); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.adv-value { font-size: var(--fs-adv); font-weight: 800; color: #58a6ff; }
 
 /* ── Score card ────────────────────────────────────────────────────────────── */
 .score-card {
-    background: #161b22;
-    border: 1px solid #30363d;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
     border-radius: 10px;
     padding: 10px 14px;
     margin-bottom: 6px;
 }
-.score-card-date { font-size: 10px; color: #8b949e; margin-bottom: 5px; }
+.score-card-date { font-size: 10px; color: var(--subtext); margin-bottom: 5px; }
 .score-card-team { font-size: 13px; font-weight: 600; color: #c9d1d9; }
 .score-card-pts  { font-size: 20px; font-weight: 800; }
 .score-winner    { color: #f0a500; }
-.score-loser     { color: #8b949e; }
+.score-loser     { color: var(--subtext); }
 .score-final     { font-size: 10px; color: #2ecc71; margin-top: 4px; }
 
 /* ── Ranking card ─────────────────────────────────────────────────────────── */
 .rank-card {
-    background: #161b22;
-    border: 1px solid #30363d;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
     border-radius: 10px;
     padding: 11px 14px;
     margin-bottom: 6px;
@@ -94,8 +94,8 @@
 .rank-2 { background: #adb5bd; color: #000; }
 .rank-3 { background: #cd7f32; color: #fff; }
 .rank-n { background: #2d333b; color: #c9d1d9; }
-.rank-team { font-size: 14px; font-weight: 700; color: #f0f6fc; }
-.rank-rec  { font-size: 12px; color: #8b949e; }
+.rank-team { font-size: 14px; font-weight: 700; color: var(--text); }
+.rank-rec  { font-size: 12px; color: var(--subtext); }
 .rank-ps   { font-size: 13px; font-weight: 700; color: #58a6ff; margin-left: auto; }
 
 /* ── Player leader card ───────────────────────────────────────────────────── */
@@ -107,57 +107,57 @@
     text-align: center;
     margin-bottom: 8px;
 }
-.pl-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+.pl-label { font-size: 10px; color: var(--subtext); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
 .pl-value { font-size: 30px; font-weight: 800; color: #f0a500; }
-.pl-name  { font-size: 14px; font-weight: 700; color: #f0f6fc; margin-top: 4px; }
-.pl-meta  { font-size: 11px; color: #8b949e; }
+.pl-name  { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 4px; }
+.pl-meta  { font-size: 11px; color: var(--subtext); }
 
 /* ── Section header ───────────────────────────────────────────────────────── */
 .section-hdr {
     font-size: 17px;
     font-weight: 700;
-    color: #f0f6fc;
+    color: var(--text);
     border-left: 4px solid #f0a500;
     padding-left: 10px;
     margin: 16px 0 10px;
 }
 
 /* ── Four-factors bar labels ─────────────────────────────────────────────── */
-.ff-label  { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+.ff-label  { font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
 .ff-team   { font-size: 20px; font-weight: 800; color: #f0a500; }
 .ff-opp    { font-size: 20px; font-weight: 800; color: #e74c3c; }
-.ff-bar-wrap { background: #21262d; border-radius: 4px; height: 8px; overflow: hidden; margin: 4px 0; }
+.ff-bar-wrap { background: var(--track); border-radius: 4px; height: 8px; overflow: hidden; margin: 4px 0; }
 .ff-bar-t  { background: #f0a500; height: 100%; border-radius: 4px; }
 .ff-bar-o  { background: #e74c3c; height: 100%; border-radius: 4px; }
 
 /* ── Rating / player-rating cards ────────────────────────────────────────── */
 .rat-card {
-    background: linear-gradient(135deg, #0d1117, #161b22);
-    border: 1px solid #30363d;
+    background: linear-gradient(135deg, #0d1117, var(--card-bg));
+    border: 1px solid var(--card-border);
     border-radius: 12px;
     padding: 16px;
     margin-bottom: 10px;
 }
 .rat-title { font-size: 13px; font-weight: 700; color: #58a6ff; margin-bottom: 6px; }
-.rat-desc  { font-size: 11px; color: #8b949e; line-height: 1.5; margin-bottom: 6px; }
+.rat-desc  { font-size: 11px; color: var(--subtext); line-height: 1.5; margin-bottom: 6px; }
 .rat-comp  { font-size: 10px; color: #6e7681; font-style: italic; }
 
 .rpl-card {
-    background: linear-gradient(160deg, #0d1117, #161b22);
-    border: 1px solid #30363d;
+    background: linear-gradient(160deg, #0d1117, var(--card-bg));
+    border: 1px solid var(--card-border);
     border-radius: 12px;
     padding: 14px 12px;
     margin-bottom: 10px;
 }
-.rpl-name { font-size: 13px; font-weight: 800; color: #f0f6fc; }
-.rpl-meta { font-size: 10px; color: #8b949e; margin-bottom: 8px; }
-.rpl-bar-wrap { background: #21262d; border-radius: 3px; height: 5px; overflow: hidden; margin-top: 2px; }
+.rpl-name { font-size: 13px; font-weight: 800; color: var(--text); }
+.rpl-meta { font-size: 10px; color: var(--subtext); margin-bottom: 8px; }
+.rpl-bar-wrap { background: var(--track); border-radius: 3px; height: 5px; overflow: hidden; margin-top: 2px; }
 .rpl-bar-fill { height: 100%; border-radius: 3px; }
 
 /* ── Lineup card ──────────────────────────────────────────────────────────── */
 .lu-card {
-    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-    border: 1px solid #30363d;
+    background: linear-gradient(135deg, #0d1117 0%, var(--card-bg) 100%);
+    border: 1px solid var(--card-border);
     border-radius: 14px;
     padding: 18px 12px;
     text-align: center;
@@ -169,38 +169,38 @@
     overflow: hidden;
 }
 .lu-slot { font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; margin-bottom: 4px; flex-shrink: 0; }
-.lu-num  { font-size: 12px; color: #8b949e; margin-bottom: 1px; flex-shrink: 0; }
-.lu-name { font-size: 14px; font-weight: 800; color: #f0f6fc; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
-.lu-tm   { font-size: 10px; color: #8b949e; margin-bottom: 6px; flex-shrink: 0; }
+.lu-num  { font-size: 12px; color: var(--subtext); margin-bottom: 1px; flex-shrink: 0; }
+.lu-name { font-size: 14px; font-weight: 800; color: var(--text); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+.lu-tm   { font-size: 10px; color: var(--subtext); margin-bottom: 6px; flex-shrink: 0; }
 .lu-val  { font-size: 28px; font-weight: 900; line-height: 1; flex-shrink: 0; }
-.lu-lbl  { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; flex-shrink: 0; }
-.lu-ovrl { font-size: 10px; color: #8b949e; margin-bottom: 3px; flex-shrink: 0; }
-.lu-line { font-size: 10px; color: #8b949e; border-top: 1px solid #30363d; padding-top: 6px; margin-top: auto; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lu-lbl  { font-size: 9px; color: var(--subtext); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; flex-shrink: 0; }
+.lu-ovrl { font-size: 10px; color: var(--subtext); margin-bottom: 3px; flex-shrink: 0; }
+.lu-line { font-size: 10px; color: var(--subtext); border-top: 1px solid var(--card-border); padding-top: 6px; margin-top: auto; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Percentile bar rows (Players Hub) ────────────────────────────────────── */
 .pctile-row       { margin-bottom: 10px; }
 .pctile-label-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.pctile-stat      { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.8px; }
-.pctile-val       { font-size: 13px; font-weight: 700; color: #f0f6fc; }
+.pctile-stat      { font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.8px; }
+.pctile-val       { font-size: 13px; font-weight: 700; color: var(--text); }
 .pctile-rank      { font-size: 11px; font-weight: 700; }
-.pctile-track     { background: #21262d; border-radius: 3px; height: 5px; overflow: hidden; }
+.pctile-track     { background: var(--track); border-radius: 3px; height: 5px; overflow: hidden; }
 .pctile-fill      { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
 
 /* ── Officials hub ref card ──────────────────────────────────────────────── */
 .ref-card {
-    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-    border: 1px solid #30363d;
+    background: linear-gradient(135deg, #0d1117 0%, var(--card-bg) 100%);
+    border: 1px solid var(--card-border);
     border-radius: 12px;
     padding: 16px;
     margin-bottom: 8px;
 }
-.ref-name  { font-size: 16px; font-weight: 800; color: #f0f6fc; }
-.ref-games { font-size: 12px; color: #8b949e; margin-top: 3px; }
+.ref-name  { font-size: 16px; font-weight: 800; color: var(--text); }
+.ref-games { font-size: 12px; color: var(--subtext); margin-top: 3px; }
 
 /* ── Daily breakdown game hero ───────────────────────────────────────────── */
 .game-hero {
     background: linear-gradient(135deg, #0d1117 0%, #1c2b4a 100%);
-    border: 1px solid #30363d;
+    border: 1px solid var(--card-border);
     border-radius: 16px;
     padding: 20px;
     margin-bottom: 16px;
@@ -239,7 +239,7 @@
     mask-image: linear-gradient(180deg, rgba(0,0,0,0.9), transparent 80%);
 }
 .lab-hero-name { font-size: 30px; font-weight: 900; letter-spacing: -0.5px; line-height: 1.05; }
-.lab-hero-sub  { font-size: 13px; color: #8b949e; margin-top: 4px; }
+.lab-hero-sub  { font-size: 13px; color: var(--subtext); margin-top: 4px; }
 .lab-hero-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
 /* Glassmorphism tile */
@@ -254,20 +254,20 @@
     height: 100%;
     box-sizing: border-box;
 }
-.glass-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 1.4px; font-weight: 700; }
-.glass-value { font-size: 26px; font-weight: 900; line-height: 1.15; margin-top: 5px; }
-.glass-sub   { font-size: 11px; color: #8b949e; margin-top: 3px; }
+.glass-label { font-size: 10px; color: var(--subtext); text-transform: uppercase; letter-spacing: 1.4px; font-weight: 700; }
+.glass-value { font-size: var(--fs-kpi); font-weight: 900; line-height: 1.15; margin-top: 5px; }
+.glass-sub   { font-size: 11px; color: var(--subtext); margin-top: 3px; }
 
 /* Stat chip / pill */
 .stat-chip {
     display: inline-flex; align-items: center; gap: 6px;
     background: rgba(13,17,23,0.7);
-    border: 1px solid #30363d;
+    border: 1px solid var(--card-border);
     border-radius: 999px;
     padding: 5px 12px;
     font-size: 12px; font-weight: 600; color: #c9d1d9;
 }
-.stat-chip b { color: #f0f6fc; font-weight: 800; }
+.stat-chip b { color: var(--text); font-weight: 800; }
 
 /* Recent-form strip (W / L pills) */
 .form-strip { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -282,7 +282,7 @@
 
 /* Neon section header */
 .lab-hdr {
-    font-size: 16px; font-weight: 800; color: #f0f6fc;
+    font-size: 16px; font-weight: 800; color: var(--text);
     text-transform: uppercase; letter-spacing: 1.5px;
     border-left: 3px solid #00e5ff;
     padding-left: 11px; margin: 18px 0 10px;
@@ -293,14 +293,14 @@
 .spotlight {
     background:
         radial-gradient(600px 80px at 50% -30%, rgba(0,229,255,0.12), transparent 70%),
-        linear-gradient(135deg, #0d1117, #161b22);
+        linear-gradient(135deg, #0d1117, var(--card-bg));
     border: 1px solid #233047;
     border-radius: 16px;
     padding: 18px 16px;
     text-align: center;
 }
-.spotlight-num { font-size: 40px; font-weight: 900; line-height: 1; }
-.spotlight-lbl { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1.4px; margin-top: 6px; }
+.spotlight-num { font-size: var(--fs-hero); font-weight: 900; line-height: 1; }
+.spotlight-lbl { font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 1.4px; margin-top: 6px; }
 .spotlight-sub { font-size: 11px; color: #6e7681; margin-top: 4px; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -314,14 +314,26 @@
     --accent: #f0a500;
     --accent-rgb: 240,165,0;
     --card-bg: #161b22;
+    --card-bg-2: #0d1117;     /* darker gradient stop / inset wells */
     --card-border: #30363d;
     --body-bg: #0d1117;
     --text: #f0f6fc;
     --subtext: #8b949e;
     --good: #3fb950;
     --bad: #e74c3c;
+    --info: #58a6ff;          /* "above average" tier / secondary metric accent */
+    --track: #21262d;         /* fill behind progress / percentile bars */
     --radius: 14px;
     --shadow-card: 0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 26px -18px rgba(0,0,0,0.9);
+
+    /* Governed display type scale — every big stat number references one of these
+       (was six ad-hoc px sizes scattered across the component classes). */
+    --fs-hero: 40px;          /* spotlight hero numbers          */
+    --fs-stat: 32px;          /* primary KPI / dash-card values  */
+    --fs-kpi:  26px;          /* glass-tile values               */
+    --fs-mini: 23px;          /* compact mini-tile values        */
+    --fs-adv:  22px;          /* advanced/secondary metric value */
+    --fs-chip: 12px;          /* stat-chip / pill text           */
 }
 
 /* Premium system font stack — zero network dependency (local app friendly).
@@ -560,7 +572,7 @@ hr, [data-testid="stDivider"] {
 }
 .mini-tile:hover { transform: translateY(-2px); border-color: rgba(var(--accent-rgb),0.5); }
 .mini-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--subtext); }
-.mini-val { font-size: 23px; font-weight: 800; color: var(--text); line-height: 1.1; margin-top: 3px;
+.mini-val { font-size: var(--fs-mini); font-weight: 800; color: var(--text); line-height: 1.1; margin-top: 3px;
             font-variant-numeric: tabular-nums; }
 .mini-sub { font-size: 10.5px; color: var(--subtext); margin-top: 2px; }
 
@@ -593,19 +605,19 @@ hr, [data-testid="stDivider"] {
 .pl-pct-top { display: flex; justify-content: space-between; align-items: center;
               margin-bottom: 3px; }
 .pl-pct-lbl { font-size: 12px; color: #c9d1d9; }
-.pl-pct-val { font-size: 12px; font-weight: 700; color: #f0f6fc; }
-.pl-pct-track { background: #21262d; border-radius: 4px; height: 7px; overflow: hidden; }
+.pl-pct-val { font-size: 12px; font-weight: 700; color: var(--text); }
+.pl-pct-track { background: var(--track); border-radius: 4px; height: 7px; overflow: hidden; }
 .pl-pct-fill { height: 100%; border-radius: 4px; }
-.pl-scout { background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+.pl-scout { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px;
             padding: 14px; height: 100%; }
 .pl-glass { background: rgba(22,27,34,0.55); -webkit-backdrop-filter: blur(8px);
             backdrop-filter: blur(8px); border: 1px solid rgba(48,54,61,0.9);
             border-radius: 14px; padding: 13px 15px; text-align: center; height: 100%;
             box-sizing: border-box; }
-.pl-glass-l { font-size: 9px; color: #8b949e; text-transform: uppercase;
+.pl-glass-l { font-size: 9px; color: var(--subtext); text-transform: uppercase;
               letter-spacing: 1.3px; font-weight: 700; }
 .pl-glass-v { font-size: 25px; font-weight: 900; line-height: 1.15; margin-top: 4px; }
-.pl-glass-s { font-size: 10px; color: #8b949e; margin-top: 2px; }
+.pl-glass-s { font-size: 10px; color: var(--subtext); margin-top: 2px; }
 
 /* ── Branded empty state (helpers/ui.py: empty_state) ─────────────────────────
    Replaces a bare st.info() when a page/tab has no data yet. Accent via var. */
@@ -635,3 +647,64 @@ hr, [data-testid="stDivider"] {
                 rgba(255,255,255,0.08) 37%, rgba(255,255,255,0.03) 63%);
     animation: pl-shimmer 1.4s ease infinite;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PHASE 0 — MOTION + TIER ENCODING + CONFIDENCE
+   Additive layer. Compositor-cheap (opacity/transform only), theme-reactive,
+   and fully disabled under prefers-reduced-motion.
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Data-arrival reveal ──────────────────────────────────────────────────── */
+@keyframes lab-rise {
+    from { opacity: 0.35; transform: translateY(6px); }
+    to   { opacity: 1;    transform: translateY(0); }
+}
+/* Applied to the signature DISPLAY tiles only — NOT interactive widgets/forms,
+   so frequent Streamlit reruns don't flash. st.metric keeps its hover-lift
+   (defined above) instead of a per-rerun reveal. */
+.dash-card, .kpi-tile, .glass-tile, .pl-glass, .spotlight, .mini-tile,
+.lab-hero, .game-hero {
+    animation: lab-rise .18s ease both;
+}
+
+/* Single global kill-switch — honours OS "reduce motion". */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Tier value tints (cards.tier() ladder: 70/62/54/46) ──────────────────────
+   Size+colour encode where a stat sits in the league. Single-class selectors so
+   FRESH markup (the new cards.stat_kpi / ui tiles) picks the tint up cleanly.
+   Legacy classes that apply_theme_css() force to --accent (.dash-card-value etc.)
+   keep that accent until migrated — by design; don't fight the cascade here. */
+.v-elite { color: var(--accent) !important; }   /* ≥70 — reskins with accent   */
+.v-great { color: var(--good)   !important; }   /* ≥62                          */
+.v-above { color: var(--info)   !important; }   /* ≥54                          */
+.v-avg   { color: var(--text)   !important; }   /* ≥46                          */
+.v-dev   { color: var(--subtext)!important; }   /* <46 / unrated               */
+
+/* ── Confidence affordance (cards.conf_dot / conf_chip) ───────────────────────
+   How firmly the sample backs a number: solid+glow = stable, soft = fair,
+   hollow ring = directional (weak sample). Reads engine n/k or RAPM `sig`. */
+.conf-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    vertical-align: middle; margin-left: 6px; box-sizing: border-box;
+}
+.conf-stable { background: var(--good);
+               box-shadow: 0 0 7px -1px var(--good); }
+.conf-fair   { background: var(--accent); opacity: 0.9; }
+.conf-weak   { background: transparent;
+               border: 1.5px solid var(--subtext); }
+
+.conf-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--subtext);
+    border: 1px solid var(--card-border); border-radius: 999px;
+    padding: 2px 8px; background: rgba(255,255,255,0.02);
+}
+.conf-chip .conf-dot { margin-left: 0; }

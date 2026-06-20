@@ -43,6 +43,8 @@ STYLE_PRESETS = {
         "card_border": "#30363d",
         "card_grad":   "linear-gradient(135deg,#0d1117 0%,#161b22 100%)",
         "body_bg":     "#0d1117",
+        "card_bg_2":   "#0d1117",
+        "track":       "#21262d",
         "subtext":     "#8b949e",
         "text":        "#f0f6fc",
     },
@@ -52,6 +54,8 @@ STYLE_PRESETS = {
         "card_border": "#1a2744",
         "card_grad":   "linear-gradient(135deg,#06091a 0%,#0b1120 100%)",
         "body_bg":     "#06091a",
+        "card_bg_2":   "#06091a",
+        "track":       "#16233f",
         "subtext":     "#7a8fa8",
         "text":        "#e8edf5",
     },
@@ -61,6 +65,8 @@ STYLE_PRESETS = {
         "card_border": "#3a3a3a",
         "card_grad":   "linear-gradient(135deg,#111111 0%,#1e1e1e 100%)",
         "body_bg":     "#111111",
+        "card_bg_2":   "#111111",
+        "track":       "#2a2a2a",
         "subtext":     "#9a9a9a",
         "text":        "#f5f5f5",
     },
@@ -70,6 +76,8 @@ STYLE_PRESETS = {
         "card_border": "#2d4060",
         "card_grad":   "linear-gradient(135deg,#131d2b 0%,#1e2a3a 100%)",
         "body_bg":     "#131d2b",
+        "card_bg_2":   "#131d2b",
+        "track":       "#24344a",
         "subtext":     "#7d9bb5",
         "text":        "#e2ecf4",
     },
@@ -79,6 +87,8 @@ STYLE_PRESETS = {
         "card_border": "#27422a",
         "card_grad":   "linear-gradient(135deg,#0c170e 0%,#162318 100%)",
         "body_bg":     "#0c170e",
+        "card_bg_2":   "#0c170e",
+        "track":       "#1d3320",
         "subtext":     "#7aa87f",
         "text":        "#e2f4e5",
     },
@@ -206,10 +216,12 @@ def apply_theme_css(settings: dict = None) -> None:
     --accent: {accent};
     --accent-rgb: {accent_rgb};
     --card-bg: {style['card_bg']};
+    --card-bg-2: {style.get('card_bg_2', style['body_bg'])};
     --card-border: {style['card_border']};
     --body-bg: {style['body_bg']};
     --text: {style['text']};
     --subtext: {style['subtext']};
+    --track: {style.get('track', '#21262d')};
 }}
 /* ── Accent colour ─────────────────────────────────────────── */
 .dash-card-value,

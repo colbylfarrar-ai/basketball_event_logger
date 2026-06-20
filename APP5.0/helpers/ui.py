@@ -105,7 +105,13 @@ def page_chrome(title: str = None):
         st.cache_data.clear()
         st.session_state["_data_refreshed_at"] = (
             datetime.now().strftime("%I:%M %p").lstrip("0"))
+        st.session_state["_data_just_refreshed"] = True
         st.rerun()
+    if st.session_state.pop("_data_just_refreshed", False):
+        try:
+            st.toast("Data refreshed", icon="↻")
+        except Exception:
+            pass
     _refreshed = st.session_state.get("_data_refreshed_at")
     if _refreshed:
         st.sidebar.caption(f"Data refreshed at {_refreshed}")
@@ -416,3 +422,213 @@ def team_color(name, team_id=None):
     import hashlib
     digest = hashlib.md5(str(name).strip().lower().encode("utf-8")).hexdigest()
     return PALETTE[int(digest, 16) % len(PALETTE)]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PHASE 0/1/2 — shared "analytics lab" components
+#  Single source for the signature tiles + the win-probability ribbon + the
+#  modern input wrappers, so pages stop re-implementing inline HTML and every
+#  surface picks up theme/motion/tier encoding from assets/style.css at once.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def lab_hero(name, sub=None, *, chips=None, form=None, phase=None, accent=None):
+    """Neon team/page identity band (the `.lab-hero` look, previously inline on
+    only 2 pages). ``phase`` renders an ANALYZE/BUILD/PLAN pill; ``form`` is a
+    list of recent 'W'/'L' rendered as glowing pills; ``chips`` a row of
+    stat-chips. Drop-in richer alternative to ``page_header`` for hero pages."""
+    accent = accent or get_setting("accent_color", "#f0a500")
+    phase_html = (f"<span class='badge accent' style='margin-bottom:9px'>"
+                  f"{html.escape(str(phase))}</span><br>" if phase else "")
+    sub_html = (f"<div class='lab-hero-sub'>{html.escape(str(sub))}</div>"
+                if sub else "")
+    chip_html = "".join(f"<span class='stat-chip'>{html.escape(str(c))}</span>"
+                        for c in (chips or []))
+    chips_wrap = (f"<div class='lab-hero-chips'>{chip_html}</div>"
+                  if chip_html else "")
+    form_html = ""
+    if form:
+        pills = "".join(
+            f"<span class='form-pill "
+            f"{'w' if str(f).upper().startswith('W') else 'l'}'>"
+            f"{html.escape(str(f)[:1].upper())}</span>" for f in form)
+        form_html = (
+            "<div class='form-strip' style='margin-top:13px'>"
+            "<span style='font-size:10px;color:var(--subtext);"
+            "text-transform:uppercase;letter-spacing:1.4px;margin-right:2px'>"
+            f"Last {len(form)}</span>{pills}</div>")
+    st.markdown(
+        f"<div class='lab-hero'>{phase_html}"
+        f"<div class='lab-hero-name' style='color:{accent}'>"
+        f"{html.escape(str(name))}</div>"
+        f"{sub_html}{chips_wrap}{form_html}</div>",
+        unsafe_allow_html=True)
+
+
+def wp_ribbon(curve, *, home_name="Home", accent=None, height=240, swings=3,
+              total_secs=None):
+    """Filled win-probability ribbon from a ``win_probability.wp_curve`` result
+    (a list of ``(elapsed_secs, margin, wp)`` where ``wp`` is the home win prob
+    0-1). Returns a styled ``go.Figure`` (or ``None`` for <2 points) so the
+    caller places it where it wants. Quarter gridlines + markers on the biggest
+    win-prob swings make the drama legible. This is the one curve the landing
+    page used to compute and throw away."""
+    import plotly.graph_objects as go
+    if not curve or len(curve) < 2:
+        return None
+    accent = accent or get_setting("accent_color", "#f0a500")
+    xs = [c[0] for c in curve]
+    wp = [100 * c[2] for c in curve]
+    r, g, b = rgb(accent)
+    total = total_secs or xs[-1] or 1
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=xs, y=wp, line_shape="hv", mode="lines",
+        line=dict(color=accent, width=2.6), fill="tozeroy",
+        fillcolor=f"rgba({r},{g},{b},0.14)", name=f"{home_name} win %",
+        hovertemplate=f"{home_name} win: " + "%{y:.0f}%<extra></extra>"))
+    fig.add_hline(y=50, line=dict(color="#8b949e", width=1, dash="dot"))
+    # quarter dividers (480s HS quarters) within range
+    for tk in range(480, int(total) + 1, 480):
+        if tk < total:
+            fig.add_vline(x=tk, line=dict(color="#30363d", width=1, dash="dot"))
+    # markers on the biggest single-step win-prob swings
+    if swings and len(curve) > 2:
+        order = sorted(range(1, len(curve)),
+                       key=lambda i: -abs(curve[i][2] - curve[i - 1][2]))
+        pk = order[:swings]
+        fig.add_trace(go.Scatter(
+            x=[xs[i] for i in pk], y=[wp[i] for i in pk], mode="markers",
+            marker=dict(size=9, color=accent,
+                        line=dict(color="#0d1117", width=1.5)),
+            hoverinfo="skip", showlegend=False))
+    fig.update_yaxes(range=[0, 100], ticksuffix="%",
+                     title=f"{home_name} win probability")
+    fig.update_xaxes(visible=False)
+    style_fig(fig, height, margin=dict(l=46, r=14, t=28, b=10), showlegend=False)
+    return fig
+
+
+def engine_status(label="Crunching the numbers…", steps=None):
+    """``st.status`` wrapper for heavy engine calls — narrates that real
+    computation is happening instead of a bare spinner. ``steps`` pre-writes
+    narration lines. Use as ``with ui.engine_status('Solving RAPM…', [...]):``.
+    Degrades to ``st.spinner`` on older Streamlit."""
+    try:
+        s = st.status(label, expanded=False)
+        for line in (steps or []):
+            s.write(line)
+        return s
+    except Exception:
+        return st.spinner(label)
+
+
+def seg(label, options, *, default=None, key=None, format_func=str,
+        help=None, label_visibility="visible", container=None):
+    """``st.segmented_control`` view-switcher with an ``st.radio`` fallback.
+    Use for per-game/per-100, scope, off/def toggles — pill UI that feels modern
+    and reruns instantly inside a fragment. ``container`` is an st.columns slot
+    (or st, the default), mirroring ``gender_radio``."""
+    c = container if container is not None else st
+    dflt = default if default is not None else (options[0] if options else None)
+    try:
+        return c.segmented_control(
+            label, options, default=dflt, key=key, format_func=format_func,
+            help=help, label_visibility=label_visibility)
+    except Exception:
+        idx = options.index(default) if default in options else 0
+        return c.radio(label, options, index=idx, key=key,
+                       format_func=format_func, horizontal=True, help=help,
+                       label_visibility=label_visibility)
+
+
+def info_popover(label, body_md, *, icon="ⓘ"):
+    """A click-to-reveal glossary / formula / detail popover (``st.popover``),
+    falling back to an expander. The third disclosure layer that keeps dense
+    pages clean without deleting any data."""
+    try:
+        with st.popover(f"{icon} {label}"):
+            st.markdown(body_md)
+    except Exception:
+        with st.expander(f"{icon} {label}"):
+            st.markdown(body_md)
+
+
+def chart_select(fig, *, key, selection_mode="points", on_select="rerun",
+                 data=None):
+    """Like ``chart()`` but returns Plotly selection events so a chart can be a
+    cross-filter INPUT (tap a point → caller slices the panel beside it). Returns
+    the selection dict (``{'selection': {...}}``) or None. Degrades to a plain
+    render (returns None) on older Streamlit without ``on_select``."""
+    try:
+        return st.plotly_chart(fig, width="stretch", key=key,
+                               on_select=on_select,
+                               selection_mode=selection_mode)
+    except TypeError:
+        chart(fig, data=data, key=key)
+        return None
+
+
+def court_panel(fig, *, key, df=None, selection_mode="points"):
+    """Render a shot-court figure as a cross-filter INPUT: tap shots/hexes and the
+    Plotly selection comes back so the caller can slice the table/box beside it.
+    Returns the selection dict (or None). Thin wrapper over ``chart_select`` so
+    every court that wants drill-down behaves the same."""
+    return chart_select(fig, key=key, selection_mode=selection_mode, data=df)
+
+
+def selected_xy(selection):
+    """Pull ``[(x, y), …]`` out of a plotly ``on_select`` payload (returned by
+    ``court_panel``/``chart_select``), robust to the few shapes Streamlit uses.
+    Empty list when nothing is selected."""
+    if not selection:
+        return []
+    sel = selection.get("selection") if isinstance(selection, dict) else None
+    pts = (sel or {}).get("points") if isinstance(sel, dict) else None
+    out = []
+    for p in (pts or []):
+        x, y = p.get("x"), p.get("y")
+        if x is not None and y is not None:
+            out.append((x, y))
+    return out
+
+
+# ── Signature HTML tiles (return strings; caller wraps with st.markdown) ──────
+def _tile(cls, label, value, sub, label_cls, value_cls, tier_class, color):
+    vc = f" {tier_class}" if tier_class else ""
+    style = f" style='color:{color}'" if color else ""
+    return (f"<div class='{cls}'>"
+            f"<div class='{label_cls}'>{html.escape(str(label))}</div>"
+            f"<div class='{value_cls}{vc}'{style}>{html.escape(str(value))}</div>"
+            + (f"<div class='{label_cls.rsplit('-', 1)[0]}-sub'>"
+               f"{html.escape(str(sub))}</div>" if sub else "")
+            + "</div>")
+
+
+def spotlight(num, label, sub="", *, tier_class="", color=None):
+    """Big 'made-up metric' hero tile (the ``.spotlight`` look). ``tier_class``
+    (from ``cards.tier_class``) tints the number by league tier."""
+    vc = f" {tier_class}" if tier_class else ""
+    style = f" style='color:{color}'" if color else ""
+    return (f"<div class='spotlight'>"
+            f"<div class='spotlight-num{vc}'{style}>{html.escape(str(num))}</div>"
+            f"<div class='spotlight-lbl'>{html.escape(str(label))}</div>"
+            + (f"<div class='spotlight-sub'>{html.escape(str(sub))}</div>"
+               if sub else "") + "</div>")
+
+
+def glass_tile(label, value, sub="", *, tier_class="", color=None):
+    """Glassmorphism KPI tile (``.glass-tile``)."""
+    return _tile("glass-tile", label, value, sub, "glass-label", "glass-value",
+                 tier_class, color)
+
+
+def mini_tile(label, value, sub="", *, tier_class="", color=None):
+    """Compact stat tile for dense grids (``.mini-tile``)."""
+    return _tile("mini-tile", label, value, sub, "mini-lbl", "mini-val",
+                 tier_class, color)
+
+
+def chip(text, *, kind=""):
+    """A small ``.badge`` pill. ``kind`` ∈ {'', 'accent', 'good', 'bad'}."""
+    k = f" {kind}" if kind else ""
+    return f"<span class='badge{k}'>{html.escape(str(text))}</span>"

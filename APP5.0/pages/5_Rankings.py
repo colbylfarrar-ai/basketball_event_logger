@@ -37,7 +37,8 @@ from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, grid as _grid,
-                        page_header, empty_state, HEAT, DIVERGE)
+                        page_header, lab_hero as _lab_hero, empty_state,
+                        HEAT, DIVERGE)
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
@@ -268,10 +269,10 @@ def _team_tracked_deep(team_id, vis=None):
 #  PAGE HEADER + GENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-page_header("Rankings",
-            sub="Opponent-adjusted power, résumé and possession analytics "
-                "across the whole league — results power every team, tracked "
-                "games add the deep layer.")
+_lab_hero("Rankings", phase="ANALYZE",
+          sub="Opponent-adjusted power, résumé and possession analytics "
+              "across the whole league — results power every team, tracked "
+              "games add the deep layer.")
 
 gender = gender_radio()
 
@@ -544,6 +545,14 @@ with tab_over:
             "Rank", "name", "class", "W", "L", "Power", "Rating",
             "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]].rename(
             columns={"name": "Team", "class": "Class"})
+        # Inline margin-trend sparkline per team (last 7 games, oldest→newest) —
+        # reads the engine's per_team_results; aligned to ov_tids row order.
+        try:
+            _ptr = LA.per_team_results(gender)
+            df["Form"] = [[r["margin"] for r in _ptr.get(t, [])[-7:]]
+                          for t in ov_tids]
+        except Exception:
+            pass
         st.dataframe(
             df, hide_index=True, width="stretch",
             height=min(720, 60 + 35 * len(df)),
@@ -553,8 +562,11 @@ with tab_over:
                 "Rating": st.column_config.NumberColumn("Rating", format="%.2f"),
                 "SOS": st.column_config.NumberColumn("SOS", format="%.2f"),
                 "SOR": st.column_config.NumberColumn("SOR", format="%.2f"),
+                "Form": st.column_config.LineChartColumn(
+                    "Margin trend", y_min=-30, y_max=30),
             })
-        st.download_button("Rankings (CSV)", df.to_csv(index=False),
+        st.download_button("Rankings (CSV)",
+                           df.drop(columns=["Form"], errors="ignore").to_csv(index=False),
                            file_name=f"rankings_{gender}.csv", mime="text/csv",
                            key="dl_scored")
 

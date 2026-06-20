@@ -18,7 +18,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from helpers.ui import (page_chrome, page_header, gender_radio, style_fig as _style,
+from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
+                        gender_radio, style_fig as _style,
                         empty_state, grid as _grid, chart as _chart, DIVERGE)
 import helpers.player_ratings as PR
 import helpers.archetypes as AR
@@ -29,10 +30,10 @@ import helpers.entitlement as ENT
 
 _cfg, ACCENT = page_chrome("Data Explorer")
 
-page_header("Data Explorer",
-            sub="Every stat, your way — filter the full table, build any scatter, "
-                "map the league's playing styles, and correlate anything. Raw and "
-                "dense by design; trust your own read on what matters.")
+_lab_hero("Data Explorer", phase="ANALYZE",
+          sub="Every stat, your way — filter the full table, build any scatter, "
+              "map the league's playing styles, and correlate anything. Raw and "
+              "dense by design; trust your own read on what matters.")
 
 # ── cached engine wrappers (compute once per gender/min-games, reuse on rerun) ──
 @st.cache_data(ttl=600, show_spinner=False)
@@ -177,18 +178,71 @@ with t_map:
         mdf = pd.DataFrame(list(pts.values()))
         mdf["overall"] = mdf["overall"].fillna(50)
         evr = sm.get("evr") or [0, 0]
+        st.markdown("<div class='lab-hdr'>Player style galaxy</div>",
+                    unsafe_allow_html=True)
         fig = px.scatter(mdf, x="x", y="y", color="archetype", size="overall",
                          hover_name="name", hover_data={"team": True, "x": False,
                                                          "y": False, "overall": True})
+        # Convex-hull halos per archetype, drawn BEHIND the dots, so each cluster
+        # reads as a territory in style-space (the "galaxy" feel). Fully guarded —
+        # any failure falls back to the plain scatter.
+        try:
+            import plotly.graph_objects as go
+            import numpy as _np  # noqa: F401  (kept explicit; hull is pure-python)
+
+            def _hull(P):
+                P = sorted(set(map(tuple, P)))
+                if len(P) < 3:
+                    return P
+
+                def _cr(o, a, b):
+                    return ((a[0] - o[0]) * (b[1] - o[1])
+                            - (a[1] - o[1]) * (b[0] - o[0]))
+                lo = []
+                for p in P:
+                    while len(lo) >= 2 and _cr(lo[-2], lo[-1], p) <= 0:
+                        lo.pop()
+                    lo.append(p)
+                up = []
+                for p in reversed(P):
+                    while len(up) >= 2 and _cr(up[-2], up[-1], p) <= 0:
+                        up.pop()
+                    up.append(p)
+                return lo[:-1] + up[:-1]
+
+            halos = []
+            for tr in fig.data:
+                clr = tr.marker.color
+                if not (isinstance(clr, str) and clr.startswith("#")):
+                    continue
+                sub = mdf[mdf["archetype"] == tr.name][["x", "y"]].values.tolist()
+                hp = _hull(sub)
+                if len(hp) < 3:
+                    continue
+                r, g, b = (int(clr[1:3], 16), int(clr[3:5], 16),
+                           int(clr[5:7], 16))
+                halos.append(go.Scatter(
+                    x=[p[0] for p in hp] + [hp[0][0]],
+                    y=[p[1] for p in hp] + [hp[0][1]],
+                    mode="lines", fill="toself",
+                    fillcolor=f"rgba({r},{g},{b},0.07)",
+                    line=dict(color=f"rgba({r},{g},{b},0.35)", width=1),
+                    hoverinfo="skip", showlegend=False))
+            if halos:
+                fig.data = tuple(halos) + tuple(fig.data)
+        except Exception:
+            pass
         fig.update_layout(
             xaxis_title=f"Style PC1 · {evr[0] * 100:.0f}% of variance",
             yaxis_title=f"Style PC2 · {evr[1] * 100:.0f}% of variance")
-        fig.update_traces(marker=dict(line=dict(width=0.5, color="#0d1117")))
+        fig.update_traces(marker=dict(line=dict(width=0.5, color="#0d1117")),
+                          selector=dict(mode="markers"))
         _style(fig, 560)
         _chart(fig, data=mdf, key="dx_map")
         st.caption("Each dot is a player placed by *how* they play (16 style "
                    "features, reduced to 2 axes via PCA). Neighbours play alike; "
-                   "colour = the archetype k-means grouped them into; size = OVERALL.")
+                   "colour = the archetype k-means grouped them into; size = "
+                   "OVERALL. Shaded territories are each archetype's convex hull.")
 
 # ── tab 4: correlation heatmap ─────────────────────────────────────────────────
 with t_corr:
@@ -242,6 +296,7 @@ with t_shots:
             format_func=lambda kv: f"{kv[1]['name']} · {kv[1].get('team', '')}")
         kw["player_id"] = psel[0]
     ctype = cc[2].radio("Chart", ["Hexbin (volume + PPS)",
+                                  "Points over expected",
                                   "Expected points surface", "Scatter"],
                         key="sm_ctype")
     approx = cc[3].checkbox("Zone-approx", value=True, key="sm_approx",
@@ -265,6 +320,15 @@ with t_shots:
             st.plotly_chart(fig, width="stretch", key="sm_hex")
             st.caption("Hexagon size = shots from that spot; colour = points per "
                        f"shot (green above league {lpps:.2f}, red below).")
+        elif ctype.startswith("Points"):
+            model = _shot_model(approx)
+            fig, _n = court.shot_hexbin(shots, title="Points over expected",
+                                        model=model, mode="poe")
+            st.plotly_chart(fig, width="stretch", key="sm_poe")
+            st.caption("Hexagon size = shot volume; colour = points per shot "
+                       "ABOVE / BELOW what the league make-rate model expects "
+                       "from that spot (green = beating the shot's difficulty, "
+                       "red = below). Shot *quality*, not just makes.")
         elif ctype.startswith("Expected"):
             model = _shot_model(approx)
             fig = court.expected_points_surface(model, shots=shots, overlay=True,

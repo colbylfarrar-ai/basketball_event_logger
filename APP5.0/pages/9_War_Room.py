@@ -25,8 +25,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from helpers.ui import (page_chrome, style_fig as _style, empty_state, team_color,
-                        chart as _chart, AWAY, GOOD, BAD, HEAT, gender_radio,
-                        gender_label)
+                        chart as _chart, seg as _seg, engine_status as _eng,
+                        AWAY, GOOD, BAD, HEAT, gender_radio, gender_label)
 from helpers.cards import bar_h, team_short, style_df as _style_df
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
@@ -71,17 +71,17 @@ def _tracked(g):
     return TR.tracked_ratings(gender=g)
 
 
-@st.cache_data(ttl=600, show_spinner="Simulating matchup…")
+@st.cache_data(ttl=600, show_spinner=False)
 def _sim_game(g, a, b, home, n):
     return SIM.simulate_game(_scored(g), a, b, home=home, n=n)
 
 
-@st.cache_data(ttl=600, show_spinner="Simulating season…")
+@st.cache_data(ttl=600, show_spinner=False)
 def _sim_season(g, n):
     return SIM.simulate_season(_scored(g), SIM.schedule_from_results(g), n=n)
 
 
-@st.cache_data(ttl=600, show_spinner="Simulating bracket…")
+@st.cache_data(ttl=600, show_spinner=False)
 def _sim_bracket(g, field, n):
     return SIM.simulate_tournament(_scored(g), list(field), n=n)
 
@@ -199,8 +199,8 @@ def _render_matchup():
     ta = pc[0].selectbox("Team A", order, index=0, format_func=_pfmt, key="wr_a")
     tb = pc[1].selectbox("Team B", order, index=min(1, len(order) - 1),
                          format_func=_pfmt, key="wr_b")
-    homep = pc[2].radio("Home court", ["Neutral", name_of[ta], name_of[tb]],
-                        key="wr_home")
+    homep = _seg("Home court", ["Neutral", name_of[ta], name_of[tb]],
+                 key="wr_home", container=pc[2]) or "Neutral"
 
     if ta == tb:
         empty_state("Pick two different teams",
@@ -245,7 +245,10 @@ def _render_matchup():
             st.plotly_chart(wp, width="stretch", key="wr_wp")
 
             # simulated margin distribution
-            sim = _sim_game(gender, ta, tb, home_arg, n)
+            with _eng("Simulating matchup…",
+                      [f"{n:,} Monte-Carlo games", "Sampling possession outcomes",
+                       "Aggregating margins & win share"]):
+                sim = _sim_game(gender, ta, tb, home_arg, n)
             margins = np.asarray(sim["margins"])
             edges = np.linspace(float(margins.min()), float(margins.max()), 41)
             centers = (edges[:-1] + edges[1:]) / 2
@@ -324,7 +327,10 @@ def _render_season():
         "team's **expected wins** — and the **luck** baked into their actual "
         "record (actual minus expected).")
 
-    sea = _sim_season(gender, n)
+    with _eng("Simulating season…",
+              [f"{n:,} season replays", "Re-playing every scheduled game",
+               "Tallying wins, seeds & finish odds"]):
+        sea = _sim_season(gender, n)
     if not sea:
         empty_state("No finished games to simulate",
                     "Enter at least one final score in the Input Hub and the season "
@@ -425,7 +431,10 @@ def _render_bracket():
                    "waits for the button. Results stay loaded once run.")
     else:
         st.session_state["wr_brk_ran"] = True
-        res = _sim_bracket(gender, tuple(field), n)
+        with _eng("Simulating bracket…",
+                  [f"{n:,} tournament runs", "Advancing winners round by round",
+                   "Computing each team's title odds"]):
+            res = _sim_bracket(gender, tuple(field), n)
         if not res:
             empty_state("Not enough rated teams in the field",
                         "Add more rated teams to simulate the bracket.")
@@ -484,7 +493,7 @@ with tab_lineup:
     _li_any = ENT.viewer_is_league_wide(_li)
     _my_team = _li.get("team_id")
     _modes = ["One team", "Any team"] if _li_any else ["One team"]
-    _lmode = (st.radio("Build from", _modes, horizontal=True, key="wl_mode")
+    _lmode = ((_seg("Build from", _modes, key="wl_mode") or "One team")
               if len(_modes) > 1 else "One team")
 
     if _lmode == "One team":

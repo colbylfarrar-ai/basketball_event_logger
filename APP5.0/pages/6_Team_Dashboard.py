@@ -40,7 +40,7 @@ from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, page_header, rgb as _rgb,
                         style_fig as _style, q_label as _q_label, empty_state,
-                        gender_radio, gender_label, grid as _grid,
+                        gender_radio, gender_label, grid as _grid, seg as _seg,
                         AWAY, CARD_BG, GRID, HEAT, DIVERGE)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
@@ -438,6 +438,18 @@ def _team_label(t):
 # a gender switch that changes the team list.
 team_by_id = {t["id"]: t for t in order}
 order_ids = [t["id"] for t in order]
+# Deep-link preselect: a ?team=<id> link (from a landing power-ranking row) opens
+# this dashboard already scoped to that team. Applied once per distinct id so the
+# user can still switch teams; ids outside the current gender pool fall through.
+_qp_team = st.query_params.get("team")
+if _qp_team and st.session_state.get("_ta_deeplink") != _qp_team:
+    try:
+        _dl_tid = int(_qp_team)
+    except (TypeError, ValueError):
+        _dl_tid = _qp_team
+    if _dl_tid in order_ids:
+        st.session_state["ta_team"] = _dl_tid
+    st.session_state["_ta_deeplink"] = _qp_team
 team_id = c2.selectbox("Team", order_ids, index=default_idx,
                        format_func=lambda tid: _team_label(team_by_id[tid]),
                        key="ta_team")
@@ -928,8 +940,8 @@ with tab_charts:
                 "Track a game in the Game Tracker to unlock play-type efficiency "
                 "and league percentiles.", icon="🎬")
         else:
-            _ptside = st.radio("Side of the ball", ["Offense", "Defense"],
-                               horizontal=True, key="pt_side")
+            _ptside = _seg("Side of the ball", ["Offense", "Defense"],
+                           key="pt_side") or "Offense"
             _ptoff = _ptside == "Offense"
             _ptv = _playtype_view(gender, team_id, _ptoff)
             _ptrows = _ptv["rows"]
@@ -3304,19 +3316,66 @@ if True:
             if rows_r:
                 rc1, rc2 = st.columns([3, 2])
                 with rc1:
-                    seq = list(reversed(rows_r))
-                    rf = go.Figure()
-                    rf.add_trace(go.Bar(
-                        x=[v["ORAPM"] for v in seq], y=[v["name"] for v in seq],
-                        name="O-RAPM", orientation="h", marker_color=ACCENT))
-                    rf.add_trace(go.Bar(
-                        x=[v["DRAPM"] for v in seq], y=[v["name"] for v in seq],
-                        name="D-RAPM", orientation="h", marker_color=BLUE))
-                    rf.update_layout(barmode="relative")
-                    rf.update_xaxes(title="Pts / 100 vs average")
-                    _style(rf, max(220, 32 * len(seq) + 60))
-                    rf.update_layout(margin=dict(l=4, r=14, t=6, b=30))
-                    st.plotly_chart(rf, width="stretch", key="il_rapm")
+                    # Two-way quadrant: O-RAPM (x) vs D-RAPM (y), size = poss,
+                    # solid = significantly clear of average (engine `sig`),
+                    # hollow = directional. Upgrades the old relative bar — the
+                    # one bit that says "this impact is real", not just ranked.
+                    _GRN, _RED, _BLU = "#3fb950", "#e74c3c", "#58a6ff"
+                    _ax = max(2.0,
+                              max((abs(v["ORAPM"]) for v in rows_r), default=2),
+                              max((abs(v["DRAPM"]) for v in rows_r), default=2)) * 1.1
+                    _mp = max((v["poss"] for v in rows_r), default=1) or 1
+                    qf = go.Figure()
+                    for _sg, _sym, _leg in (
+                            (True, "circle", "Clear of average"),
+                            (False, "circle-open", "Directional (small sample)")):
+                        _grp = [v for v in rows_r if bool(v.get("sig")) == _sg]
+                        if not _grp:
+                            continue
+                        qf.add_trace(go.Scatter(
+                            x=[v["ORAPM"] for v in _grp],
+                            y=[v["DRAPM"] for v in _grp],
+                            mode="markers+text" if _sg else "markers",
+                            text=[v["name"] for v in _grp] if _sg else None,
+                            textposition="top center",
+                            textfont=dict(size=9, color="#c9d1d9"), name=_leg,
+                            marker=dict(
+                                size=[max(11, min(34, 11 + 25 * (v["poss"] / _mp)))
+                                      for v in _grp],
+                                symbol=_sym,
+                                color=[_GRN if v["RAPM"] > 0 else _RED
+                                       for v in _grp],
+                                line=dict(width=1.6,
+                                          color=[_GRN if v["RAPM"] > 0 else _RED
+                                                 for v in _grp])),
+                            customdata=[(v["RAPM"], v["poss"]) for v in _grp],
+                            hovertemplate=("%{text}<br>" if _sg else "")
+                            + "O %{x:+.1f} · D %{y:+.1f} · RAPM "
+                            "%{customdata[0]:+.1f} · %{customdata[1]} poss"
+                            "<extra></extra>"))
+                    qf.add_vline(x=0, line=dict(color="#8b949e", width=1,
+                                                dash="dot"))
+                    qf.add_hline(y=0, line=dict(color="#8b949e", width=1,
+                                                dash="dot"))
+                    for _qx, _qy, _txt, _clr in (
+                            (0.72, 0.9, "Two-Way Star", _GRN),
+                            (-0.76, 0.9, "Stopper", _BLU),
+                            (0.72, -0.92, "Off. Engine", ACCENT),
+                            (-0.76, -0.92, "Liability", "#8b949e")):
+                        qf.add_annotation(x=_qx * _ax, y=_qy * _ax, text=_txt,
+                                          showarrow=False, opacity=0.65,
+                                          font=dict(size=10, color=_clr))
+                    qf.update_xaxes(title="Offensive RAPM →", range=[-_ax, _ax],
+                                    zeroline=False)
+                    qf.update_yaxes(title="Defensive RAPM →", range=[-_ax, _ax],
+                                    zeroline=False)
+                    _style(qf, 430)
+                    qf.update_layout(margin=dict(l=10, r=14, t=10, b=40))
+                    st.plotly_chart(qf, width="stretch", key="il_rapm_quad")
+                    st.caption("Right = better offense, up = better defense, "
+                               "size = possessions. Solid dots clear league "
+                               "average; hollow are directional on the small "
+                               "book.")
                 with rc2:
                     st.dataframe(pd.DataFrame([{
                         "Player": v["name"], "RAPM": v["RAPM"],
@@ -3361,12 +3420,12 @@ if True:
             # ── win probability added ────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>Win Probability Added (WPA)</div>",
                         unsafe_allow_html=True)
-            wmode = st.radio(
-                "Model", ["Scoring", "Possession"], horizontal=True,
-                key="il_wpa_mode",
+            wmode = _seg(
+                "Model", ["Scoring", "Possession"], key="il_wpa_mode",
                 help="Scoring = win-prob swing on made baskets. Possession = value "
                      "over an average possession on every shot AND turnover, split "
-                     "into offense and defense (credits stops, steals, blocks).")
+                     "into offense and defense (credits stops, steals, blocks).") \
+                or "Scoring"
             st.caption("Opponent-adjusted: each game's pre-game spread feeds the "
                        "win-probability model, so a stop or comeback earned as the "
                        "underdog (vs a stronger team) is worth more, and padding a "

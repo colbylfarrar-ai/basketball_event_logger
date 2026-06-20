@@ -221,7 +221,8 @@ def initialize_database():
             # can never double-insert. NULL for events logged in the app itself.
             "ALTER TABLE game_events     ADD COLUMN client_uuid  TEXT",
             # Optional one-tap "play call" label on a shot (pnr / iso / post /
-            # spot / cut / offscreen / transition / putback / other). Nullable:
+            # spot / cut / offscreen / dho / duckin / transition / putback /
+            # other). Nullable:
             # the tracker tags it only when the coach wants, every existing shot
             # stays NULL, and the inferred play-type view (helpers/playtypes.py)
             # is unaffected. Captures the literal set call that tempo+creation

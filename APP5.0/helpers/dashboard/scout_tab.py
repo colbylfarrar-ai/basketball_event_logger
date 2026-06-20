@@ -41,6 +41,7 @@ SCOUT_SECTIONS = [
     ("efficiency", "Efficiency summary"),
     ("personnel", "Personnel (player breakdown)"),
     ("shot_source", "Shot source — SC / Pass / Screen / Both"),
+    ("play_calls", "Play calls — how they get their shots"),
     ("shot_chart", "Shot chart"),
     ("zones", "Shooting by zone"),
     ("poss_length", "Scoring by possession length"),
@@ -407,12 +408,17 @@ def render(ctx):
                 if p.get(k) is not None)
             bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd}</span>"
                        if _bd else "")
+            # measurables: height · weight · wingspan · hand
+            pos_html = (f" <span style='color:#8b949e;font-size:12px'>"
+                        f"{html.escape(p['pos'])}</span>" if p.get("pos") else "")
+            bio_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
+                        f"{html.escape(p['bio'])}</span>" if p.get("bio") else "")
             st.markdown(
                 f"<div class='glass-tile' style='margin-bottom:8px'>"
-                f"<b>#{p['num']} {html.escape(p['name'])}</b> "
+                f"<b>#{p['num']} {html.escape(p['name'])}</b>{pos_html} "
                 f"<span style='color:#8b949e'>OVR "
                 f"{p['ovr'] if p['ovr'] is not None else '—'}{gs_txt}</span>"
-                f"{arch_html}{bd_html}<br>"
+                f"{arch_html}{bd_html}{bio_html}<br>"
                 f"<span style='font-size:13px'>{(p['ppg'] or 0):.1f} ppg · "
                 f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
                 f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "
@@ -423,6 +429,33 @@ def render(ctx):
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"
                    f"{html.escape(bdg)}</span>" if bdg else "")
                 + "</div>", unsafe_allow_html=True)
+
+    # ── how they get their shots: tagged play calls (one-tap from tracker) ───
+    if _show("play_calls"):
+        st.markdown("<div class='lab-hdr'>How they get their shots — play calls"
+                    "</div>", unsafe_allow_html=True)
+        pc = sc.get("play_calls")
+        if pc and pc.get("rows"):
+            import pandas as pd
+            _pcrows = sorted(pc["rows"], key=lambda r: r["share"], reverse=True)
+            st.dataframe(pd.DataFrame([{
+                "Play call": r["label"], "Share": r["share"] * 100,
+                "PPP": r["PPP"], "FG%": r["FG%"] * 100, "Poss": r["poss"],
+            } for r in _pcrows]), hide_index=True, width="stretch",
+                column_config={
+                    "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                    "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                    "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+                })
+            st.caption(
+                f"Coach-tagged set calls on {pc['total_tagged']} shots "
+                f"({pc['untagged']} untagged) — share = % of tagged shots, PPP = "
+                "points per possession. Separate from the inferred shot-source mix "
+                "on each personnel card; tag plays one-tap in the Game Tracker.")
+        else:
+            st.caption("No play-call tags yet — tap an optional **Play type** "
+                       "(Pick & roll, Iso, Post-up…) on shots in the Game Tracker "
+                       "to scout how a team generates offense.")
 
     # ── where they shoot from (real x/y chart when tap data exists) ──────────
     if _show("shot_chart"):

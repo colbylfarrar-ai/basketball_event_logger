@@ -189,6 +189,7 @@ def team_playtype_percentiles(team_id, gender=None, game_ids=None, events=None,
 NAMED_PLAY_TYPES = [
     ("pnr", "Pick & roll"), ("iso", "Isolation"), ("post", "Post-up"),
     ("spot", "Spot-up"), ("cut", "Cut"), ("offscreen", "Off screen"),
+    ("dho", "DHO"), ("duckin", "Duck in"),
     ("transition", "Transition"), ("putback", "Putback"), ("other", "Other"),
 ]
 _NAMED_KEYS = {k for k, _ in NAMED_PLAY_TYPES}

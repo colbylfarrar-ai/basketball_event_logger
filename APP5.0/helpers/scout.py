@@ -18,6 +18,7 @@ import helpers.league_analytics as LA
 import helpers.badges as BG
 import helpers.stats as S
 import helpers.court_png as CP
+import helpers.playtypes as PT
 
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
@@ -26,6 +27,32 @@ ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
 def _mean(pool):
     pool = [v for v in pool if v is not None]
     return sum(pool) / len(pool) if pool else 0.0
+
+
+def _fmt_height(inches):
+    """Inches → feet-inches string (e.g. 74 → 6'2\"); None / 0 → None."""
+    if not inches:
+        return None
+    ft, inch = divmod(int(round(inches)), 12)
+    return f"{ft}'{inch}\""
+
+
+def _fmt_bio(row):
+    """Compact measurables line for a personnel card from a players row:
+    height · weight · wingspan · handedness. Handedness shows as RH/LH, but
+    only tags onto a line that already has a real measurable (a lone "RH" is
+    noise) — except a lefty is always flagged since that's the scouting read.
+    None when nothing worth printing is set."""
+    if not row:
+        return None
+    ht = _fmt_height(row["height"])
+    wt = f"{row['weight']:g} lb" if row["weight"] else None
+    ws = _fmt_height(row["wingspan"])
+    lefty = row["handedness"] == "left"
+    meas = [x for x in (ht, wt, (f"{ws} wing" if ws else None)) if x]
+    if not meas:
+        return "LH" if lefty else None
+    return " · ".join(meas + ["LH" if lefty else "RH"])
 
 
 def team_zone(game_ids, team_pids):
@@ -196,8 +223,14 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     if visible_game_ids is not None:
         _vis = set(visible_game_ids)
         gids = [g for g in gids if g in _vis]
-    team_pids = tuple(r["id"] for r in
-                      query("SELECT id FROM players WHERE team_id=?", (team_id,)))
+    _proster = query("SELECT id, height, wingspan, weight, handedness, position "
+                     "FROM players WHERE team_id=?", (team_id,))
+    team_pids = tuple(r["id"] for r in _proster)
+    bio = {r["id"]: r for r in _proster}
+    for p in personnel:
+        _b = bio.get(p["pid"])
+        p["bio"] = _fmt_bio(_b)
+        p["pos"] = (_b["position"].strip() or None) if (_b and _b["position"]) else None
     zones = team_zone(tuple(gids), team_pids)
     ev = S.fetch_events(list(gids)) if gids else []
     zones_by_type = team_zone_by_type(tuple(gids), team_pids, events=ev)
@@ -248,6 +281,12 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     for p in personnel:
         p["shots"] = shots_by_pid.get(p["pid"], [])
 
+    # ── how they get their shots: explicit one-tap play-call tags ─────────────
+    # The literal set call a coach taps on a shot in the tracker (pnr / iso /
+    # post / spot / …). Reuses the events already pulled and the same visible
+    # game set, so it honours the entitlement filter like every view above.
+    play_calls = PT.team_named_playtypes(team_id, events=ev, offense=True)
+
     return {
         "name": name, "class": s.get("class", "N/A"),
         "record": f"{s.get('W',0)}-{s.get('L',0)}",
@@ -256,7 +295,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         "factors": factors, "strengths": strengths, "weaknesses": weaknesses,
         "guard": guard, "attack": attack, "personnel": personnel,
         "zones": zones, "zones_by_type": zones_by_type,
-        "team_shots": team_shots,
+        "team_shots": team_shots, "play_calls": play_calls,
         "has_tracked": me is not None,
     }
 
@@ -403,6 +442,25 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
         li = "".join(f"<li>{_md_bold(t)}</li>" for t in tips)
         report_html = f"<h2>Scouting report</h2><ul>{li}</ul>"
 
+    # ── how they get their shots: tagged play calls (one-tap from the tracker) ─
+    pc_html = ""
+    pc = sc.get("play_calls")
+    if _show("play_calls") and pc and pc.get("rows"):
+        rows_pc = "".join(
+            f"<tr><td>{e(r['label'])}</td>"
+            f"<td class='n'>{r['share'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['poss']}</td></tr>"
+            for r in sorted(pc["rows"], key=lambda r: r["share"], reverse=True))
+        pc_html = (
+            "<h2>How they get their shots — play calls</h2><table><tr>"
+            "<th>Play call</th><th class='n'>Share</th><th class='n'>PPP</th>"
+            f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_pc}</table>"
+            f"<p class='note'>Coach-tagged set calls on {pc['total_tagged']} shots "
+            f"({pc['untagged']} untagged). Share = % of tagged shots; PPP = points "
+            "per possession.</p>")
+
     # ── team shot chart (inline SVG from tap-captured x/y) ──
     shot_html = ""
     team_shots = sc.get("team_shots") or []
@@ -428,9 +486,12 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             gs = (f"Starts {p['gs_pct']:.0f}%"
                   if p.get("gs_pct") is not None else "")
             head_bits = " · ".join(x for x in (ovr, gs) if x)
-            head = (f"<div class='phead'><b>#{p['num']} {e(p['name'])}</b>"
+            pos = f" <span class='pos'>{e(p['pos'])}</span>" if p.get("pos") else ""
+            head = (f"<div class='phead'><b>#{p['num']} {e(p['name'])}</b>{pos}"
                     + (f" <span class='ovr'>{e(head_bits)}</span>" if head_bits else "")
                     + "</div>")
+            # measurables: height · weight · wingspan · hand
+            bio = f"<div class='brk'>{e(p['bio'])}</div>" if p.get("bio") else ""
             # 0-100 category breakdown
             br = [(lbl, p.get(k)) for k, lbl in
                   (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))]
@@ -458,7 +519,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             mini = (f"<div class='mini'>"
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
-            cards.append(f"<td class='pcard'>{head}{brk}{stat}{src}{hand_html}{note}{mini}</td>")
+            cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{src}{hand_html}{note}{mini}</td>")
         # two cards per row
         rows = ""
         for i in range(0, len(cards), 2):
@@ -554,6 +615,7 @@ td.pcard{{width:50%;border:1px solid #ccc;padding:6px 8px;vertical-align:top}}
 td.pcard.empty{{border:none}}
 .phead{{font-size:12px;margin-bottom:1px}}
 .ovr{{color:#444;font-size:10px;font-weight:700}}
+.pos{{color:#444;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}}
 .brk{{color:#555;font-size:10px}}
 .pstat{{font-size:11px;margin:1px 0}}
 .pnote{{color:#b25e00;font-size:10px;margin-top:1px}}
@@ -575,6 +637,7 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 {breakeven_html}
 {eff_html}
 {report_html}
+{pc_html}
 {shot_html}
 {pers_html}
 {three_html}

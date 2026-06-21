@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 from database.db import (query, execute, normalize_date,
                          delete_or_archive_player, delete_or_archive_official)
-from helpers.ui import page_chrome, page_header
+from helpers.ui import page_chrome, page_header, lab_hero as _lab_hero
 import helpers.seasons as SZ
 import helpers.auth as AUTH
 import helpers.change_requests as CR
@@ -24,7 +24,9 @@ def _gated_delete(table, target_id, label):
     st.toast(f"Delete of {label} sent to the admin for approval 🕓")
     return False
 
-page_header("Input Hub")
+_lab_hero("Input Hub", phase="BUILD",
+          sub="Log games, manage rosters & officials, and seed the data the "
+              "whole app runs on.")
 
 # Render messages queued before an st.rerun (an inline message would be wiped).
 for _level, _msg in st.session_state.pop("_flash", []):

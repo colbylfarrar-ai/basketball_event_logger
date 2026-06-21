@@ -22,7 +22,8 @@ import streamlit as st
 
 from database.db import query
 from helpers.box_score import render_box_score
-from helpers.ui import page_chrome, page_header, score_card, team_color, empty_state
+from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
+                        score_card, team_color, empty_state)
 import helpers.team_ratings as TR
 import helpers.predictor as PRED
 import helpers.stats as S
@@ -101,10 +102,10 @@ div[data-testid="stColumn"] .stButton > button { min-height:46px; padding:4px 2p
 </style>
 """, unsafe_allow_html=True)
 
-page_header("Schedule",
-            sub="A calendar of every game day. Click a day to see what happened — "
-                "the headline game, the biggest upset, the day's leaders and every "
-                "final with a full box score.")
+_lab_hero("Schedule", phase="BUILD",
+          sub="A calendar of every game day. Click a day to see what happened — "
+              "the headline game, the biggest upset, the day's leaders and every "
+              "final with a full box score.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from helpers.ui import (page_chrome, page_header, style_fig as _style,
                         gauge as _gauge, lab_hero as _lab_hero,
                         wp_ribbon as _wp_ribbon, spotlight as _spotlight,
-                        mini_tile as _mini, GOOD, BAD, AWAY)
+                        mini_tile as _mini, stat_help as _stat_help,
+                        GOOD, BAD, AWAY)
 
 _cfg, ACCENT = page_chrome("Analytics Hub")
 
@@ -254,6 +255,7 @@ else:
                     _spotlight(f"{gei:.1f}", "Game Excitement Index",
                                excitement_label(gei), color=ACCENT),
                     unsafe_allow_html=True)
+                _stat_help("GEI", label="What's GEI?")
                 if _summ:
                     _m = st.columns(2)
                     _m[0].markdown(_mini("Lead changes",

@@ -553,6 +553,31 @@ def info_popover(label, body_md, *, icon="ⓘ"):
             st.markdown(body_md)
 
 
+def stat_help(abbr, *, icon="ⓘ", label=None):
+    """Inline glossary popover for a stat ``abbr`` — its definition + formula,
+    pulled straight from ``helpers.glossary.STAT_DEFS`` so the explanation lives
+    in one place. Silent no-op when the abbr isn't in the glossary, so call sites
+    stay safe to sprinkle next to any number."""
+    try:
+        from helpers.glossary import STAT_DEFS
+        row = next((d for d in STAT_DEFS if d and d[0] == abbr), None)
+        if not row:
+            return
+        full = row[1] if len(row) > 1 else abbr
+        cat = row[2] if len(row) > 2 else ""
+        formula = row[3] if len(row) > 3 else ""
+        defn = row[4] if len(row) > 4 else ""
+        how = row[5] if len(row) > 5 else ""
+        body = f"**{full}**" + (f"  ·  _{cat}_" if cat else "") + "\n\n" + (defn or "")
+        if formula:
+            body += f"\n\n**Formula:** `{formula}`"
+        if how:
+            body += f"\n\n{how}"
+        info_popover(label or abbr, body, icon=icon)
+    except Exception:
+        pass
+
+
 def chart_select(fig, *, key, selection_mode="points", on_select="rerun",
                  data=None):
     """Like ``chart()`` but returns Plotly selection events so a chart can be a

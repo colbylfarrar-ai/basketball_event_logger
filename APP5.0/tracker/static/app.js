@@ -943,6 +943,7 @@ const PLAY_TYPES = [
   ['pnr', 'Pick & roll'], ['iso', 'Isolation'], ['post', 'Post-up'],
   ['spot', 'Spot-up'], ['cut', 'Cut'], ['offscreen', 'Off screen'],
   ['dho', 'DHO'], ['duckin', 'Duck in'],
+  ['slob', 'SLOB'], ['blob', 'BLOB'],
   ['transition', 'Transition'], ['putback', 'Putback'], ['other', 'Other']
 ];
 const PLAY_TYPE_KEYS = PLAY_TYPES.map(function (p) { return p[0]; });

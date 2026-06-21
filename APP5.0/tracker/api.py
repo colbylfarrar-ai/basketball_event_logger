@@ -150,6 +150,7 @@ class EventEdit(BaseModel):
     secondary_player_id: int | None = None
     official_id: int | None = None
     stolen_by_id: int | None = None
+    play_type: str | None = None
 
 
 class NewGame(BaseModel):

@@ -30,7 +30,7 @@ EVENT_TYPES = ("shot", "free_throw", "foul", "turnover")
 _FIELDS_BY_TYPE = {
     "shot": ("primary_player_id", "shot_type", "shot_result", "zone",
              "pass_from_id", "shot_created_by_id", "rebound_by_id",
-             "blocked_by_id", "guarded_by_id"),
+             "blocked_by_id", "guarded_by_id", "play_type"),
     "free_throw": ("primary_player_id", "shot_result", "rebound_by_id"),
     "foul": ("primary_player_id", "secondary_player_id", "official_id"),
     "turnover": ("primary_player_id", "stolen_by_id"),
@@ -40,9 +40,9 @@ _FIELDS_BY_TYPE = {
 _ALL_FIELDS = ("primary_player_id", "shot_type", "shot_result", "zone",
                "pass_from_id", "shot_created_by_id", "rebound_by_id",
                "blocked_by_id", "guarded_by_id", "secondary_player_id",
-               "stolen_by_id", "official_id")
+               "stolen_by_id", "official_id", "play_type")
 # Text columns among _ALL_FIELDS; the rest are integer ids / shot_type.
-_STR_FIELDS = ("shot_result", "zone")
+_STR_FIELDS = ("shot_result", "zone", "play_type")
 
 
 # ── people / labels ─────────────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ def update_event(game_id, ev_id, vals, pid2team):
     clean = {f: (vals.get(f) if f in keep else None) for f in _ALL_FIELDS}
     if etype != "shot":
         clean["shot_type"] = None
-    clean = {f: (int(v) if v is not None and f != "shot_result" and f != "zone"
+    clean = {f: (int(v) if v is not None and f not in _STR_FIELDS
                  else v) for f, v in clean.items()}
 
     # +/- adjustment from old scoring -> new scoring over this event's floor

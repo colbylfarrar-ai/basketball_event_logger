@@ -190,6 +190,7 @@ NAMED_PLAY_TYPES = [
     ("pnr", "Pick & roll"), ("iso", "Isolation"), ("post", "Post-up"),
     ("spot", "Spot-up"), ("cut", "Cut"), ("offscreen", "Off screen"),
     ("dho", "DHO"), ("duckin", "Duck in"),
+    ("slob", "SLOB"), ("blob", "BLOB"),
     ("transition", "Transition"), ("putback", "Putback"), ("other", "Other"),
 ]
 _NAMED_KEYS = {k for k, _ in NAMED_PLAY_TYPES}

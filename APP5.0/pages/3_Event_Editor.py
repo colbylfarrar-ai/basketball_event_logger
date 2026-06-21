@@ -23,6 +23,7 @@ from PIL import Image
 from helpers.ui import page_chrome, page_header, empty_state
 import helpers.court_geom as CG
 import helpers.event_log as EL
+import helpers.playtypes as PT
 
 try:
     from streamlit_image_coordinates import streamlit_image_coordinates
@@ -68,6 +69,12 @@ pid2team = people["pid2team"]
 
 player_opts = ["—"] + [p["label"] for p in people["players"]]
 official_opts = ["—"] + [o["name"] for o in people["officials"]]
+
+# Play-call (play_type) labels for the optional one-tap set-call tag on a shot —
+# same set as the PWA tracker (helpers/playtypes.NAMED_PLAY_TYPES).
+play_opts = ["—"] + [lbl for _k, lbl in PT.NAMED_PLAY_TYPES]
+key2play = {k: lbl for k, lbl in PT.NAMED_PLAY_TYPES}
+play2key = {lbl: k for k, lbl in PT.NAMED_PLAY_TYPES}
 
 # ── score drift indicator ────────────────────────────────────────────────────
 from database.db import query as _q
@@ -118,6 +125,7 @@ def _disp(ev):
         "Result": ev["shot_result"] or "—",
         "ShotType": str(ev["shot_type"]) if ev["shot_type"] else "—",
         "Zone": ev["zone"] or "—",
+        "Play": key2play.get(ev["play_type"], "—"),
         "Pass": pid2label.get(ev["pass_from_id"], "—"),
         "Created": pid2label.get(ev["shot_created_by_id"], "—"),
         "Guarded": pid2label.get(ev["guarded_by_id"], "—"),
@@ -134,10 +142,11 @@ grid = pd.DataFrame([_disp(e) for e in events])
 orig_by_id = {e["id"]: e for e in events}
 
 st.caption("**Primary** = shooter (shot/FT) · player fouled (foul) · player who "
-           "lost it (turnover). **Fouler** = who committed the foul. Tick "
-           "**Delete?** to remove a row. Player picks are limited to both rosters. "
-           "For tap-captured shots, Zone and 2/3 follow the stored location — "
-           "move the shot in **Fix a shot location** below instead.")
+           "lost it (turnover). **Fouler** = who committed the foul. **Play** = the "
+           "one-tap set call on a shot (PnR, ISO, SLOB, BLOB …) — back-fill it on "
+           "old shots here. Tick **Delete?** to remove a row. Player picks are "
+           "limited to both rosters. For tap-captured shots, Zone and 2/3 follow the "
+           "stored location — move the shot in **Fix a shot location** below instead.")
 
 edited = st.data_editor(
     grid, hide_index=True, width="stretch", key=f"ee_grid_{gid}_{qpick}",
@@ -156,6 +165,9 @@ edited = st.data_editor(
                                                      width="small"),
         "Zone": st.column_config.SelectboxColumn("Zone", options=["—"] + list(EL.ZONES),
                                                  width="small"),
+        "Play": st.column_config.SelectboxColumn("Play", options=play_opts,
+                                                 width="small",
+                                                 help="One-tap set call (shots only)"),
         "Pass": st.column_config.SelectboxColumn("Pass from", options=player_opts),
         "Created": st.column_config.SelectboxColumn("Created by", options=player_opts),
         "Guarded": st.column_config.SelectboxColumn("Guarded by", options=player_opts),
@@ -186,6 +198,7 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
             "shot_result": None if r["Result"] == "—" else r["Result"],
             "shot_type": None if r["ShotType"] == "—" else int(r["ShotType"]),
             "zone": None if r["Zone"] == "—" else r["Zone"],
+            "play_type": play2key.get(r["Play"]),
             "primary_player_id": label2pid.get(r["Primary"]),
             "pass_from_id": label2pid.get(r["Pass"]),
             "shot_created_by_id": label2pid.get(r["Created"]),
@@ -388,6 +401,8 @@ with st.form(f"ins_form_{gid}", clear_on_submit=True):
         ins_guarded = s7.selectbox("Guarded by", player_opts)
         ins_rebound = s8.selectbox("Rebound by", player_opts)
         ins_blocked = s9.selectbox("Blocked by", player_opts)
+        ins_play = st.selectbox("Play type", play_opts,
+                                help="One-tap set call (optional)")
     elif ins_type == "free_throw":
         f1, f2, f3 = st.columns([3, 1, 2])
         ins_primary = f1.selectbox("Shooter", player_opts[1:])
@@ -427,7 +442,8 @@ if ins_go:
                       shot_created_by_id=label2pid.get(ins_created),
                       guarded_by_id=label2pid.get(ins_guarded),
                       rebound_by_id=label2pid.get(ins_rebound),
-                      blocked_by_id=label2pid.get(ins_blocked))
+                      blocked_by_id=label2pid.get(ins_blocked),
+                      play_type=play2key.get(ins_play))
         elif ins_type == "free_throw":
             ev.update(shot_result=ins_result,
                       rebound_by_id=label2pid.get(ins_rebound))

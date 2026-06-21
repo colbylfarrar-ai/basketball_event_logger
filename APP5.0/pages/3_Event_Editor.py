@@ -329,10 +329,22 @@ else:
         base = _ee_court_base(W)
         mark = _pending or ((fx["shot_x"], fx["shot_y"])
                             if fx["shot_x"] is not None else None)
-        shown = (CG.court_image_with_marker(mark[0], mark[1], base=base, width=W)
-                 if mark else base)
+        if mark:
+            shown = CG.court_image_with_marker(mark[0], mark[1], base=base, width=W)
+            _hint = False
+        else:
+            # No location yet — draw a faint placeholder dot (top of the key)
+            # instead of the BARE court. The bare base image is byte-identical
+            # every render and the coordinates component intermittently failed to
+            # repaint it; routing through the same marked-image path as located
+            # shots makes the court render reliably + gives a clear tap target.
+            shown = CG.court_image_with_marker(0.0, 19.0, base=base, width=W,
+                                               color="#5b636e")
+            _hint = True
         disp = shown.transpose(Image.TRANSPOSE)
-        st.caption("Tap where the shot was actually taken")
+        st.caption("Tap where the shot was actually taken"
+                   + (" — the grey dot is a placeholder, not the shot"
+                      if _hint else ""))
         val = streamlit_image_coordinates(disp, width=disp.width,
                                           key=f"ee_court_{fx['id']}_{_fx_gen}")
         if val is not None:

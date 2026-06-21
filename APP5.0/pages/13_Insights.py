@@ -94,6 +94,33 @@ with tab_scout:
                "gated by sample size so a hot night never headlines. The number "
                "in each line is real; trust the ones with bigger samples.")
 
+    # ── league snapshot — quick KPI tiles ─────────────────────────────────────
+    _snap = st.columns(4)
+    _poe_lead = max(((r["PPS"] - r["xPPS"], r["name"]) for r in table.values()
+                     if r.get("PPS") is not None and r.get("xPPS") is not None
+                     and (r.get("FGA") or 0) >= 20), default=None)
+    _hand_lead = max(((r["Dom_FG%"] - r["Weak_FG%"], r["name"])
+                      for r in table.values()
+                      if r.get("Dom_FG%") is not None and r.get("Weak_FG%") is not None
+                      and (r.get("Dom_FGA") or 0) >= 6 and (r.get("Weak_FGA") or 0) >= 6),
+                     default=None)
+    _def_lead = min(((r["DSHOT%"], r["name"]) for r in table.values()
+                     if r.get("DSHOT%") is not None and (r.get("GP") or 0) >= 4),
+                    default=None)
+    _avg_q = [r["ShotRating"] for r in table.values()
+              if r.get("ShotRating") is not None and (r.get("FGA") or 0) >= 15]
+    if _poe_lead:
+        _snap[0].metric("Top shot-maker", _poe_lead[1].split()[-1],
+                        f"{_poe_lead[0]:+.2f} pts/shot", delta_color="off")
+    if _hand_lead:
+        _snap[1].metric("Most one-handed", _hand_lead[1].split()[-1],
+                        f"+{_hand_lead[0]:.0f} FG% gap", delta_color="off")
+    if _def_lead:
+        _snap[2].metric("Best on-ball D", _def_lead[1].split()[-1],
+                        f"{_def_lead[0]:.0f}% allowed", delta_color="off")
+    if _avg_q:
+        _snap[3].metric("League shot quality", f"{sum(_avg_q) / len(_avg_q):.0f}")
+
     # league board — biggest single signals across all players
     flat = []
     for pid, lines in feed.items():

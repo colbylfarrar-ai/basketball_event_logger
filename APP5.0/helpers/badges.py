@@ -25,7 +25,12 @@ _TIER_RANK = {"Gold": 3, "Silver": 2, "Bronze": 1, None: 0}
 
 
 def _percentile(value, pool, higher_better=True):
-    """Percentile (0-100) of value within pool (non-None numbers)."""
+    """Mid-rank percentile (0-100) of value within pool (non-None numbers).
+
+    Uses (#worse + 0.5*#ties) / n. Counting only strictly-worse members capped
+    the unique pool leader at (n-1)/n*100 — e.g. 87.5 in a pool of 8 — which put
+    Gold (>=90) out of reach on a single-team roster; the 0.5*tie term restores a
+    reachable ceiling (unique leader of 8 -> 93.75)."""
     vals = [v for v in pool if v is not None]
     if not vals or value is None:
         return None
@@ -33,7 +38,8 @@ def _percentile(value, pool, higher_better=True):
         below = sum(1 for v in vals if v < value)
     else:
         below = sum(1 for v in vals if v > value)
-    return 100.0 * below / len(vals)
+    eq = sum(1 for v in vals if v == value)
+    return 100.0 * (below + 0.5 * eq) / len(vals)
 
 
 def _tier(pct, gold=GOLD, silver=SILVER, bronze=BRONZE):
@@ -135,6 +141,38 @@ BADGES = [
      "stat": "OREB/G", "gate": ("GP", 1),
      "desc": "Crashes the offensive boards for second chances."},
 
+    # ── Creation / role (tracker-rich) ──────────────────────────────────────────
+    {"key": "screen_assist", "name": "Screen Assist", "emoji": "", "cat": "Playmaking",
+     "stat": "SCCreated%", "gate": ("SC", 12),
+     "desc": "Frees teammates — high share of shot-creation from setting screens."},
+    {"key": "catch_shoot", "name": "Catch & Shoot", "emoji": "", "cat": "Shooting",
+     "stat": "SCPass%", "gate": ("FGA", 20),
+     "desc": "Lethal spot-up — efficient on passes into the shot.",
+     "combo": lambda r, P: _tier(min(P("SCPass%") or 0, P("eFG%") or 0))},
+
+    # ── Hand side (true half-court split mapped to handedness) ───────────────────
+    {"key": "two_handed", "name": "Two-Handed Threat", "emoji": "", "cat": "Scoring",
+     "stat": "Weak_FG%",
+     "gate": lambda r: (r.get("Weak_FGA") or 0) >= 15 and (r.get("Dom_FGA") or 0) >= 15,
+     "desc": "No weak side — finishes going either direction (both hands ≥15 FGA).",
+     "combo": lambda r, P: _tier(min(P("Dom_FG%") or 0, P("Weak_FG%") or 0))},
+
+    # ── True tap-distance (richer than the zone shadow) ─────────────────────────
+    {"key": "rim_finisher", "name": "Rim Finisher", "emoji": "", "cat": "Scoring",
+     "stat": "Near_FG%", "gate": ("Near_FGA", 15),
+     "desc": "Finishes at the rim — FG% inside 5 ft on real volume."},
+    {"key": "deep_range", "name": "Deep Range", "emoji": "", "cat": "Shooting",
+     "stat": "Deep_FG%", "gate": ("Deep_FGA", 12),
+     "desc": "Makes them from way out — FG% on shots 19.75+ ft."},
+
+    # ── Play-type (one-tap coach tags; sparse until tagging volume grows) ────────
+    {"key": "pnr_maestro", "name": "PnR Maestro", "emoji": "", "cat": "Scoring",
+     "stat": "PnR_PPP", "gate": ("PnR_poss", 15),
+     "desc": "Elite scoring out of the pick & roll (tagged plays)."},
+    {"key": "post_hub", "name": "Post Hub", "emoji": "", "cat": "Scoring",
+     "stat": "Post_PPP", "gate": ("Post_poss", 15),
+     "desc": "Efficient post-up scorer (tagged plays)."},
+
     # ── Two-way / Identity ────────────────────────────────────────────────────
     {"key": "two_way", "name": "Two-Way Wire", "emoji": "", "cat": "Two-Way",
      "stat": "2WAY", "gate": ("GP", 1),
@@ -158,6 +196,8 @@ BADGES = [
 def _gate_ok(row, gate):
     if not gate:
         return True
+    if callable(gate):          # custom multi-field gate (e.g. dual hand-side volume)
+        return bool(gate(row))
     stat, minimum = gate
     v = row.get(stat)
     return v is not None and v >= minimum

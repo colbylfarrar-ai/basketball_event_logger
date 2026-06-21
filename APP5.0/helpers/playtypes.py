@@ -243,3 +243,38 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
         })
     rows.sort(key=lambda r: r["PPP"], reverse=True)
     return {"rows": rows, "total_tagged": tagged, "untagged": untagged}
+
+
+def player_named_playtypes(game_ids=None, events=None):
+    """
+    Per-PLAYER PPP by the explicit one-tap `play_type` tag — the player-level
+    companion to team_named_playtypes (which is team-only). Each shot is counted
+    for its shooter (primary_player_id); a shot ends a possession so PPP == PPS.
+    Unknown/legacy labels fold into 'other'; untagged shots are skipped.
+
+    Returns {player_id: {key: {'poss','FGM','PPP','FG%'}}} — only the play_type
+    keys a player actually has tagged attempts for. Feeds the per-set player
+    badges (PnR Maestro / Post Hub) and the scout cards.
+    """
+    if events is None:
+        events = S.fetch_events(game_ids)
+    agg = {}
+    for e in events:
+        if e["event_type"] != "shot" or e["primary_player_id"] is None:
+            continue
+        pt = e.get("play_type")
+        if not pt:
+            continue
+        if pt not in _NAMED_KEYS:
+            pt = "other"
+        cell = agg.setdefault(e["primary_player_id"], {}).setdefault(
+            pt, {"FGA": 0, "FGM": 0, "PTS": 0})
+        cell["FGA"] += 1
+        if e["shot_result"] == "make":
+            cell["FGM"] += 1
+            cell["PTS"] += 3 if e["shot_type"] == 3 else 2
+    return {pid: {k: {"poss": c["FGA"], "FGM": c["FGM"],
+                      "PPP": _safe(c["PTS"], c["FGA"]),
+                      "FG%": _safe(c["FGM"], c["FGA"])}
+                  for k, c in d.items()}
+            for pid, d in agg.items()}

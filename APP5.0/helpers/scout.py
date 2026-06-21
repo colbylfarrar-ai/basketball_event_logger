@@ -257,8 +257,15 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         hb = hsplits.get(p["pid"])
         if hb and (hb["dominant"]["all"]["FGA"] or hb["weak"]["all"]["FGA"]):
             dom, wk = hb["dominant"]["all"], hb["weak"]["all"]
+            # scouting directive: which way to make him go. Needs volume on the
+            # worse side + a real FG% gap so it's not a 1-2 shot fluke.
+            cue = None
+            if wk["FGA"] >= 6 and dom["pct"] - wk["pct"] >= 0.10:
+                cue = "force weak hand"
+            elif dom["FGA"] >= 6 and wk["pct"] - dom["pct"] >= 0.10:
+                cue = "force strong hand"
             p["hand"] = {"dom_fga": dom["FGA"], "dom_pct": dom["pct"],
-                         "weak_fga": wk["FGA"], "weak_pct": wk["pct"]}
+                         "weak_fga": wk["FGA"], "weak_pct": wk["pct"], "cue": cue}
         else:
             p["hand"] = None
 
@@ -516,9 +523,10 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             hd = p.get("hand")
             hand_html = ""
             if hd:
+                _cue = f" ▶ {hd['cue']}" if hd.get("cue") else ""
                 hand_html = ("<div class='brk'>Hand side: " + e(
                     f"Dom {hd['dom_pct'] * 100:.0f}% ({hd['dom_fga']}) · "
-                    f"Weak {hd['weak_pct'] * 100:.0f}% ({hd['weak_fga']})") + "</div>")
+                    f"Weak {hd['weak_pct'] * 100:.0f}% ({hd['weak_fga']}){_cue}") + "</div>")
             note = (f"<div class='pnote'>▶ {e(p['note'])}</div>"
                     if p.get("note") else "")
             shots = p.get("shots") or []

@@ -484,6 +484,16 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     qbox  = S.quarter_boxes(events=events)
     gbox  = S.player_game_boxes(events=events)
 
+    # tracker-rich per-player signals (one shared pass each): hand-side splits,
+    # true-distance bands from tap (x,y), and the one-tap play_type mix. Surfaced
+    # for the badge wall + scout cards; sparse where coaches haven't tagged/tapped.
+    import helpers.playtypes as PT
+    hand_splits = S.player_hand_splits(events=events)
+    loc_by_pid = {}
+    for _sh in S.located_shots(events=events):
+        loc_by_pid.setdefault(_sh["player_id"], []).append(_sh)
+    play_by_pid = PT.player_named_playtypes(events=events)
+
     # pool per-game means for the Versatility entropy normaliser
     _pm_keys = ("PPG", "RPG", "APG", "SPG", "BPG")
     _pm_box  = {"PPG": "PTS", "RPG": "TRB", "APG": "AST", "SPG": "STL", "BPG": "BLK"}
@@ -541,6 +551,15 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         # ── clutch: 4th-quarter scoring ──────────────────────────────────
         q4 = qbox.get(pid, {}).get(4, {})
         q4_pts = q4.get("PTS", 0)
+
+        # ── hand-side / true-distance / play_type (tracker-rich) ─────────
+        _hs = hand_splits.get(pid) or {}
+        _dom = _hs.get("dominant", {}).get("all")
+        _weak = _hs.get("weak", {}).get("all")
+        _db = S.distance_buckets(loc_by_pid.get(pid, []))
+        _near = next((x for x in _db if x["label"] == "<5 ft"), None)
+        _deep = next((x for x in _db if x["label"] == "19.75+ ft"), None)
+        _pl = play_by_pid.get(pid, {})
 
         # ── versatility (entropy balance of the five per-game pillars) ───
         vers = _versatility(
@@ -648,6 +667,21 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "SCShot%":    _pct(_safe(b["SC_shoot"], b["SC"])) if b["SC"] else None,
             "SCPass%":    _pct(_safe(b["SC_pass"], b["SC"])) if b["SC"] else None,
             "SCCreated%": _pct(_safe(b["SC_screen"], b["SC"])) if b["SC"] else None,
+            # ── hand-side shooting (dominant vs weak), 0-100 FG% + volume ──
+            "Dom_FGA": _dom["FGA"] if _dom else None,
+            "Dom_FG%": _pct(_dom["pct"]) if (_dom and _dom["FGA"]) else None,
+            "Weak_FGA": _weak["FGA"] if _weak else None,
+            "Weak_FG%": _pct(_weak["pct"]) if (_weak and _weak["FGA"]) else None,
+            # ── true tap-distance finishing / range (not the zone shadow) ──
+            "Near_FGA": _near["n"] if _near else None,
+            "Near_FG%": _pct(_near["fg"]) if (_near and _near["n"]) else None,
+            "Deep_FGA": _deep["n"] if _deep else None,
+            "Deep_FG%": _pct(_deep["fg"]) if (_deep and _deep["n"]) else None,
+            # ── per-set play_type efficiency (one-tap coach tags; sparse) ──
+            "PnR_poss": _pl.get("pnr", {}).get("poss"),
+            "PnR_PPP": _round(_pl.get("pnr", {}).get("PPP"), 2),
+            "Post_poss": _pl.get("post", {}).get("poss"),
+            "Post_PPP": _round(_pl.get("post", {}).get("PPP"), 2),
             # ── clutch (4th quarter) ────────────────────────────────
             "Q4PTS": q4_pts, "Q4PPG": pg(q4_pts),
             "Q4%": _pct(_safe(q4_pts, b["PTS"])) if b["PTS"] else None,
@@ -690,6 +724,10 @@ EVENT_DERIVED_STATS = frozenset({
     "ShotRating", "xPPS", "xFG%", "SMOE", "RimFGA%", "MidFGA%",
     "PaintM", "PaintA", "PaintPTS", "Paint%", "PRF", "PRF/G",
     "AST2", "AST3",
+    # hand-side splits, true tap-distance bands, one-tap play_type (all event/tap)
+    "Dom_FGA", "Dom_FG%", "Weak_FGA", "Weak_FG%",
+    "Near_FGA", "Near_FG%", "Deep_FGA", "Deep_FG%",
+    "PnR_poss", "PnR_PPP", "Post_poss", "Post_PPP",
     # clutch (need quarter splits from events)
     "Q4PTS", "Q4PPG", "Q4%",
 })

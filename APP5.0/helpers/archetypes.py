@@ -36,7 +36,10 @@ DEFAULT_FEATURES = [
     "RimFGA%", "3PR",
     "AST/TOV", "USG%",
     "OREB/G", "DREB/G",
-    "SelfCr%",
+    # shot-creation SOURCE mix (shares of own shots): self-made vs assisted (pass
+    # into the shot) vs screen-assist (freed a teammate). Splits the old single
+    # SelfCr% so centroids resolve Self-Creator vs Spot-Up vs Screen Setter.
+    "SelfCr%", "SCPass%", "SCCreated%",
 ]
 
 # Feature → archetype "axis" weights, used to read a centroid's personality.
@@ -50,7 +53,9 @@ _AXES = {
     "rebounding":  ["RPG", "DREB/G", "OREB/G"],
     "steals":      ["SPG"],
     "blocks":      ["BPG"],
-    "creation":    ["SelfCr%"],
+    "creation":    ["SelfCr%"],     # self-made (off the dribble, no pass/screen)
+    "spot_up":     ["SCPass%"],     # assisted — catch-and-shoot / drive-and-kick
+    "screen_assist": ["SCCreated%"],  # frees shooters by screening (connector big)
 }
 
 
@@ -215,6 +220,10 @@ def _name_for(axes):
         return "Efficient Finisher"
     if top == "creation":
         return "Self-Creator"
+    if top == "spot_up":
+        return "Spot-Up Shooter"
+    if top == "screen_assist":
+        return "Screen Setter"
     return f"{top.title()} Specialist · {second.title()}"
 
 

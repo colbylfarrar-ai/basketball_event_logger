@@ -5,23 +5,41 @@ Rates every eligible player on FIVE numbers, each on a 0-100 scale where
 50 = pool average and +10 = one standard deviation better than the pool
 (the same scaling as helpers/team_ratings._power_scale):
 
-    OVERALL      average of the other four ratings + PER + Game Score
-    OFFENSE      Shooting rating + Finishing rating
-    DEFENSE      Stocks · Steals · Blocks · Guarded%
-    PLAYMAKING   Assists · Shots Created · SC-Pass · Turnovers(inv) · AST/TOV
+    OVERALL      four category ratings + Game Score · EFF · FIC (production)
+    OFFENSE      Shooting · Finishing · scoring VOLUME (PPG · PRF/G)
+    DEFENSE      Steals · Blocks · Guarded% · DSHOT%(inv) · Fouls(inv)
+    PLAYMAKING   Assists · Shots Created · SC-Pass · AST/TOV · TOV%(inv)
     REBOUNDING   OREB · DREB · REB · REB% · OREB% · DREB%
 
-Each rating is built bottom-up: every underlying stat is turned into a z-score
-across the eligible pool, related z-scores are averaged into a category z, and
-the category z is mapped to 0-100. Counting stats are per-game so players with
-different games-played are comparable. Rate stats (3P%, TS%, Paint%, Guarded%,
-REB% …) and "% while on court" come straight from the engine.
+Each rating is built bottom-up in THREE passes so the spread is real, not
+collapsed toward 50:
+
+  1. every underlying stat is turned into a z-score across the eligible pool;
+  2. a category's leaf z-scores are combined with per-leaf WEIGHTS (high-signal
+     stats count more, redundant/noisy ones less) into a raw category z;
+  3. each raw category/overall z is RE-STANDARDIZED across the pool (z' =
+     (z-mean)/sd) before mapping to 0-100.
+
+Step 3 is the load-bearing fix: averaging k weakly-correlated z's shrinks the
+composite's SD well below 1, so without re-standardizing, scale100's "+10 per
+SD" silently became "+5 per real SD" and crushed everyone to ~50 (top player
+66). Re-standardizing restores SD=1 so the 50=avg / +10=1 SD contract that
+cards.tier() and the lineup engine assume actually holds — and, crucially, it
+flips the sign of "more leaves": under raw mean-of-z, extra stats TIGHTEN the
+spread; under re-standardized weighted composites, signal-bearing stats WIDEN
+it. (Tiny/degenerate pools below MIN_POOL_FOR_RESTD skip step 3 and fall back
+to the raw averaged z so a 2-player pool can't blow up.)
+
+Counting stats are per-game so players with different games-played are
+comparable. Rate stats (3P%, TS%, Paint%, Guarded%, REB%, DSHOT% …) and
+"% while on court" come straight from the engine.
 
 Sub-rating definitions (per the ratings spec):
-    Shooting  = 3PR (3PA/FGA) · 3P% · TS%
+    Shooting  = 3PR (3PA/FGA) · 3P% · TS% · eFG% · FTR
     Finishing = Paint FG% · Paint shots per game
     SC-Pass   = SC - FGA  (shots created that aren't the player's own attempts)
-    PER       = Game Score proxy (see helpers/stats.per — single-program DB)
+    DSHOT%    = FG% allowed as the contesting defender (helpers/stats.defended_fg_pct)
+    PRF       = Points Responsible For = own pts + assist pts (helpers/stats.prf)
 
 Pure data layer: depends only on database.db and helpers.stats, never on
 streamlit, so any page or script can import it.
@@ -89,10 +107,17 @@ def _scale100(z):
     return S.scale100(z)
 
 
-def _avg_z(zs):
-    """Average the present (non-None) z-scores; None if none are present."""
-    vals = [z for z in zs if z is not None]
-    return sum(vals) / len(vals) if vals else None
+def _wavg(pairs):
+    """Weighted mean of (z, weight) pairs over the present (non-None) z's; None
+    if none are present. A missing leaf simply drops out of the weighted mean
+    (its weight is not counted), so players aren't penalized for an undefined
+    stat — they're scored on what they do have."""
+    num = wsum = 0.0
+    for z, w in pairs:
+        if z is not None:
+            num += z * w
+            wsum += w
+    return (num / wsum) if wsum else None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -128,6 +153,9 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
     boxes = S.aggregate_player_boxes(game_ids, events=events)
     gp = S.games_played(game_ids)
     oc = S.oncourt_rate_stats(game_ids, events=events)
+    dfg = S.defended_fg_pct(game_ids, events=events)   # DSHOT% — defense quality
+    ddr = S.individual_defensive_rating_all(game_ids, events=events)  # DRtg (lower=better)
+    xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     meta = _player_meta(gender=gender)
 
     profiles = {}
@@ -137,6 +165,7 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             continue
         b = boxes.get(pid, S.finalize_box(S._blank_box()))
         o = oc.get(pid, {})
+        df = dfg.get(pid, {})
 
         FGA = b["FGA"]
         per_g = lambda x: x / g if g else 0.0
@@ -154,22 +183,36 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             **m,
             "GP": g,
             "box": b,
-            # ── OFFENSE ─────────────────────────────────────────────
+            # ── OFFENSE: efficiency ─────────────────────────────────
             "3PR":   _safe(b["3PA"], FGA) if FGA else None,
             "3P%":   _safe(b["3PM"], b["3PA"]) if b["3PA"] else None,
             "TS%":   S.ts(b) if (FGA or b["FTA"]) else None,
+            "eFG%":  S.efg(b) if FGA else None,
+            "FTR":   S.ftr(b) if FGA else None,
+            # SMOE — shot-making over expected: real FG% minus the FG% expected
+            # from the player's shot-creation mix (positive = finishes the looks
+            # they take better than the league does).
+            "SMOE":  ((_safe(b["FGM"], b["FGA"]) - xfg[pid])
+                      if (FGA and pid in xfg) else None),
             "Paint%": S.paint_fg_pct(b) if b["paint_FGA"] else None,
             "PaintSh/G": per_g(b["paint_FGA"]),
+            # ── OFFENSE: scoring volume ─────────────────────────────
+            "PPG":   per_g(b["PTS"]),
+            "PRF/G": per_g(S.prf(b)),
             # ── DEFENSE ─────────────────────────────────────────────
             "Stocks/G": per_g(b["STL"] + b["BLK"]),
             "STL/G": per_g(b["STL"]),
             "BLK/G": per_g(b["BLK"]),
             "Guarded%": o.get("guarded_pct") if o.get("opp_FGA_on") else None,
+            "DSHOT%": df.get("pct") if df.get("def_FGA") else None,
+            "DRtg":  ddr.get(pid),   # Oliver individual DRtg (per-100, lower=better)
+            "PF/G":  per_g(b["PF"]),
             # ── PLAYMAKING ──────────────────────────────────────────
             "AST/G": per_g(b["AST"]),
             "SC/G": per_g(b["SC"]),
             "SCPass/G": per_g(b["SC"] - FGA),
             "TOV/G": per_g(b["TOV"]),
+            "TOV%":  S.tov_pct(b) if (FGA or b["TOV"]) else None,
             "AST/TOV": ast_tov,
             # ── REBOUNDING ──────────────────────────────────────────
             "OREB/G": per_g(b["ORB"]),
@@ -180,7 +223,8 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             "REB%":  o.get("reb_pct") if o.get("reb_avail") else None,
             # ── PRODUCTION (feeds OVERALL) ──────────────────────────
             "GS/G":  per_g(S.game_score(b)),
-            "PER/G": per_g(S.per(b)),
+            "EFF/G": per_g(S.eff(b)),
+            "FIC/G": per_g(S.fic(b)),
         }
     return profiles
 
@@ -189,19 +233,66 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
 #  RATINGS
 # ══════════════════════════════════════════════════════════════════════════════
 
-# leaf stats grouped by sub-rating; True = lower is better (z gets negated)
-_SHOOTING  = [("3PR", False), ("3P%", False), ("TS%", False)]
-_FINISHING = [("Paint%", False), ("PaintSh/G", False)]
-_DEFENSE   = [("Stocks/G", False), ("STL/G", False), ("BLK/G", False),
-              ("Guarded%", False)]
-_PLAYMAKING = [("AST/G", False), ("SC/G", False), ("SCPass/G", False),
-               ("TOV/G", True), ("AST/TOV", False)]
-_REBOUNDING = [("OREB/G", False), ("DREB/G", False), ("REB/G", False),
-               ("REB%", False), ("OREB%", False), ("DREB%", False)]
+# Leaf stats grouped by sub-rating as (stat, weight, lower_better):
+#   weight       how much this leaf counts in the category's weighted-mean z
+#                (high-signal stats > redundant/shot-mix ones).
+#   lower_better True negates the z (turnovers, fouls, FG% allowed → less is more).
+# Every leaf is None-skipped per player (3P% with no 3PA, DSHOT% with no contested
+# FGA, …), so a missing stat drops out of the weighted mean rather than counting 0.
+_SHOOTING  = [("TS%", 1.5, False), ("3P%", 1.0, False), ("eFG%", 1.0, False),
+              ("SMOE", 1.0, False), ("FTR", 0.75, False), ("3PR", 0.5, False)]
+_FINISHING = [("Paint%", 1.0, False), ("PaintSh/G", 0.75, False)]
+_DEFENSE   = [("DSHOT%", 1.25, True), ("DRtg", 1.0, True), ("STL/G", 1.0, False),
+              ("BLK/G", 1.0, False), ("Guarded%", 0.75, False), ("PF/G", 0.5, True)]
+_PLAYMAKING = [("AST/G", 1.0, False), ("AST/TOV", 1.0, False), ("SC/G", 0.75, False),
+               ("SCPass/G", 0.75, False), ("TOV%", 0.75, True)]
+_REBOUNDING = [("OREB%", 1.0, False), ("DREB%", 1.0, False), ("REB%", 0.75, False),
+               ("OREB/G", 0.75, False), ("DREB/G", 0.75, False), ("REB/G", 0.5, False)]
+
+# How the headline ratings combine their parts (re-standardized component z, weight).
+# OFFENSE folds scoring VOLUME (PPG/PRF) onto the two shooting sub-ratings so a
+# high-efficiency low-usage spot-up shooter no longer rates like a 25-PPG engine.
+_OFFENSE_PARTS = [("shooting", 1.0), ("finishing", 0.6), ("PPG", 1.0), ("PRF/G", 0.75)]
+# OVERALL = the four pillars (offense-leaning) + three production anchors. PER was
+# a literal duplicate of Game Score, so it is gone; EFF + FIC add independent
+# all-around production signal instead of double-counting one composite.
+_OVERALL_PARTS = [("offense", 1.1), ("defense", 1.0), ("playmaking", 1.0),
+                  ("rebounding", 0.8), ("GS/G", 1.0), ("EFF/G", 0.6), ("FIC/G", 0.5)]
+
+# Pools smaller than this skip composite re-standardization (an SD from 2-3 players
+# is meaningless) and fall back to the raw weighted-mean z.
+MIN_POOL_FOR_RESTD = 8
+
+# Games-equivalent prior weight for the per-rating shrinkage toward 50 (passed to
+# shrinkage.stabilize_index). Higher than shrinkage's default (3) so thin 1-2 game
+# samples — typically lightly-tracked opponents — regress harder toward average and
+# stop surfacing mid-pack on a single fluky line, without flattening full-season
+# players (retention g/(g+k): 1 GP 0.17, 2 GP 0.29, 8 GP 0.62, 15 GP 0.75).
+RATING_K_GAMES = 5
+
+
+def _restandardize(zmap):
+    """Re-z a composite z-vector across the pool so it regains unit SD.
+
+    Averaging k weakly-correlated unit-variance leaf z's yields a composite with
+    SD well below 1, which silently turns scale100's "+10 per SD" into far less.
+    Re-standardizing (z' = (z-mean)/sd over the present values) restores the
+    50=avg / +10=1 SD contract before the 0-100 map. Pools below
+    MIN_POOL_FOR_RESTD, or with no spread, are returned unchanged (a 2-3 player
+    SD is noise) so tiny/early-season pools fall back to the raw averaged z.
+    """
+    present = {p: v for p, v in zmap.items() if v is not None}
+    if len(present) < MIN_POOL_FOR_RESTD:
+        return dict(zmap)
+    mean = sum(present.values()) / len(present)
+    sd = (sum((v - mean) ** 2 for v in present.values()) / len(present)) ** 0.5
+    if sd <= 1e-9:
+        return dict(zmap)
+    return {p: (None if v is None else (v - mean) / sd) for p, v in zmap.items()}
 
 
 def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
-                   stabilize=True):
+                   stabilize=True, profiles=None):
     """
     Compute every player's five 0-100 ratings over the eligible pool.
 
@@ -213,12 +304,17 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         plus the raw stat inputs (3P%, TS%, Guarded%, REB%, GS/G, …) for display.
     Empty dict if no eligible players.
 
-    `stabilize` (default True) pulls every 0-100 rating toward 50 by games played
-    (helpers.shrinkage.stabilize_index), so a 1-game cameo can't post a 90 OVERALL
-    on noise. Ranks are assigned on the stabilized OVERALL. Pass stabilize=False
-    for the raw, unregressed z-score ratings (e.g. to show raw-vs-stable).
+    Each rating is a weighted mean of its leaf z-scores, re-standardized across
+    the pool (see _restandardize), then mapped to 0-100. `stabilize` (default
+    True) then pulls every rating toward 50 by games played
+    (helpers.shrinkage.stabilize_index), so a 1-game cameo can't post a 90
+    OVERALL on noise. Ranks are assigned on the stabilized OVERALL. Pass
+    stabilize=False for the raw, unregressed ratings (e.g. to show raw-vs-stable).
+    `profiles` lets a caller (player_stat_table) hand in an already-built profile
+    map so the engine isn't recomputed twice for one table.
     """
-    profiles = player_profiles(game_ids, gender=gender, min_games=min_games)
+    if profiles is None:
+        profiles = player_profiles(game_ids, gender=gender, min_games=min_games)
     if not profiles:
         return {}
 
@@ -235,31 +331,38 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         return z
 
     def group_z(group):
-        """Per-player averaged z over a list of (stat, lower_better) leaves."""
-        cols = {stat: zcol_signed(stat, lb) for stat, lb in group}
-        return {p: _avg_z([cols[stat][p] for stat, _ in group]) for p in pids}
+        """Weighted-mean z over a list of (stat, weight, lower_better) leaves,
+        then re-standardized to unit SD across the pool."""
+        cols = {stat: zcol_signed(stat, lb) for stat, _w, lb in group}
+        raw = {p: _wavg([(cols[stat][p], w) for stat, w, _lb in group])
+               for p in pids}
+        return _restandardize(raw)
 
-    shooting_z  = group_z(_SHOOTING)
-    finishing_z = group_z(_FINISHING)
+    def combine(parts, comps):
+        """Weighted blend of named component z-maps (from `comps`) and raw leaf
+        columns, re-standardized to unit SD. `parts` = [(name, weight), …] where
+        name is either a key in `comps` or a profile stat fed through zcol()."""
+        cols = {name: (comps[name] if name in comps else zcol(name))
+                for name, _w in parts}
+        raw = {p: _wavg([(cols[name][p], w) for name, w in parts]) for p in pids}
+        return _restandardize(raw)
+
+    shooting_z   = group_z(_SHOOTING)
+    finishing_z  = group_z(_FINISHING)
     defense_z    = group_z(_DEFENSE)
     playmaking_z = group_z(_PLAYMAKING)
     rebounding_z = group_z(_REBOUNDING)
-    offense_z = {p: _avg_z([shooting_z[p], finishing_z[p]]) for p in pids}
-
-    # OVERALL = average of the four category z's + PER + Game Score (per game)
-    gs_z  = zcol("GS/G")
-    per_z = zcol("PER/G")
-    overall_z = {
-        p: _avg_z([offense_z[p], defense_z[p], playmaking_z[p], rebounding_z[p],
-                   per_z[p], gs_z[p]])
-        for p in pids
-    }
+    offense_z = combine(_OFFENSE_PARTS,
+                        {"shooting": shooting_z, "finishing": finishing_z})
+    overall_z = combine(_OVERALL_PARTS,
+                        {"offense": offense_z, "defense": defense_z,
+                         "playmaking": playmaking_z, "rebounding": rebounding_z})
 
     def _rate(z, g):
         """0-100 rating from a z-score, regressed toward 50 by games when on."""
         v = _scale100(z)
         if stabilize:
-            v = SHR.stabilize_index(v, g)
+            v = SHR.stabilize_index(v, g, k_games=RATING_K_GAMES)
         return _round(v)
 
     out = {}
@@ -362,7 +465,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     if not profiles:
         return {}
     ratings = player_ratings(game_ids, gender=gender, min_games=min_games,
-                             stabilize=stabilize)
+                             stabilize=stabilize, profiles=profiles)
 
     # shared event pass + rate tables so the per-player advanced metrics below
     # don't each refetch / recompute the whole sample.
@@ -370,6 +473,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     diff_rates = S.shot_difficulty_rates(events=events)
     qual_rates = S.shot_quality_rates(events=events)
     cre_rates  = S.creation_fg_rates(events=events)
+    xfg_all    = S.expected_fg_pct_all(events=events, rates=cre_rates)  # one pass for all
 
     # whole-sample lineup tables (minutes / +/- / defended FG%), computed once.
     mins     = S.minutes_played(game_ids)
@@ -416,7 +520,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
 
         shot_rt = S.shot_rating(pid, events=events, rates=diff_rates)
         xpps    = S.expected_points_per_shot(pid, events=events, rates=qual_rates) if has_fga else None
-        xfg     = S.expected_fg_pct(pid, events=events, rates=cre_rates) if has_fga else None
+        xfg     = xfg_all.get(pid) if has_fga else None
 
         # impact / usage
         pmin   = mins.get(pid, 0.0)

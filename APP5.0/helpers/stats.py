@@ -608,6 +608,30 @@ def expected_fg_pct(player_id, game_ids=None, events=None, rates=None):
     return _safe(exp_makes, attempts)
 
 
+def expected_fg_pct_all(game_ids=None, events=None, rates=None):
+    """
+    {player_id: xFG%} for every shooter in the sample, in ONE pass over events
+    (O(events) instead of O(players·events) from calling expected_fg_pct per
+    player). xFG% = the player's shot-creation mix scored at the sample-wide FG%
+    for each bucket; compare to real FG% for shot-making-over-expected (SMOE).
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    if rates is None:
+        rates = creation_fg_rates(events=events)
+    exp = defaultdict(float)
+    att = defaultdict(int)
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        pid = e["primary_player_id"]
+        bucket = _creation_bucket(e["pass_from_id"] is not None,
+                                  e["shot_created_by_id"] is not None)
+        exp[pid] += rates[bucket]["pct"]
+        att[pid] += 1
+    return {pid: _safe(exp[pid], att[pid]) for pid in att}
+
+
 def shot_quality_rates(game_ids=None, events=None):
     """
     Empirical make-rate for each (zone, creation-bucket, guarded?) combination,
@@ -1178,21 +1202,29 @@ def individual_offensive_rating(player_id, team_id, game_ids=None,
 
 
 def individual_defensive_rating(player_id, team_id, game_ids=None,
-                                events=None, fp=None):
+                                events=None, fp=None, boxes=None, tb=None, ob=None):
     """
     Oliver individual Defensive Rating = points allowed per 100 defensive
     possessions, blended off the team rate via the player's Stop%. Lower = better.
     Uses on-court fraction in place of minutes (see section header). Returns None
     if the player was never on the floor.
+
+    `boxes` / `tb` / `ob` may be supplied precomputed (the player-box map, the
+    player's team box, and the opponent box) so a batch caller can avoid the
+    O(players) re-aggregation; each is computed on demand when None. See
+    individual_defensive_rating_all for the batched whole-pool version.
     """
     if events is None:
         events = fetch_events(game_ids)
-    boxes = aggregate_player_boxes(game_ids, events=events)
+    if boxes is None:
+        boxes = aggregate_player_boxes(game_ids, events=events)
     p = boxes.get(player_id)
     if not p:
         return None
-    tb = _team_box(team_id, game_ids, events=events)
-    ob = _opp_box_for(team_id, game_ids, events)
+    if tb is None:
+        tb = _team_box(team_id, game_ids, events=events)
+    if ob is None:
+        ob = _opp_box_for(team_id, game_ids, events)
     if fp is None:
         fp = oncourt_fraction(game_ids).get(player_id, 0.0)
     if fp <= 0:
@@ -1229,6 +1261,50 @@ def individual_defensive_rating(player_id, team_id, game_ids=None,
 
     D_pts_per_scposs = _safe(oPTS, oFGM + (1 - (1 - _safe(oFTM, oFTA)) ** 2) * oFTA * 0.4)
     return Team_DRtg + 0.2 * (100 * D_pts_per_scposs * (1 - Stop_pct) - Team_DRtg)
+
+
+def individual_defensive_rating_all(game_ids=None, events=None):
+    """
+    {player_id: individual DRtg} for every player in the sample, in ONE pass.
+
+    Same Oliver formula as individual_defensive_rating, but the player-box map,
+    each team's box, and each team's opponent box are built once and reused, so
+    the whole pool costs one box aggregation instead of one per player. Players
+    who were never on the floor (fp<=0) or whose team has no defensive
+    possessions are omitted. Lower is better.
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    boxes = aggregate_player_boxes(game_ids, events=events)
+    if not boxes:
+        return {}
+    team_of = {r["id"]: r["team_id"] for r in query("SELECT id, team_id FROM players")}
+    frac = oncourt_fraction(game_ids)
+
+    # team boxes from the single box map; opp box = league total minus that team
+    keys = list(finalize_box(_blank_box()).keys())
+    team_box = {}
+    for pid, b in boxes.items():
+        tid = team_of.get(pid)
+        if tid is None:
+            continue
+        tb = team_box.setdefault(tid, {k: 0 for k in keys})
+        for k in keys:
+            tb[k] += b.get(k, 0)
+    total = {k: sum(tb[k] for tb in team_box.values()) for k in keys}
+    opp_box = {tid: {k: total[k] - tb[k] for k in keys} for tid, tb in team_box.items()}
+
+    out = {}
+    for pid in boxes:
+        tid = team_of.get(pid)
+        if tid is None:
+            continue
+        d = individual_defensive_rating(
+            pid, tid, events=events, fp=frac.get(pid, 0.0),
+            boxes=boxes, tb=team_box.get(tid), ob=opp_box.get(tid))
+        if d is not None:
+            out[pid] = d
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════

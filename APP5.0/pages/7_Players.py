@@ -30,7 +30,7 @@ import streamlit as st
 
 from database.db import query
 from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
-                        empty_state, rgb as _rgb,
+                        empty_state, rgb as _rgb, shot_panel as _shot_panel,
                         style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
                         gender_radio, grid as _grid)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
@@ -294,6 +294,12 @@ def _zone_tables():
     ev = S.fetch_events()
     return (S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev),
             S.player_hand_splits(events=ev))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _shot_model():
+    """League distance×value make-rate model for the points-over-expected heat."""
+    return S.distance_make_model(events=S.fetch_events())
 
 
 def _agg_zone(pids, zsplits):
@@ -891,31 +897,25 @@ def _fx_shot():
     pl_shots = _player_located(pl_pid)
     ec1, ec2 = st.columns([3, 2])
     with ec1:
+        # Unified shot surface: dots / points-over-expected heat / zone fallback.
+        if not _shot_panel(pl_shots, zone_data=pl_zone, model=_shot_model(),
+                           key="lab_player", title=PL["name"]):
+            empty_state("No located shots yet",
+                        "Tap shots in the Game Tracker to build this player's "
+                        "shot map.")
         if pl_shots:
-            smap, _n = _shot_map(pl_shots, f"{PL['name']} — shot map · {len(pl_shots)} located")
-            st.plotly_chart(smap, width="stretch", key="lab_player_map")
             _ls = S.shot_location_summary(pl_shots)
             if _ls:
-                def _seg(lbl, n, fg):
+                def _segc(lbl, n, fg):
                     return f"{lbl} {n}" + (f" ({fg*100:.0f}%)" if fg is not None else "")
                 st.caption(
                     f"Avg distance **{_ls['avg_dist']:.1f} ft** · "
-                    + _seg("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
-                    + _seg("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
-                    + _seg("Three", _ls["three_n"], _ls["three_fg"]))
+                    + _segc("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
+                    + _segc("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
+                    + _segc("Three", _ls["three_n"], _ls["three_fg"]))
             _dbl = S.distance_buckets(pl_shots)
             if _dbl:
                 st.caption("By length — " + S.distance_buckets_caption(_dbl))
-        else:
-            fig, ok = _shot_chart(pl_zone, f"{PL['name']} — shot chart (zones)")
-            if ok:
-                st.plotly_chart(fig, width="stretch", key="lab_player_court")
-                st.caption("Zone chart (older games). Tap-captured shots show here "
-                           "as a precise shot map.")
-            else:
-                empty_state("No located shots yet",
-                            "Tap shots in the Game Tracker to build this "
-                            "player's shot map.")
     with ec2:
         st.markdown("**Shot-location profile**")
         rim, mid, thr = PL.get("RimFGA%"), PL.get("MidFGA%"), PL.get("3PR")

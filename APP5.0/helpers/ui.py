@@ -601,6 +601,48 @@ def court_panel(fig, *, key, df=None, selection_mode="points"):
     return chart_select(fig, key=key, selection_mode=selection_mode, data=df)
 
 
+def shot_panel(shots, *, zone_data=None, model=None, key, title="Shots",
+               height=470):
+    """The unified shot surface — a segmented toggle between the located-shot DOTS,
+    a points-over-expected HEAT hexbin (needs a league make-rate ``model``), and the
+    legacy ZONE chart. Graceful by design: falls back to zones when there's no x,y,
+    and returns False when there's nothing to show (caller renders an empty state).
+    One helper so the x,y experience is identical on Players / Team / Scout, with
+    the zone fallback for games that aren't tap-tracked. Returns True if rendered."""
+    import helpers.court as _court
+    located = bool(shots)
+    opts = []
+    if located:
+        opts.append("Shot map")
+        if model is not None:
+            opts.append("Heat vs xPts")
+    if zone_data:
+        opts.append("Zones")
+    if not opts:
+        return False
+    view = opts[0] if len(opts) == 1 else (seg("View", opts, key=f"{key}_view")
+                                           or opts[0])
+    if view == "Heat vs xPts" and located and model is not None:
+        fig, _n = _court.shot_hexbin(shots, title=f"{title} — points over expected",
+                                     model=model, mode="poe", height=height)
+        st.plotly_chart(fig, width="stretch", key=f"{key}_poe")
+        st.caption("Hexagon colour = points/shot **above/below** what the league "
+                   "make-rate model expects from that spot — green beats the shot's "
+                   "difficulty, red is below. Shot *quality*, not just makes.")
+    elif view == "Shot map" and located:
+        fig, _n = _court.shot_map(shots, title=title, height=height)
+        st.plotly_chart(fig, width="stretch", key=f"{key}_map")
+    elif zone_data:
+        fig, ok = _court.shot_chart(zone_data, title=f"{title} (zones)",
+                                    height=height)
+        if not ok:
+            return False
+        st.plotly_chart(fig, width="stretch", key=f"{key}_zone")
+    else:
+        return False
+    return True
+
+
 def selected_xy(selection):
     """Pull ``[(x, y), …]`` out of a plotly ``on_select`` payload (returned by
     ``court_panel``/``chart_select``), robust to the few shapes Streamlit uses.

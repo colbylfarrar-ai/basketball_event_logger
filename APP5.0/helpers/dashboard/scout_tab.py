@@ -397,6 +397,14 @@ def render(ctx):
                                   if k in cm)
                 src_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
                             f"▦ Shots: {_src}</span>")
+            # play-type tags per player (one-tap set calls): top 4, share of tagged
+            pm = p.get("playmix")
+            play_html = ""
+            if _show("play_calls") and pm:
+                _pl = " · ".join(f"{lbl} {pct:.0f}%" for lbl, pct in pm[:4])
+                play_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
+                             f"▶ Plays: {html.escape(_pl)} "
+                             f"(n={p['playmix_n']})</span>")
             arch_html = (f" <span class='stat-chip' style='font-size:11px'>"
                          f"{html.escape(archlbl)}</span>" if archlbl else "")
             # who normally starts + the 0-100 category breakdown behind OVERALL
@@ -423,7 +431,7 @@ def render(ctx):
                 f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
                 f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "
                 f"TS {('%.0f%%'%p['ts']) if p['ts'] is not None else '—'}</span>"
-                f"{extra_html}{src_html}<br>"
+                f"{extra_html}{src_html}{play_html}<br>"
                 f"<span style='color:{ctx.ACCENT};font-size:13px'>▶ "
                 f"{html.escape(p['note'])}</span>"
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"

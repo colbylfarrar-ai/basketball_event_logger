@@ -225,6 +225,31 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         tot = sum(c.values()) if c else 0
         p["creation"] = {k: 100 * c[k] / tot for k in c} if tot else None
 
+    # how each player gets their shots by the one-tap play_type tag (pnr / iso /
+    # post / …): the literal set call, as a share of that player's TAGGED shots.
+    # Sparse until a coach tags — None when this player has no tagged shots.
+    _PT_LABEL = dict(PT.NAMED_PLAY_TYPES)
+    pmix = {}
+    for e in ev:
+        if e["event_type"] != "shot" or e["primary_player_id"] is None:
+            continue
+        pt = e.get("play_type")
+        if not pt:
+            continue
+        pt = pt if pt in _PT_LABEL else "other"
+        d = pmix.setdefault(e["primary_player_id"], {})
+        d[pt] = d.get(pt, 0) + 1
+    for p in personnel:
+        c = pmix.get(p["pid"])
+        tot = sum(c.values()) if c else 0
+        if tot:
+            ordered = sorted(c.items(), key=lambda kv: -kv[1])
+            p["playmix"] = [(_PT_LABEL.get(k, k), 100 * n / tot) for k, n in ordered]
+            p["playmix_n"] = tot
+        else:
+            p["playmix"] = None
+            p["playmix_n"] = 0
+
     # dominant- vs weak-hand-side shooting per player (helpers/handedness.py:
     # righty's right-side shots = dominant; center = straightaway, kept apart).
     hsplits = S.player_hand_splits(events=ev) if ev else {}
@@ -481,6 +506,13 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             if _show("shot_source") and cm:
                 src = ("<div class='brk'>Shots: " + e(" · ".join(
                     f"{lbl} {cm[k]:.0f}%" for k, lbl in _SRC if k in cm)) + "</div>")
+            # play-type tags per player (one-tap set calls): top 4, share of tagged
+            pm = p.get("playmix")
+            play = ""
+            if _show("play_calls") and pm:
+                play = ("<div class='brk'>Plays: " + e(" · ".join(
+                    f"{lbl} {pct:.0f}%" for lbl, pct in pm[:4])
+                    + f" (n={p['playmix_n']})") + "</div>")
             hd = p.get("hand")
             hand_html = ""
             if hd:
@@ -493,7 +525,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             mini = (f"<div class='mini'>"
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
-            cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{src}{hand_html}{note}{mini}</td>")
+            cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{src}{play}{hand_html}{note}{mini}</td>")
         # two cards per row
         rows = ""
         for i in range(0, len(cards), 2):

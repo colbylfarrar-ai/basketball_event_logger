@@ -945,6 +945,38 @@ def _fx_shot():
             for col, lbl, c in ((hh[0], "Dominant FG%", dom), (hh[1], "Weak FG%", wk)):
                 col.metric(lbl, f"{c['pct']*100:.0f}%" if c["FGA"] else "—",
                            help=f"{c['FGM']}/{c['FGA']} FGA")
+        # ── scout cues: the new reads (shot making, space dependence, off-hand) ──
+        _cues = []
+        _pps, _xpps = PL.get("PPS"), PL.get("xPPS")
+        if _pps is not None and _xpps is not None and (PL.get("FGA") or 0) >= 12:
+            _poe = _pps - _xpps
+            _cues.append(("Over expected", f"{_poe:+.2f}", "pts/shot vs look quality",
+                          "#3fb950" if _poe >= 0 else "#e74c3c"))
+        if gd:
+            _g, _o = gd["guarded"], gd["open"]
+            if _g["FGA"] >= 5 and _o["FGA"] >= 5:
+                _cliff = (_o["pct"] - _g["pct"]) * 100
+                _cues.append(("Space dependence", f"{_cliff:+.0f}",
+                              "needs space" if _cliff > 8 else
+                              "contest-proof" if _cliff < -2 else "even",
+                              "#e74c3c" if _cliff > 8 else
+                              "#3fb950" if _cliff < -2 else "#8b949e"))
+        if hb:
+            _d, _w = hb["dominant"]["all"], hb["weak"]["all"]
+            if _d["FGA"] >= 6 and _w["FGA"] >= 6:
+                _gap = (_d["pct"] - _w["pct"]) * 100
+                if _gap > 0:
+                    _cues.append(("Force off-hand", f"+{_gap:.0f}",
+                                  "gap to weak side", "#f0a500"))
+        if _cues:
+            st.caption("**Scout cues** — what the tracked splits say")
+            _cc = st.columns(len(_cues))
+            for _col, (_lbl, _val, _sub, _c) in zip(_cc, _cues):
+                _col.markdown(
+                    f"<div class='mini-tile'><div class='mini-lbl'>{_lbl}</div>"
+                    f"<div class='mini-val' style='color:{_c}'>{_val}</div>"
+                    f"<div class='mini-sub'>{_sub}</div></div>",
+                    unsafe_allow_html=True)
     st.markdown("**Hot zones**")
     if pl_zone:
         _hot_zones(pl_zone)

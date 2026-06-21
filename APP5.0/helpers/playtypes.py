@@ -278,3 +278,101 @@ def player_named_playtypes(game_ids=None, events=None):
                       "FG%": _safe(c["FGM"], c["FGA"])}
                   for k, c in d.items()}
             for pid, d in agg.items()}
+
+
+# ── play-type ROLE split (ball-handler vs roll man within a screen action) ────────
+# game_events.shot_created_by_id is the "Shot Created By" tag — the SCREENER who
+# freed this shooter. On a pick-&-roll the BALL-HANDLER uses the on-ball screen,
+# so his shot carries a creator (filled); the ROLL MAN set the screen and was not
+# screened himself, so his finish has no creator (empty). So among `pnr` shots the
+# creator field splits the shooter's ROLE — the owner's headline read. The mapping
+# is one constant (ROLE_EMPTY_IS) so it's trivial to flip if a program's tagging
+# convention differs. Off-screen / DHO reuse the same split (screen-user vs setter).
+ROLE_SPLIT_KEYS = ("pnr", "dho", "offscreen")
+ROLE_EMPTY_IS = "roller"     # shot_created_by_id empty => this role; filled => the other
+_ROLE_OTHER = {"roller": "handler", "handler": "roller"}
+
+
+def _role_of(e):
+    """Shooter's role on a screen action, from shot_created_by_id (the screener)."""
+    return (ROLE_EMPTY_IS if e.get("shot_created_by_id") is None
+            else _ROLE_OTHER[ROLE_EMPTY_IS])
+
+
+def _role_fin(c):
+    return {"poss": c["FGA"], "FGM": c["FGM"],
+            "PPP": _safe(c["PTS"], c["FGA"]), "FG%": _safe(c["FGM"], c["FGA"]),
+            "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"])}
+
+
+def player_role_splits(game_ids=None, events=None, keys=ROLE_SPLIT_KEYS):
+    """Per-PLAYER PPP/FG%/eFG split by ROLE within screen actions (the owner's
+    PnR ball-handler-vs-roller read). Only shots whose ``play_type`` is in ``keys``.
+
+    Returns ``{player_id: {play_key: {'handler': fin, 'roller': fin, 'all': fin}}}``
+    where ``handler`` = shooter used a teammate's screen (shot_created_by_id filled)
+    and ``roller`` = the screen-setter who finished (empty). Empty until games carry
+    play_type tags, so it lights up as tracking fills in — graceful by construction.
+    """
+    if events is None:
+        events = S.fetch_events(game_ids)
+    agg = {}
+    for e in events:
+        if e["event_type"] != "shot" or e["primary_player_id"] is None:
+            continue
+        pt = e.get("play_type")
+        if pt not in keys:
+            continue
+        role = _role_of(e)
+        d = agg.setdefault(e["primary_player_id"], {}).setdefault(pt, {
+            "handler": {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
+            "roller":  {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
+            "all":     {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0}})
+        made = e["shot_result"] == "make"
+        is3 = e["shot_type"] == 3
+        for r in (role, "all"):
+            c = d[r]
+            c["FGA"] += 1
+            if made:
+                c["FGM"] += 1
+                c["PTS"] += 3 if is3 else 2
+                if is3:
+                    c["FG3M"] += 1
+    return {pid: {k: {r: _role_fin(c) for r, c in v.items()}
+                  for k, v in d.items()}
+            for pid, d in agg.items()}
+
+
+def team_role_splits(team_id, game_ids=None, events=None, keys=ROLE_SPLIT_KEYS,
+                     offense=True):
+    """Team-level companion to ``player_role_splits`` — the team's own shots
+    (offense) or shots it allowed (defense), split handler vs roller per set call.
+    Returns ``{play_key: {'handler': fin, 'roller': fin, 'all': fin}}``."""
+    if events is None:
+        gids = game_ids if game_ids is not None else None
+        events = S.fetch_events(gids)
+    agg = {}
+    for e in events:
+        if e["event_type"] != "shot" or e["shooter_team_id"] is None:
+            continue
+        if offense != (e["shooter_team_id"] == team_id):
+            continue
+        pt = e.get("play_type")
+        if pt not in keys:
+            continue
+        role = _role_of(e)
+        d = agg.setdefault(pt, {
+            "handler": {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
+            "roller":  {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
+            "all":     {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0}})
+        made = e["shot_result"] == "make"
+        is3 = e["shot_type"] == 3
+        for r in (role, "all"):
+            c = d[r]
+            c["FGA"] += 1
+            if made:
+                c["FGM"] += 1
+                c["PTS"] += 3 if is3 else 2
+                if is3:
+                    c["FG3M"] += 1
+    return {k: {r: _role_fin(c) for r, c in v.items()} for k, v in agg.items()}

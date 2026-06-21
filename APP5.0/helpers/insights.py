@@ -220,8 +220,8 @@ def _g_playstyle(row, pools, d):
     low = label.lower()
     score = abs(val - 0.4) / 0.15
     if kind == "3pa":
-        txt = (f"**Transition 3-hunter** — **{val:.0%} of their {low} shots are 3s** "
-               f"({poss} poss); get back and find shooters.")
+        txt = (f"**Hunts 3s out of {low}** — **{val:.0%} of their {low} shots are "
+               f"3s** ({poss} poss); chase shooters off the line.")
     elif kind == "rim":
         txt = (f"**{label} rim pressure** — **{val:.0%} of {low} shots are at the "
                f"rim** ({poss} poss); wall up the paint.")
@@ -394,17 +394,22 @@ def playtype_profile_edges(events):
         import helpers.playtypes as PT
         labels = dict(PT.NAMED_PLAY_TYPES)
         per = PT.player_playtype_shot_profiles(events=events)
-        # (rate-key, kind, threshold) — only fire when the rate clears its floor.
-        rules = (("3PA_rate", "3pa", 0.5), ("rim_rate", "rim", 0.6),
-                 ("open_rate", "open", 0.65))
+        # (rate-key, kind, threshold, inherent-attr) — only fire when the rate
+        # clears its floor AND the attribute isn't baked into the tag (a spot-up
+        # being a 3, an iso/post/cut being a rim attack restates the tag, no read).
+        rules = (("3PA_rate", "3pa", 0.5, "three"),
+                 ("rim_rate", "rim", 0.6, "rim"),
+                 ("open_rate", "open", 0.65, None))
         for pid, profiles in per.items():
             best = None  # (deviation, kind, key, val, poss, ppp, label)
             for key, prof in profiles.items():
                 if (prof.get("poss") or 0) < 8:
                     continue
-                for rate_key, kind, floor in rules:
+                for rate_key, kind, floor, attr in rules:
                     val = prof.get(rate_key)
                     if val is None or val < floor:
+                        continue
+                    if attr and PT.is_inherent(key, attr):
                         continue
                     dev = abs(val - 0.4)
                     if best is None or dev > best[0]:

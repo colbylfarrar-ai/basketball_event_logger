@@ -195,6 +195,26 @@ NAMED_PLAY_TYPES = [
 ]
 _NAMED_KEYS = {k for k, _ in NAMED_PLAY_TYPES}
 
+# Some set calls have an INTRINSIC shot nature — a single play_type tag already
+# implies it. A spot-up IS a catch-and-shoot three; an iso / post / cut / putback
+# / duck-in IS a rim/paint attack (you only get the tag because that's what the
+# action is). So calling that out as a "tendency" just restates the tag — the
+# prose scout keys / insight generators suppress the attribute a set inherently
+# has and only fire on the SURPRISING ones (a transition that hunts threes, a PnR
+# that pops, a set that gets clean looks). Attributes: 'three' (3-point hunt),
+# 'rim' (rim/paint attack).
+INHERENT_ATTR = {
+    "spot": {"three"},
+    "iso": {"rim"}, "post": {"rim"}, "cut": {"rim"},
+    "putback": {"rim"}, "duckin": {"rim"},
+}
+
+
+def is_inherent(key, attr):
+    """True if set call ``key`` intrinsically has shot attribute ``attr`` (so
+    surfacing it as a tendency is redundant — it's baked into the tag)."""
+    return attr in INHERENT_ATTR.get(key, ())
+
 
 def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
                          offense=True):

@@ -40,7 +40,6 @@ SCOUT_SECTIONS = [
     ("auto_report", "Auto scouting report"),
     ("efficiency", "Efficiency summary"),
     ("personnel", "Personnel (player breakdown)"),
-    ("shot_source", "Shot source — SC / Pass / Screen / Both"),
     ("play_calls", "Play calls — how they get their shots"),
     ("shot_chart", "Shot chart"),
     ("zones", "Shooting by zone"),
@@ -387,16 +386,6 @@ def render(ctx):
                 extra.append(f"Q4 {q4:.1f} ppg")
             extra_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
                           f"{' · '.join(extra)}</span>" if extra else "")
-            # how the player gets their shots (SC / Pass / Screen / Both)
-            cm = p.get("creation")
-            src_html = ""
-            if _show("shot_source") and cm:
-                _src = " · ".join(f"{lbl} {cm[k]:.0f}%" for k, lbl in
-                                  (("self", "SC"), ("pass", "Pass"),
-                                   ("screen", "Screen"), ("both", "Both"))
-                                  if k in cm)
-                src_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
-                            f"▦ Shots: {_src}</span>")
             # play-type tags per player (one-tap set calls): top 4 sets with
             # share + efficiency, e.g. "Iso 38% (1.21 PPP) · PnR 24% (0.88)"
             pm = p.get("playmix")
@@ -443,7 +432,7 @@ def render(ctx):
                 f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
                 f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "
                 f"TS {('%.0f%%'%p['ts']) if p['ts'] is not None else '—'}</span>"
-                f"{extra_html}{src_html}{play_html}<br>"
+                f"{extra_html}{play_html}<br>"
                 f"<span style='color:{ctx.ACCENT};font-size:13px'>▶ "
                 f"{html.escape(p['note'])}</span>"
                 + cues_html
@@ -523,31 +512,43 @@ def render(ctx):
                     "What each tagged set PRODUCES — 3PA% / Rim% = shot-type share, "
                     "Assisted% = off a pass, Open% = uncontested, Where = the zone "
                     "the set most lives in. High transition 3PA% = a get-back read.")
-            # initiator chains: who is the DHO hub / who inbounds the BLOB-SLOB,
-            # with the PPP that hub generates and the top target it feeds.
-            fd = sc.get("feeders")
-            if fd:
+            # full DHO / BLOB / SLOB breakdown (PnR-style): the set's overall
+            # efficiency, an initiator-vs-finisher split, and the hub chain.
+            ho = sc.get("handoff")
+            if ho:
                 _name_of = sc.get("name_of") or {}
-                _HUB = {"dho": "DHO hub", "blob": "BLOB inbounder",
-                        "slob": "SLOB inbounder"}
-                _hub_lines = []
-                for _k in ("dho", "blob", "slob"):
-                    _blk = fd.get(_k)
-                    if not _blk or not _blk.get("feeders"):
-                        continue
-                    _top = _blk["feeders"][0]
-                    _nm = _name_of.get(_top["feeder_id"], f"#{_top['feeder_id']}")
-                    _tgt = _top.get("top_target_id")
-                    _tgt_txt = (f" → {_name_of.get(_tgt, '#' + str(_tgt))}"
-                                if _tgt is not None else "")
-                    _hub_lines.append(
-                        f"- **{_HUB[_k]}:** {_nm} ({_top['feeds']}, "
-                        f"{_top['PPP']:.2f} PPP){_tgt_txt}")
-                if _hub_lines:
-                    st.markdown("<div class='lab-hdr'>Hand-off / inbounds hubs"
-                                "</div>", unsafe_allow_html=True)
-                    for _ln in _hub_lines:
-                        st.markdown(_ln)
+                st.markdown("<div class='lab-hdr'>Hand-off &amp; inbounds "
+                            "breakdown</div>", unsafe_allow_html=True)
+                for h in ho:
+                    _ls = [f"**{h['label']}**"]
+                    _s = h.get("set")
+                    if _s:
+                        _ls.append(
+                            f"- Set: {_s['PPP']:.2f} PPP · {_s['FG%'] * 100:.0f}% FG "
+                            f"· {_s['share'] * 100:.0f}% of tags ({_s['poss']} poss)")
+                    _i = h.get("initiator")
+                    if _i:
+                        _ls.append(
+                            f"- Initiator (set it): {_i['PPP']:.2f} PPP · "
+                            f"{_i['FG%'] * 100:.0f}% FG · {_i['poss']} poss")
+                    _f = h.get("finisher")
+                    if _f:
+                        _ls.append(
+                            f"- Finisher (got it): {_f['PPP']:.2f} PPP · "
+                            f"{_f['FG%'] * 100:.0f}% FG · "
+                            f"{_f['3PA_rate'] * 100:.0f}% 3PA · {_f['poss']} poss")
+                    _hb = h.get("hub")
+                    if _hb:
+                        _nm = _name_of.get(_hb["feeder_id"], f"#{_hb['feeder_id']}")
+                        _tg = _hb.get("target_id")
+                        _tt = (f" → {_name_of.get(_tg, '#' + str(_tg))}"
+                               if _tg is not None else "")
+                        _ls.append(f"- Hub: {_nm} ({_hb['feeds']} feeds){_tt}")
+                    st.markdown("  \n".join(_ls))
+                st.caption("The PnR-style read for DHO / BLOB / SLOB: each set's "
+                           "overall efficiency, the initiator (set it / handed off) "
+                           "vs finisher (received & shot) split, and the hub who "
+                           "initiates it.")
         else:
             st.caption("No play-call tags yet — tap an optional **Play type** "
                        "(Pick & roll, Iso, Post-up…) on shots in the Game Tracker "

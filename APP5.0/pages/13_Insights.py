@@ -241,8 +241,8 @@ with tab_board:
     with bc1:
         st.markdown("<div class='lab-hdr'>Force them off their hand</div>",
                     unsafe_allow_html=True)
-        st.caption("Dominant vs weak floor-side FG%. Biggest gap = send him to "
-                   "his off hand.")
+        st.caption("Dominant vs weak floor-side FG%. Biggest gap = send them to "
+                   "their off hand.")
         hb = []
         for pid, row in table.items():
             dom, weak = row.get("Dom_FG%"), row.get("Weak_FG%")

@@ -74,7 +74,7 @@ def _g_selection(row, pools, d):
                f"(shot-quality {sr:.0f}, top of the league).")
     else:
         txt = (f"**Settles for tough shots** — low-value shot diet "
-               f"(shot-quality {sr:.0f}); make him take the hard ones.")
+               f"(shot-quality {sr:.0f}); make them take the hard ones.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "Selection", "n": n}
 
 
@@ -88,8 +88,8 @@ def _g_hand(row, pools, d):
     if abs(z) < MIN_Z or gap <= 0:
         return None
     dom, weak = _num(row, "Dom_FG%"), _num(row, "Weak_FG%")
-    txt = (f"**Force him off his hand** — **{dom:.0f}% strong side vs {weak:.0f}% "
-           f"weak** ({int(dfa)}/{int(wfa)} att); a {gap:.0f}-pt cliff to his off hand.")
+    txt = (f"**Force to the weak hand** — **{dom:.0f}% strong side vs {weak:.0f}% "
+           f"weak** ({int(dfa)}/{int(wfa)} att); a {gap:.0f}-pt cliff to the off hand.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "HandGap", "n": int(dfa + wfa)}
 
 
@@ -104,7 +104,7 @@ def _g_guarded(row, pools, d):
         return None
     if cliff >= 0:
         txt = (f"**Needs space** — **{cliff:.0f} pts of FG% better open than "
-               f"contested**; close out hard, he wilts under pressure ({n} shots).")
+               f"contested**; close out hard — wilts under pressure ({n} shots).")
     else:
         txt = (f"**Contest-proof** — barely dips when guarded ({cliff:+.0f} open vs "
                f"contested); a tough cover one-on-one ({n} shots).")
@@ -121,11 +121,11 @@ def _g_q4(row, pools, d):
     if abs(z) < MIN_Z:
         return None
     if sw >= 0:
-        txt = (f"**Closer** — FG% **rises {sw:+.0f} pts in the 4th** vs his own "
+        txt = (f"**Closer** — FG% **rises {sw:+.0f} pts in the 4th** vs their own "
                f"earlier rate ({n} Q4 shots); wants the ball late.")
     else:
         txt = (f"**Fades late** — FG% **drops {sw:.0f} pts in the 4th** ({n} Q4 "
-               f"shots); pressure him in crunch time.")
+               f"shots); pressure them in crunch time.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "Q4", "n": n}
 
 
@@ -139,9 +139,9 @@ def _g_three(row, pools, d):
         return None
     if z >= 0:
         txt = (f"**Deadeye** — **{tp:.0f}% from three on {int(tpa)} attempts**; "
-               f"do not leave him.")
+               f"do not leave them open.")
     else:
-        txt = (f"**Let him shoot it** — just **{tp:.0f}% on {int(tpa)} threes**; "
+        txt = (f"**Let them shoot it** — just **{tp:.0f}% on {int(tpa)} threes**; "
                f"sag and pack the paint.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "3P%", "n": int(tpa)}
 
@@ -162,7 +162,7 @@ def _g_consistency(row, pools, d):
                f"variance in the pool; bankable production.")
     else:
         txt = (f"**Boom-or-bust** — **{ppg:.0f} ± {sd:.0f}** (high {int(_num(row,'bestPTS') or 0)} "
-               f"ceiling); live with the swings or take him out of it.")
+               f"ceiling); live with the swings or take them out of it.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "Consistency",
             "n": int(_num(row, "GP") or 0)}
 
@@ -176,11 +176,11 @@ def _g_defense(row, pools, d):
     if abs(z) < MIN_Z:
         return None
     if z <= 0:
-        txt = (f"**Stopper** — holds the man he guards to **{ds:.0f}% from the "
+        txt = (f"**Stopper** — holds the matchup to **{ds:.0f}% from the "
                f"field**, among the best in the league.")
     else:
-        txt = (f"**Targetable on D** — shooters hit **{ds:.0f}%** against him; "
-               f"hunt his matchup in the half-court.")
+        txt = (f"**Targetable on D** — shooters hit **{ds:.0f}%** against them; "
+               f"hunt the matchup in the half-court.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "Defense",
             "n": int(_num(row, "GP") or 0)}
 

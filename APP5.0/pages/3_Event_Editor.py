@@ -116,6 +116,18 @@ if not events:
     st.info("No events in this quarter.")
     st.stop()
 
+# ── event-type filter — view just shots, just fouls, etc. ───────────────────────
+_etypes = sorted({e["event_type"] for e in events})
+tpick = st.radio("Event type", ["All"] + _etypes, horizontal=True, key="ee_type",
+                 format_func=lambda t: "All" if t == "All" else t.replace("_", " "),
+                 help="Filter the grid (and the shot fixer) to one event type — "
+                      "e.g. only shots in this game.")
+if tpick != "All":
+    events = [e for e in events if e["event_type"] == tpick]
+if not events:
+    st.info(f"No {tpick.replace('_', ' ')} events in this view.")
+    st.stop()
+
 
 def _disp(ev):
     return {
@@ -149,7 +161,7 @@ st.caption("**Primary** = shooter (shot/FT) · player fouled (foul) · player wh
            "stored location — move the shot in **Fix a shot location** below instead.")
 
 edited = st.data_editor(
-    grid, hide_index=True, width="stretch", key=f"ee_grid_{gid}_{qpick}",
+    grid, hide_index=True, width="stretch", key=f"ee_grid_{gid}_{qpick}_{tpick}",
     num_rows="fixed", height=560,
     column_config={
         "id": None,

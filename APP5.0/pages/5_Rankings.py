@@ -1501,6 +1501,26 @@ with tab_chart:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _pt_team_leaders(g, offense):
+    """League team leaderboards by set call (one-tap play_type), best PPP first
+    on offense / fewest allowed first on defense."""
+    return PT.league_named_playtype_leaders(gender=g, offense=offense)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _pt_player_leaders(g):
+    """Per-player PPP by set call, league-percentiled — keyed by player_id."""
+    return PT.player_named_playtype_percentiles(gender=g)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _pt_player_meta(g):
+    """player_id → (name, team) for labelling the play-type player board."""
+    return {pid: (r["name"], r.get("team", ""))
+            for pid, r in PR.player_stat_table(gender=g, min_games=1).items()}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def _league_player_edge(g):
     """League-wide PLAYER leaderboards in the tracked-edge metrics: shot-makers
     (points over expected), force-to-off-hand gaps, and defensive win-impact."""
@@ -1538,9 +1558,97 @@ def _fx_evr():
     pteams = pack["teams"]
     sv = list(scored.values())
 
-    lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl = st.tabs(
+    lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl, lab_pt = st.tabs(
         ["Landscape", "Power tiers", "Pythagoras & luck",
-         "Momentum", "Win network", "Player edge"])
+         "Momentum", "Win network", "Player edge", "Play types"])
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  PLAY TYPES — league leaders by one-tap set call (team + player)
+    # ──────────────────────────────────────────────────────────────────────
+    with lab_pt:
+        _pt_lock = _paid_pool_lock()  # league-wide pooled possession surface
+        if _pt_lock:
+            st.info(_pt_lock)
+        else:
+            st.caption(
+                "League leaders by **set call** — the one-tap play type on each "
+                "shot. **Offense** = who runs the action best (most points per "
+                "possession); **Defense** = who defends it best (fewest points "
+                "allowed). Each row is tiered vs the league on that set.")
+            _pt_side = st.radio("Side", ["Offense", "Defense"], horizontal=True,
+                                key="pt_lead_side")
+            _pt_off = _pt_side == "Offense"
+            _pt_teams = _pt_team_leaders(gender, _pt_off)
+            if not _pt_teams:
+                st.caption("No tagged plays yet — add a one-tap **Play type** to a "
+                           "shot in the Game Tracker and these boards fill in.")
+            else:
+                _pt_lbl = dict(PT.NAMED_PLAY_TYPES)
+                _pt_keys = [k for k, _ in PT.NAMED_PLAY_TYPES if k in _pt_teams]
+                _pt_pick = st.selectbox(
+                    "Set call", _pt_keys, key="pt_lead_set",
+                    format_func=lambda k: _pt_lbl.get(k, k))
+                _pt_blk = _pt_teams[_pt_pick]
+                _pt_lg = _pt_blk.get("lg_ppp")
+                _lab_hdr(f"{_pt_blk['label']} — "
+                         f"{'best offense' if _pt_off else 'best defense'}")
+                if _pt_lg is not None:
+                    st.caption(f"League average on this set: **{_pt_lg:.2f}** PPP")
+                _pt_trows = [{
+                    "Team": name_of.get(L["team_id"], str(L["team_id"])),
+                    "PPP": round(L["PPP"], 2),
+                    "FG%": (round(L["FG%"]) if L["FG%"] is not None else None),
+                    "Poss": L["poss"],
+                    "Share": (round(L["share"] * 100)
+                              if L["share"] is not None else None),
+                    "Pct": (round(L["pct"]) if L["pct"] is not None else None),
+                    "Tier": L["tier"], "_c": L["color"]}
+                    for L in _pt_blk["leaders"]]
+                st.dataframe(
+                    pd.DataFrame(_pt_trows).style.apply(
+                        lambda r: [f"color:{r['_c']}"] * len(r), axis=1),
+                    hide_index=True, width="stretch",
+                    column_order=["Team", "PPP", "FG%", "Poss", "Share",
+                                  "Pct", "Tier"],
+                    column_config={
+                        "FG%": st.column_config.NumberColumn(format="%d%%"),
+                        "Share": st.column_config.NumberColumn(format="%d%%"),
+                        "Pct": st.column_config.NumberColumn(
+                            "Lg %ile", help="League percentile on this set")})
+
+                # ── PLAYER board for the same set: a player's own PPP finishing
+                #    the action, league-percentiled (8+ tagged possessions) ──
+                st.markdown("<div class='lab-hdr'>Top finishers</div>",
+                            unsafe_allow_html=True)
+                _pt_pl = _pt_player_leaders(gender)
+                _pt_meta = _pt_player_meta(gender)
+                _pt_prows = sorted(
+                    ((c["PPP"], pid, c) for pid, d in _pt_pl.items()
+                     if (c := d.get(_pt_pick)) and c["poss"] >= 8),
+                    key=lambda t: -t[0])[:12]
+                st.caption("Players finishing this set themselves — most points "
+                           "per possession (8+ poss).")
+                if _pt_prows:
+                    st.dataframe(pd.DataFrame([{
+                        "Player": _pt_meta.get(pid, ("?", ""))[0],
+                        "Team": _pt_meta.get(pid, ("?", ""))[1],
+                        "PPP": round(c["PPP"], 2),
+                        "FG%": (round(c["FG%"]) if c["FG%"] is not None else None),
+                        "Poss": c["poss"],
+                        "Pct": (round(c["pct"]) if c["pct"] is not None else None),
+                        "Tier": c["tier"], "_c": c["color"]}
+                        for _v, pid, c in _pt_prows]).style.apply(
+                            lambda r: [f"color:{r['_c']}"] * len(r), axis=1),
+                        hide_index=True, width="stretch",
+                        column_order=["Player", "Team", "PPP", "FG%", "Poss",
+                                      "Pct", "Tier"],
+                        column_config={
+                            "FG%": st.column_config.NumberColumn(format="%d%%"),
+                            "Pct": st.column_config.NumberColumn(
+                                "Lg %ile", help="League percentile on this set")})
+                else:
+                    st.caption("No player has 8+ tagged possessions on this set "
+                               "yet.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  PLAYER EDGE — league-wide player leaders in the tracked-edge metrics

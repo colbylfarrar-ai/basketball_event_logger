@@ -397,14 +397,17 @@ def render(ctx):
                                   if k in cm)
                 src_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
                             f"▦ Shots: {_src}</span>")
-            # play-type tags per player (one-tap set calls): top 4, share of tagged
+            # play-type tags per player (one-tap set calls): top 4 sets with
+            # share + efficiency, e.g. "Iso 38% (1.21 PPP) · PnR 24% (0.88)"
             pm = p.get("playmix")
             play_html = ""
             if _show("play_calls") and pm:
-                _pl = " · ".join(f"{lbl} {pct:.0f}%" for lbl, pct in pm[:4])
+                _pl = " · ".join(f"{lbl} {pct:.0f}% ({ppp:.2f} PPP)"
+                                 for lbl, pct, ppp, _fg in pm[:4])
+                _goto = (f" · go-to: {p['goto']}" if p.get("goto") else "")
                 play_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
                              f"▶ Plays: {html.escape(_pl)} "
-                             f"(n={p['playmix_n']})</span>")
+                             f"(n={p['playmix_n']}){html.escape(_goto)}</span>")
             arch_html = (f" <span class='stat-chip' style='font-size:11px'>"
                          f"{html.escape(archlbl)}</span>" if archlbl else "")
             # who normally starts + the 0-100 category breakdown behind OVERALL
@@ -470,6 +473,81 @@ def render(ctx):
                 f"({pc['untagged']} untagged) — share = % of tagged shots, PPP = "
                 "points per possession. Separate from the inferred shot-source mix "
                 "on each personnel card; tag plays one-tap in the Game Tracker.")
+            # companion: what they ALLOW — set calls opponents ran on them
+            pcd = sc.get("play_calls_def")
+            if pcd and pcd.get("rows"):
+                import pandas as pd
+                st.markdown("<div class='lab-hdr'>What they allow — play calls "
+                            "defended</div>", unsafe_allow_html=True)
+                _pcdrows = sorted(pcd["rows"], key=lambda r: r["share"],
+                                  reverse=True)
+                st.dataframe(pd.DataFrame([{
+                    "Play call": r["label"], "Share": r["share"] * 100,
+                    "PPP": r["PPP"], "FG%": r["FG%"] * 100, "Poss": r["poss"],
+                } for r in _pcdrows]), hide_index=True, width="stretch",
+                    column_config={
+                        "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                        "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                        "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+                    })
+                st.caption(
+                    f"Set calls opponents ran on them, on {pcd['total_tagged']} "
+                    f"shots ({pcd['untagged']} untagged) — higher PPP allowed = a "
+                    "set to lean on against them.")
+            # cross-dimension: what each set PRODUCES — where it shoots from and
+            # the 3PA / rim / assisted / open share (the "they shoot HERE on X /
+            # hunt a 3 in transition" read, beside the play-calls table above).
+            spf = sc.get("set_profiles")
+            if spf:
+                import pandas as pd
+                st.markdown("<div class='lab-hdr'>Set tendencies — what each set "
+                            "produces</div>", unsafe_allow_html=True)
+                _sprows = sorted(spf.items(), key=lambda kv: -kv[1]["poss"])
+                st.dataframe(pd.DataFrame([{
+                    "Set": pr.get("label") or k,
+                    "3PA%": (pr.get("3PA_rate") or 0) * 100,
+                    "Rim%": (pr.get("rim_rate") or 0) * 100,
+                    "Assisted%": (pr.get("ast_rate") or 0) * 100,
+                    "Open%": (pr.get("open_rate") or 0) * 100,
+                    "Where": SC.ZONE_LABELS.get(pr.get("top_zone"), "—"),
+                    "Poss": pr["poss"],
+                } for k, pr in _sprows]), hide_index=True, width="stretch",
+                    column_config={
+                        "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
+                        "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
+                        "Assisted%": st.column_config.NumberColumn(
+                            "Assisted%", format="%.0f%%"),
+                        "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
+                    })
+                st.caption(
+                    "What each tagged set PRODUCES — 3PA% / Rim% = shot-type share, "
+                    "Assisted% = off a pass, Open% = uncontested, Where = the zone "
+                    "the set most lives in. High transition 3PA% = a get-back read.")
+            # initiator chains: who is the DHO hub / who inbounds the BLOB-SLOB,
+            # with the PPP that hub generates and the top target it feeds.
+            fd = sc.get("feeders")
+            if fd:
+                _name_of = sc.get("name_of") or {}
+                _HUB = {"dho": "DHO hub", "blob": "BLOB inbounder",
+                        "slob": "SLOB inbounder"}
+                _hub_lines = []
+                for _k in ("dho", "blob", "slob"):
+                    _blk = fd.get(_k)
+                    if not _blk or not _blk.get("feeders"):
+                        continue
+                    _top = _blk["feeders"][0]
+                    _nm = _name_of.get(_top["feeder_id"], f"#{_top['feeder_id']}")
+                    _tgt = _top.get("top_target_id")
+                    _tgt_txt = (f" → {_name_of.get(_tgt, '#' + str(_tgt))}"
+                                if _tgt is not None else "")
+                    _hub_lines.append(
+                        f"- **{_HUB[_k]}:** {_nm} ({_top['feeds']}, "
+                        f"{_top['PPP']:.2f} PPP){_tgt_txt}")
+                if _hub_lines:
+                    st.markdown("<div class='lab-hdr'>Hand-off / inbounds hubs"
+                                "</div>", unsafe_allow_html=True)
+                    for _ln in _hub_lines:
+                        st.markdown(_ln)
         else:
             st.caption("No play-call tags yet — tap an optional **Play type** "
                        "(Pick & roll, Iso, Post-up…) on shots in the Game Tracker "

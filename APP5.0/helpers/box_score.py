@@ -35,6 +35,7 @@ import helpers.court as court
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.seasons as SEAS
+import helpers.playtypes as PT
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
@@ -335,7 +336,7 @@ def render_box_score(game_id: int):
         key=f"bs{game_id}_recap")
 
     tabs = st.tabs(["Overview", "Flow", "Shooting", "Quarters",
-                    "Lineups", "Box Score", "Four Factors"])
+                    "Lineups", "Box Score", "Four Factors", "Play Types"])
 
     # Each tab body is a @st.fragment so its widgets (team/player pickers,
     # lineup sliders, …) rerun only that tab instead of rebuilding all seven.
@@ -1338,6 +1339,179 @@ def render_box_score(game_id: int):
 
     with tabs[6]:
         _tab_factors()
+
+    # ════════════════════════════════════════════════════════════════════════
+    #  TAB 7 — PLAY TYPES  (explicit one-tap set-call tags, league-ranked)
+    # ════════════════════════════════════════════════════════════════════════
+    @st.fragment
+    def _tab_playtypes():
+        side = st.radio("Lens", ["Offense (we ran)", "Defense (we allowed)"],
+                        horizontal=True, key=f"bs{game_id}_pt_side")
+        offense = side.startswith("Offense")
+        st.caption("Your one-tap **Play type** tags on this game's shots, ranked "
+                   "against the league. PPP = points per possession (a shot ends "
+                   "the possession). On defense, allowing fewer points ranks higher.")
+
+        _ptcfg = {
+            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+            "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+            "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+            "Pct": st.column_config.NumberColumn("Pct", format="%.0f"),
+        }
+        _rcfg = {
+            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+            "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+            "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
+            "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
+        }
+        _fpcfg = {
+            "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
+            "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
+            "Assisted%": st.column_config.NumberColumn("Assisted%", format="%.0f%%"),
+            "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
+            "avg s": st.column_config.NumberColumn("avg s", format="%.1f"),
+        }
+
+        for tid, nm in [(t1id, t1name), (t2id, t2name)]:
+            st.markdown(f"**{nm}**")
+            pt = PT.team_named_playtype_percentiles(
+                tid, gender=g["gender"], game_ids=[game_id], events=events,
+                offense=offense)
+            rows = pt["rows"]
+            if not rows:
+                st.caption("No play-type tags yet — add a one-tap **Play type** to a "
+                           "shot in the Game Tracker (Pick & roll, Iso, Post-up…) and "
+                           "this fills in.")
+            else:
+                # KPI callouts: most-used (max share), best/worst PPP among poss>=3
+                _ranked = [r for r in rows if r["poss"] >= 3]
+                _most = max(rows, key=lambda r: r["share"], default=None)
+                _best = max(_ranked, key=lambda r: r["PPP"], default=None)
+                _worst = min(_ranked, key=lambda r: r["PPP"], default=None)
+                kc = st.columns(3)
+                for col, lbl, r in [(kc[0], "Most used", _most),
+                                    (kc[1], "Best PPP", _best),
+                                    (kc[2], "Worst PPP", _worst)]:
+                    if r:
+                        col.markdown(
+                            f"<div class='kpi-tile'><div class='kpi-label'>{lbl}</div>"
+                            f"<div class='kpi-value'>{r['label']}</div>"
+                            f"<div class='kpi-sub'>{r['PPP']:.2f} PPP · "
+                            f"{r['poss']} poss</div></div>", unsafe_allow_html=True)
+                    else:
+                        col.markdown(
+                            f"<div class='kpi-tile'><div class='kpi-label'>{lbl}</div>"
+                            f"<div class='kpi-value'>—</div>"
+                            f"<div class='kpi-sub'>need 3+ poss</div></div>",
+                            unsafe_allow_html=True)
+
+                # horizontal PPP bar — one row per tagged set call, shaded by FG%
+                _bn = [r["label"] for r in rows]
+                _bv = [round(r["PPP"], 2) for r in rows]
+                _bc = [_heat(r["FG%"]) for r in rows]
+                _bt = [f"{r['PPP']:.2f} · {r['poss']}p" for r in rows]
+                ptfig = go.Figure(go.Bar(
+                    x=_bv, y=_bn, orientation="h", marker_color=_bc,
+                    marker_line_width=0, text=_bt, textposition="auto",
+                    textfont=dict(size=11), cliponaxis=False,
+                    hovertemplate="%{y}: %{text}<extra></extra>"))
+                _style(ptfig, 300)
+                ptfig.update_layout(margin=dict(l=4, r=14, t=8, b=34))
+                ptfig.update_xaxes(
+                    title=f"Points per possession ({'scored' if offense else 'allowed'})")
+                ptfig.update_yaxes(showgrid=False, automargin=True)
+                st.plotly_chart(ptfig, width="stretch",
+                                key=f"bs{game_id}_pt_bar_{tid}")
+
+                # ranked table (Play call / Poss / PPP / FG% / Share / Pct / Tier)
+                df = pd.DataFrame([{
+                    "Play call": r["label"], "Poss": r["poss"],
+                    "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
+                    "Share": round(r["share"] * 100, 0),
+                    "Pct": r["pct"], "Tier": r["tier"]} for r in rows])
+                st.dataframe(df, hide_index=True, width="stretch",
+                             column_config=_ptcfg, key=f"bs{game_id}_pt_tbl_{tid}")
+                st.caption(f"{pt['total_tagged']} tagged · {pt['untagged']} untagged. "
+                           "Pct = league percentile · Tier shades good→poor (shot-"
+                           "quality color encodes the bar above).")
+
+                # ── set fingerprint (how each set is GENERATED) ─────────────
+                _prof = PT.team_playtype_shot_profiles(
+                    tid, gender=g["gender"], game_ids=[game_id], events=events,
+                    offense=offense)
+                if _prof:
+                    fdf = pd.DataFrame([{
+                        "Set": p["label"],
+                        "3PA%": round(p["3PA_rate"] * 100, 0),
+                        "Rim%": round(p["rim_rate"] * 100, 0),
+                        "Assisted%": round(p["ast_rate"] * 100, 0),
+                        "Open%": round(p["open_rate"] * 100, 0),
+                        "Where": (ZONE_LABELS.get(p["top_zone"], p["top_zone"])
+                                  if p["top_zone"] else "—"),
+                        "avg s": (round(p["avg_secs"], 1)
+                                  if p["avg_secs"] is not None else None)}
+                        for p in _prof.values()])
+                    st.markdown("*Set fingerprint*")
+                    st.dataframe(fdf, hide_index=True, width="stretch",
+                                 column_config=_fpcfg,
+                                 key=f"bs{game_id}_pt_profile_{tid}")
+                    st.caption("How each set is generated — 3PA% = 3-point hunt, "
+                               "Rim% = paint pressure, Where = zone it lives in.")
+
+            # ── ball-screen role split (handler vs roller) ──────────────────
+            roles = PT.team_role_splits(tid, game_ids=[game_id], events=events,
+                                        offense=offense)
+            _shown = False
+            for key, label in PT.NAMED_PLAY_TYPES:
+                rs = roles.get(key)
+                if not rs or rs["all"]["poss"] <= 0:
+                    continue
+                if key not in PT.ROLE_SPLIT_KEYS:
+                    continue
+                if not _shown:
+                    st.markdown("*Ball-screen role split (handler vs roller)*  \n"
+                                "<span style='font-size:.82em;opacity:.7'>"
+                                "roller 3PA% high = pops for 3 (low = rolls to "
+                                "the rim)</span>", unsafe_allow_html=True)
+                    _shown = True
+                rdf = pd.DataFrame([{
+                    "Role": rlbl, "Poss": rs[rk]["poss"], "FGM": rs[rk]["FGM"],
+                    "PPP": round(rs[rk]["PPP"], 2), "FG%": round(rs[rk]["FG%"] * 100, 0),
+                    "eFG%": round(rs[rk]["eFG"] * 100, 0),
+                    "3PA%": round(rs[rk].get("3PA_rate", 0.0) * 100, 0)}
+                    for rk, rlbl in [("handler", "Handler"), ("roller", "Roller"),
+                                     ("all", "All")] if rs[rk]["poss"] > 0])
+                st.markdown(f"&nbsp;&nbsp;{label}", unsafe_allow_html=True)
+                st.dataframe(rdf, hide_index=True, width="stretch",
+                             column_config=_rcfg,
+                             key=f"bs{game_id}_role_{tid}_{key}")
+
+            # ── hand-off / inbounds hubs (who initiates) ────────────────────
+            def _pname(_pid):
+                _b = boxes.get(_pid)
+                return _b["name"] if _b else "—"
+
+            _feeders = PT.team_playtype_feeders(
+                tid, gender=g["gender"], game_ids=[game_id], events=events,
+                offense=offense)
+            _frows = []
+            for key, fk in _feeders.items():
+                for f in fk["feeders"]:
+                    _frows.append({
+                        "Type": fk["label"],
+                        "Initiator": _pname(f["feeder_id"]),
+                        "Feeds": f["feeds"],
+                        "PPP": round(f["PPP"], 2),
+                        "FG%": round(f["FG%"] * 100, 0),
+                        "Top target": _pname(f["top_target_id"])})
+            if _frows:
+                st.markdown("*Hand-off & inbounds hubs (who initiates)*")
+                st.dataframe(pd.DataFrame(_frows), hide_index=True,
+                             width="stretch", column_config=_rcfg,
+                             key=f"bs{game_id}_pt_feeders_{tid}")
+
+    with tabs[7]:
+        _tab_playtypes()
 
     st.caption("Recomputed from game_events. Box/advanced formulas in helpers/stats.py; "
                "team, shot-quality & lineup engines in helpers/team_analytics.py + "

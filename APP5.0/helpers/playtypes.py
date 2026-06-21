@@ -300,9 +300,12 @@ def _role_of(e):
 
 
 def _role_fin(c):
+    # 3PA_rate splits ROLL (rim, low 3PA) from POP (high 3PA) for a screen finisher
+    # — "their roll man pops for 3" falls straight out of the roller's 3PA_rate.
     return {"poss": c["FGA"], "FGM": c["FGM"],
             "PPP": _safe(c["PTS"], c["FGA"]), "FG%": _safe(c["FGM"], c["FGA"]),
-            "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"])}
+            "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
+            "3PA_rate": _safe(c.get("FG3A", 0), c["FGA"])}
 
 
 def player_role_splits(game_ids=None, events=None, keys=ROLE_SPLIT_KEYS):
@@ -325,14 +328,16 @@ def player_role_splits(game_ids=None, events=None, keys=ROLE_SPLIT_KEYS):
             continue
         role = _role_of(e)
         d = agg.setdefault(e["primary_player_id"], {}).setdefault(pt, {
-            "handler": {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
-            "roller":  {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
-            "all":     {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0}})
+            "handler": {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0},
+            "roller":  {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0},
+            "all":     {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0}})
         made = e["shot_result"] == "make"
         is3 = e["shot_type"] == 3
         for r in (role, "all"):
             c = d[r]
             c["FGA"] += 1
+            if is3:
+                c["FG3A"] += 1
             if made:
                 c["FGM"] += 1
                 c["PTS"] += 3 if is3 else 2
@@ -362,17 +367,330 @@ def team_role_splits(team_id, game_ids=None, events=None, keys=ROLE_SPLIT_KEYS,
             continue
         role = _role_of(e)
         d = agg.setdefault(pt, {
-            "handler": {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
-            "roller":  {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0},
-            "all":     {"FGA": 0, "FGM": 0, "FG3M": 0, "PTS": 0}})
+            "handler": {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0},
+            "roller":  {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0},
+            "all":     {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0}})
         made = e["shot_result"] == "make"
         is3 = e["shot_type"] == 3
         for r in (role, "all"):
             c = d[r]
             c["FGA"] += 1
+            if is3:
+                c["FG3A"] += 1
             if made:
                 c["FGM"] += 1
                 c["PTS"] += 3 if is3 else 2
                 if is3:
                     c["FG3M"] += 1
     return {k: {r: _role_fin(c) for r, c in v.items()} for k, v in agg.items()}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  EXPLICIT-TAG LEAGUE PERCENTILES  (the Synergy-style rank for the one-tap call)
+# ══════════════════════════════════════════════════════════════════════════════
+# team_named_playtypes / player_named_playtypes give raw PPP by the literal set
+# call, but a raw "1.04 PPP on Iso" means nothing without a league rank. These
+# mirror the INFERRED machinery above (_baseline_from_events / team_playtype_
+# percentiles) but over NAMED_PLAY_TYPES, so the explicit tag gets the same
+# percentile + tier treatment the tempo/creation lenses already have. Built to be
+# trustworthy at dense tagging scale; rows under MIN_POSS / pools under MIN_POOL
+# get pct=None (shown as "thin sample", never a fake rank). Min per-PLAYER poss is
+# a touch lower (8) than per-TEAM (10) since a player runs fewer of any one set.
+MIN_PLAYER_POSS = 8
+
+
+def _named_baseline_from_events(events, offense=True):
+    """One pool of team PPPs per NAMED_PLAY_TYPES key (the league baseline the
+    explicit-tag percentiles rank against). Mirrors _baseline_from_events."""
+    pool = {k: [] for k, _ in NAMED_PLAY_TYPES}
+    for tid in _shooter_teams(events):
+        named = team_named_playtypes(tid, events=events, offense=offense)
+        for r in named["rows"]:
+            if r["poss"] >= MIN_POSS:
+                pool[r["key"]].append(r["PPP"])
+    return pool
+
+
+def team_named_playtype_percentiles(team_id, gender=None, game_ids=None,
+                                    events=None, offense=True, baseline=None):
+    """The explicit-tag analog of team_playtype_percentiles: each tagged set call
+    with the team's PPP/FG%/share PLUS its **league percentile** + tier (good
+    already encoded — on defense, allowing fewer points ranks higher). Self-
+    contained: with no events/baseline it does one tracked-game pass for the
+    gender and ranks the team off that same pass.
+
+    Returns {'rows':[{key,label,poss,FGM,PPP,FG%,share,pct,tier,color,lg_ppp}],
+    'total_tagged','untagged','offense'} — rows are only the set calls the team
+    actually ran (sorted by PPP, as team_named_playtypes returns them)."""
+    if events is None:
+        gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    if baseline is None:
+        baseline = _named_baseline_from_events(events, offense=offense)
+    named = team_named_playtypes(team_id, events=events, offense=offense)
+    rows = []
+    for r in named["rows"]:
+        pool = baseline.get(r["key"], [])
+        ranked = r["poss"] >= MIN_POSS and len(pool) >= MIN_POOL
+        pct = TA.percentile(r["PPP"], pool, higher_better=offense) if ranked else None
+        tier_label, tier_color = _tier(pct)
+        rows.append({**r, "pct": pct, "tier": tier_label, "color": tier_color,
+                     "lg_ppp": (sum(pool) / len(pool)) if pool else None})
+    return {"rows": rows, "total_tagged": named["total_tagged"],
+            "untagged": named["untagged"], "offense": offense}
+
+
+def player_named_playtype_percentiles(gender=None, game_ids=None, events=None,
+                                      min_poss=MIN_PLAYER_POSS, min_pool=MIN_POOL):
+    """Per-PLAYER PPP by the explicit one-tap tag, each ranked vs the league pool
+    of players' PPP on that same set (Synergy's player play-type page). Inverts
+    player_named_playtypes into per-key pools, gates by ``min_poss``, percentiles
+    each qualifying player, attaches _tier + per-player share-of-tagged.
+
+    Returns {player_id: {play_key: {poss,FGM,PPP,FG%,share,pct,tier,color,
+    lg_ppp}}} — only the keys a player has tagged attempts in. Empty until games
+    carry tags, so it lights up as tracking fills in."""
+    if events is None:
+        gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    per = player_named_playtypes(events=events)
+    pools = {}
+    for _pid, d in per.items():
+        for key, c in d.items():
+            if c["poss"] >= min_poss:
+                pools.setdefault(key, []).append(c["PPP"])
+    out = {}
+    for pid, d in per.items():
+        tot_poss = sum(c["poss"] for c in d.values())
+        row = {}
+        for key, c in d.items():
+            pool = pools.get(key, [])
+            ranked = c["poss"] >= min_poss and len(pool) >= min_pool
+            pct = TA.percentile(c["PPP"], pool, higher_better=True) if ranked else None
+            tier_label, tier_color = _tier(pct)
+            row[key] = {**c, "share": _safe(c["poss"], tot_poss),
+                        "pct": pct, "tier": tier_label, "color": tier_color,
+                        "lg_ppp": (sum(pool) / len(pool)) if pool else None}
+        out[pid] = row
+    return out
+
+
+def league_named_playtype_leaders(gender=None, game_ids=None, events=None,
+                                  offense=True, min_poss=MIN_POSS, baseline=None):
+    """League leaderboards by set call: for each NAMED_PLAY_TYPES key, the teams
+    ranked by PPP on that action (offense=who runs it best; offense=False=who
+    defends it best, fewest points allowed first). The team-facing companion to
+    player_named_playtype_percentiles.
+
+    Returns {key: {'label','lg_ppp','leaders':[{team_id,PPP,FG%,poss,share,pct,
+    tier,color}]}} — only keys with at least one team above min_poss."""
+    if events is None:
+        gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    per_team = {tid: team_named_playtypes(tid, events=events, offense=offense)
+                for tid in _shooter_teams(events)}
+    if baseline is None:
+        baseline = {k: [] for k, _ in NAMED_PLAY_TYPES}
+        for _tid, named in per_team.items():
+            for r in named["rows"]:
+                if r["poss"] >= min_poss:
+                    baseline[r["key"]].append(r["PPP"])
+    out = {}
+    for key, label in NAMED_PLAY_TYPES:
+        pool = baseline.get(key, [])
+        leaders = []
+        for tid, named in per_team.items():
+            cell = next((r for r in named["rows"] if r["key"] == key), None)
+            if not cell or cell["poss"] < min_poss:
+                continue
+            pct = (TA.percentile(cell["PPP"], pool, higher_better=offense)
+                   if len(pool) >= MIN_POOL else None)
+            tier_label, tier_color = _tier(pct)
+            leaders.append({"team_id": tid, "PPP": cell["PPP"], "FG%": cell["FG%"],
+                            "poss": cell["poss"], "share": cell["share"],
+                            "pct": pct, "tier": tier_label, "color": tier_color})
+        leaders.sort(key=lambda x: x["PPP"], reverse=offense)
+        if leaders:
+            out[key] = {"label": label,
+                        "lg_ppp": (sum(pool) / len(pool)) if pool else None,
+                        "leaders": leaders}
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CROSS-DIMENSION INTEL  (play_type × everything else a shot already carries)
+# ══════════════════════════════════════════════════════════════════════════════
+# A set call's PPP is the headline; the SCOUTING read is what the set produces:
+#   • shot_type   -> 3PA-rate per set     ("in transition they hunt a 3")
+#   • zone        -> where the set scores  ("they shoot HERE on transition")
+#   • pass_from_id-> assisted-rate + the FEEDER chain (who hands off the DHO,
+#                    who inbounds the BLOB/SLOB) — the pass-side analog of the
+#                    screen role split
+#   • guarded_by_id-> open vs contested per set ("their iso gets clean looks")
+#   • possession_secs -> true tempo per set
+# Robust on zone+shot_type (every shot carries them); located x/y only sharpens.
+# rim = a 2-pt attempt in the paint zone ('C'); mid = a non-paint 2; three = a 3.
+
+_PROFILE_ZONES = ("LC", "LW", "C", "RW", "RC")
+
+
+def _blank_profile():
+    return {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0,
+            "three": 0, "rim": 0, "mid": 0, "ast": 0, "open": 0, "guard_n": 0,
+            "zones": {z: 0 for z in _PROFILE_ZONES}, "secs": 0.0, "secs_n": 0}
+
+
+def _profile_add(p, e):
+    """Fold one shot event into a profile cell."""
+    is3 = e["shot_type"] == 3
+    made = e["shot_result"] == "make"
+    p["FGA"] += 1
+    if is3:
+        p["FG3A"] += 1
+        p["three"] += 1
+    elif e.get("zone") == "C":
+        p["rim"] += 1
+    else:
+        p["mid"] += 1
+    if made:
+        p["FGM"] += 1
+        p["PTS"] += 3 if is3 else 2
+        if is3:
+            p["FG3M"] += 1
+    if e.get("pass_from_id") is not None:
+        p["ast"] += 1
+    # guarded_by_id present == contested; absent == an open look (matches the
+    # guarded/open convention team_analytics.guarded_splits already uses).
+    if e.get("guarded_by_id") is None:
+        p["open"] += 1
+    else:
+        p["guard_n"] += 1
+    z = e.get("zone")
+    if z in p["zones"]:
+        p["zones"][z] += 1
+    secs = e.get("possession_secs")
+    if secs and secs > 0:
+        p["secs"] += secs
+        p["secs_n"] += 1
+
+
+def _profile_fin(p, key=None, label=None):
+    fga = p["FGA"]
+    return {
+        "key": key, "label": label, "poss": fga, "FGM": p["FGM"],
+        "PPP": _safe(p["PTS"], fga), "FG%": _safe(p["FGM"], fga),
+        "eFG": _safe(p["FGM"] + 0.5 * p["FG3M"], fga),
+        "3PA_rate": _safe(p["FG3A"], fga),
+        "rim_rate": _safe(p["rim"], fga), "mid_rate": _safe(p["mid"], fga),
+        "ast_rate": _safe(p["ast"], fga), "open_rate": _safe(p["open"], fga),
+        "zones": dict(p["zones"]), "top_zone": (max(p["zones"], key=p["zones"].get)
+                                                if fga else None),
+        "avg_secs": (p["secs"] / p["secs_n"]) if p["secs_n"] else None,
+    }
+
+
+def team_playtype_shot_profiles(team_id, gender=None, game_ids=None, events=None,
+                                offense=True):
+    """Per-set SHOT PROFILE for a team's own shots (offense) or shots it allowed
+    (defense): each tagged set call with PPP/FG%/eFG PLUS the cross-dimension read
+    — 3PA-rate, rim/mid share, assisted-rate, open-rate, zone distribution
+    (top_zone = where the set most lives) and average possession length.
+
+    Returns {key: {key,label,poss,FGM,PPP,FG%,eFG,3PA_rate,rim_rate,mid_rate,
+    ast_rate,open_rate,zones,top_zone,avg_secs}} — only set calls actually run."""
+    if events is None:
+        gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    label = dict(NAMED_PLAY_TYPES)
+    profs = {}
+    for e in events:
+        if e["event_type"] != "shot" or e["shooter_team_id"] is None:
+            continue
+        if offense != (e["shooter_team_id"] == team_id):
+            continue
+        pt = e.get("play_type")
+        if not pt:
+            continue
+        if pt not in _NAMED_KEYS:
+            pt = "other"
+        _profile_add(profs.setdefault(pt, _blank_profile()), e)
+    return {k: _profile_fin(p, k, label.get(k, k)) for k, p in profs.items()}
+
+
+def player_playtype_shot_profiles(game_ids=None, events=None):
+    """Per-PLAYER, per-set SHOT PROFILE (the player-level companion to
+    team_playtype_shot_profiles). Each shot counts for its shooter. Returns
+    {player_id: {key: profile}} — feeds the per-player 'in transition they hunt a
+    3 / get to the rim' read on the player card and the auto-scout miner."""
+    if events is None:
+        events = S.fetch_events(game_ids)
+    label = dict(NAMED_PLAY_TYPES)
+    out = {}
+    for e in events:
+        if e["event_type"] != "shot" or e["primary_player_id"] is None:
+            continue
+        pt = e.get("play_type")
+        if not pt:
+            continue
+        if pt not in _NAMED_KEYS:
+            pt = "other"
+        d = out.setdefault(e["primary_player_id"], {})
+        _profile_add(d.setdefault(pt, _blank_profile()), e)
+    return {pid: {k: _profile_fin(p, k, label.get(k, k)) for k, p in d.items()}
+            for pid, d in out.items()}
+
+
+# ── feeder / initiator chains (who hands off the DHO, who inbounds the BLOB) ──────
+# On a hand-off or inbounds set, pass_from_id is the player who STARTED the action
+# — the DHO hander, the BLOB/SLOB inbounder — and primary_player_id is the
+# finisher. Grouping the set's shots by pass_from_id answers "who is the DHO hub"
+# and "who runs the inbounds", with the PPP that hub generates and who it feeds.
+FEEDER_KEYS = ("dho", "blob", "slob")
+
+
+def team_playtype_feeders(team_id, gender=None, game_ids=None, events=None,
+                          keys=FEEDER_KEYS, offense=True):
+    """Initiator chains for hand-off / inbounds sets. Returns {key: {'label',
+    'feeders': [{feeder_id, feeds, FGM, PPP, FG%, top_target_id, targets}]}} sorted
+    by volume — feeder_id = pass_from_id (the hander / inbounder), targets =
+    {finisher_id: count}. Empty until those sets carry a pass_from_id tag."""
+    if events is None:
+        gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    keyset = set(keys)
+    label = dict(NAMED_PLAY_TYPES)
+    agg = {}
+    for e in events:
+        if e["event_type"] != "shot" or e["shooter_team_id"] is None:
+            continue
+        if offense != (e["shooter_team_id"] == team_id):
+            continue
+        pt = e.get("play_type")
+        if pt not in keyset:
+            continue
+        feeder = e.get("pass_from_id")
+        if feeder is None:
+            continue
+        cell = agg.setdefault(pt, {}).setdefault(
+            feeder, {"feeds": 0, "FGM": 0, "PTS": 0, "targets": {}})
+        cell["feeds"] += 1
+        if e["shot_result"] == "make":
+            cell["FGM"] += 1
+            cell["PTS"] += 3 if e["shot_type"] == 3 else 2
+        tgt = e["primary_player_id"]
+        if tgt is not None:
+            cell["targets"][tgt] = cell["targets"].get(tgt, 0) + 1
+    out = {}
+    for k, feeders in agg.items():
+        rows = []
+        for fid, c in feeders.items():
+            tgts = c["targets"]
+            rows.append({
+                "feeder_id": fid, "feeds": c["feeds"], "FGM": c["FGM"],
+                "PPP": _safe(c["PTS"], c["feeds"]), "FG%": _safe(c["FGM"], c["feeds"]),
+                "top_target_id": (max(tgts, key=tgts.get) if tgts else None),
+                "targets": dict(tgts)})
+        rows.sort(key=lambda r: r["feeds"], reverse=True)
+        if rows:
+            out[k] = {"label": label.get(k, k), "feeders": rows}
+    return out

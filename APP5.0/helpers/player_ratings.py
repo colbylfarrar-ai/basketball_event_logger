@@ -682,6 +682,12 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "PnR_PPP": _round(_pl.get("pnr", {}).get("PPP"), 2),
             "Post_poss": _pl.get("post", {}).get("poss"),
             "Post_PPP": _round(_pl.get("post", {}).get("PPP"), 2),
+            "Iso_poss": _pl.get("iso", {}).get("poss"),
+            "Iso_PPP": _round(_pl.get("iso", {}).get("PPP"), 2),
+            "Spot_poss": _pl.get("spot", {}).get("poss"),
+            "Spot_PPP": _round(_pl.get("spot", {}).get("PPP"), 2),
+            "Transition_poss": _pl.get("transition", {}).get("poss"),
+            "Transition_PPP": _round(_pl.get("transition", {}).get("PPP"), 2),
             # ── clutch (4th quarter) ────────────────────────────────
             "Q4PTS": q4_pts, "Q4PPG": pg(q4_pts),
             "Q4%": _pct(_safe(q4_pts, b["PTS"])) if b["PTS"] else None,
@@ -728,6 +734,8 @@ EVENT_DERIVED_STATS = frozenset({
     "Dom_FGA", "Dom_FG%", "Weak_FGA", "Weak_FG%",
     "Near_FGA", "Near_FG%", "Deep_FGA", "Deep_FG%",
     "PnR_poss", "PnR_PPP", "Post_poss", "Post_PPP",
+    "Iso_poss", "Iso_PPP", "Spot_poss", "Spot_PPP",
+    "Transition_poss", "Transition_PPP",
     # clutch (need quarter splits from events)
     "Q4PTS", "Q4PPG", "Q4%",
 })

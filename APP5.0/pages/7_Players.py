@@ -42,6 +42,7 @@ from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            ZONE_FULLNAME as _ZONE_FULLNAME)
 from helpers.glossary import glossary_tab
 import helpers.player_ratings as PR
+import helpers.playtypes as PT
 import helpers.team_ratings as TR
 import helpers.stats as S
 import helpers.badges as BG
@@ -300,6 +301,26 @@ def _zone_tables():
 def _shot_model():
     """League distance×value make-rate model for the points-over-expected heat."""
     return S.distance_make_model(events=S.fetch_events())
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _named_sets(g):
+    """Per-player play-type PPP, league-percentiled vs the gender pool."""
+    return PT.player_named_playtype_percentiles(gender=g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _role_splits(g):
+    """Per-player screen-action handler/roller splits (scoped to gender's games)."""
+    gids = PT._tracked_game_ids(g)
+    return PT.player_role_splits(game_ids=gids) if gids else {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _set_profiles(g):
+    """Per-player set-call shot profiles (scoped to gender's games)."""
+    gids = PT._tracked_game_ids(g)
+    return PT.player_playtype_shot_profiles(game_ids=gids) if gids else {}
 
 
 def _agg_zone(pids, zsplits):
@@ -1239,6 +1260,8 @@ def _fx_prof():
         badges=_lab_badges(gender).get(pid, []),
         archetype=_lab_clusters(gender)["players"].get(pid, {}).get("archetype"),
         pgb=_pgb(), located=_player_located(pid), foulft=_foulft().get(pid),
+        named_sets=_named_sets(gender).get(pid), role_splits=_role_splits(gender).get(pid),
+        set_profiles=_set_profiles(gender).get(pid),
     ))
 
 

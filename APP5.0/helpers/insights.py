@@ -185,8 +185,57 @@ def _g_defense(row, pools, d):
             "n": int(_num(row, "GP") or 0)}
 
 
+def _g_playtype(row, pools, d):
+    """Signature action: the play_type set a player is most extreme on (vs the
+    league pool of players on that same action). pct=league percentile."""
+    pt = d.get("playtype")
+    if not pt or pt.get("pct") is None or (pt.get("poss") or 0) < 8:
+        return None
+    pct, poss = pt["pct"], pt["poss"]
+    if abs(pct - 50) < 20:
+        return None
+    label, ppp = pt["label"], pt["PPP"]
+    z = (pct - 50) / 15.0
+    if pct >= 50:
+        txt = (f"**Go-to: {label}** — scores **{ppp:.2f} PPP** on {label.lower()} "
+               f"({pct:.0f}th pctile, {poss} poss); their bread-and-butter.")
+    else:
+        txt = (f"**Take away the {label.lower()}** — only **{ppp:.2f} PPP** "
+               f"({pct:.0f}th pctile, {poss} poss); make them beat you another way.")
+    return {"text": txt, "score": abs(pct - 50) / 15.0, "z": z,
+            "metric": "PlayType", "n": poss}
+
+
+def _g_playstyle(row, pools, d):
+    """Cross-dimension: what a player's SET produces (the shot it generates), not
+    its PPP — a 3-hunting transition set, a rim-pressure call, or a set they get
+    clean looks on. Reads the precomputed profile-edge for this player."""
+    ps = d.get("playstyle")
+    if not ps or (ps.get("poss") or 0) < 8:
+        return None
+    val, poss = ps.get("val"), ps["poss"]
+    if val is None:
+        return None
+    kind, label = ps.get("kind"), ps.get("label") or ps.get("key") or "this set"
+    low = label.lower()
+    score = abs(val - 0.4) / 0.15
+    if kind == "3pa":
+        txt = (f"**Transition 3-hunter** — **{val:.0%} of their {low} shots are 3s** "
+               f"({poss} poss); get back and find shooters.")
+    elif kind == "rim":
+        txt = (f"**{label} rim pressure** — **{val:.0%} of {low} shots are at the "
+               f"rim** ({poss} poss); wall up the paint.")
+    elif kind == "open":
+        txt = (f"**Gets clean looks on {low}** — **{val:.0%} open** ({poss} poss); "
+               f"close out harder.")
+    else:
+        return None
+    return {"text": txt, "score": score, "z": score, "metric": "PlayStyle",
+            "n": poss}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
-               _g_consistency, _g_defense]
+               _g_consistency, _g_defense, _g_playtype, _g_playstyle]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -202,12 +251,16 @@ def _derive(row):
     }
 
 
-def league_insights(table, *, guarded=None, q4=None, top=3):
+def league_insights(table, *, guarded=None, q4=None, playtypes=None,
+                    playstyles=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
-    hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}} and ``q4`` =
-    {pid: {'swing','n'}} are optional precomputed splits (guarded-vs-open, 4th-Q);
-    when omitted those generators simply don't fire. Generators tied to play_type
-    or x,y light up automatically once games carry that data."""
+    hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
+    {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
+    'poss','share'}}, and ``playstyles`` = {pid: {'kind','key','label','val',
+    'poss','PPP'}} are optional precomputed splits (guarded-vs-open, 4th-Q,
+    signature play_type PPP, and cross-dimension play-type profile); when omitted
+    those generators simply don't fire. Generators tied to play_type or x,y light
+    up automatically once games carry that data."""
     rows = list(table.items())
     derived = {}
     for pid, row in rows:
@@ -218,6 +271,10 @@ def league_insights(table, *, guarded=None, q4=None, top=3):
         if q4 and pid in q4:
             d["q4_swing"] = q4[pid].get("swing")
             d["q4_n"] = q4[pid].get("n")
+        if playtypes and pid in playtypes:
+            d["playtype"] = playtypes[pid]
+        if playstyles and pid in playstyles:
+            d["playstyle"] = playstyles[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -295,11 +352,79 @@ def q4_swings(events):
     return out
 
 
+def named_playtype_edges(events):
+    """{pid: {'key','label','PPP','pct','poss','share'}} — each player's single
+    most extreme play_type set vs the league pool of players on that same action
+    (the |pct-50| outlier among their tagged sets). Reads
+    playtypes.player_named_playtype_percentiles; empty until shots carry a
+    one-tap play_type, so it lights up as tracking fills in."""
+    import helpers.playtypes as PT
+    labels = dict(PT.NAMED_PLAY_TYPES)
+    per = PT.player_named_playtype_percentiles(events=events)
+    out = {}
+    for pid, d in per.items():
+        best = None
+        for key, c in d.items():
+            pct, poss = c.get("pct"), c.get("poss") or 0
+            if pct is None or poss < 8:
+                continue
+            edge = abs(pct - 50)
+            if best is None or edge > best[0]:
+                best = (edge, key, c)
+        if best is None:
+            continue
+        _edge, key, c = best
+        out[pid] = {"key": key, "label": labels.get(key, key),
+                    "PPP": c["PPP"], "pct": c["pct"], "poss": c["poss"],
+                    "share": c.get("share")}
+    return out
+
+
+def playtype_profile_edges(events):
+    """{pid: {'kind','key','label','val','poss','PPP'}} — each player's single most
+    notable PROFILE tendency across their set calls (what a set PRODUCES, not its
+    PPP): a set they shoot 3s on at a very high clip (kind='3pa'), attack the rim on
+    (kind='rim'), or get clean looks on (kind='open'). Crosses play_type with the
+    shot signals every shot already carries. Picks the one set (poss>=8) whose rate
+    deviates most from a neutral ~0.4. Reads playtypes.player_playtype_shot_profiles;
+    empty until shots carry a one-tap play_type + location, so it lights up as
+    tracking fills in."""
+    out = {}
+    try:
+        import helpers.playtypes as PT
+        labels = dict(PT.NAMED_PLAY_TYPES)
+        per = PT.player_playtype_shot_profiles(events=events)
+        # (rate-key, kind, threshold) — only fire when the rate clears its floor.
+        rules = (("3PA_rate", "3pa", 0.5), ("rim_rate", "rim", 0.6),
+                 ("open_rate", "open", 0.65))
+        for pid, profiles in per.items():
+            best = None  # (deviation, kind, key, val, poss, ppp, label)
+            for key, prof in profiles.items():
+                if (prof.get("poss") or 0) < 8:
+                    continue
+                for rate_key, kind, floor in rules:
+                    val = prof.get(rate_key)
+                    if val is None or val < floor:
+                        continue
+                    dev = abs(val - 0.4)
+                    if best is None or dev > best[0]:
+                        best = (dev, kind, key, val, prof["poss"],
+                                prof.get("PPP"), labels.get(key, key))
+            if best is None:
+                continue
+            _dev, kind, key, val, poss, ppp, label = best
+            out[pid] = {"kind": kind, "key": key, "label": label, "val": val,
+                        "poss": poss, "PPP": ppp}
+    except Exception:
+        return {}
+    return out
+
+
 def build_feed(table, events, *, top=3):
     """One-call insight feed: precomputes the event-derived splits (guarded-cliff,
     Q4) and runs the miner. ``{pid: [insight,...]}``. Wrap heavy calls in a cache
     at the page level."""
-    guarded = q4 = None
+    guarded = q4 = pt = ps = None
     try:
         guarded = guarded_cliffs(events)
     except Exception:
@@ -308,4 +433,13 @@ def build_feed(table, events, *, top=3):
         q4 = q4_swings(events)
     except Exception:
         pass
-    return league_insights(table, guarded=guarded, q4=q4, top=top)
+    try:
+        pt = named_playtype_edges(events)
+    except Exception:
+        pass
+    try:
+        ps = playtype_profile_edges(events)
+    except Exception:
+        pass
+    return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
+                           playstyles=ps, top=top)

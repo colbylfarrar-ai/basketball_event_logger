@@ -172,6 +172,15 @@ BADGES = [
     {"key": "post_hub", "name": "Post Hub", "emoji": "", "cat": "Scoring",
      "stat": "Post_PPP", "gate": ("Post_poss", 15),
      "desc": "Efficient post-up scorer (tagged plays)."},
+    {"key": "iso_scorer", "name": "Iso Scorer", "emoji": "", "cat": "Scoring",
+     "stat": "Iso_PPP", "gate": ("Iso_poss", 15),
+     "desc": "Elite isolation scorer (tagged plays)."},
+    {"key": "spot_sniper", "name": "Spot-up Sniper", "emoji": "", "cat": "Shooting",
+     "stat": "Spot_PPP", "gate": ("Spot_poss", 15),
+     "desc": "Lethal spot-up shooter off the catch (tagged plays)."},
+    {"key": "transition_terror", "name": "Transition Terror", "emoji": "", "cat": "Scoring",
+     "stat": "Transition_PPP", "gate": ("Transition_poss", 15),
+     "desc": "Devastating in the open floor (tagged plays)."},
 
     # ── Two-way / Identity ────────────────────────────────────────────────────
     {"key": "two_way", "name": "Two-Way Wire", "emoji": "", "cat": "Two-Way",

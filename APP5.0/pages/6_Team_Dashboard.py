@@ -798,6 +798,45 @@ def _playtype_view(g, tid, offense):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _named_playtype_view(g, tid, offense):
+    """Explicit one-tap set calls for one team, each ranked vs the league pool."""
+    return PT.team_named_playtype_percentiles(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _named_sets_all(g):
+    """Per-player explicit set-call PPP, ranked vs the league pool (card ctx)."""
+    return PT.player_named_playtype_percentiles(gender=g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _role_splits_all(g):
+    """Per-player handler/roller screen-action splits (card ctx)."""
+    return PT.player_role_splits(events=S.fetch_events())
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _set_profiles_view(g, tid, offense):
+    """WAVE-2 cross-dimension: per set call, what it PRODUCES (PPP, 3PA/rim/mid
+    rates, assisted%, open%, top zone, avg secs) — the set fingerprint."""
+    return PT.team_playtype_shot_profiles(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _feeders_view(g, tid, offense):
+    """WAVE-2: hand-off / inbounds feeder hubs (DHO hander, BLOB/SLOB inbounder)
+    — who feeds the action, how often, and to what efficiency / target."""
+    return PT.team_playtype_feeders(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _set_profiles_all(g):
+    """Per-player set-call shot profiles (card ctx) — what each player's sets
+    produce. Keyed by player_id; mirrors how _named_sets_all is wired."""
+    return PT.player_playtype_shot_profiles(events=S.fetch_events())
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _scoring_buckets(_ids):
     """Scoring buckets (paint/2nd-chance/off-TO/fast-break/bench) over the games."""
     return GF.scoring_buckets(list(_ids))
@@ -1000,31 +1039,165 @@ with tab_charts:
                            "tracked games.")
 
             # ── explicit one-tap play-call tags (the coach's literal set call) ──
-            _npt = PT.team_named_playtypes(team_id, gender=gender, offense=_ptoff)
+            # Now league-ranked: each tagged set carries a percentile + tier, so
+            # the explicit ranks sit visually under the inferred ranks above.
+            _npt = _named_playtype_view(gender, team_id, _ptoff)
+            _nrows = _npt["rows"]
             st.markdown("<div class='pl-hdr'>Tagged play calls</div>",
                         unsafe_allow_html=True)
-            if _npt["rows"]:
+            if _nrows:
                 st.caption(
                     f"Your one-tap play-call tags on {'own' if _ptoff else 'opponent'} "
                     f"shots ({_npt['total_tagged']} tagged · {_npt['untagged']} "
-                    f"untagged) — PPP by the literal set call you logged, separate "
-                    f"from the inferred view above.")
+                    f"untagged) — PPP by the literal set call you logged, ranked vs "
+                    f"the league, separate from the inferred view above.")
+                for r in _nrows:
+                    _nval = (f"{r['PPP']:.2f} PPP · {r['FG%'] * 100:.0f}% FG · "
+                             f"{r['poss']} poss")
+                    if r["pct"] is None:
+                        st.markdown(
+                            f"<div class='pl-pct'><div class='pl-pct-top'>"
+                            f"<span class='pl-pct-lbl'>{r['label']}</span>"
+                            f"<span class='pl-pct-val'>{_nval} · "
+                            f"<span style='color:#8b949e'>thin sample</span>"
+                            f"</span></div></div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(_pctile_bar(r["label"], _nval, r["pct"]),
+                                    unsafe_allow_html=True)
+                # compact detail table under the bars
                 st.dataframe(pd.DataFrame([{
                     "Play call": r["label"], "Poss": r["poss"],
                     "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
                     "Share": round(r["share"] * 100, 0),
-                } for r in _npt["rows"]]), hide_index=True, width="stretch",
+                    "Tier": r["tier"],
+                } for r in _nrows]), hide_index=True, width="stretch",
                     column_config={
                         "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
                         "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
                         "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
                     }, key="pt_named_tbl")
+                # ── frequency-vs-efficiency quadrant: where each call lives ──
+                _qx = [r["share"] * 100 for r in _nrows]
+                _qy = [r["PPP"] for r in _nrows]
+                _qsz = [r["poss"] for r in _nrows]
+                _qmax = max(_qsz) or 1
+                _qposs = sum(r["poss"] for r in _nrows)
+                _qppp = (sum(r["PPP"] * r["poss"] for r in _nrows) / _qposs
+                         if _qposs else 0.0)
+                _qsh = (sum(_qx) / len(_qx)) if _qx else 0.0
+                _qfig = go.Figure(go.Scatter(
+                    x=_qx, y=_qy, mode="markers+text",
+                    text=[r["label"] for r in _nrows], textposition="top center",
+                    textfont=dict(size=10),
+                    marker=dict(size=[12 + 34 * (s / _qmax) for s in _qsz],
+                                color=[r["color"] for r in _nrows],
+                                line=dict(width=0), sizemode="diameter"),
+                    customdata=[[r["poss"], r["FG%"] * 100] for r in _nrows],
+                    hovertemplate=("%{text}<br>%{x:.0f}% of calls · %{y:.2f} PPP"
+                                   "<br>%{customdata[0]} poss · "
+                                   "%{customdata[1]:.0f}% FG<extra></extra>")))
+                _qfig.add_vline(x=_qsh, line_dash="dot", line_color=GREY,
+                                line_width=1)
+                _qfig.add_hline(y=_qppp, line_dash="dot", line_color=GREY,
+                                line_width=1)
+                _style(_qfig, 380)
+                _qfig.update_xaxes(title="Share of tagged calls (%)",
+                                   showgrid=False)
+                _qfig.update_yaxes(title="Points per possession", showgrid=False)
+                st.plotly_chart(_qfig, width="stretch", key="pt_named_quad")
+                st.caption(
+                    "Dot size = possessions. Lines mark your average share & PPP. "
+                    "**Top-right = bread-and-butter** (run often, scores) · "
+                    "**bottom-right = over-reliance** (run often, doesn't score) · "
+                    "**top-left = under-used gem** (efficient, rarely called) · "
+                    "**bottom-left = junk** (rare and inefficient).")
             else:
                 st.caption(
                     "No play-call tags yet — add an optional one-tap **Play type** "
                     "to a shot in the Game Tracker (Pick & roll, Iso, Post-up…) and "
                     "this fills in. Tags are the literal set call, separate from the "
                     "inferred tempo/creation view above.")
+
+            # ── SET FINGERPRINT (WAVE 2) — not the PPP of a call, but what the ──
+            # call PRODUCES: every other signal a set's shots carry, crossed with
+            # the play-type tag. The actionable read lives in the shape, not the
+            # headline PPP.
+            _spv = _set_profiles_view(gender, team_id, _ptoff)
+            st.markdown("<div class='pl-hdr'>Set fingerprint — what each call "
+                        "produces</div>", unsafe_allow_html=True)
+            if _spv:
+                _zlbl = TA.ZONE_LABELS
+                _sp_rows = sorted(_spv.values(), key=lambda p: p["poss"],
+                                  reverse=True)
+                st.dataframe(pd.DataFrame([{
+                    "Set": p["label"], "Poss": p["poss"],
+                    "PPP": round(p["PPP"], 2),
+                    "3PA%": round(p["3PA_rate"] * 100, 0),
+                    "Rim%": round(p["rim_rate"] * 100, 0),
+                    "Assisted%": round(p["ast_rate"] * 100, 0),
+                    "Open%": round(p["open_rate"] * 100, 0),
+                    "Where": (_zlbl.get(p["top_zone"], "—")
+                              if p["top_zone"] else "—"),
+                    "Avg s": (round(p["avg_secs"], 1)
+                              if p["avg_secs"] is not None else None),
+                } for p in _sp_rows]), hide_index=True, width="stretch",
+                    column_config={
+                        "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                        "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
+                        "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
+                        "Assisted%": st.column_config.NumberColumn(
+                            "Assisted%", format="%.0f%%"),
+                        "Open%": st.column_config.NumberColumn(
+                            "Open%", format="%.0f%%"),
+                        "Avg s": st.column_config.NumberColumn(
+                            "Avg s", format="%.1f"),
+                    }, key="pt_set_fingerprint")
+                st.caption(
+                    "PPP is the headline — the rest is the scouting value. **3PA%** "
+                    "= share of the set's shots that are 3s (a high-3PA Transition = "
+                    "a team hunting transition 3s); **Rim%** = paint 2s (a finishing "
+                    "set); **Assisted%** = how often the look came off a pass (low = "
+                    "a self-creation call); **Open%** = clean looks generated (a high "
+                    "Open% set is a great look-generator regardless of who's shooting); "
+                    "**Where** = the zone the set most often produces; **Avg s** = "
+                    "seconds into the shot clock it strikes.")
+            else:
+                st.caption(
+                    "No set-call shots tagged yet — once **Play type** tags carry "
+                    "across located shots, each call's full fingerprint (3PA / rim / "
+                    "assisted / open / where) fills in here.")
+
+            # ── HAND-OFF & INBOUNDS HUBS (WAVE 2) — who FEEDS the action ───────
+            # DHO hander + BLOB/SLOB inbounder: the pass_from player who initiates
+            # the set, with how often, the PPP it yields, and the top target.
+            _fdv = _feeders_view(gender, team_id, _ptoff)
+            _pid_name = {p["_pid"]: f"#{p['number']} {p['name']}" for p in players}
+            _fd_present = _fdv and any(v["feeders"] for v in _fdv.values())
+            if _fd_present:
+                st.markdown("<div class='pl-hdr'>Hand-off & inbounds hubs</div>",
+                            unsafe_allow_html=True)
+                st.caption(
+                    "Who initiates the set — the DHO hander and the BLOB / SLOB "
+                    "inbounder — by feeds, the PPP those feeds yield and their go-to "
+                    "target. Shut off the hub and you shut off the set.")
+                for _fk in ("dho", "blob", "slob"):
+                    _fblk = _fdv.get(_fk)
+                    if not _fblk or not _fblk["feeders"]:
+                        continue
+                    st.markdown(f"**{_fblk['label']}**")
+                    st.dataframe(pd.DataFrame([{
+                        "Feeder": _pid_name.get(f["feeder_id"], "?"),
+                        "Feeds": f["feeds"], "FGM": f["FGM"],
+                        "PPP": round(f["PPP"], 2),
+                        "FG%": round(f["FG%"] * 100, 0),
+                        "Top target": _pid_name.get(f["top_target_id"], "—"),
+                    } for f in _fblk["feeders"]]), hide_index=True,
+                        width="stretch", column_config={
+                            "PPP": st.column_config.NumberColumn(
+                                "PPP", format="%.2f"),
+                            "FG%": st.column_config.NumberColumn(
+                                "FG%", format="%.0f%%"),
+                        }, key=f"pt_feeders_{_fk}")
 
     with ch_play:
         _fx_chplay()
@@ -4019,6 +4192,9 @@ def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
         badges=_badges(gender).get(pid, []),
         archetype=_archetypes(gender).get(pid),
         pgb=_pgb(), located=_pp_located(pid), foulft=_pp_foulft().get(pid),
+        named_sets=_named_sets_all(gender).get(pid),
+        role_splits=_role_splits_all(gender).get(pid),
+        set_profiles=_set_profiles_all(gender).get(pid),
     ))
 
 

@@ -20,6 +20,8 @@ ctx fields (SimpleNamespace built per page):
 """
 from __future__ import annotations
 
+from html import escape as html_escape
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -28,6 +30,7 @@ from database.db import query
 import helpers.stats as S
 import helpers.trends as TRD
 import helpers.player_ratings as PR
+import helpers.playtypes as PT
 from helpers.ui import empty_state, rgb as _rgb, style_fig as _style, CARD_BG, GRID
 from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
@@ -441,6 +444,113 @@ def render_card(ctx):
                 st.plotly_chart(qfig, width="stretch", key="pcard_qtr")
             else:
                 st.caption("No quarter data.")
+
+    # ── Set-call profile (one-tap play_type tags → Paid) ──────────────────────
+    _named = getattr(ctx, "named_sets", None)
+    _roles = getattr(ctx, "role_splits", None)
+    _setprof = getattr(ctx, "set_profiles", None)  # {key: shot-profile} or None
+    _ZL = {"LC": "left corner", "LW": "left wing", "C": "the paint",
+           "RW": "right wing", "RC": "right corner"}
+
+    def _howline(pr):
+        """Gender-neutral 'how they score it' sub-line from a shot profile."""
+        if not pr or (pr.get("poss") or 0) < 5:
+            return ""
+        bits = [f"{pr['PPP']:.2f} PPP"]
+        if pr.get("3PA_rate") is not None:
+            bits.append(f"{round(pr['3PA_rate']*100)}% 3PA")
+        if pr.get("rim_rate") is not None:
+            bits.append(f"{round(pr['rim_rate']*100)}% rim")
+        if pr.get("ast_rate") is not None:
+            bits.append(f"{round(pr['ast_rate']*100)}% assisted")
+        if pr.get("open_rate") is not None:
+            bits.append(f"{round(pr['open_rate']*100)}% open")
+        _tz = pr.get("top_zone")
+        if _tz:
+            bits.append(f"mostly {_ZL.get(_tz, str(_tz))}")
+        return " · ".join(bits) + f" ({pr['poss']} poss)"
+
+    if paid and (_named or _roles):
+        _ptlbl = dict(PT.NAMED_PLAY_TYPES)
+        st.markdown("<div class='pl-hdr'>Set-call profile</div>",
+                    unsafe_allow_html=True)
+        if _named:
+            # Go-to / take-away chip pair (ranked sets only, ≥8 poss).
+            _ranked = {k: c for k, c in _named.items()
+                       if c.get("pct") is not None and c["poss"] >= 8}
+            if _ranked:
+                _go_k = max(_ranked, key=lambda k: _ranked[k]["pct"])
+                _aw_k = min(_ranked, key=lambda k: _ranked[k]["pct"])
+
+                def _chip(k):
+                    c = _ranked[k]
+                    return _glass(
+                        "GO-TO SET" if k == _go_k else "TAKE-AWAY",
+                        _ptlbl.get(k, k.title()),
+                        f"{c['PPP']:.2f} PPP · {c['pct']}th pct · {c['poss']} poss",
+                        c["color"])
+                _keys = [_go_k] + ([_aw_k] if _aw_k != _go_k else [])
+                _cc = st.columns(len(_keys))
+                for _col, _k in zip(_cc, _keys):
+                    _col.markdown(_chip(_k), unsafe_allow_html=True)
+
+            # Per-set percentile rows, sorted by PPP desc.  Each row carries an
+            # optional "how they score it" sub-line from the set shot profile.
+            html = ""
+            for _k, c in sorted(_named.items(), key=lambda kv: kv[1]["PPP"],
+                                reverse=True):
+                _lbl = _ptlbl.get(_k, _k.title())
+                _v = f"{c['PPP']:.2f} PPP · {c['FG%']*100:.0f}% · {c['poss']} poss"
+                if c.get("pct") is None:
+                    _v += " · thin sample"
+                html += _pctile_bar(_lbl, _v, c.get("pct"))
+                _hl = _howline((_setprof or {}).get(_k)) if _setprof else ""
+                if _hl:
+                    html += ("<div style='font-size:11px;color:var(--subtext);"
+                             "margin:-5px 0 9px 0'>"
+                             f"{html_escape(_hl)}</div>")
+            if html:
+                st.markdown(html, unsafe_allow_html=True)
+
+        # Screen-action role split (handler vs roller on screen sets).
+        if _roles:
+            _role_keys = [k for k in ("pnr", "dho", "offscreen")
+                          if (_roles.get(k) or {}).get("all", {}).get("poss", 0) > 0]
+            if _role_keys:
+                st.markdown("**Screen-action role** — finishing as the ball-handler "
+                            "vs the screen-setter who rolls/pops")
+                for _k in _role_keys:
+                    rc = _roles[_k]
+                    h, r = rc.get("handler", {}), rc.get("roller", {})
+                    st.markdown(f"**{_ptlbl.get(_k, _k.title())}**")
+                    rcols = st.columns(2)
+                    rcols[0].metric(
+                        "Handler", f"{h.get('PPP', 0):.2f} PPP",
+                        f"{h.get('poss', 0)} poss", delta_color="off",
+                        help=f"As the ball-handler off the screen — "
+                             f"{h.get('FG%', 0)*100:.0f}% FG · "
+                             f"{h.get('eFG', 0)*100:.0f}% eFG")
+                    # Roll-vs-pop: roller 3PA_rate splits a rim-roller from a
+                    # pick-and-pop big (high 3PA% = they pop for the three).
+                    _r3 = r.get("3PA_rate")
+                    _rsub = (f"pops 3 on {round(_r3*100)}% of finishes"
+                             if _r3 is not None else "")
+                    _rhelp = (f"As the screen-setter who finishes — "
+                              f"{r.get('FG%', 0)*100:.0f}% FG · "
+                              f"{r.get('eFG', 0)*100:.0f}% eFG")
+                    if _r3 is not None:
+                        _rhelp += (f" · pops for 3 on {round(_r3*100)}% of "
+                                   f"finishes (high = pick-and-pop)")
+                    rcols[1].metric(
+                        "Roller", f"{r.get('PPP', 0):.2f} PPP",
+                        f"{r.get('poss', 0)} poss", delta_color="off",
+                        help=_rhelp)
+                    if _rsub:
+                        rcols[1].caption(_rsub)
+        if _named and not any(c.get("pct") is not None for c in _named.values()) \
+                and not _roles:
+            st.caption("No play types tagged yet — add a one-tap Play type to a "
+                       "shot in the Game Tracker to light this up.")
 
     # ── Career highs & milestones ─────────────────────────────────────────────
     st.markdown("<div class='pl-hdr'>Career highs & milestones</div>",

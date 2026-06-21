@@ -226,29 +226,28 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         p["creation"] = {k: 100 * c[k] / tot for k in c} if tot else None
 
     # how each player gets their shots by the one-tap play_type tag (pnr / iso /
-    # post / …): the literal set call, as a share of that player's TAGGED shots.
+    # post / …): the literal set call WITH its efficiency, as a share of that
+    # player's TAGGED shots. Reuses the engine so PPP/FG% ride along the share.
     # Sparse until a coach tags — None when this player has no tagged shots.
     _PT_LABEL = dict(PT.NAMED_PLAY_TYPES)
-    pmix = {}
-    for e in ev:
-        if e["event_type"] != "shot" or e["primary_player_id"] is None:
-            continue
-        pt = e.get("play_type")
-        if not pt:
-            continue
-        pt = pt if pt in _PT_LABEL else "other"
-        d = pmix.setdefault(e["primary_player_id"], {})
-        d[pt] = d.get(pt, 0) + 1
+    pnp = PT.player_named_playtypes(events=ev)
     for p in personnel:
-        c = pmix.get(p["pid"])
-        tot = sum(c.values()) if c else 0
+        sets = pnp.get(p["pid"])
+        tot = sum(s["poss"] for s in sets.values()) if sets else 0
         if tot:
-            ordered = sorted(c.items(), key=lambda kv: -kv[1])
-            p["playmix"] = [(_PT_LABEL.get(k, k), 100 * n / tot) for k, n in ordered]
+            ordered = sorted(sets.items(), key=lambda kv: -kv[1]["poss"])
+            p["playmix"] = [(_PT_LABEL.get(k, k), 100 * s["poss"] / tot,
+                             s["PPP"], s["FG%"]) for k, s in ordered]
             p["playmix_n"] = tot
+            # one-line go-to directive: a dominant, efficient, real-volume set.
+            top_k, top_s = ordered[0]
+            p["goto"] = (_PT_LABEL.get(top_k, top_k)
+                         if (top_s["poss"] / tot) >= 0.25 and top_s["PPP"] >= 1.0
+                         and top_s["poss"] >= 8 else None)
         else:
             p["playmix"] = None
             p["playmix_n"] = 0
+            p["goto"] = None
 
     # dominant- vs weak-hand-side shooting per player (helpers/handedness.py:
     # righty's right-side shots = dominant; center = straightaway, kept apart).
@@ -308,6 +307,48 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     # post / spot / …). Reuses the events already pulled and the same visible
     # game set, so it honours the entitlement filter like every view above.
     play_calls = PT.team_named_playtypes(team_id, events=ev, offense=True)
+    # companion "what they allow" view: the set calls opponents ran ON them
+    # (offense=False flips the flag), same events / visible game set.
+    play_calls_def = PT.team_named_playtypes(team_id, events=ev, offense=False)
+    # cross-dimension: per-set SHOT PROFILE (what each set call PRODUCES — where
+    # it shoots from, 3PA/rim/assisted/open share, top zone). The scouting value
+    # behind the headline PPP: "they hunt a 3 in transition / get to the rim on
+    # X". Reuses the same events / visible game set as everything above.
+    set_profiles = PT.team_playtype_shot_profiles(team_id, events=ev,
+                                                  offense=True)
+    # initiator chains for hand-off / inbounds sets — who is the DHO hub, who
+    # inbounds the BLOB/SLOB and the PPP that hub generates. Empty until those
+    # sets carry a pass_from_id (hander / inbounder) tag.
+    feeders = PT.team_playtype_feeders(team_id, events=ev, offense=True)
+
+    # ── AUTO KEYS: high-volume + extreme set profile -> one prose scout key ────
+    # Only fires when a set has real volume AND its profile is lopsided, so it
+    # stays silent when sparse. Gender-neutral, no pronouns; rendered for free in
+    # the existing guard[] / attack[] lists.
+    if set_profiles:
+        _set_total = sum(pr["poss"] for pr in set_profiles.values()) or 1
+        for _k, _pr in sorted(set_profiles.items(),
+                              key=lambda kv: -kv[1]["poss"]):
+            _poss, _share = _pr["poss"], _pr["poss"] / _set_total
+            _lbl = _pr.get("label") or _k
+            # transition (or any set) that hunts the three at real volume
+            if (_k == "transition" and _poss >= 10
+                    and (_pr.get("3PA_rate") or 0) >= 0.45):
+                guard.append("They hunt transition 3s — get back and find "
+                             "shooters before they spot up.")
+            elif (_poss >= 12 and _share >= 0.10
+                    and (_pr.get("3PA_rate") or 0) >= 0.55):
+                guard.append(f"Their {_lbl.lower()} is a three-point hunt — "
+                             "chase shooters off the line.")
+            # a set that gets to the rim at real volume
+            if _poss >= 12 and (_pr.get("rim_rate") or 0) >= 0.6:
+                guard.append(f"Their {_lbl.lower()} attacks the rim — wall up "
+                             "the lane and force a kick-out.")
+            # a set that gets clean, open looks
+            if _poss >= 12 and (_pr.get("open_rate") or 0) >= 0.6:
+                guard.append(f"Their {_lbl.lower()} gets clean looks "
+                             f"({(_pr['open_rate'] * 100):.0f}% open) — close "
+                             "out hard and switch screens cleanly.")
 
     return {
         "name": name, "class": s.get("class", "N/A"),
@@ -318,6 +359,11 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         "guard": guard, "attack": attack, "personnel": personnel,
         "zones": zones, "zones_by_type": zones_by_type,
         "team_shots": team_shots, "play_calls": play_calls,
+        "play_calls_def": play_calls_def,
+        "set_profiles": set_profiles, "feeders": feeders,
+        # team-wide pid->name (covers feeder hubs / targets outside the top-N
+        # personnel list) for the hand-off / inbounds hub note.
+        "name_of": {pid: nm for nm, pid in pid_of.items()},
         "has_tracked": me is not None,
     }
 
@@ -482,6 +528,67 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             f"<p class='note'>Coach-tagged set calls on {pc['total_tagged']} shots "
             f"({pc['untagged']} untagged). Share = % of tagged shots; PPP = points "
             "per possession.</p>")
+        # companion: what they ALLOW — the set calls opponents ran on them.
+        pcd = sc.get("play_calls_def")
+        if pcd and pcd.get("rows"):
+            rows_pcd = "".join(
+                f"<tr><td>{e(r['label'])}</td>"
+                f"<td class='n'>{r['share'] * 100:.0f}%</td>"
+                f"<td class='n'>{r['PPP']:.2f}</td>"
+                f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+                f"<td class='n'>{r['poss']}</td></tr>"
+                for r in sorted(pcd["rows"], key=lambda r: r["share"], reverse=True))
+            pc_html += (
+                "<h2>What they allow — play calls defended</h2><table><tr>"
+                "<th>Play call</th><th class='n'>Share</th><th class='n'>PPP</th>"
+                f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_pcd}</table>"
+                f"<p class='note'>Set calls opponents ran on them, on "
+                f"{pcd['total_tagged']} shots ({pcd['untagged']} untagged). Higher "
+                "PPP allowed = a set to lean on.</p>")
+        # cross-dimension: what each set PRODUCES — where it shoots from and the
+        # 3PA / rim / assisted / open share. The "they shoot HERE on X / hunt a
+        # 3 in transition" read, joined beside the play-calls table above.
+        sp = sc.get("set_profiles")
+        if sp:
+            rows_sp = "".join(
+                f"<tr><td>{e(pr.get('label') or k)}</td>"
+                f"<td class='n'>{(pr.get('3PA_rate') or 0) * 100:.0f}%</td>"
+                f"<td class='n'>{(pr.get('rim_rate') or 0) * 100:.0f}%</td>"
+                f"<td class='n'>{(pr.get('ast_rate') or 0) * 100:.0f}%</td>"
+                f"<td class='n'>{(pr.get('open_rate') or 0) * 100:.0f}%</td>"
+                f"<td>{e(ZONE_LABELS.get(pr.get('top_zone'), '—'))}</td></tr>"
+                for k, pr in sorted(sp.items(), key=lambda kv: -kv[1]["poss"]))
+            pc_html += (
+                "<h2>Set tendencies — what each set produces</h2><table><tr>"
+                "<th>Set</th><th class='n'>3PA%</th><th class='n'>Rim%</th>"
+                "<th class='n'>Assisted%</th><th class='n'>Open%</th>"
+                f"<th>Where</th></tr>{rows_sp}</table>"
+                "<p class='note'>3PA% / Rim% = shot-type share of the set; "
+                "Assisted% = off a pass; Open% = uncontested; Where = the zone the "
+                "set most lives in. High transition 3PA% = a get-back read.</p>")
+        # initiator chains: who is the DHO hub / who inbounds the BLOB-SLOB, with
+        # the PPP that hub generates and the top target it feeds. One line per set.
+        fd = sc.get("feeders")
+        if fd:
+            _name_of = sc.get("name_of") or {}
+            _HUB = {"dho": "DHO hub", "blob": "BLOB inbounder",
+                    "slob": "SLOB inbounder"}
+            hub_lines = []
+            for k in ("dho", "blob", "slob"):
+                blk = fd.get(k)
+                if not blk or not blk.get("feeders"):
+                    continue
+                top = blk["feeders"][0]
+                nm = _name_of.get(top["feeder_id"], f"#{top['feeder_id']}")
+                tgt = top.get("top_target_id")
+                tgt_txt = (f" → {e(_name_of.get(tgt, '#' + str(tgt)))}"
+                           if tgt is not None else "")
+                hub_lines.append(
+                    f"<li><b>{e(_HUB[k])}:</b> {e(nm)} ({top['feeds']}, "
+                    f"{top['PPP']:.2f} PPP){tgt_txt}</li>")
+            if hub_lines:
+                pc_html += ("<h2>Hand-off / inbounds hubs</h2><ul>"
+                            + "".join(hub_lines) + "</ul>")
 
     # ── team shot chart (inline SVG from tap-captured x/y) ──
     shot_html = ""
@@ -529,13 +636,16 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             if _show("shot_source") and cm:
                 src = ("<div class='brk'>Shots: " + e(" · ".join(
                     f"{lbl} {cm[k]:.0f}%" for k, lbl in _SRC if k in cm)) + "</div>")
-            # play-type tags per player (one-tap set calls): top 4, share of tagged
+            # play-type tags per player (one-tap set calls): top 4 sets with
+            # share + efficiency (PPP), e.g. "Iso 38% (1.21 PPP) · PnR 24% (0.88)"
             pm = p.get("playmix")
             play = ""
             if _show("play_calls") and pm:
+                _goto = (f" ▶ go-to: {p['goto']}" if p.get("goto") else "")
                 play = ("<div class='brk'>Plays: " + e(" · ".join(
-                    f"{lbl} {pct:.0f}%" for lbl, pct in pm[:4])
-                    + f" (n={p['playmix_n']})") + "</div>")
+                    f"{lbl} {pct:.0f}% ({ppp:.2f} PPP)"
+                    for lbl, pct, ppp, _fg in pm[:4])
+                    + f" (n={p['playmix_n']}){_goto}") + "</div>")
             hd = p.get("hand")
             hand_html = ""
             if hd:

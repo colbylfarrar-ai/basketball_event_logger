@@ -175,6 +175,14 @@ def apply_page_config(settings: dict = None, title: str = None) -> None:
     Safe to call even if APP.py already called set_page_config (exception is swallowed).
     `title` sets the browser-tab title ("<title> · APP5"); default stays the hub name.
     """
+    # Under the st.navigation router (Main.py) the page config is OWNED by the
+    # router and set once, before navigation runs. A page re-calling
+    # set_page_config here would (a) raise — it's no longer the first st command —
+    # and (b) suppress st.navigation's sidebar. So skip entirely when the router
+    # flag is set; the router already applied layout + the per-page tab title
+    # comes from st.Page(title=).
+    if st.session_state.get("_nav_router"):
+        return
     if settings is None:
         settings = get_all_settings()
     wide = settings.get("wide_mode", DEFAULTS["wide_mode"]) == "1"

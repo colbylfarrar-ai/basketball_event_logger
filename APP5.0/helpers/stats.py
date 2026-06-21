@@ -1660,6 +1660,7 @@ def located_shots(game_ids=None, events=None, player_id=None, team_id=None):
             "player_id": e["primary_player_id"],
             "team_id": e.get("shooter_team_id"),
             "dist": CG.shot_distance(x, y),
+            "play_type": e.get("play_type"),
         })
     return out
 
@@ -1805,6 +1806,7 @@ def mapped_shots(game_ids=None, events=None, player_id=None, team_id=None,
             "guarded": e["guarded_by_id"] is not None, "zone": e["zone"],
             "player_id": e["primary_player_id"], "team_id": e.get("shooter_team_id"),
             "dist": CG.shot_distance(x, y), "approx": approx,
+            "play_type": e.get("play_type"),
         })
     return out
 

@@ -825,7 +825,7 @@ def render_box_score(game_id: int):
         # shot chart — real tap-located court when (x,y) exist, else 5-zone tiles
         st.markdown("**Shot chart** — tap-located shots on the court, or 5-zone "
                     "heat when the game has zone-only data")
-        hz1, hz2 = st.columns([1, 1])
+        hz1, hz2, hz3 = st.columns(3)
         with hz1:
             team_pick = st.selectbox("Team", ["Both", t1name, t2name],
                                      key=f"bs{game_id}_hz_team")
@@ -840,12 +840,28 @@ def render_box_score(game_id: int):
                                        key=f"bs{game_id}_hz_player")
         pid = (_pid_of(pmap[player_pick], boxes)
                if player_pick != "All players" else None)
-        who = (player_pick if player_pick != "All players"
-               else team_pick if team_pick != "Both" else "Both teams")
 
         # tap-captured (x,y) when present, else zone centroid (flagged approx)
         shots = S.mapped_shots(game_ids=[game_id], events=events,
                                team_id=tid_pick, player_id=pid)
+        # play-type filter — only the tagged set calls present in this scope
+        _PTL = dict(PT.NAMED_PLAY_TYPES)
+        _pt_present = {s.get("play_type") for s in shots if s.get("play_type")}
+        _lbl2key = {_PTL[k]: k for k, _ in PT.NAMED_PLAY_TYPES if k in _pt_present}
+        with hz3:
+            pt_pick = st.selectbox(
+                "Play type", ["All sets"] + list(_lbl2key),
+                key=f"bs{game_id}_hz_pt", disabled=not _lbl2key,
+                help="Filter the chart to one tagged set call (Pick & roll, "
+                     "Iso, Transition…). Tag shots in the Game Tracker to fill this.")
+        _pk = _lbl2key.get(pt_pick)
+        if _pk:
+            shots = [s for s in shots if s.get("play_type") == _pk]
+        who = (player_pick if player_pick != "All players"
+               else team_pick if team_pick != "Both" else "Both teams")
+        if _pk:
+            who += f" · {pt_pick}"
+
         n_real = sum(1 for s in shots if not s["approx"])
 
         if not shots:
@@ -898,6 +914,8 @@ def render_box_score(game_id: int):
                 if tid_pick is not None and e["shooter_team_id"] != tid_pick:
                     continue
                 if pid is not None and e["primary_player_id"] != pid:
+                    continue
+                if _pk and e.get("play_type") != _pk:
                     continue
                 c = za[(e["zone"], 3 if e["shot_type"] == 3 else 2)]
                 c["fga"] += 1

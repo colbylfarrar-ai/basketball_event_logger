@@ -393,8 +393,47 @@ def _search_notables(gender):
     return {"players": players, "notables": TRD.league_notables(table=table)}
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _league_intel(gender):
+    """The biggest auto-mined league signals — the 'what the data noticed' strip
+    that makes the hub feel alive. Top |z| insight lines across the whole pool."""
+    import helpers.player_ratings as _PR
+    import helpers.stats as _S
+    import helpers.insights as _IN
+    import helpers.playtypes as _PT
+    table = _PR.player_stat_table(gender=gender, min_games=2)
+    gids = _PT._tracked_game_ids(gender)
+    ev = _S.fetch_events(gids) if gids else []
+    feed = _IN.build_feed(table, ev, top=1) if (table and ev) else {}
+    import re as _re
+    flat = sorted(((abs(l["z"]), table[p]["name"],
+                    _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", l["text"]),
+                    l["metric"], l["n"])
+                   for p, ls in feed.items() for l in ls),
+                  key=lambda t: -t[0])
+    return flat[:6]
+
+
 if D["scored"]:
     EX = _search_notables(_gender)
+
+    # ── what the data noticed — league-wide auto-insights (Paid, event-derived) ─
+    if _paid:
+        _intel = _league_intel(_gender)
+        if _intel:
+            st.markdown("<div class='lab-hdr'>What the data noticed</div>",
+                        unsafe_allow_html=True)
+            st.caption("Auto-mined from the tracked play-by-play — the biggest "
+                       "signals across the league, gated by sample size.")
+            _ic = st.columns(2)
+            for _i, (_z, _nm, _txt, _met, _n) in enumerate(_intel):
+                _ic[_i % 2].markdown(
+                    f"<div class='gloss-card' style='border-left-color:var(--accent)'>"
+                    f"<b>{_nm}</b> <span class='badge'>{_met}</span> "
+                    f"<span style='color:var(--subtext);font-size:10px'>n={_n}</span>"
+                    f"<div style='margin-top:3px;font-size:13px'>{_txt}</div></div>",
+                    unsafe_allow_html=True)
+
     with st.expander("🔎  Search players & teams"):
         q = st.text_input("Search by name", placeholder="player or team…",
                           label_visibility="collapsed").strip().lower()

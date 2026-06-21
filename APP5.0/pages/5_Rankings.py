@@ -46,6 +46,10 @@ import helpers.predictor as PRED
 import helpers.team_analytics as TA
 import helpers.stats as S
 import helpers.league_analytics as LA
+import helpers.player_ratings as PR
+import helpers.insights as INS
+import helpers.playtypes as PT
+import helpers.wpa as WPA
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 
@@ -1496,6 +1500,32 @@ with tab_chart:
         _fx_chart()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _league_player_edge(g):
+    """League-wide PLAYER leaderboards in the tracked-edge metrics: shot-makers
+    (points over expected), force-to-off-hand gaps, and defensive win-impact."""
+    table = PR.player_stat_table(gender=g, min_games=2)
+    gids = PT._tracked_game_ids(g)
+    ev = S.fetch_events(gids) if gids else []
+    try:
+        sw = WPA.season_wpa(g, mode="possession")
+    except Exception:
+        sw = {}
+    poe = sorted(((r["PPS"] - r["xPPS"], r["name"], r.get("team", ""), r.get("FGA"))
+                  for r in table.values()
+                  if r.get("PPS") is not None and r.get("xPPS") is not None
+                  and (r.get("FGA") or 0) >= 20), key=lambda t: -t[0])
+    hand = sorted(((r["Dom_FG%"] - r["Weak_FG%"], r["name"], r.get("team", ""),
+                    r["Dom_FG%"], r["Weak_FG%"]) for r in table.values()
+                   if r.get("Dom_FG%") is not None and r.get("Weak_FG%") is not None
+                   and (r.get("Dom_FGA") or 0) >= 6 and (r.get("Weak_FGA") or 0) >= 6),
+                  key=lambda t: -t[0])
+    dwpa = sorted(((v.get("def_wpa") or 0, v.get("name"), v.get("team", ""),
+                    v.get("games")) for v in sw.values()
+                   if (v.get("games") or 0) >= 4), key=lambda t: -t[0])
+    return poe[:12], hand[:12], dwpa[:12]
+
+
 @st.fragment
 def _fx_evr():
     st.caption(
@@ -1508,9 +1538,54 @@ def _fx_evr():
     pteams = pack["teams"]
     sv = list(scored.values())
 
-    lab_land, lab_tier, lab_pyth, lab_mo, lab_net = st.tabs(
+    lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl = st.tabs(
         ["Landscape", "Power tiers", "Pythagoras & luck",
-         "Momentum", "Win network"])
+         "Momentum", "Win network", "Player edge"])
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  PLAYER EDGE — league-wide player leaders in the tracked-edge metrics
+    # ──────────────────────────────────────────────────────────────────────
+    with lab_pl:
+        st.caption("League-wide player leaders in the **tracked-edge** reads — "
+                   "shot-making over expected, who to force off their hand, and "
+                   "who creates the most defensive win value. Gated by sample.")
+        _poe, _hand, _dwpa = _league_player_edge(gender)
+        pe1, pe2, pe3 = st.columns(3)
+        with pe1:
+            st.markdown("<div class='lab-hdr'>Shot-makers</div>",
+                        unsafe_allow_html=True)
+            st.caption("Points/shot over expected (FGA ≥ 20)")
+            if _poe:
+                st.dataframe(pd.DataFrame([
+                    {"Player": n, "Team": t, "+pts/shot": round(v, 2), "FGA": f}
+                    for v, n, t, f in _poe]), hide_index=True, width="stretch",
+                    column_config={"+pts/shot":
+                                   st.column_config.NumberColumn(format="%+.2f")})
+            else:
+                st.caption("Not enough tracked shot volume yet.")
+        with pe2:
+            st.markdown("<div class='lab-hdr'>Force off-hand</div>",
+                        unsafe_allow_html=True)
+            st.caption("Strong − weak side FG% gap (6+ each)")
+            if _hand:
+                st.dataframe(pd.DataFrame([
+                    {"Player": n, "Strong%": round(d), "Weak%": round(w),
+                     "Gap": round(g)} for g, n, t, d, w in _hand]),
+                    hide_index=True, width="stretch")
+            else:
+                st.caption("Needs tap-located shots on both sides.")
+        with pe3:
+            st.markdown("<div class='lab-hdr'>Defensive win value</div>",
+                        unsafe_allow_html=True)
+            st.caption("Def WPA — wins created on defense (4+ GP)")
+            if _dwpa:
+                st.dataframe(pd.DataFrame([
+                    {"Player": n, "Team": t, "Def WPA": round(v, 2), "GP": g}
+                    for v, n, t, g in _dwpa]), hide_index=True, width="stretch",
+                    column_config={"Def WPA":
+                                   st.column_config.NumberColumn(format="%+.2f")})
+            else:
+                st.caption("Needs more tracked games.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  LANDSCAPE

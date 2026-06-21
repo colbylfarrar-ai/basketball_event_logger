@@ -623,6 +623,12 @@ def _league_pps_located(g):
             if shots else None)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _shot_model(g):
+    """League distance×value make-rate model for points-over-expected heat."""
+    return S.distance_make_model(events=S.fetch_events(_gender_tracked_ids(g)))
+
+
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
 def _rapm(g):
     """League-wide two-way RAPM over the gender's tracked games (holds teammates
@@ -1323,6 +1329,14 @@ with tab_charts:
                 st.caption("Hexagon size = attempts, color = points per shot "
                            "vs league average. Dots are individual shots — "
                            "green make, red ✕ miss.")
+                # points-over-expected heat — shot QUALITY, not just makes
+                _pxf, _pxn = _shot_hexbin(
+                    _td_shots, title="Points over expected — shot quality",
+                    model=_shot_model(gender), mode="poe")
+                st.plotly_chart(_pxf, width="stretch", key="sh_poe")
+                st.caption("Points over expected — **green** hexes beat the league "
+                           "make-rate for that spot (good shots being made), **red** "
+                           "are below. Separates shot *quality* from shot volume.")
                 _td_db = S.distance_buckets(_td_shots)
                 if _td_db:
                     st.caption("By length — " + S.distance_buckets_caption(_td_db))

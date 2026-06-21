@@ -78,6 +78,7 @@ import helpers.dashboard.overview as DOVER
 import helpers.dashboard.players_tab as DPLAY
 import helpers.dashboard.sched as DSCHED
 import helpers.dashboard.scout_tab as DSCOUT
+import helpers.dashboard.insights_tab as DINS
 import helpers.dashboard.profile_tab as DPROF
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
@@ -843,10 +844,10 @@ def _matchup_grid(g, tid, _ids):
 #       rendered BELOW at module level — the sub-tab objects are module globals)
 #    tab_gloss   → Glossary
 # ══════════════════════════════════════════════════════════════════════════════
-(tab_over, tab_scout, tab_players, tab_prof, tab_sched, tab_charts,
+(tab_over, tab_scout, tab_insights, tab_players, tab_prof, tab_sched, tab_charts,
  tab_lab, tab_gloss) = st.tabs(
-    ["Overview", "Scout", "Players", "Player Profile", "Schedule", "Charts",
-     "Lab", "Glossary"])
+    ["Overview", "Scout", "Insights", "Players", "Player Profile", "Schedule",
+     "Charts", "Lab", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3578,6 +3579,14 @@ _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                              zone_pair_bars=_zone_pair_bars)
 with tab_scout:
     DSCOUT.render(_scout_ctx)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB — INSIGHTS (the scout that reads itself, scoped to this team)
+# ══════════════════════════════════════════════════════════════════════════════
+_insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
+                                has_tracked=has_tracked)
+with tab_insights:
+    DINS.render(_insights_ctx)
 
 
 @st.fragment

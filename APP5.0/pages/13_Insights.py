@@ -29,6 +29,7 @@ import helpers.player_ratings as PR
 import helpers.stats as S
 import helpers.insights as IN
 import helpers.playtypes as PT
+import helpers.wpa as WPA
 import helpers.cards as C
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
@@ -55,7 +56,12 @@ def _bundle(g):
     events = S.fetch_events(gids) if gids else []
     feed = IN.build_feed(table, events, top=3) if table else {}
     roles = PT.player_role_splits(events=events) if events else {}
-    return {"table": table, "feed": feed, "roles": roles, "n_events": len(events)}
+    try:
+        impact = WPA.season_wpa(g, mode="possession")
+    except Exception:
+        impact = {}
+    return {"table": table, "feed": feed, "roles": roles, "impact": impact,
+            "n_events": len(events)}
 
 
 with st.spinner("Reading the game…"):
@@ -76,8 +82,9 @@ def _b(t):
     doesn't process markdown inside an HTML block)."""
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
 
-tab_scout, tab_quality, tab_board, tab_roles = st.tabs(
-    ["🔎 Auto-Scout", "🎯 Shot Quality", "🧭 Scouting Boards", "⚙️ Roles & Sets"])
+tab_scout, tab_quality, tab_board, tab_impact, tab_roles = st.tabs(
+    ["🔎 Auto-Scout", "🎯 Shot Quality", "🧭 Scouting Boards", "🛡️ Win Impact",
+     "⚙️ Roles & Sets"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  AUTO-SCOUT — the feed
@@ -259,6 +266,48 @@ with tab_board:
                 f"n={n}</span></span>"
                 f"<span style='color:{clr}'>{cliff:+.0f} · {tag}</span></div>",
                 unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  WIN IMPACT — possession-mode WPA (who won games on DEFENSE)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_impact:
+    st.caption("Win Probability Added in **possession mode** — the only metric "
+               "that values steals, stops and blocks in WIN terms. **Def WPA** = "
+               "wins created on defense; **Clutch** weights high-leverage moments. "
+               "Filtered to players with real minutes so two-game cameos don't top "
+               "the board.")
+    sw = D.get("impact") or {}
+    irows = [{"pid": p, **v} for p, v in sw.items()
+             if (v.get("games") or 0) >= 4 and p in table]
+    if not irows:
+        empty_state("Not enough tracked games yet",
+                    "Win-impact needs several tracked games to separate signal "
+                    "from noise.", icon="🛡️")
+    else:
+        irows.sort(key=lambda r: -(r.get("def_wpa") or 0))
+        top = irows[0]
+        st.markdown(
+            f"**{top['name']}** won the most games on **defense** — "
+            f"**{top.get('def_wpa') or 0:+.2f} Def WPA** across "
+            f"{top.get('games')} games (steals, stops & blocks in win terms).")
+        idf = pd.DataFrame([{
+            "Player": r["name"], "Team": r.get("team", ""), "GP": r.get("games"),
+            "Def WPA": round(r.get("def_wpa") or 0, 2),
+            "Off WPA": round(r.get("off_wpa") or 0, 2),
+            "Clutch WPA": round(r.get("clutch_wpa") or 0, 2),
+            "Total / game": round(r.get("wpa_per_game") or 0, 3),
+        } for r in irows[:20]])
+        st.dataframe(
+            idf, hide_index=True, width="stretch",
+            column_config={
+                "Def WPA": st.column_config.NumberColumn(format="%+.2f"),
+                "Off WPA": st.column_config.NumberColumn(format="%+.2f"),
+                "Clutch WPA": st.column_config.NumberColumn(format="%+.2f"),
+                "Total / game": st.column_config.NumberColumn(format="%+.3f"),
+            })
+        st.caption("Sorted by defensive win value. Possession-mode WPA is novel "
+                   "for a HS coach — it credits the plays box scores never reward.")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  ROLES & SETS — PnR ball-handler vs roll man (lights up with play_type tags)

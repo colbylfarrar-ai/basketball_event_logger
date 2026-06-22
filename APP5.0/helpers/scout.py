@@ -686,16 +686,24 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             hd = p.get("hand")
             hand_html = ""
             if hd:
-                _cue = f" ▶ {hd['cue']}" if hd.get("cue") else ""
                 hand_html = ("<div class='brk'>Hand side: " + e(
                     f"Dom {hd['dom_pct'] * 100:.0f}% ({hd['dom_fga']}) · "
-                    f"Weak {hd['weak_pct'] * 100:.0f}% ({hd['weak_fga']}){_cue}") + "</div>")
+                    f"Weak {hd['weak_pct'] * 100:.0f}% ({hd['weak_fga']})") + "</div>")
             sp = p.get("space")
             space_html = ""
             if sp and sp.get("cue"):
                 space_html = ("<div class='brk'>Contest: " + e(
-                    f"{sp['cliff']:+d} open vs guarded ({sp['n']}) ▶ {sp['cue']}")
-                    + "</div>")
+                    f"{sp['cliff']:+d} open vs guarded ({sp['n']})") + "</div>")
+            # tactical cue tag (force-hand / space dependence) — the actionable
+            # directives, surfaced prominently to match the on-screen scout tab's
+            # ✋ badge (previously only buried at the tail of the detail lines).
+            _cues = []
+            if hd and hd.get("cue"):
+                _cues.append(hd["cue"])
+            if sp and sp.get("cue"):
+                _cues.append(sp["cue"])
+            cue_html = (f"<div class='pnote'>✋ {e(' · '.join(_cues))}</div>"
+                        if _cues else "")
             note = (f"<div class='pnote'>▶ {e(p['note'])}</div>"
                     if p.get("note") else "")
             shots = p.get("shots") or []
@@ -703,7 +711,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
             cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{play}"
-                         f"{hand_html}{space_html}{note}{mini}</td>")
+                         f"{hand_html}{space_html}{cue_html}{note}{mini}</td>")
         # two cards per row
         rows = ""
         for i in range(0, len(cards), 2):

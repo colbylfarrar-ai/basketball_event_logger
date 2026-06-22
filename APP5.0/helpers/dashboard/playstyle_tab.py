@@ -350,19 +350,36 @@ def render(ctx):
             v = roles[k]
             sub = [("Handler", "handler"), ("Roller", "roller"), ("All", "all")]
             sub = [(lbl, rk) for lbl, rk in sub if v[rk]["poss"] > 0]
-            rfig = go.Figure()
-            for metric, mkey, scale in [("PPP", "PPP", 1), ("eFG%", "eFG", 100),
-                                        ("3PA%", "3PA_rate", 100)]:
-                rfig.add_trace(go.Bar(
-                    name=metric, x=[lbl for lbl, _ in sub],
-                    y=[round(v[rk][mkey] * scale, 2) for _, rk in sub],
-                    marker_line_width=0))
-            rfig.update_layout(barmode="group")
-            style_fig(rfig, 280)
-            st.plotly_chart(rfig, width="stretch", key=f"ps_role_{k}")
-            st.caption(f"**{_PTL.get(k, k)}** — "
-                       + " · ".join(f"{lbl} {v[rk]['poss']}p {v[rk]['PPP']:.2f}PPP"
-                                    for lbl, rk in sub))
+            xs = [lbl for lbl, _ in sub]
+            st.markdown(f"**{_PTL.get(k, k)}**")
+            # PPP (~0-1.5) and the percentages (0-100) live on SEPARATE charts so
+            # the PPP bars aren't crushed flat next to a 50% bar on one axis.
+            rc1, rc2 = st.columns(2)
+            with rc1:
+                pfig = go.Figure(go.Bar(
+                    x=xs, y=[round(v[rk]["PPP"], 2) for _, rk in sub],
+                    marker_color=ctx.ACCENT, marker_line_width=0,
+                    text=[f"{v[rk]['PPP']:.2f}" for _, rk in sub],
+                    textposition="outside"))
+                pfig.update_yaxes(title="PPP")
+                style_fig(pfig, 260)
+                st.plotly_chart(pfig, width="stretch", key=f"ps_role_ppp_{k}")
+            with rc2:
+                sfig = go.Figure()
+                for metric, mkey, color in [("eFG%", "eFG", ctx.BLUE),
+                                            ("3PA%", "3PA_rate", ctx.PURPLE)]:
+                    sfig.add_trace(go.Bar(
+                        name=metric, x=xs,
+                        y=[round(v[rk][mkey] * 100, 0) for _, rk in sub],
+                        marker_color=color, marker_line_width=0))
+                sfig.update_layout(barmode="group")
+                sfig.update_yaxes(title="%", range=[0, 100])
+                style_fig(sfig, 260)
+                st.plotly_chart(sfig, width="stretch", key=f"ps_role_pct_{k}")
+            st.caption(" · ".join(
+                f"{lbl} {v[rk]['poss']}p · {v[rk]['PPP']:.2f} PPP · "
+                f"{v[rk]['eFG'] * 100:.0f}% eFG · {v[rk]['3PA_rate'] * 100:.0f}% 3PA"
+                for lbl, rk in sub))
 
     # ══ §H — hand-off & inbounds feeder hubs ═════════════════════════════════
     feeders = ctx.feeders(g, tid, _off) or {}

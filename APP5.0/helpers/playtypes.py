@@ -231,7 +231,8 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
-    agg = {k: {"FGA": 0, "FGM": 0, "PTS": 0} for k, _ in NAMED_PLAY_TYPES}
+    agg = {k: {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0}
+           for k, _ in NAMED_PLAY_TYPES}
     tagged = untagged = 0
     for e in events:
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
@@ -247,19 +248,30 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
         tagged += 1
         cell = agg[pt]
         cell["FGA"] += 1
+        is3 = e["shot_type"] == 3
+        if is3:
+            cell["FG3A"] += 1
         if e["shot_result"] == "make":
             cell["FGM"] += 1
-            cell["PTS"] += 3 if e["shot_type"] == 3 else 2
+            cell["PTS"] += 3 if is3 else 2
+            if is3:
+                cell["FG3M"] += 1
     total_fga = sum(c["FGA"] for c in agg.values())
     rows = []
     for key, label in NAMED_PLAY_TYPES:
         c = agg[key]
         if c["FGA"] == 0:
             continue
+        _2pa, _2pm = c["FGA"] - c["FG3A"], c["FGM"] - c["FG3M"]
         rows.append({
             "key": key, "label": label, "poss": c["FGA"], "FGM": c["FGM"],
             "PPP": _safe(c["PTS"], c["FGA"]), "FG%": _safe(c["FGM"], c["FGA"]),
-            "share": _safe(c["FGA"], total_fga),
+            # eFG weights 3s; SCE = FG points / max possible (rewards shot
+            # selection AND making); 2P%/3P% split the mix.
+            "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
+            "SCE": _safe(c["PTS"], _2pa * 2 + c["FG3A"] * 3),
+            "3P%": _safe(c["FG3M"], c["FG3A"]), "2P%": _safe(_2pm, _2pa),
+            "3PA": c["FG3A"], "share": _safe(c["FGA"], total_fga),
         })
     rows.sort(key=lambda r: r["PPP"], reverse=True)
     return {"rows": rows, "total_tagged": tagged, "untagged": untagged}
@@ -288,14 +300,23 @@ def player_named_playtypes(game_ids=None, events=None):
         if pt not in _NAMED_KEYS:
             pt = "other"
         cell = agg.setdefault(e["primary_player_id"], {}).setdefault(
-            pt, {"FGA": 0, "FGM": 0, "PTS": 0})
+            pt, {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0})
         cell["FGA"] += 1
+        is3 = e["shot_type"] == 3
+        if is3:
+            cell["FG3A"] += 1
         if e["shot_result"] == "make":
             cell["FGM"] += 1
-            cell["PTS"] += 3 if e["shot_type"] == 3 else 2
+            cell["PTS"] += 3 if is3 else 2
+            if is3:
+                cell["FG3M"] += 1
     return {pid: {k: {"poss": c["FGA"], "FGM": c["FGM"],
                       "PPP": _safe(c["PTS"], c["FGA"]),
-                      "FG%": _safe(c["FGM"], c["FGA"])}
+                      "FG%": _safe(c["FGM"], c["FGA"]),
+                      "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
+                      "SCE": _safe(c["PTS"],
+                                   (c["FGA"] - c["FG3A"]) * 2 + c["FG3A"] * 3),
+                      "3P%": _safe(c["FG3M"], c["FG3A"])}
                   for k, c in d.items()}
             for pid, d in agg.items()}
 
@@ -600,6 +621,7 @@ def _profile_fin(p, key=None, label=None):
         "key": key, "label": label, "poss": fga, "FGM": p["FGM"],
         "PPP": _safe(p["PTS"], fga), "FG%": _safe(p["FGM"], fga),
         "eFG": _safe(p["FGM"] + 0.5 * p["FG3M"], fga),
+        "SCE": _safe(p["PTS"], (fga - p["FG3A"]) * 2 + p["FG3A"] * 3),
         "3PA_rate": _safe(p["FG3A"], fga),
         "rim_rate": _safe(p["rim"], fga), "mid_rate": _safe(p["mid"], fga),
         "ast_rate": _safe(p["ast"], fga), "open_rate": _safe(p["open"], fga),

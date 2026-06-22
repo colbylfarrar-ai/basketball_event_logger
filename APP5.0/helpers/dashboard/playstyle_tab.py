@@ -37,6 +37,11 @@ from helpers.ui import empty_state, seg, style_fig
 _PTL = dict(PT.NAMED_PLAY_TYPES)
 _ZL = TA.ZONE_LABELS
 _ZONES = ("LC", "LW", "C", "RW", "RC")
+# Categorical palette for the distribution pie (identity colour per set — kept
+# separate from the tier colours, which encode performance not which set it is).
+_PALETTE = ["#58a6ff", "#3fb950", "#bc8cff", "#ff5db1", "#f0a500", "#e74c3c",
+            "#2dd4bf", "#f97583", "#a3e635", "#fbbf24", "#22d3ee", "#c084fc",
+            "#7ee787"]
 
 
 # ── small shared helpers ─────────────────────────────────────────────────────
@@ -217,12 +222,43 @@ def render(ctx):
         st.dataframe(pd.DataFrame([{
             "Play call": r["label"], "Poss": r["poss"],
             "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
+            "3P%": round(r.get("3P%", 0) * 100, 0),
+            "eFG%": round(r.get("eFG", 0) * 100, 0),
+            "SCE": round(r.get("SCE", 0) * 100, 0),
             "Share": round(r["share"] * 100, 0), "Tier": r["tier"],
         } for r in nrows]), hide_index=True, width="stretch", column_config={
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
             "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+            "3P%": st.column_config.NumberColumn("3P%", format="%.0f%%"),
+            "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
+            "SCE": st.column_config.NumberColumn("SCE", format="%.0f%%"),
             "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
         }, key="ps_named_tbl")
+        st.caption("PPP = points/possession · eFG% weights 3s · **SCE** = scoring "
+                   "efficiency (FG points ÷ max possible — rewards shot selection "
+                   "AND making) · Share = % of tagged shots.")
+
+        # ── play-call distribution pie ──────────────────────────────────────
+        st.markdown("<div class='pl-hdr'>Play-call distribution</div>",
+                    unsafe_allow_html=True)
+        _ord = sorted(nrows, key=lambda r: -r["poss"])
+        pie = go.Figure(go.Pie(
+            labels=[r["label"] for r in _ord],
+            values=[r["poss"] for r in _ord],
+            marker=dict(colors=[_PALETTE[i % len(_PALETTE)]
+                                for i in range(len(_ord))],
+                        line=dict(color="#0d1117", width=2)),
+            textinfo="label+percent", sort=False, hole=0.55,
+            hovertemplate="%{label}: %{value} poss · %{percent}<extra></extra>"))
+        pie.update_layout(
+            showlegend=False, height=380, paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=10, r=10, t=20, b=10),
+            annotations=[dict(text=f"<b>{nv.get('total_tagged', 0)}</b><br>tagged",
+                              x=0.5, y=0.5, showarrow=False,
+                              font=dict(size=15, color="#c9d1d9"))])
+        st.plotly_chart(pie, width="stretch", key="ps_named_pie")
+        st.caption(f"How the {'offense' if _off else 'defense'} breaks down by "
+                   "tagged set call (by possessions).")
     else:
         st.caption("No tagged set calls yet for this side.")
 
@@ -281,6 +317,8 @@ def render(ctx):
                     unsafe_allow_html=True)
         fdf = pd.DataFrame([{
             "Set": p["label"], "Poss": p["poss"], "PPP": round(p["PPP"], 2),
+            "eFG%": round(p.get("eFG", 0) * 100, 0),
+            "SCE": round(p.get("SCE", 0) * 100, 0),
             "3PA%": round(p["3PA_rate"] * 100, 0),
             "Rim%": round(p["rim_rate"] * 100, 0),
             "Assisted%": round(p["ast_rate"] * 100, 0),
@@ -290,15 +328,17 @@ def render(ctx):
         } for p in sorted(prof.values(), key=lambda p: -p["poss"])])
         st.dataframe(fdf, hide_index=True, width="stretch", column_config={
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+            "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
+            "SCE": st.column_config.NumberColumn("SCE", format="%.0f%%"),
             "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
             "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
             "Assisted%": st.column_config.NumberColumn("Assisted%", format="%.0f%%"),
             "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
             "Avg s": st.column_config.NumberColumn("Avg s", format="%.1f"),
         }, key="ps_set_fingerprint")
-        st.caption("3PA% / Rim% = shot-type share · Assisted% = off a pass · "
-                   "Open% = uncontested · Where = the zone the set most lives in · "
-                   "Avg s = possession length.")
+        st.caption("eFG% weights 3s · SCE = scoring efficiency · 3PA% / Rim% = "
+                   "shot-type share · Assisted% = off a pass · Open% = uncontested "
+                   "· Where = the zone the set most lives in · Avg s = poss length.")
 
     # ══ §F — per-set shot diet + zone heat + length ══════════════════════════
     if prof and shots:
@@ -503,7 +543,7 @@ def render(ctx):
         if pr_sets:
             for k, c in sorted(pr_sets.items(), key=lambda kv: -kv[1]["poss"]):
                 val = (f"{c['PPP']:.2f} PPP · {c['FG%'] * 100:.0f}% FG · "
-                       f"{c['poss']} poss")
+                       f"{c.get('SCE', 0) * 100:.0f}% SCE · {c['poss']} poss")
                 st.markdown(_pctile_or_thin(_PTL.get(k, k), val, c.get("pct")),
                             unsafe_allow_html=True)
                 how = _profile_howline(pr_prof.get(k))

@@ -80,6 +80,7 @@ import helpers.dashboard.sched as DSCHED
 import helpers.dashboard.scout_tab as DSCOUT
 import helpers.dashboard.insights_tab as DINS
 import helpers.dashboard.profile_tab as DPROF
+import helpers.dashboard.playstyle_tab as DPLAYSTYLE
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
 GOOD = "#3fb950"
@@ -837,6 +838,20 @@ def _set_profiles_all(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _team_role_splits_view(g, tid, offense):
+    """Team handler-vs-roller / roll-vs-pop split per pnr/dho/offscreen set.
+    team_role_splits has no gender= kwarg; it filters events by team_id, and a
+    team belongs to one gender, so the full-sample events are safe."""
+    return PT.team_role_splits(tid, events=S.fetch_events(), offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _named_leaders_view(g, offense):
+    """League leaderboard per named set call — where this team ranks vs the pool."""
+    return PT.league_named_playtype_leaders(gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _scoring_buckets(_ids):
     """Scoring buckets (paint/2nd-chance/off-TO/fast-break/bench) over the games."""
     return GF.scoring_buckets(list(_ids))
@@ -958,13 +973,13 @@ with tab_sched:
 # before tab_charts so the ch_* objects exist for every with-block below.
 with tab_lab:
     st.caption("Analyst tools — deeper dives beyond the game-prep core.")
-    (ch_adv, ch_bld, ch_play, ch_impact) = st.tabs(
-        ["Advanced", "Build", "Play Types", "Impact Lab"])
+    (ch_adv, ch_bld, ch_impact) = st.tabs(
+        ["Advanced", "Build", "Impact Lab"])
 
 with tab_charts:
-    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt) = st.tabs(
+    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps) = st.tabs(
         ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
-         "Quarters"])
+         "Quarters", "Play Style"])
 
     # ───────────────────────────────────────────── PLAY TYPES ──────────────
     # fragment: the Offense/Defense radio lives INSIDE, so flipping it reruns
@@ -1199,8 +1214,25 @@ with tab_charts:
                                 "FG%", format="%.0f%%"),
                         }, key=f"pt_feeders_{_fk}")
 
-    with ch_play:
-        _fx_chplay()
+    # ── Play Style super-tab (the explicit set-call deep dive) ──────────────
+    # Modular renderer in helpers/dashboard/playstyle_tab.py; the page passes
+    # plain values + its own cached wrappers so caching stays here and the module
+    # is testable in isolation. Self-gates on has_tracked internally (it is its
+    # own @st.fragment), so it is NOT in the empty-state loop below.
+    with ch_ps:
+        _ps_ctx = SimpleNamespace(
+            team_id=team_id, gender=gender, has_tracked=has_tracked,
+            players=players, tracked_ids=tuple(bundle["tracked_ids"]),
+            ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
+            PURPLE=PURPLE, PINK=PINK, pctf=_pctf,
+            located_team=_located_team,
+            named_view=_named_playtype_view, playtype_view=_playtype_view,
+            set_profiles=_set_profiles_view, feeders=_feeders_view,
+            role_splits=_team_role_splits_view,
+            league_leaders=_named_leaders_view,
+            league_pps=_league_pps_located, shot_model=_shot_model,
+            named_sets_all=_named_sets_all, set_profiles_all=_set_profiles_all)
+        DPLAYSTYLE.render(_ps_ctx)
 
     if not has_tracked:
         for _ch in (ch_sc, ch_sh, ch_rb, ch_df, ch_tr):

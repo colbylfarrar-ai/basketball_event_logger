@@ -172,6 +172,61 @@ def shot_map(shots, title="Shot chart", height=470, show_misses=True):
     return fig, len(shots)
 
 
+# Categorical palette for color-by-group courts (cycled in group order).
+_GROUP_PALETTE = ["#58a6ff", "#3fb950", "#bc8cff", "#ff5db1", "#f0a500",
+                  "#e74c3c", "#2dd4bf", "#f97583", "#a3e635", "#fbbf24",
+                  "#22d3ee", "#c084fc", "#7ee787"]
+
+
+def shot_map_grouped(shots, group_key="play_type", labels=None, palette=None,
+                     title="Shot chart by play style", height=470,
+                     show_misses=True, marker_size=9):
+    """Color-by-group half-court map: each group value (e.g. play_type) gets its
+    own colour; makes = filled circle, misses = open circle of the SAME colour.
+    Reuses _draw_court / _court_layout / _shot_hover so geometry + theme never
+    diverge from shot_map(). Untagged (group value None) renders grey as
+    'Untagged'. Returns ``(figure, n_shots)`` (0 = nothing to plot)."""
+    fig = go.Figure()
+    _draw_court(fig)
+    labels = labels or {}
+    palette = palette or _GROUP_PALETTE
+    groups = {}
+    for s in shots:
+        groups.setdefault(s.get(group_key), []).append(s)
+    # biggest groups first; untagged always last
+    ordered = sorted(groups.items(), key=lambda kv: (kv[0] is None, -len(kv[1])))
+    ci = 0
+    for gval, gshots in ordered:
+        if gval is None:
+            color, name = "rgba(139,148,158,0.55)", "Untagged"
+        else:
+            color, name = palette[ci % len(palette)], labels.get(gval, str(gval))
+            ci += 1
+        makes = [s for s in gshots if s.get("make")]
+        misses = [s for s in gshots if not s.get("make")]
+        if makes:
+            fig.add_trace(go.Scatter(
+                x=[s["x"] for s in makes], y=[s["y"] for s in makes],
+                mode="markers", name=name, legendgroup=name,
+                marker=dict(symbol="circle", size=marker_size, color=color,
+                            line=dict(width=1, color="rgba(255,255,255,0.55)")),
+                hovertext=[_shot_hover(s) for s in makes], hoverinfo="text"))
+        if show_misses and misses:
+            fig.add_trace(go.Scatter(
+                x=[s["x"] for s in misses], y=[s["y"] for s in misses],
+                mode="markers", name=name, legendgroup=name,
+                showlegend=not makes,        # one legend entry per group
+                marker=dict(symbol="circle-open", size=marker_size, color=color,
+                            line=dict(width=1.5, color=color)),
+                hovertext=[_shot_hover(s) for s in misses], hoverinfo="text"))
+    _court_layout(fig, title, height)
+    fig.update_layout(showlegend=True,
+                      legend=dict(orientation="h", y=1.02, x=0,
+                                  bgcolor="rgba(0,0,0,0)",
+                                  font=dict(size=10, color="#c9d1d9")))
+    return fig, len(shots)
+
+
 # Zone-leader bubble spots: midpoint of the zone's 2PT and 3PT bubble positions.
 _LEADER_XY = {z: ((ZONE_XY[(z, 2)][0] + ZONE_XY[(z, 3)][0]) / 2,
                   (ZONE_XY[(z, 2)][1] + ZONE_XY[(z, 3)][1]) / 2)

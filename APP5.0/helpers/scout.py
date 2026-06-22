@@ -677,7 +677,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             # share + efficiency (PPP), e.g. "Iso 38% (1.21 PPP) · PnR 24% (0.88)"
             pm = p.get("playmix")
             play = ""
-            if _show("play_calls") and pm:
+            if _show("player_plays") and pm:
                 _goto = (f" ▶ go-to: {p['goto']}" if p.get("goto") else "")
                 play = ("<div class='brk'>Plays: " + e(" · ".join(
                     f"{lbl} {pct:.0f}% ({ppp:.2f} PPP)"

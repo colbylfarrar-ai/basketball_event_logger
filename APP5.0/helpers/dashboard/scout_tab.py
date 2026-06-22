@@ -40,7 +40,8 @@ SCOUT_SECTIONS = [
     ("auto_report", "Auto scouting report"),
     ("efficiency", "Efficiency summary"),
     ("personnel", "Personnel (player breakdown)"),
-    ("play_calls", "Play calls — how they get their shots"),
+    ("player_plays", "Player play-type mix (on personnel cards)"),
+    ("play_calls", "Play calls — how they get their shots (team block)"),
     ("shot_chart", "Shot chart"),
     ("zones", "Shooting by zone"),
     ("poss_length", "Scoring by possession length"),
@@ -390,7 +391,7 @@ def render(ctx):
             # share + efficiency, e.g. "Iso 38% (1.21 PPP) · PnR 24% (0.88)"
             pm = p.get("playmix")
             play_html = ""
-            if _show("play_calls") and pm:
+            if _show("player_plays") and pm:
                 _pl = " · ".join(f"{lbl} {pct:.0f}% ({ppp:.2f} PPP)"
                                  for lbl, pct, ppp, _fg in pm[:4])
                 _goto = (f" · go-to: {p['goto']}" if p.get("goto") else "")

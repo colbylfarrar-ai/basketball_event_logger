@@ -19,6 +19,7 @@ import helpers.badges as BG
 import helpers.stats as S
 import helpers.court_png as CP
 import helpers.playtypes as PT
+import helpers.defenses as DEF
 
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
@@ -334,6 +335,34 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
                     if _top else None),
         })
 
+    # ── DEFENSE: the schemes THEY run + how THEY attack a defense ─────────────
+    # offense=False -> the defenses this opponent RUNS (PPP allowed): the scout
+    # headline "what D do they play". offense=True -> how they ATTACK each scheme
+    # thrown at them (PPP scored): drives YOUR defensive game plan. Plus the
+    # play_type × defense cross-tab the user asked for ("their PnR vs a zone").
+    defenses_run = DEF.team_defenses(team_id, events=ev, offense=False)
+    defenses_faced = DEF.team_defenses(team_id, events=ev, offense=True)
+    defense_families = DEF.team_defense_families(team_id, events=ev, offense=False)
+    defense_cross = DEF.cross_play_defense(team_id, events=ev, offense=True)
+    # prose scout keys (gender-neutral, volume-gated, silent when sparse):
+    if defenses_run.get("total_tagged", 0) >= 12:
+        _drun = sorted(defenses_run.get("rows", []), key=lambda r: -r["poss"])
+        _dtop = _drun[0] if _drun else None
+        if _dtop and _dtop["share"] >= 0.4:
+            # "what they run" is YOUR offense's problem -> attack[]
+            attack.append(
+                f"They sit in {_dtop['label'].lower()} "
+                f"({_dtop['share'] * 100:.0f}% of tagged trips) — have your "
+                f"{_dtop['family']} offense ready.")
+    # a scheme THEY can't score against (high volume, low PPP) -> YOUR defense
+    _dfaced = [r for r in defenses_faced.get("rows", []) if r["poss"] >= 10]
+    if _dfaced:
+        _weak = min(_dfaced, key=lambda r: r["PPP"])
+        if _weak["PPP"] <= 0.85:
+            guard.append(
+                f"They stall against {_weak['label'].lower()} "
+                f"({_weak['PPP']:.2f} PPP on {_weak['poss']} poss) — show it.")
+
     # ── AUTO KEYS: high-volume + extreme set profile -> one prose scout key ────
     # Only fires when a set has real volume AND its profile is lopsided, so it
     # stays silent when sparse. Gender-neutral, no pronouns; rendered for free in
@@ -377,6 +406,8 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         "zones": zones, "zones_by_type": zones_by_type,
         "team_shots": team_shots, "play_calls": play_calls,
         "play_calls_def": play_calls_def,
+        "defenses_run": defenses_run, "defenses_faced": defenses_faced,
+        "defense_families": defense_families, "defense_cross": defense_cross,
         "set_profiles": set_profiles, "feeders": feeders, "handoff": handoff,
         # team-wide pid->name (covers feeder hubs / targets outside the top-N
         # personnel list) for the hand-off / inbounds hub note.
@@ -633,6 +664,60 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
                     "handed off &amp; shot) vs finisher (received &amp; shot) split, "
                     "and the hub who initiates it.</p>")
 
+    # ── DEFENSE: schemes they run + how they attack a D + play×D cross-tab ──
+    def_html = ""
+    if _show("defenses"):
+        drun = sc.get("defenses_run")
+        if drun and drun.get("rows"):
+            rows_dr = "".join(
+                f"<tr><td>{e(r['label'])}</td>"
+                f"<td class='n'>{r['share'] * 100:.0f}%</td>"
+                f"<td class='n'>{r['PPP']:.2f}</td>"
+                f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+                f"<td class='n'>{r['poss']}</td></tr>"
+                for r in drun["rows"])
+            def_html += (
+                "<h2>Defenses they run</h2><table><tr>"
+                "<th>Defense</th><th class='n'>Share</th><th class='n'>PPP allowed</th>"
+                f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_dr}</table>"
+                f"<p class='note'>The schemes this team plays on defense, over "
+                f"{drun['total_tagged']} tagged trips. Lower PPP allowed = the look "
+                "they trust; biggest share = what to prep your offense against.</p>")
+        dfaced = sc.get("defenses_faced")
+        if dfaced and dfaced.get("rows"):
+            rows_df = "".join(
+                f"<tr><td>{e(r['label'])}</td>"
+                f"<td class='n'>{r['share'] * 100:.0f}%</td>"
+                f"<td class='n'>{r['PPP']:.2f}</td>"
+                f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+                f"<td class='n'>{r['poss']}</td></tr>"
+                for r in dfaced["rows"])
+            def_html += (
+                "<h2>How they attack a defense</h2><table><tr>"
+                "<th>Defense faced</th><th class='n'>Share</th><th class='n'>PPP</th>"
+                f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_df}</table>"
+                "<p class='note'>How this team scores against each scheme thrown at "
+                "it. A low PPP on real volume = a defense to play against them.</p>")
+        cx = sc.get("defense_cross")
+        if cx and cx.get("plays") and cx.get("defenses"):
+            _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
+            _head = "".join(f"<th class='n'>{e(_dl.get(d, d))}</th>"
+                            for d in cx["defenses"])
+            _brows = []
+            for pk in cx["plays"]:
+                _tds = []
+                for dk in cx["defenses"]:
+                    c = _mx.get(pk, {}).get(dk)
+                    _tds.append(f"<td class='n'>{c['PPP']:.2f} ({c['poss']})</td>"
+                                if c and c["stable"] else "<td class='n'>—</td>")
+                _brows.append(f"<tr><td>{e(_pl.get(pk, pk))}</td>{''.join(_tds)}</tr>")
+            def_html += (
+                "<h2>Play type &times; defense — PPP they score</h2>"
+                f"<table><tr><th>Set</th>{_head}</tr>{''.join(_brows)}</table>"
+                "<p class='note'>PPP this team scores running each set vs each scheme "
+                "(cells with at least 4 possessions; blank = thin). The overlap that "
+                "says which defense to throw at which action.</p>")
+
     # ── team shot chart (inline SVG from tap-captured x/y) ──
     shot_html = ""
     team_shots = sc.get("team_shots") or []
@@ -830,6 +915,7 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 {eff_html}
 {report_html}
 {pc_html}
+{def_html}
 {shot_html}
 {pers_html}
 {three_html}

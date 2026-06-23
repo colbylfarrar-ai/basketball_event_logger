@@ -95,7 +95,8 @@ CREATE TABLE IF NOT EXISTS game_events (
     secondary_player_id INTEGER REFERENCES players(id),
     official_id         INTEGER REFERENCES officials(id),
     stolen_by_id        INTEGER REFERENCES players(id),
-    play_type           TEXT
+    play_type           TEXT,
+    defense             TEXT
 );
 
 -- "Assistant scorer" guest links: each row is one standing, revocable token (the

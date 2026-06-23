@@ -42,6 +42,7 @@ SCOUT_SECTIONS = [
     ("personnel", "Personnel (player breakdown)"),
     ("player_plays", "Player play-type mix (on personnel cards)"),
     ("play_calls", "Play calls — how they get their shots (team block)"),
+    ("defenses", "Defenses they run + play type × defense"),
     ("shot_chart", "Shot chart"),
     ("zones", "Shooting by zone"),
     ("poss_length", "Scoring by possession length"),
@@ -554,6 +555,66 @@ def render(ctx):
             st.caption("No play-call tags yet — tap an optional **Play type** "
                        "(Pick & roll, Iso, Post-up…) on shots in the Game Tracker "
                        "to scout how a team generates offense.")
+
+    # ── defenses they run + how they attack a defense + play × defense ───────
+    if _show("defenses"):
+        drun = sc.get("defenses_run")
+        dfaced = sc.get("defenses_faced")
+        cx = sc.get("defense_cross")
+        if (drun and drun.get("rows")) or (dfaced and dfaced.get("rows")) or \
+                (cx and cx.get("plays")):
+            import pandas as pd
+            st.markdown("<div class='lab-hdr'>Defenses they run</div>",
+                        unsafe_allow_html=True)
+            if drun and drun.get("rows"):
+                st.dataframe(pd.DataFrame([{
+                    "Defense": r["label"], "Share": r["share"] * 100,
+                    "PPP allowed": round(r["PPP"], 2), "FG%": r["FG%"] * 100,
+                    "Poss": r["poss"],
+                } for r in drun["rows"]]), hide_index=True, width="stretch",
+                    column_config={
+                        "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                        "PPP allowed": st.column_config.NumberColumn("PPP allowed", format="%.2f"),
+                        "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+                    })
+                st.caption(f"The schemes this team plays on D, over "
+                           f"{drun['total_tagged']} tagged trips. Biggest share = "
+                           "what to prep your offense against; lower PPP allowed = "
+                           "the look they trust.")
+            else:
+                st.caption("No defense tags yet — set the **Defense** in the Game "
+                           "Tracker (it's sticky) to scout what a team runs.")
+            if dfaced and dfaced.get("rows"):
+                st.markdown("<div class='lab-hdr'>How they attack a defense</div>",
+                            unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame([{
+                    "Defense faced": r["label"], "Share": r["share"] * 100,
+                    "PPP": round(r["PPP"], 2), "FG%": r["FG%"] * 100,
+                    "Poss": r["poss"],
+                } for r in dfaced["rows"]]), hide_index=True, width="stretch",
+                    column_config={
+                        "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                        "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                        "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+                    })
+                st.caption("How they score vs each scheme thrown at them — a low PPP "
+                           "on real volume = a defense to play against them.")
+            if cx and cx.get("plays") and cx.get("defenses"):
+                st.markdown("<div class='lab-hdr'>Play type &times; defense — PPP "
+                            "they score</div>", unsafe_allow_html=True)
+                _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
+                _grid = []
+                for pk in cx["plays"]:
+                    _r = {"Set": _pl.get(pk, pk)}
+                    for dk in cx["defenses"]:
+                        c = _mx.get(pk, {}).get(dk)
+                        _r[_dl.get(dk, dk)] = (round(c["PPP"], 2)
+                                               if c and c["stable"] else None)
+                    _grid.append(_r)
+                st.dataframe(pd.DataFrame(_grid), hide_index=True, width="stretch")
+                st.caption("PPP this team scores running each set vs each scheme "
+                           "(cells with ≥4 poss; blank = thin). Which defense to "
+                           "throw at which action.")
 
     # ── where they shoot from (real x/y chart when tap data exists) ──────────
     if _show("shot_chart"):

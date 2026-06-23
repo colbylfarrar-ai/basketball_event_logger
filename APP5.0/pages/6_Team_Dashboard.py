@@ -64,6 +64,7 @@ import helpers.wpa as WP
 import helpers.networks as NW
 import helpers.lineups as LU
 import helpers.playtypes as PT
+import helpers.defenses as DEF
 import helpers.matchups as MU
 import helpers.gameflow as GF
 import helpers.fouls as FL
@@ -81,6 +82,7 @@ import helpers.dashboard.scout_tab as DSCOUT
 import helpers.dashboard.insights_tab as DINS
 import helpers.dashboard.profile_tab as DPROF
 import helpers.dashboard.playstyle_tab as DPLAYSTYLE
+import helpers.dashboard.defense_tab as DDEFENSE
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
 GOOD = "#3fb950"
@@ -851,6 +853,49 @@ def _named_leaders_view(g, offense):
     return PT.league_named_playtype_leaders(gender=g, offense=offense)
 
 
+# ── DEFENSE-SCHEME views (helpers/defenses.py — the Defense super-tab) ────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_view(g, tid, offense):
+    """Per-scheme PPP for one team, each ranked vs the league pool."""
+    return DEF.team_defense_percentiles(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_families(g, tid, offense):
+    """Scheme rollup to families (man/zone/press) for one team."""
+    return DEF.team_defense_families(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_profiles(g, tid, offense):
+    """Per-scheme shot profile — what each defense gives up (3PA/rim/zone/open)."""
+    return DEF.team_defense_shot_profiles(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_cross(g, tid, offense):
+    """play_type × defense cross-tab — 'their PnR vs a 2-3 zone'."""
+    return DEF.cross_play_defense(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_tovs(g, tid, offense):
+    """Turnovers forced/committed per scheme (the press/trap disruption read)."""
+    return DEF.team_defense_turnovers(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_leaders(g, offense):
+    """League leaderboard per scheme — where this team ranks vs the pool."""
+    return DEF.league_defense_leaders(gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_players_faced(g):
+    """Per-player PPP vs each defense faced, ranked vs the league pool (card ctx)."""
+    return DEF.player_defenses_faced(gender=g)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _scoring_buckets(_ids):
     """Scoring buckets (paint/2nd-chance/off-TO/fast-break/bench) over the games."""
@@ -978,9 +1023,24 @@ with tab_lab:
         ["Advanced", "Build", "Impact Lab"])
 
 with tab_charts:
-    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps) = st.tabs(
+    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps, ch_dscheme) = st.tabs(
         ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
-         "Quarters", "Play Style"])
+         "Quarters", "Play Style", "Defense Scheme"])
+
+    # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
+    # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
+    # the page passes plain values + its own cached wrappers. Self-gates on
+    # has_tracked internally (own @st.fragment), so NOT in the empty-state loop.
+    with ch_dscheme:
+        _def_ctx = SimpleNamespace(
+            team_id=team_id, gender=gender, has_tracked=has_tracked,
+            players=players, ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD,
+            BAD=BAD, PURPLE=PURPLE, PINK=PINK,
+            def_view=_def_view, def_families=_def_families,
+            def_profiles=_def_profiles, cross_pd=_def_cross,
+            def_tovs=_def_tovs, def_leaders=_def_leaders,
+            def_players_faced=_def_players_faced)
+        DDEFENSE.render(_def_ctx)
 
     # ── Play Style super-tab (the explicit set-call deep dive) ──────────────
     # Modular renderer in helpers/dashboard/playstyle_tab.py; the page passes

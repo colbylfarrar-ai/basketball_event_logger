@@ -76,11 +76,11 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
       shot:       primary_player_id, shot_result, shot_x, shot_y,
                   shot_type, zone (both derived from x/y when present),
                   pass_from_id, shot_created_by_id, rebound_by_id,
-                  blocked_by_id, guarded_by_id
+                  blocked_by_id, guarded_by_id, play_type, defense
       free_throw: primary_player_id, shot_result, rebound_by_id
       foul:       primary_player_id (fouled), secondary_player_id (fouler),
-                  official_id
-      turnover:   primary_player_id, stolen_by_id
+                  official_id, defense
+      turnover:   primary_player_id, stolen_by_id, defense
 
     on_court: iterable of (player_id, team_id) currently on the floor.
     on_officials: iterable of official ids working the game.
@@ -111,14 +111,14 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
             (game_id,event_type,quarter,time,possession_secs,primary_player_id,
              shot_type,shot_result,pass_from_id,shot_created_by_id,
              rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y,
-             play_type,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             play_type,defense,client_uuid)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (game_id, "shot", q, t, poss,
              g("primary_player_id"), shot_type, g("shot_result"),
              g("pass_from_id"), g("shot_created_by_id"),
              g("rebound_by_id"), g("blocked_by_id"),
              g("guarded_by_id"), zone, sx, sy,
-             g("play_type"), client_uuid))
+             g("play_type"), g("defense"), client_uuid))
         pts = shot_type if g("shot_result") == "make" else 0
 
     elif etype == "free_throw":
@@ -134,20 +134,20 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
     elif etype == "foul":
         eid = execute("""INSERT INTO game_events
             (game_id,event_type,quarter,time,possession_secs,
-             primary_player_id,secondary_player_id,official_id,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?)""",
+             primary_player_id,secondary_player_id,official_id,defense,client_uuid)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (game_id, "foul", q, t, poss,
              g("primary_player_id"), g("secondary_player_id"), g("official_id"),
-             client_uuid))
+             g("defense"), client_uuid))
         pts = 0
 
     else:  # turnover
         eid = execute("""INSERT INTO game_events
             (game_id,event_type,quarter,time,possession_secs,
-             primary_player_id,stolen_by_id,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?)""",
+             primary_player_id,stolen_by_id,defense,client_uuid)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
             (game_id, "turnover", q, t, poss,
-             g("primary_player_id"), g("stolen_by_id"), client_uuid))
+             g("primary_player_id"), g("stolen_by_id"), g("defense"), client_uuid))
         pts = 0
 
     scoring_tid = None

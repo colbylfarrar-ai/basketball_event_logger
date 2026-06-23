@@ -11,7 +11,8 @@ const LS = {
   state: 'tracker_state',
   roster: function (gid) { return 'tracker_roster_' + gid; },
   game: function (gid) { return 'tracker_game_' + gid; },   // per-game lineup/quarter/clock
-  live: function (gid) { return 'tracker_live_' + gid; }    // last server live snapshot
+  live: function (gid) { return 'tracker_live_' + gid; },   // last server live snapshot
+  lastDefense: 'tracker_last_defense'                       // most-recent defense (new-game default)
 };
 
 function $(id) { return document.getElementById(id); }
@@ -50,6 +51,7 @@ const S = {
   quarter: 1,
   clockMin: 8,
   clockSec: 0,
+  defense: null,                                // sticky "current defense" tag (see DEFENSES)
   lastLive: Object.assign({}, EMPTY_LIVE),      // last synced server state (never includes queue)
   queue: [],                                    // unsynced events for current game, oldest first
   flushing: false,
@@ -130,7 +132,7 @@ function qDelete(uuids) {
 const SERVER_FIELDS = ['uuid', 'event_type', 'quarter', 'time', 'primary_player_id', 'shot_result',
   'shot_x', 'shot_y', 'shot_type', 'zone', 'pass_from_id', 'shot_created_by_id', 'rebound_by_id',
   'blocked_by_id', 'guarded_by_id', 'secondary_player_id', 'official_id', 'stolen_by_id',
-  'play_type', 'on_court', 'officials_on'];
+  'play_type', 'defense', 'on_court', 'officials_on'];
 
 function toServer(item) {
   const o = {};
@@ -356,6 +358,9 @@ async function selectGame(gid) {
   S.quarter = prefs.quarter || 1;
   S.clockMin = prefs.clockMin != null ? prefs.clockMin : 8;
   S.clockSec = prefs.clockSec != null ? prefs.clockSec : 0;
+  // Sticky D: keep this game's saved scheme if it has one; a fresh game defaults
+  // to the most-recently-used scheme (carried across games via LS.lastDefense).
+  S.defense = ('defense' in prefs) ? prefs.defense : lsGet(LS.lastDefense, null);
   S.lastLive = lsGet(LS.live(gid), Object.assign({}, EMPTY_LIVE));
   try { S.queue = await qLoad(gid); } catch (e) { S.queue = []; }
   resetFlow('shot');
@@ -585,7 +590,8 @@ async function createGame() {
 function savePrefs() {
   if (!S.gameId) return;
   lsSet(LS.game(S.gameId), {
-    lineup: S.lineup, quarter: S.quarter, clockMin: S.clockMin, clockSec: S.clockSec
+    lineup: S.lineup, quarter: S.quarter, clockMin: S.clockMin, clockSec: S.clockSec,
+    defense: S.defense
   });
 }
 
@@ -950,9 +956,55 @@ const PLAY_TYPE_KEYS = PLAY_TYPES.map(function (p) { return p[0]; });
 const PLAY_TYPE_LABEL = PLAY_TYPES.reduce(function (m, p) { m[p[0]] = p[1]; return m; }, {});
 function ptLabel(k) { return PLAY_TYPE_LABEL[k] || k; }
 
+// Sticky "current defense" the opponent is in. Unlike play_type (per-shot), a
+// defense holds for stretches, so this is set ONCE on the always-visible bar and
+// every event logged inherits S.defense until it's changed. Keep this list in
+// lockstep with helpers/defenses.DEFENSES (the server folds unknown -> 'other').
+const DEFENSES = [
+  ['man', 'Man'], ['man_press', 'Man press'],
+  ['zone_23', '2-3'], ['zone_32', '3-2'], ['zone_131', '1-3-1'], ['zone_122', '1-2-2'],
+  ['matchup', 'Match-up'], ['trap_23', '2-3 trap'], ['trap_131', '1-3-1 trap'],
+  ['press_221', '2-2-1 press'], ['press_131', '1-3-1 press'], ['press_1211', '1-2-1-1 press'],
+  ['box1', 'Box-1'], ['triangle2', 'Triangle-2'], ['diamond1', 'Diamond-1'],
+  ['scramble', 'Scramble'], ['other', 'Other']
+];
+const DEFENSE_KEYS = DEFENSES.map(function (d) { return d[0]; });
+const DEFENSE_LABEL = DEFENSES.reduce(function (m, d) { m[d[0]] = d[1]; return m; }, {});
+function defLabel(k) { return DEFENSE_LABEL[k] || k; }
+
+// Always-visible sticky defense selector (its own bar, above the flow, so it's
+// reachable in any mode and before a shot is started). Tapping sets S.defense
+// for every subsequent event; re-tapping the selected scheme clears it.
+function renderDefenseBar() {
+  const bar = $('defense-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  if (!S.game) return;
+  const lab = document.createElement('span');
+  lab.className = 'chip-label';
+  lab.textContent = 'Defense';
+  bar.appendChild(lab);
+  const box = document.createElement('div');
+  box.className = 'chips scroll';
+  function pickDefense(k) {
+    S.defense = k;
+    lsSet(LS.lastDefense, k);   // remember across games -> new-game default
+    savePrefs();
+    renderDefenseBar();
+  }
+  box.appendChild(flowBtn('—', 'chip' + (S.defense == null ? ' sel' : ''),
+    function () { pickDefense(null); }));
+  DEFENSE_KEYS.forEach(function (k) {
+    box.appendChild(flowBtn(defLabel(k), 'chip' + (S.defense === k ? ' sel' : ''),
+      function () { pickDefense(S.defense === k ? null : k); }));
+  });
+  bar.appendChild(box);
+}
+
 function renderFlow() {
   const wrap = $('flow');
   if (!wrap) return;
+  renderDefenseBar();          // sticky D bar lives outside #flow — refresh every pass
   wrap.innerHTML = '';
   if (!S.game || !S.flow) return;
   const f = S.flow;
@@ -1036,6 +1088,7 @@ function baseEvent(type) {
     pass_from_id: null, shot_created_by_id: null, rebound_by_id: null,
     blocked_by_id: null, guarded_by_id: null, play_type: null,
     secondary_player_id: null, official_id: null, stolen_by_id: null,
+    defense: S.defense,                          // sticky current defense (see DEFENSES)
     on_court: onCourtIds(),
     officials_on: S.lineup.officials.slice()
   };
@@ -1291,7 +1344,9 @@ function formFromEvent(ev) {
     guarded_by_id: ev.guarded_by_id != null ? ev.guarded_by_id : null,
     secondary_player_id: ev.secondary_player_id != null ? ev.secondary_player_id : null,
     official_id: ev.official_id != null ? ev.official_id : null,
-    stolen_by_id: ev.stolen_by_id != null ? ev.stolen_by_id : null
+    stolen_by_id: ev.stolen_by_id != null ? ev.stolen_by_id : null,
+    play_type: ev.play_type || null,
+    defense: ev.defense || null
   };
 }
 
@@ -1412,6 +1467,10 @@ function buildEditForm(ev) {
     SHOT_DETAILS.forEach(function (d) {
       box.appendChild(pickRow(d[1], d[0], roster));
     });
+    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
+      f.play_type, function (v) { f.play_type = v; rerender(); }));
+    box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
+      f.defense, function (v) { f.defense = v; rerender(); }));
   } else if (f.event_type === 'free_throw') {
     box.appendChild(pickRow('Shooter', 'primary_player_id', roster));
     box.appendChild(optRow('Result', [{ v: 'make', label: 'Make' }, { v: 'miss', label: 'Miss' }],
@@ -1422,9 +1481,13 @@ function buildEditForm(ev) {
     box.appendChild(pickRow('Fouler', 'secondary_player_id', roster));
     const offIds = ((S.game && S.game.officials) || []).map(function (o) { return o.id; });
     box.appendChild(pickRow('Official', 'official_id', offIds, { labelFn: oLabel }));
+    box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
+      f.defense, function (v) { f.defense = v; rerender(); }));
   } else if (f.event_type === 'turnover') {
     box.appendChild(pickRow('Player', 'primary_player_id', roster));
     box.appendChild(pickRow('Stolen by', 'stolen_by_id', roster));
+    box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
+      f.defense, function (v) { f.defense = v; rerender(); }));
   }
 
   const actions = document.createElement('div');
@@ -1480,7 +1543,9 @@ async function saveEdit(eid) {
     guarded_by_id: f.guarded_by_id,
     secondary_player_id: f.secondary_player_id,
     official_id: f.official_id,
-    stolen_by_id: f.stolen_by_id
+    stolen_by_id: f.stolen_by_id,
+    play_type: f.play_type,
+    defense: f.defense
   };
   try {
     const res = await api('/api/games/' + S.gameId + '/events/' + eid, {

@@ -228,6 +228,15 @@ def initialize_database():
             # is unaffected. Captures the literal set call that tempo+creation
             # inference can't derive.
             "ALTER TABLE game_events     ADD COLUMN play_type    TEXT",
+            # Optional "current defense" label on a shot/turnover (man / 2-3 zone
+            # / 1-3-1 / man press / 2-2-1 press / trap / box-and-1 / scramble …,
+            # full set in helpers/defenses.DEFENSES). Describes the DEFENDING
+            # team's scheme on that possession (the non-shooter). Nullable + sticky
+            # in the tracker (a team stays in a defense for stretches), so every
+            # existing event stays NULL and the defense engine (helpers/defenses.py)
+            # lights up only as coaches tag. The offense/defense companion to
+            # play_type, and the cross-tab partner (play_type × defense).
+            "ALTER TABLE game_events     ADD COLUMN defense      TEXT",
             # "Assistant scorer" guest links (the link IS the token; log-only,
             # resolves to the owner coach). Separate from app_users.tracker_token
             # so revoking an assistant never touches the coach's own credential.

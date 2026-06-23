@@ -149,6 +149,16 @@ STAT_DEFS = [
      "tags, NOT video-tagged play calls (no PnR/iso film here).",
      "Higher PPP + percentile = a more efficient way this team generates offense; "
      "on defense the rank is flipped so fewer points allowed ranks higher.", True),
+    ("Defense", "Defensive Scheme", "Possession & Pace",
+     "PPP per defensive scheme (man / zone / press / trap / junk), ranked vs league",
+     "The defensive companion to Play Type: a one-tap, sticky tag for the scheme in "
+     "effect (man, 2-3 / 1-3-1 zone, man / 2-2-1 / 1-3-1 press, traps, box-and-1, "
+     "scramble…). Two reads off one tag — the schemes a team RUNS (PPP allowed) and "
+     "how it ATTACKS each scheme it faces (PPP scored) — plus the play type × "
+     "defense cross-tab ('their PnR vs a 2-3 zone'). A shot ends a possession, so "
+     "PPP = points per shot; presses also report turnovers forced.",
+     "On defense, fewer points allowed ranks higher; on offense, more points scored "
+     "ranks higher. Empty until coaches tag the defense in the tracker.", True),
     ("ORtg",  "Offensive Rating", "Possession & Pace", "≈ 100 · PTS / POSS",
      "Points produced per 100 possessions (Dean Oliver). Individual ORtg uses "
      "on-court lineup fractions since the DB has no minutes.",

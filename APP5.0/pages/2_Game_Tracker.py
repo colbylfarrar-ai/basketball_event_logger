@@ -20,6 +20,7 @@ from database.db import query, execute
 from helpers.ui import page_chrome, page_header, q_label
 import helpers.court as COURT
 import helpers.court_geom as CG
+import helpers.defenses as DEF
 import helpers.fouls as FOULS
 import helpers.game_events as GE
 from PIL import Image
@@ -626,6 +627,20 @@ else:
         else:
             event_type = st.selectbox("Event Type", ["Shot", "Free Throw", "Foul", "Turnover"], key="ev_type")
 
+            # Sticky "current defense" — the scheme the OPPONENT is in. Set once and
+            # every shot/turnover logged inherits it until changed (a team stays in
+            # a defense for stretches). Lives OUTSIDE the form so flipping it doesn't
+            # need a submit; its own session key keeps it across reruns. Mirrors the
+            # PWA tracker's defense bar and powers the Defense tab / scout sheet.
+            _def_lbls = ["—"] + [lbl for _k, lbl, _f in DEF.DEFENSES]
+            _def_lbl2key = {lbl: k for k, lbl, _f in DEF.DEFENSES}
+            _cur_def_lbl = st.selectbox(
+                "Current defense", _def_lbls, key=f"cur_def_{game_id}",
+                help="The defense in effect right now — stamped on every shot and "
+                     "turnover you log until you change it. Powers the Defense "
+                     "breakdown on the Team Dashboard and the scout sheet.")
+            cur_def_key = _def_lbl2key.get(_cur_def_lbl)
+
             cap_key = f"shot_xy_{game_id}"
             if event_type != "Shot" and cap_key in st.session_state:
                 # drop the stale marker AND remount the tap component, else its
@@ -767,7 +782,9 @@ else:
                 # Build the event payload; helpers.game_events owns possession secs,
                 # the lineup snapshot, +/- and x/y -> zone/2-3 (shared with the mobile
                 # tracker API, so both writers stay in lockstep).
-                ev = {"quarter": q, "time": t}
+                # Stamp the sticky current defense onto the event; log_event only
+                # persists it for shot/turnover inserts (FT/foul ignore it).
+                ev = {"quarter": q, "time": t, "defense": cur_def_key}
                 if event_type == "Shot":
                     _xy = st.session_state.get(cap_key)
                     _sx, _sy = _xy if _xy else (None, None)

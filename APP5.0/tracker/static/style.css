@@ -332,6 +332,13 @@ button {
 .btn.mode { font-weight: 700; color: var(--muted); }
 .btn.mode.active { background: var(--gold); color: var(--bg); border-color: var(--gold); }
 
+/* Sticky "current defense" bar — set once, every event inherits it. Sits just
+   above the flow with a subtle accent edge so it reads as a persistent setting,
+   not a per-event picker. Empty (#defense-bar with no children) collapses. */
+#defense-bar { margin-bottom: 8px; }
+#defense-bar:empty { display: none; }
+#defense-bar .chip-label { display: inline-block; margin: 0 0 4px; }
+
 #flow { background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 10px; min-height: 70px; }
 #flow .no-loc { display: block; margin: 0 auto 6px; }
 .chip-row { margin-bottom: 10px; }

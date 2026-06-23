@@ -76,6 +76,14 @@ play_opts = ["—"] + [lbl for _k, lbl in PT.NAMED_PLAY_TYPES]
 key2play = {k: lbl for k, lbl in PT.NAMED_PLAY_TYPES}
 play2key = {lbl: k for k, lbl in PT.NAMED_PLAY_TYPES}
 
+# Defense labels for the sticky one-tap defense tag on a shot/turnover — same set
+# as the tracker (helpers/defenses.DEFENSES). Back-fill / correct it on old events
+# here just like the play call.
+import helpers.defenses as DEF
+def_opts = ["—"] + [lbl for _k, lbl, _f in DEF.DEFENSES]
+key2def = {k: lbl for k, lbl, _f in DEF.DEFENSES}
+def2key = {lbl: k for k, lbl, _f in DEF.DEFENSES}
+
 # ── score drift indicator ────────────────────────────────────────────────────
 from database.db import query as _q
 
@@ -138,6 +146,7 @@ def _disp(ev):
         "ShotType": str(ev["shot_type"]) if ev["shot_type"] else "—",
         "Zone": ev["zone"] or "—",
         "Play": key2play.get(ev["play_type"], "—"),
+        "Defense": key2def.get(ev["defense"], "—"),
         "Pass": pid2label.get(ev["pass_from_id"], "—"),
         "Created": pid2label.get(ev["shot_created_by_id"], "—"),
         "Guarded": pid2label.get(ev["guarded_by_id"], "—"),
@@ -156,7 +165,8 @@ orig_by_id = {e["id"]: e for e in events}
 st.caption("**Primary** = shooter (shot/FT) · player fouled (foul) · player who "
            "lost it (turnover). **Fouler** = who committed the foul. **Play** = the "
            "one-tap set call on a shot (PnR, ISO, SLOB, BLOB …) — back-fill it on "
-           "old shots here. Tick **Delete?** to remove a row. Player picks are "
+           "old shots here. **Defense** = the scheme in effect (man, 2-3, press …) "
+           "on a shot or turnover. Tick **Delete?** to remove a row. Player picks are "
            "limited to both rosters. For tap-captured shots, Zone and 2/3 follow the "
            "stored location — move the shot in **Fix a shot location** below instead.")
 
@@ -180,6 +190,10 @@ edited = st.data_editor(
         "Play": st.column_config.SelectboxColumn("Play", options=play_opts,
                                                  width="small",
                                                  help="One-tap set call (shots only)"),
+        "Defense": st.column_config.SelectboxColumn("Defense", options=def_opts,
+                                                    width="small",
+                                                    help="Defense in effect (shots & "
+                                                         "turnovers) — man, 2-3, press …"),
         "Pass": st.column_config.SelectboxColumn("Pass from", options=player_opts),
         "Created": st.column_config.SelectboxColumn("Created by", options=player_opts),
         "Guarded": st.column_config.SelectboxColumn("Guarded by", options=player_opts),
@@ -211,6 +225,7 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
             "shot_type": None if r["ShotType"] == "—" else int(r["ShotType"]),
             "zone": None if r["Zone"] == "—" else r["Zone"],
             "play_type": play2key.get(r["Play"]),
+            "defense": def2key.get(r["Defense"]),
             "primary_player_id": label2pid.get(r["Primary"]),
             "pass_from_id": label2pid.get(r["Pass"]),
             "shot_created_by_id": label2pid.get(r["Created"]),
@@ -425,22 +440,29 @@ with st.form(f"ins_form_{gid}", clear_on_submit=True):
         ins_guarded = s7.selectbox("Guarded by", player_opts)
         ins_rebound = s8.selectbox("Rebound by", player_opts)
         ins_blocked = s9.selectbox("Blocked by", player_opts)
-        ins_play = st.selectbox("Play type", play_opts,
-                                help="One-tap set call (optional)")
+        i_pd1, i_pd2 = st.columns(2)
+        ins_play = i_pd1.selectbox("Play type", play_opts,
+                                   help="One-tap set call (optional)")
+        ins_def = i_pd2.selectbox("Defense", def_opts,
+                                  help="Defense in effect (optional)")
     elif ins_type == "free_throw":
         f1, f2, f3 = st.columns([3, 1, 2])
         ins_primary = f1.selectbox("Shooter", player_opts[1:])
         ins_result = f2.selectbox("Result", ["make", "miss"])
         ins_rebound = f3.selectbox("Rebound by", player_opts)
     elif ins_type == "foul":
-        f1, f2, f3 = st.columns([2, 2, 1])
+        f1, f2, f3, f4 = st.columns([2, 2, 1, 2])
         ins_primary = f1.selectbox("Player fouled", player_opts[1:])
         ins_fouler = f2.selectbox("Player who fouled", player_opts[1:])
         ins_off = f3.selectbox("Official", official_opts)
+        ins_def = f4.selectbox("Defense", def_opts,
+                               help="Defense in effect (optional)")
     else:  # turnover
-        f1, f2 = st.columns(2)
+        f1, f2, f3 = st.columns(3)
         ins_primary = f1.selectbox("Turnover by", player_opts[1:])
         ins_stolen = f2.selectbox("Stolen by", player_opts)
+        ins_def = f3.selectbox("Defense", def_opts,
+                               help="Defense in effect (optional)")
 
     ins_go = st.form_submit_button("Insert event", type="primary")
 
@@ -467,15 +489,18 @@ if ins_go:
                       guarded_by_id=label2pid.get(ins_guarded),
                       rebound_by_id=label2pid.get(ins_rebound),
                       blocked_by_id=label2pid.get(ins_blocked),
-                      play_type=play2key.get(ins_play))
+                      play_type=play2key.get(ins_play),
+                      defense=def2key.get(ins_def))
         elif ins_type == "free_throw":
             ev.update(shot_result=ins_result,
                       rebound_by_id=label2pid.get(ins_rebound))
         elif ins_type == "foul":
             ev.update(secondary_player_id=label2pid.get(ins_fouler),
-                      official_id=name2oid.get(ins_off))
+                      official_id=name2oid.get(ins_off),
+                      defense=def2key.get(ins_def))
         else:
-            ev.update(stolen_by_id=label2pid.get(ins_stolen))
+            ev.update(stolen_by_id=label2pid.get(ins_stolen),
+                      defense=def2key.get(ins_def))
 
         _eid, _nfloor = EL.insert_missed_event(gid, ev)
         _flash = [("success",

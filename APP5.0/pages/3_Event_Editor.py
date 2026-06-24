@@ -136,6 +136,33 @@ if not events:
     st.info(f"No {tpick.replace('_', ' ')} events in this view.")
     st.stop()
 
+# ── bulk-tag the defense scheme (one click for the whole game, then tweak) ──────
+# Most teams play one or two defenses, so tagging every possession by hand is a
+# slog. Set the whole game to one scheme in a click, then change the exceptions
+# in the grid. Applies to the WHOLE game (shots/turnovers/fouls), not the filter.
+with st.expander("🛡️ Bulk-tag defense — set the whole game, then tweak"):
+    st.caption("Tag every shot, turnover and foul in **this game** with one "
+               "scheme in a single click, then change the few exceptions in the "
+               "grid below. Free throws don't carry a defense. Great for coaches "
+               "who play one or two defenses and tag after the game.")
+    bf1, bf2, bf3 = st.columns([2, 2, 1])
+    _bulk_lbl = bf1.selectbox("Defense", def_opts[1:], key="ee_bulk_def")
+    _only_blank = bf2.checkbox(
+        "Only untagged events", value=True, key="ee_bulk_blank",
+        help="On = fill only events that have no defense yet (keeps your tweaks). "
+             "Off = overwrite every shot/turnover/foul in the game.")
+    if bf3.button("Apply", key="ee_bulk_go", type="primary", width="stretch"):
+        _bn = EL.bulk_set_defense(gid, def2key.get(_bulk_lbl),
+                                  only_blank=_only_blank)
+        if _bn:
+            st.cache_data.clear()
+            st.success(f"Tagged {_bn} event{'s' if _bn != 1 else ''} as "
+                       f"{_bulk_lbl}. Tweak the exceptions in the grid below.")
+            st.rerun()
+        else:
+            st.info("Nothing to tag — every eligible event already has a defense. "
+                    "Uncheck **Only untagged** to overwrite them all.")
+
 
 def _disp(ev):
     return {

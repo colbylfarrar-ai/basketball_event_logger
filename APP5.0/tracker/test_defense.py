@@ -143,4 +143,28 @@ ok(flh.get("man", {}).get("fouls") == 1, "home drew 1 foul vs man (offense side)
 fla = {r["key"]: r for r in DEF.team_defense_fouls(t2, events=ev, offense=False)["rows"]}
 ok(fla.get("man", {}).get("fouls") == 1, "away committed 1 foul running man (defense side)")
 
+print("bulk-tag defense (Event Editor 'fill whole game, then tweak')")
+import helpers.event_log as EL                                          # noqa: E402
+# add an UNtagged shot + a free throw, then bulk-fill the blanks as man
+client.post(f"/api/games/{gid}/events", json={"events": [
+    {"uuid": "u-untag", "event_type": "shot", "quarter": 2, "time": "7:00",
+     "primary_player_id": home[0], "shot_result": "make", "shot_x": 0.0,
+     "shot_y": 8.0, "on_court": floor, "officials_on": []},
+    {"uuid": "u-ft2", "event_type": "free_throw", "quarter": 2, "time": "6:55",
+     "primary_player_id": home[0], "shot_result": "make",
+     "on_court": floor, "officials_on": []}]})
+_nb = EL.bulk_set_defense(gid, "man", only_blank=True)
+ok(_nb >= 1, "bulk fill (only_blank) tagged the untagged shot")
+ok(query("SELECT defense FROM game_events WHERE client_uuid='u-untag'")[0]["defense"]
+   == "man", "untagged shot is now man")
+ok(query("SELECT defense FROM game_events WHERE client_uuid='u-ft2'")[0]["defense"]
+   is None, "bulk fill never tags free throws")
+ok(query("SELECT defense FROM game_events WHERE client_uuid='h3'")[0]["defense"]
+   == "man", "pre-tagged man shot unchanged by only_blank fill")
+ok(EL.bulk_set_defense(gid, "man", only_blank=True) == 0,
+   "re-run only_blank -> nothing left to fill")
+_na = EL.bulk_set_defense(gid, "zone_23", only_blank=False)
+ok(query("SELECT defense FROM game_events WHERE client_uuid='u-untag'")[0]["defense"]
+   == "zone_23", "overwrite-all changed every eligible event")
+
 print(f"\nALL {PASS} CHECKS PASSED  (db: {os.environ['APP5_DATA_DIR']})")

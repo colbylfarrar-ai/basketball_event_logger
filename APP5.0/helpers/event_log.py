@@ -228,6 +228,32 @@ def update_event(game_id, ev_id, vals, pid2team):
          *[clean[f] for f in _ALL_FIELDS], ev_id))
 
 
+# event types that carry a `defense` tag (the scheme in effect). FTs don't.
+_DEFENSE_EVENT_TYPES = ("shot", "turnover", "foul")
+
+
+def bulk_set_defense(game_id, defense, only_blank=True):
+    """Tag every defense-eligible event (shot / turnover / foul) in a game with
+    ``defense`` in one write — the Event Editor's "fill the whole game as X, then
+    tweak the exceptions" button. For coaches who play one or two defenses, this
+    backfills a season's worth of possessions without per-event entry.
+
+    only_blank=True (the safe default) touches only the UNtagged events, so a
+    re-run never clobbers tweaks already made; False overwrites every eligible
+    event. ``defense=None`` clears the tag. Free throws never carry defense and
+    are excluded. Defense is independent of scoring / lineups / +/-, so this is a
+    plain targeted UPDATE (no per-event rewrite). Returns the number of events
+    updated."""
+    types = ",".join("?" for _ in _DEFENSE_EVENT_TYPES)
+    where = (f"game_id=? AND event_type IN ({types})"
+             + (" AND defense IS NULL" if only_blank else ""))
+    params = (game_id, *_DEFENSE_EVENT_TYPES)
+    n = query(f"SELECT COUNT(*) AS c FROM game_events WHERE {where}", params)[0]["c"]
+    if n:
+        execute(f"UPDATE game_events SET defense=? WHERE {where}", (defense, *params))
+    return n
+
+
 def insert_missed_event(game_id, ev):
     """Insert an after-the-fact event (the basket the scorekeeper missed).
 

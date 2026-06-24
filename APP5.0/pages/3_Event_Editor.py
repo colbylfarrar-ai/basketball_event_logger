@@ -136,32 +136,45 @@ if not events:
     st.info(f"No {tpick.replace('_', ' ')} events in this view.")
     st.stop()
 
-# ── bulk-tag the defense scheme (one click for the whole game, then tweak) ──────
-# Most teams play one or two defenses, so tagging every possession by hand is a
-# slog. Set the whole game to one scheme in a click, then change the exceptions
-# in the grid. Applies to the WHOLE game (shots/turnovers/fouls), not the filter.
-with st.expander("🛡️ Bulk-tag defense — set the whole game, then tweak"):
-    st.caption("Tag every shot, turnover and foul in **this game** with one "
-               "scheme in a single click, then change the few exceptions in the "
-               "grid below. Free throws don't carry a defense. Great for coaches "
-               "who play one or two defenses and tag after the game.")
-    bf1, bf2, bf3 = st.columns([2, 2, 1])
-    _bulk_lbl = bf1.selectbox("Defense", def_opts[1:], key="ee_bulk_def")
-    _only_blank = bf2.checkbox(
+# ── bulk-tag the defense scheme, PER TEAM (set each side, then tweak) ───────────
+# Most teams play one or two defenses, so per-possession entry is a slog. The
+# defense tag is the DEFENDING (other) team's scheme, so splitting by the team
+# WITH THE BALL lets each side take its own fill: pick the defense each team
+# FACED on its possessions (= the scheme the other team ran). Tag the whole game
+# in one click, then change the exceptions in the grid. Whole game, not the filter.
+with st.expander("🛡️ Bulk-tag defense by team — set each side, then tweak"):
+    st.caption("Pick the defense each team **faced** on its possessions (the "
+               "scheme the OTHER team was running), then change the few exceptions "
+               "in the grid below. Tag one side or both. Free throws don't carry a "
+               "defense. Applies to the whole game, not just the filtered view.")
+    _t1n, _t2n = gsel["n1"], gsel["n2"]
+    _t1id, _t2id = gsel["t1_id"], gsel["t2_id"]
+    bc1, bc2 = st.columns(2)
+    _d_t1 = bc1.selectbox(f"{_t1n} possessions — defense faced", def_opts,
+                          key="ee_bulk_t1",
+                          help=f"The scheme {_t2n} ran against {_t1n}.")
+    _d_t2 = bc2.selectbox(f"{_t2n} possessions — defense faced", def_opts,
+                          key="ee_bulk_t2",
+                          help=f"The scheme {_t1n} ran against {_t2n}.")
+    _only_blank = st.checkbox(
         "Only untagged events", value=True, key="ee_bulk_blank",
-        help="On = fill only events that have no defense yet (keeps your tweaks). "
-             "Off = overwrite every shot/turnover/foul in the game.")
-    if bf3.button("Apply", key="ee_bulk_go", type="primary", width="stretch"):
-        _bn = EL.bulk_set_defense(gid, def2key.get(_bulk_lbl),
-                                  only_blank=_only_blank)
-        if _bn:
+        help="On = fill only events with no defense yet (keeps your tweaks). "
+             "Off = overwrite every eligible event for the chosen team(s).")
+    if st.button("Apply", key="ee_bulk_go", type="primary"):
+        _total = 0
+        for _lbl, _tid in [(_d_t1, _t1id), (_d_t2, _t2id)]:
+            if _lbl and _lbl != "—":
+                _total += EL.bulk_set_defense(gid, def2key.get(_lbl),
+                                              only_blank=_only_blank,
+                                              primary_team_id=_tid)
+        if _total:
             st.cache_data.clear()
-            st.success(f"Tagged {_bn} event{'s' if _bn != 1 else ''} as "
-                       f"{_bulk_lbl}. Tweak the exceptions in the grid below.")
+            st.success(f"Tagged {_total} event{'s' if _total != 1 else ''}. "
+                       "Tweak the exceptions in the grid below.")
             st.rerun()
         else:
-            st.info("Nothing to tag — every eligible event already has a defense. "
-                    "Uncheck **Only untagged** to overwrite them all.")
+            st.info("Nothing to tag — pick a defense for at least one team "
+                    "(uncheck **Only untagged** to overwrite existing tags).")
 
 
 def _disp(ev):

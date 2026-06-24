@@ -167,4 +167,14 @@ _na = EL.bulk_set_defense(gid, "zone_23", only_blank=False)
 ok(query("SELECT defense FROM game_events WHERE client_uuid='u-untag'")[0]["defense"]
    == "zone_23", "overwrite-all changed every eligible event")
 
+# per-team scoping: fill only HOME's possessions (primary on home) with man —
+# the defense tag is the DEFENDING (away) team's scheme, so this is "the defense
+# home faced". Away's possessions (primary on away) must stay untouched.
+_nh = EL.bulk_set_defense(gid, "man", only_blank=False, primary_team_id=t1)
+ok(_nh >= 1, "team-scoped fill touched home's possessions")
+ok(query("SELECT defense FROM game_events WHERE client_uuid='h1'")[0]["defense"]
+   == "man", "home possession (primary on home) -> man")
+ok(query("SELECT defense FROM game_events WHERE client_uuid='a1'")[0]["defense"]
+   == "zone_23", "away possession untouched by home-scoped fill")
+
 print(f"\nALL {PASS} CHECKS PASSED  (db: {os.environ['APP5_DATA_DIR']})")

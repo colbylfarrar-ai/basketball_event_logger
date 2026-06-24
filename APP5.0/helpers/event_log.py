@@ -97,10 +97,11 @@ def game_people(game_id):
 
 # ── load ────────────────────────────────────────────────────────────────────────
 def games_with_events():
-    """[{id, date, n1, n2, tracked, n_events}] for every game that has events,
-    most recent first — the games the editor can open."""
+    """[{id, date, n1, n2, t1_id, t2_id, tracked, n_events}] for every game that
+    has events, most recent first — the games the editor can open."""
     return query("""
-        SELECT g.id, g.date, t1.name n1, t2.name n2, g.tracked,
+        SELECT g.id, g.date, t1.name n1, t2.name n2,
+               g.team1_id t1_id, g.team2_id t2_id, g.tracked,
                COUNT(ge.id) n_events
         FROM games g
         JOIN teams t1 ON t1.id=g.team1_id
@@ -232,7 +233,7 @@ def update_event(game_id, ev_id, vals, pid2team):
 _DEFENSE_EVENT_TYPES = ("shot", "turnover", "foul")
 
 
-def bulk_set_defense(game_id, defense, only_blank=True):
+def bulk_set_defense(game_id, defense, only_blank=True, primary_team_id=None):
     """Tag every defense-eligible event (shot / turnover / foul) in a game with
     ``defense`` in one write — the Event Editor's "fill the whole game as X, then
     tweak the exceptions" button. For coaches who play one or two defenses, this
@@ -241,13 +242,24 @@ def bulk_set_defense(game_id, defense, only_blank=True):
     only_blank=True (the safe default) touches only the UNtagged events, so a
     re-run never clobbers tweaks already made; False overwrites every eligible
     event. ``defense=None`` clears the tag. Free throws never carry defense and
-    are excluded. Defense is independent of scoring / lineups / +/-, so this is a
-    plain targeted UPDATE (no per-event rewrite). Returns the number of events
-    updated."""
+    are excluded.
+
+    primary_team_id scopes to events whose PRIMARY player is on that team — i.e.
+    that team's possessions. Since the defense tag is the DEFENDING (other) team's
+    scheme, this lets each side's possessions take a different scheme in one pass
+    (a man team facing a zone team tags both correctly). None = the whole game.
+
+    Defense is independent of scoring / lineups / +/-, so this is a plain targeted
+    UPDATE (no per-event rewrite). Returns the number of events updated."""
     types = ",".join("?" for _ in _DEFENSE_EVENT_TYPES)
-    where = (f"game_id=? AND event_type IN ({types})"
-             + (" AND defense IS NULL" if only_blank else ""))
-    params = (game_id, *_DEFENSE_EVENT_TYPES)
+    where = f"game_id=? AND event_type IN ({types})"
+    params = [game_id, *_DEFENSE_EVENT_TYPES]
+    if only_blank:
+        where += " AND defense IS NULL"
+    if primary_team_id is not None:
+        where += " AND primary_player_id IN (SELECT id FROM players WHERE team_id=?)"
+        params.append(primary_team_id)
+    params = tuple(params)
     n = query(f"SELECT COUNT(*) AS c FROM game_events WHERE {where}", params)[0]["c"]
     if n:
         execute(f"UPDATE game_events SET defense=? WHERE {where}", (defense, *params))

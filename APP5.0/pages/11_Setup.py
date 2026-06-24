@@ -44,7 +44,7 @@ with t_roster:
                             key="su_team")
         pl = query(
             """SELECT id, number, name, position, availability, handedness,
-                      height, wingspan, weight
+                      grad_year, height, wingspan, weight
                FROM players WHERE team_id=? AND archived=0 ORDER BY number""",
             (tsel["id"],))
         if not pl:
@@ -63,15 +63,25 @@ with t_roster:
                     "handedness": st.column_config.SelectboxColumn(
                         "Hand", options=["right", "left"], default="right",
                         help="Shooting hand — drives dominant- vs weak-side shot splits."),
+                    "grad_year": st.column_config.NumberColumn(
+                        "Grad yr", min_value=2000, max_value=2100, step=1, format="%d",
+                        help="Class year (e.g. 2026). Seniors auto-graduate on New "
+                             "Season rollover; everyone else carries forward "
+                             "identity-linked. Drives cross-season development."),
                     "height": st.column_config.NumberColumn("Ht", disabled=True),
                     "wingspan": st.column_config.NumberColumn("Wing", disabled=True),
                     "weight": st.column_config.NumberColumn("Wt", disabled=True),
                 })
             if st.button("Save roster", key="su_roster_save"):
                 for _, r in ed.iterrows():
-                    execute("UPDATE players SET position=?, availability=?, handedness=? WHERE id=?",
+                    _gy = r.get("grad_year")
+                    try:
+                        _gy = int(_gy) if (_gy not in (None, "") and not pd.isna(_gy)) else None
+                    except (ValueError, TypeError):
+                        _gy = None
+                    execute("UPDATE players SET position=?, availability=?, handedness=?, grad_year=? WHERE id=?",
                             (r["position"] or "", r["availability"] or "Active",
-                             "left" if r["handedness"] == "left" else "right",
+                             "left" if r["handedness"] == "left" else "right", _gy,
                              int(r["id"])))
                 st.cache_data.clear()   # depth chart & co. read these via cached queries
                 st.success("Roster saved.")

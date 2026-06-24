@@ -330,6 +330,38 @@ def render(ctx):
                       "turnovers you cough up") + " under each scheme "
                    f"({tv.get('total', 0)} tagged).")
 
+    # ══ §G2 — fouls per scheme (the line-risk read) ══════════════════════════
+    fl = ctx.def_fouls(g, tid, _off) or {}
+    flrows = fl.get("rows", [])
+    if flrows:
+        st.markdown("<div class='pl-hdr'>Fouls — " +
+                    ("committed" if not _off else "drawn") + " per scheme</div>",
+                    unsafe_allow_html=True)
+        ffig = go.Figure(go.Bar(
+            x=[r["label"] for r in flrows], y=[r["fouls"] for r in flrows],
+            marker_color=[_FAM_COLOR.get(r["family"], "#8b949e") for r in flrows],
+            marker_line_width=0, text=[r["fouls"] for r in flrows],
+            textposition="outside"))
+        ffig.update_yaxes(title="Fouls " + ("committed" if not _off else "drawn"))
+        style_fig(ffig, 300)
+        st.plotly_chart(ffig, width="stretch", key="def_fouls")
+        st.caption(
+            ("The cost a press/trap pays at the stripe — fouls your defense commits "
+             "under each scheme. A scheme that forces TOs but also fouls a lot is a "
+             "wash; one that disrupts WITHOUT fouling is gold."
+             if not _off else
+             "Fouls you draw vs each scheme — where you get to the line. Attack the "
+             "schemes that foul you.") + f" ({fl.get('total', 0)} tagged)")
+        # disruption-vs-risk one-liner when a scheme both forces TOs AND fouls
+        if not _off and tvrows:
+            _to = {r["key"]: r["tovs"] for r in tvrows}
+            _fo = {r["key"]: r["fouls"] for r in flrows}
+            shared = [k for k in _to if k in _fo]
+            if shared:
+                _net = max(shared, key=lambda k: _to[k] - _fo.get(k, 0))
+                st.caption(f"Best disruption-to-foul tradeoff: **{DEF.label(_net)}** "
+                           f"({_to[_net]} TOs forced vs {_fo.get(_net, 0)} fouls).")
+
     # ══ §H — league rank context ═════════════════════════════════════════════
     leaders = ctx.def_leaders(g, _off) or {}
     _lr = []

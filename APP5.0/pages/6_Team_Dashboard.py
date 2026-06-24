@@ -885,6 +885,12 @@ def _def_tovs(g, tid, offense):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _def_fouls(g, tid, offense):
+    """Fouls committed/drawn per scheme (the line-risk read)."""
+    return DEF.team_defense_fouls(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _def_leaders(g, offense):
     """League leaderboard per scheme — where this team ranks vs the pool."""
     return DEF.league_defense_leaders(gender=g, offense=offense)
@@ -1038,7 +1044,7 @@ with tab_charts:
             BAD=BAD, PURPLE=PURPLE, PINK=PINK,
             def_view=_def_view, def_families=_def_families,
             def_profiles=_def_profiles, cross_pd=_def_cross,
-            def_tovs=_def_tovs, def_leaders=_def_leaders,
+            def_tovs=_def_tovs, def_fouls=_def_fouls, def_leaders=_def_leaders,
             def_players_faced=_def_players_faced)
         DDEFENSE.render(_def_ctx)
 

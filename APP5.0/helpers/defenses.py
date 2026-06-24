@@ -344,6 +344,42 @@ def team_defense_turnovers(team_id, gender=None, game_ids=None, events=None,
     return {"rows": rows, "total": total}
 
 
+def team_defense_fouls(team_id, gender=None, game_ids=None, events=None,
+                       offense=True):
+    """Fouls tagged under each scheme — the line-risk read (a press/trap that
+    fouls hands the ball back at the stripe). offense=False = fouls the team
+    COMMITTED while running each scheme (the defensive cost); offense=True = fouls
+    the team DREW vs each scheme it faced (we get to the line vs X).
+    Returns {'rows':[{key,label,family,fouls,share}],'total'} sorted by volume —
+    only schemes with at least one tagged foul.
+
+    Foul rows: primary_player_id is the player FOULED, so fetch_events joins
+    shooter_team_id = the FOULED (offensive) team. So (shooter_team_id==team_id)
+    ==offense means: offense=True -> we were fouled (drew it); offense=False ->
+    the opponent was fouled, i.e. WE committed it under our scheme. The same
+    convention every other split here uses, so the orientation matches."""
+    if events is None:
+        gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    counts = {}
+    total = 0
+    for e in events:
+        if e["event_type"] != "foul" or e["shooter_team_id"] is None:
+            continue
+        if offense != (e["shooter_team_id"] == team_id):
+            continue
+        d = _norm(e.get("defense"))
+        if not d:
+            continue
+        counts[d] = counts.get(d, 0) + 1
+        total += 1
+    rows = [{"key": k, "label": _LABEL.get(k, k), "family": _FAMILY.get(k, "other"),
+             "fouls": n, "share": _safe(n, total)}
+            for k, n in counts.items()]
+    rows.sort(key=lambda r: -r["fouls"])
+    return {"rows": rows, "total": total}
+
+
 # ── league leaderboards per scheme ────────────────────────────────────────────────
 def league_defense_leaders(gender=None, game_ids=None, events=None, offense=False,
                            min_poss=MIN_POSS, baseline=None):

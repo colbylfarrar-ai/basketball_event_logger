@@ -136,4 +136,11 @@ ok("zone" in fam and fam["zone"]["poss"] == 3, "family rollup: zone = 3 poss")
 tv = {r["key"]: r for r in DEF.team_defense_turnovers(t1, events=ev, offense=False)["rows"]}
 ok(tv.get("press_221", {}).get("tovs") == 1, "home press forced 1 turnover")
 
+# fouls: foul1 = home[0] fouled (drew it) under man -> home DREW a foul vs man
+# (offense=True), and AWAY committed it under man (away offense=False).
+flh = {r["key"]: r for r in DEF.team_defense_fouls(t1, events=ev, offense=True)["rows"]}
+ok(flh.get("man", {}).get("fouls") == 1, "home drew 1 foul vs man (offense side)")
+fla = {r["key"]: r for r in DEF.team_defense_fouls(t2, events=ev, offense=False)["rows"]}
+ok(fla.get("man", {}).get("fouls") == 1, "away committed 1 foul running man (defense side)")
+
 print(f"\nALL {PASS} CHECKS PASSED  (db: {os.environ['APP5_DATA_DIR']})")

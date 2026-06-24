@@ -100,19 +100,30 @@ def render(ctx):
                     "the defensive-scheme deep dive.", icon="🛡️")
         return
 
-    # ══ SHOT CHART BY DEFENSE FACED (headline court — always shown) ══════════
-    # Plots your OWN tap-located shots, filterable by the defense you FACED —
-    # "where do we get our looks vs a 2-3 zone vs man". Own-shots only (there are
-    # no located opponent shots), so it's the same on either side toggle and it
-    # renders as soon as you have tap-located shots — even before any defense is
-    # tagged (the filter just lights up as you tag). Lives ABOVE the no-tags gate
-    # so the court is visible from day one.
-    st.markdown("<div class='pl-hdr'>Shot chart by defense faced</div>",
+    # ── §A — side toggle (drives the court below AND every table) ────────────
+    _side = seg("Side of the ball", ["Our defense", "Vs defenses we face"],
+                key="def_side") or "Our defense"
+    _off = _side != "Our defense"     # offense=True => the defenses we FACE
+
+    # ══ SHOT CHART — BOTH sides (shots-against on D, shots-for on offense) ════
+    # Our defense -> the opponents' located shots vs each scheme WE ran (where
+    # they attack our 2-3 / man — "shots against"). Vs defenses we face -> our
+    # OWN located shots vs each scheme we faced ("shots for"). Same court UI as
+    # Play Style; lives above the no-tags gate so it shows from day one, and the
+    # by-scheme filter lights up as you tag.
+    if _off:
+        shots = list(ctx.located_team(tid, ctx.tracked_ids) or [])
+        _what = "our shots by the defense we faced"
+        _filterhelp = "Filter the court to one defense you faced."
+    else:
+        shots = list(ctx.located_allowed(tid, ctx.tracked_ids) or [])
+        _what = "shots we allowed by the scheme we ran"
+        _filterhelp = "Filter the court to one scheme you ran."
+    st.markdown(f"<div class='pl-hdr'>Shot chart — {_what}</div>",
                 unsafe_allow_html=True)
-    shots = list(ctx.located_team(tid, ctx.tracked_ids) or [])
     if not shots:
-        st.caption("No tap-located shots yet — tap shot spots in the Game Tracker "
-                   "to unlock the court.")
+        st.caption("No tap-located shots for this side yet — tap shot spots in the "
+                   "Game Tracker to unlock the court.")
     else:
         _seen = {s.get("defense") for s in shots if s.get("defense")}
         lbl2key = {DEF.label(k): k for k, _l, _f in DEF.DEFENSES if k in _seen}
@@ -123,18 +134,18 @@ def render(ctx):
         if _mode.startswith("Facet"):
             fig, n = court.shot_map_grouped(
                 shots, group_key="defense", labels=_DEF_LABEL,
-                title="Every shot, colored by the defense faced")
+                title=f"Every shot, colored by scheme — {_what}")
             if n:
                 st.plotly_chart(fig, width="stretch", key="def_court_facet")
-                st.caption("Each colour = a defense faced · filled = make, open = "
-                           "miss · grey = untagged. Spot how your looks cluster vs "
-                           "each scheme.")
+                st.caption("Each colour = a scheme · filled = make, open = miss · "
+                           "grey = untagged. Spot how the looks cluster vs each "
+                           "scheme.")
             else:
                 st.caption("No located shots to plot.")
         else:
             pick = st.selectbox("Defense", ["All defenses"] + list(lbl2key),
                                 key="def_court_pick", disabled=not lbl2key,
-                                help="Filter the court to one defense you faced.")
+                                help=_filterhelp)
             _dk = lbl2key.get(pick)
             fshots = [s for s in shots if s.get("defense") == _dk] if _dk else shots
             view = seg("View", ["Shot map", "Hexbin (PPS)", "Quality (POE)"],
@@ -162,10 +173,7 @@ def render(ctx):
             st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — set "
                        "the defense in the tracker to sharpen the by-scheme court.")
 
-    # ── §A — side toggle + coverage (analytical sections below) ──────────────
-    _side = seg("Side of the ball", ["Our defense", "Vs defenses we face"],
-                key="def_side") or "Our defense"
-    _off = _side != "Our defense"     # offense=True => the defenses we FACE
+    # ── coverage line for the analytical sections below ──────────────────────
     dv = ctx.def_view(g, tid, _off)
     drows = dv.get("rows", [])
     st.caption(

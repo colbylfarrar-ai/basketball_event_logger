@@ -614,8 +614,18 @@ def _gender_tracked_ids(g):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _located_team(tid, gids):
-    """Tap-captured x/y shots for one team over its tracked games."""
+    """Tap-captured x/y shots for one team over its tracked games (shots FOR)."""
     return S.located_shots(game_ids=list(gids), team_id=tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _located_allowed(tid, gids):
+    """Tap-captured x/y shots the team ALLOWED (opponents' shots in its games) —
+    the shots-against companion to _located_team. A game has two teams, so any
+    located shot in the team's games whose shooter isn't this team is an opponent
+    attempt; its `defense` tag is the scheme THIS team was running."""
+    return [s for s in S.located_shots(game_ids=list(gids))
+            if s.get("team_id") != tid]
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1043,8 +1053,8 @@ with tab_charts:
             players=players, tracked_ids=tuple(bundle["tracked_ids"]),
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD,
             BAD=BAD, PURPLE=PURPLE, PINK=PINK,
-            located_team=_located_team, league_pps=_league_pps_located,
-            shot_model=_shot_model,
+            located_team=_located_team, located_allowed=_located_allowed,
+            league_pps=_league_pps_located, shot_model=_shot_model,
             def_view=_def_view, def_families=_def_families,
             def_profiles=_def_profiles, cross_pd=_def_cross,
             def_tovs=_def_tovs, def_fouls=_def_fouls, def_leaders=_def_leaders,

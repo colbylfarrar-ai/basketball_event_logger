@@ -147,8 +147,14 @@ with st.expander("🛡️ Bulk-tag defense by team — set each side, then tweak
                "scheme the OTHER team was running), then change the few exceptions "
                "in the grid below. Tag one side or both. Free throws don't carry a "
                "defense. Applies to the whole game, not just the filtered view.")
-    _t1n, _t2n = gsel["n1"], gsel["n2"]
-    _t1id, _t2id = gsel["t1_id"], gsel["t2_id"]
+    # Pull the two teams straight from gid (always valid) rather than gsel's keys
+    # — st.selectbox can hand back a STALE option dict from a pre-deploy session
+    # that predates these fields, which would KeyError.
+    _grow = _q("SELECT t1.id i1, t1.name n1, t2.id i2, t2.name n2 "
+               "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+               "JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?", (gid,))[0]
+    _t1n, _t2n = _grow["n1"], _grow["n2"]
+    _t1id, _t2id = _grow["i1"], _grow["i2"]
     bc1, bc2 = st.columns(2)
     _d_t1 = bc1.selectbox(f"{_t1n} possessions — defense faced", def_opts,
                           key="ee_bulk_t1",

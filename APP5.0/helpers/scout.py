@@ -24,6 +24,26 @@ import helpers.defenses as DEF
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
 
+# Coarse scout-section keys that were split into per-table keys (so a coach can
+# print just one table). A coach who previously hid the bundle keeps every child
+# hidden — expand the legacy parent key into its children when reading the toggle
+# set. Used by BOTH the on-screen tab and printable_html so they stay in lockstep.
+SCOUT_LEGACY_KEYS = {
+    "play_calls": ("pc_offense", "pc_defense", "pc_tendencies", "pc_handoff"),
+    "defenses":   ("def_run", "def_attack", "def_cross"),
+}
+
+
+def expand_hidden(hidden):
+    """Return ``hidden`` with any legacy bundle key expanded to its child keys, so
+    an old 'play_calls'/'defenses' opt-out still hides all of that bundle's now-
+    granular tables. Non-destructive (returns a new set)."""
+    out = set(hidden or ())
+    for parent, kids in SCOUT_LEGACY_KEYS.items():
+        if parent in out:
+            out.update(kids)
+    return out
+
 
 def _mean(pool):
     pool = [v for v in pool if v is not None]
@@ -435,7 +455,7 @@ def _pf(frac, dp=0):
     return f"{frac * 100:.{dp}f}%" if frac is not None else "—"
 
 
-def printable_html(sc, opponent_label, hidden=None, extra=None):
+def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     """A print-ready scouting sheet (browser → Print → PDF, or the in-app
     preview). Zero hard dependencies — table-based so the xhtml2pdf fallback
     renders it; inline-SVG shot charts / blank courts print from the browser and
@@ -455,10 +475,16 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
     except Exception:
         today = ""
 
-    hidden = hidden or set()
+    hidden = expand_hidden(hidden or set())
 
     def _show(k):
         return k not in hidden
+
+    # Compact mode flows the middle text/table sections into two columns (wide
+    # visual blocks — keys, four-factor+zone row, shot chart, personnel cards,
+    # diagrams — stay full width outside the flow).
+    _flow_open = "<div class='flow2'>" if compact else ""
+    _flow_close = "</div>" if compact else ""
 
     trk = sc["trk"]
     rng = (f"ORtg {trk['ORtg']:.0f} · DRtg {trk['DRtg']:.0f} · "
@@ -559,9 +585,12 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
         report_html = f"<h2>Scouting report</h2><ul>{li}</ul>"
 
     # ── how they get their shots: tagged play calls (one-tap from the tracker) ─
+    # Each table is independently toggleable (pc_offense / pc_defense /
+    # pc_tendencies / pc_handoff) so a coach can print just the one or two they
+    # want — the charts are large, so granular selection keeps the sheet to a page.
     pc_html = ""
     pc = sc.get("play_calls")
-    if _show("play_calls") and pc and pc.get("rows"):
+    if _show("pc_offense") and pc and pc.get("rows"):
         rows_pc = "".join(
             f"<tr><td>{e(r['label'])}</td>"
             f"<td class='n'>{r['share'] * 100:.0f}%</td>"
@@ -569,57 +598,58 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
             f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
             f"<td class='n'>{r['poss']}</td></tr>"
             for r in sorted(pc["rows"], key=lambda r: r["share"], reverse=True))
-        pc_html = (
+        pc_html += (
             "<h2>How they get their shots — play calls</h2><table><tr>"
             "<th>Play call</th><th class='n'>Share</th><th class='n'>PPP</th>"
             f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_pc}</table>"
             f"<p class='note'>Coach-tagged set calls on {pc['total_tagged']} shots "
             f"({pc['untagged']} untagged). Share = % of tagged shots; PPP = points "
             "per possession.</p>")
-        # companion: what they ALLOW — the set calls opponents ran on them.
-        pcd = sc.get("play_calls_def")
-        if pcd and pcd.get("rows"):
-            rows_pcd = "".join(
-                f"<tr><td>{e(r['label'])}</td>"
-                f"<td class='n'>{r['share'] * 100:.0f}%</td>"
-                f"<td class='n'>{r['PPP']:.2f}</td>"
-                f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
-                f"<td class='n'>{r['poss']}</td></tr>"
-                for r in sorted(pcd["rows"], key=lambda r: r["share"], reverse=True))
-            pc_html += (
-                "<h2>What they allow — play calls defended</h2><table><tr>"
-                "<th>Play call</th><th class='n'>Share</th><th class='n'>PPP</th>"
-                f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_pcd}</table>"
-                f"<p class='note'>Set calls opponents ran on them, on "
-                f"{pcd['total_tagged']} shots ({pcd['untagged']} untagged). Higher "
-                "PPP allowed = a set to lean on.</p>")
-        # cross-dimension: what each set PRODUCES — where it shoots from and the
-        # 3PA / rim / assisted / open share. The "they shoot HERE on X / hunt a
-        # 3 in transition" read, joined beside the play-calls table above.
-        sp = sc.get("set_profiles")
-        if sp:
-            rows_sp = "".join(
-                f"<tr><td>{e(pr.get('label') or k)}</td>"
-                f"<td class='n'>{(pr.get('3PA_rate') or 0) * 100:.0f}%</td>"
-                f"<td class='n'>{(pr.get('rim_rate') or 0) * 100:.0f}%</td>"
-                f"<td class='n'>{(pr.get('ast_rate') or 0) * 100:.0f}%</td>"
-                f"<td class='n'>{(pr.get('open_rate') or 0) * 100:.0f}%</td>"
-                f"<td>{e(ZONE_LABELS.get(pr.get('top_zone'), '—'))}</td></tr>"
-                for k, pr in sorted(sp.items(), key=lambda kv: -kv[1]["poss"]))
-            pc_html += (
-                "<h2>Set tendencies — what each set produces</h2><table><tr>"
-                "<th>Set</th><th class='n'>3PA%</th><th class='n'>Rim%</th>"
-                "<th class='n'>Assisted%</th><th class='n'>Open%</th>"
-                f"<th>Where</th></tr>{rows_sp}</table>"
-                "<p class='note'>3PA% / Rim% = shot-type share of the set; "
-                "Assisted% = off a pass; Open% = uncontested; Where = the zone the "
-                "set most lives in. High transition 3PA% = a get-back read.</p>")
-        # full DHO / BLOB / SLOB breakdown — the PnR-style treatment: the set's
-        # overall efficiency, an initiator-vs-finisher split, and the hub chain.
-        ho = sc.get("handoff")
-        if ho:
-            _name_of = sc.get("name_of") or {}
-            blocks = []
+    # companion: what they ALLOW — the set calls opponents ran on them.
+    pcd = sc.get("play_calls_def")
+    if _show("pc_defense") and pcd and pcd.get("rows"):
+        rows_pcd = "".join(
+            f"<tr><td>{e(r['label'])}</td>"
+            f"<td class='n'>{r['share'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['poss']}</td></tr>"
+            for r in sorted(pcd["rows"], key=lambda r: r["share"], reverse=True))
+        pc_html += (
+            "<h2>What they allow — play calls defended</h2><table><tr>"
+            "<th>Play call</th><th class='n'>Share</th><th class='n'>PPP</th>"
+            f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_pcd}</table>"
+            f"<p class='note'>Set calls opponents ran on them, on "
+            f"{pcd['total_tagged']} shots ({pcd['untagged']} untagged). Higher "
+            "PPP allowed = a set to lean on.</p>")
+    # cross-dimension: what each set PRODUCES — where it shoots from and the
+    # 3PA / rim / assisted / open share. The "they shoot HERE on X / hunt a
+    # 3 in transition" read, joined beside the play-calls table above.
+    sp = sc.get("set_profiles")
+    if _show("pc_tendencies") and sp:
+        rows_sp = "".join(
+            f"<tr><td>{e(pr.get('label') or k)}</td>"
+            f"<td class='n'>{(pr.get('3PA_rate') or 0) * 100:.0f}%</td>"
+            f"<td class='n'>{(pr.get('rim_rate') or 0) * 100:.0f}%</td>"
+            f"<td class='n'>{(pr.get('ast_rate') or 0) * 100:.0f}%</td>"
+            f"<td class='n'>{(pr.get('open_rate') or 0) * 100:.0f}%</td>"
+            f"<td>{e(ZONE_LABELS.get(pr.get('top_zone'), '—'))}</td></tr>"
+            for k, pr in sorted(sp.items(), key=lambda kv: -kv[1]["poss"]))
+        pc_html += (
+            "<h2>Set tendencies — what each set produces</h2><table><tr>"
+            "<th>Set</th><th class='n'>3PA%</th><th class='n'>Rim%</th>"
+            "<th class='n'>Assisted%</th><th class='n'>Open%</th>"
+            f"<th>Where</th></tr>{rows_sp}</table>"
+            "<p class='note'>3PA% / Rim% = shot-type share of the set; "
+            "Assisted% = off a pass; Open% = uncontested; Where = the zone the "
+            "set most lives in. High transition 3PA% = a get-back read.</p>")
+    # full DHO / BLOB / SLOB breakdown — the PnR-style treatment: the set's
+    # overall efficiency, an initiator-vs-finisher split, and the hub chain.
+    ho = sc.get("handoff")
+    if _show("pc_handoff") and ho:
+        _name_of = sc.get("name_of") or {}
+        blocks = []
+        if True:
             for h in ho:
                 lines = []
                 stx = h.get("set")
@@ -665,58 +695,58 @@ def printable_html(sc, opponent_label, hidden=None, extra=None):
                     "and the hub who initiates it.</p>")
 
     # ── DEFENSE: schemes they run + how they attack a D + play×D cross-tab ──
+    # Each table independently toggleable (def_run / def_attack / def_cross).
     def_html = ""
-    if _show("defenses"):
-        drun = sc.get("defenses_run")
-        if drun and drun.get("rows"):
-            rows_dr = "".join(
-                f"<tr><td>{e(r['label'])}</td>"
-                f"<td class='n'>{r['share'] * 100:.0f}%</td>"
-                f"<td class='n'>{r['PPP']:.2f}</td>"
-                f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
-                f"<td class='n'>{r['poss']}</td></tr>"
-                for r in drun["rows"])
-            def_html += (
-                "<h2>Defenses they run</h2><table><tr>"
-                "<th>Defense</th><th class='n'>Share</th><th class='n'>PPP allowed</th>"
-                f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_dr}</table>"
-                f"<p class='note'>The schemes this team plays on defense, over "
-                f"{drun['total_tagged']} tagged trips. Lower PPP allowed = the look "
-                "they trust; biggest share = what to prep your offense against.</p>")
-        dfaced = sc.get("defenses_faced")
-        if dfaced and dfaced.get("rows"):
-            rows_df = "".join(
-                f"<tr><td>{e(r['label'])}</td>"
-                f"<td class='n'>{r['share'] * 100:.0f}%</td>"
-                f"<td class='n'>{r['PPP']:.2f}</td>"
-                f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
-                f"<td class='n'>{r['poss']}</td></tr>"
-                for r in dfaced["rows"])
-            def_html += (
-                "<h2>How they attack a defense</h2><table><tr>"
-                "<th>Defense faced</th><th class='n'>Share</th><th class='n'>PPP</th>"
-                f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_df}</table>"
-                "<p class='note'>How this team scores against each scheme thrown at "
-                "it. A low PPP on real volume = a defense to play against them.</p>")
-        cx = sc.get("defense_cross")
-        if cx and cx.get("plays") and cx.get("defenses"):
-            _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
-            _head = "".join(f"<th class='n'>{e(_dl.get(d, d))}</th>"
-                            for d in cx["defenses"])
-            _brows = []
-            for pk in cx["plays"]:
-                _tds = []
-                for dk in cx["defenses"]:
-                    c = _mx.get(pk, {}).get(dk)
-                    _tds.append(f"<td class='n'>{c['PPP']:.2f} ({c['poss']})</td>"
-                                if c and c["stable"] else "<td class='n'>—</td>")
-                _brows.append(f"<tr><td>{e(_pl.get(pk, pk))}</td>{''.join(_tds)}</tr>")
-            def_html += (
-                "<h2>Play type &times; defense — PPP they score</h2>"
-                f"<table><tr><th>Set</th>{_head}</tr>{''.join(_brows)}</table>"
-                "<p class='note'>PPP this team scores running each set vs each scheme "
-                "(cells with at least 4 possessions; blank = thin). The overlap that "
-                "says which defense to throw at which action.</p>")
+    drun = sc.get("defenses_run")
+    if _show("def_run") and drun and drun.get("rows"):
+        rows_dr = "".join(
+            f"<tr><td>{e(r['label'])}</td>"
+            f"<td class='n'>{r['share'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['poss']}</td></tr>"
+            for r in drun["rows"])
+        def_html += (
+            "<h2>Defenses they run</h2><table><tr>"
+            "<th>Defense</th><th class='n'>Share</th><th class='n'>PPP allowed</th>"
+            f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_dr}</table>"
+            f"<p class='note'>The schemes this team plays on defense, over "
+            f"{drun['total_tagged']} tagged trips. Lower PPP allowed = the look "
+            "they trust; biggest share = what to prep your offense against.</p>")
+    dfaced = sc.get("defenses_faced")
+    if _show("def_attack") and dfaced and dfaced.get("rows"):
+        rows_df = "".join(
+            f"<tr><td>{e(r['label'])}</td>"
+            f"<td class='n'>{r['share'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['poss']}</td></tr>"
+            for r in dfaced["rows"])
+        def_html += (
+            "<h2>How they attack a defense</h2><table><tr>"
+            "<th>Defense faced</th><th class='n'>Share</th><th class='n'>PPP</th>"
+            f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_df}</table>"
+            "<p class='note'>How this team scores against each scheme thrown at "
+            "it. A low PPP on real volume = a defense to play against them.</p>")
+    cx = sc.get("defense_cross")
+    if _show("def_cross") and cx and cx.get("plays") and cx.get("defenses"):
+        _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
+        _head = "".join(f"<th class='n'>{e(_dl.get(d, d))}</th>"
+                        for d in cx["defenses"])
+        _brows = []
+        for pk in cx["plays"]:
+            _tds = []
+            for dk in cx["defenses"]:
+                c = _mx.get(pk, {}).get(dk)
+                _tds.append(f"<td class='n'>{c['PPP']:.2f} ({c['poss']})</td>"
+                            if c and c["stable"] else "<td class='n'>—</td>")
+            _brows.append(f"<tr><td>{e(_pl.get(pk, pk))}</td>{''.join(_tds)}</tr>")
+        def_html += (
+            "<h2>Play type &times; defense — PPP they score</h2>"
+            f"<table><tr><th>Set</th>{_head}</tr>{''.join(_brows)}</table>"
+            "<p class='note'>PPP this team scores running each set vs each scheme "
+            "(cells with at least 4 possessions; blank = thin). The overlap that "
+            "says which defense to throw at which action.</p>")
 
     # ── team shot chart (inline SVG from tap-captured x/y) ──
     shot_html = ""
@@ -903,7 +933,16 @@ table.diag{{border-collapse:separate;border-spacing:7px;width:100%}}
 table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 .diagname{{border-bottom:1px solid #999;height:13px;margin:0 3px 3px}}
 .foot{{margin-top:12px;color:#999;font-size:9px}}
-@media print{{.wrap{{padding:8px 12px}} td.pcard,table.diag td{{page-break-inside:avoid}}}}
+/* Compact layout: flow the text/table sections into TWO columns so far more
+   fits per page (browser print honours column-count; xhtml2pdf ignores it and
+   falls back to a single column — still valid). Keep each h2+table together. */
+.flow2{{column-count:2;column-gap:18px}}
+.flow2>h2:first-child{{margin-top:0}}
+.flow2 h2{{break-after:avoid;-webkit-column-break-after:avoid}}
+.flow2 table,.flow2 ul,.flow2 .note,.flow2 .notes-box,.flow2 .hb{{
+  break-inside:avoid;-webkit-column-break-inside:avoid}}
+@page{{margin:.4in}}
+@media print{{.wrap{{padding:6px 10px}} td.pcard,table.diag td{{page-break-inside:avoid}}}}
 </style></head><body><div class='wrap'>
 <h1>SCOUT — {e(sc['name'])}</h1>
 <div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
@@ -911,16 +950,16 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 <div class='rng'>{e(rng)}</div>
 {keys_html}
 {two_html}
-{breakeven_html}
+{_flow_open}{breakeven_html}
 {eff_html}
 {report_html}
 {pc_html}
 {def_html}
-{shot_html}
-{pers_html}
 {three_html}
 {plen_html}
-{notes_html}
+{notes_html}{_flow_close}
+{shot_html}
+{pers_html}
 {diag_html}
 <div class='foot'>Analytics Hub{(' · ' + today) if today else ''}</div>
 </div></body></html>"""

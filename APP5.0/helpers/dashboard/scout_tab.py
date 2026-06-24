@@ -32,22 +32,33 @@ import helpers.settings_utils as SU
 # HIDDEN keys in app_settings ("scout_hidden_sections", namespaced u:<email>:);
 # default = everything on. Keep keys in sync with the _show() guards below and
 # the same keys honoured in helpers/scout.py:printable_html().
+# (key, label, group). Every individual table/chart is its own key so a coach
+# can print just the one or two they want (the charts are large — granular
+# selection is what keeps the sheet to one page). The play-calls and defense
+# blocks used to be single bundled keys ("play_calls" / "defenses"); those are
+# kept as LEGACY parents (helpers/scout.SCOUT_LEGACY_KEYS) so an old opt-out
+# still hides the whole bundle.
 SCOUT_SECTIONS = [
-    ("keys", "Keys to the game (guard / attack)"),
-    ("four_factors", "Four factors & tendencies"),
-    ("breakeven", "Should they shoot 2s or 3s?"),
-    ("three_profile", "Per-player 3-point profile"),
-    ("auto_report", "Auto scouting report"),
-    ("efficiency", "Efficiency summary"),
-    ("personnel", "Personnel (player breakdown)"),
-    ("player_plays", "Player play-type mix (on personnel cards)"),
-    ("play_calls", "Play calls — how they get their shots (team block)"),
-    ("defenses", "Defenses they run + play type × defense"),
-    ("shot_chart", "Shot chart"),
-    ("zones", "Shooting by zone"),
-    ("poss_length", "Scoring by possession length"),
-    ("notes", "Game-plan notes"),
-    ("play_diagrams", "Blank play diagrams (draw by hand)"),
+    ("keys", "Keys to the game (guard / attack)", "Overview"),
+    ("four_factors", "Four factors & tendencies", "Overview"),
+    ("breakeven", "Should they shoot 2s or 3s?", "Overview"),
+    ("auto_report", "Auto scouting report", "Overview"),
+    ("efficiency", "Efficiency summary", "Overview"),
+    ("personnel", "Personnel (player breakdown)", "Personnel"),
+    ("player_plays", "Player play-type mix (on personnel cards)", "Personnel"),
+    ("three_profile", "Per-player 3-point profile", "Personnel"),
+    ("pc_offense", "Play calls — how they get their shots", "Offense (play calls)"),
+    ("pc_defense", "What they allow — play calls defended", "Offense (play calls)"),
+    ("pc_tendencies", "Set tendencies — what each set produces", "Offense (play calls)"),
+    ("pc_handoff", "Hand-off & inbounds breakdown", "Offense (play calls)"),
+    ("def_run", "Defenses they run", "Defense (schemes)"),
+    ("def_attack", "How they attack a defense", "Defense (schemes)"),
+    ("def_cross", "Play type × defense cross-tab", "Defense (schemes)"),
+    ("shot_chart", "Shot chart", "Shooting"),
+    ("zones", "Shooting by zone", "Shooting"),
+    ("poss_length", "Scoring by possession length", "Shooting"),
+    ("notes", "Game-plan notes", "Extras"),
+    ("play_diagrams", "Blank play diagrams (draw by hand)", "Extras"),
 ]
 
 
@@ -154,18 +165,39 @@ def render(ctx):
                        + ", ".join(_names[p] for p in _hide if p in _names) + ".")
 
     # ── per-coach: pick what shows (this tab + the printable sheet) ───────────
-    _hidden = set(filter(None,
-                  (SU.get_setting("scout_hidden_sections", "") or "").split(",")))
+    # Legacy bundle keys are expanded to their child keys so an old opt-out still
+    # hides the whole bundle (the two coarse keys became per-table keys).
+    _hidden = SC.expand_hidden(set(filter(None,
+                  (SU.get_setting("scout_hidden_sections", "") or "").split(","))))
+    _compact = SU.get_setting("scout_compact", "1") != "0"
     with st.expander("⚙ Customize sheet — pick what shows"):
-        st.caption("Your picks save automatically and apply to this tab AND the "
-                   "printable hand-out. Coach it your way.")
-        _cc = st.columns(2)
+        st.caption("Every table and chart is its own toggle — print just the one "
+                   "or two you want. Picks save automatically and apply to this tab "
+                   "AND the printable hand-out.")
+        _new_compact = st.checkbox(
+            "Compact 2-column printable (fits much more per page)",
+            value=_compact, key="scout_compact_cb",
+            help="Flows the text tables into two columns on the printable sheet so "
+                 "more fits on one page. Wide blocks (shot chart, personnel) stay "
+                 "full width.")
+        if _new_compact != _compact:
+            SU.set_setting("scout_compact", "1" if _new_compact else "0")
+            _compact = _new_compact
         _new_hidden = set()
-        for _i, (_k, _lbl) in enumerate(SCOUT_SECTIONS):
-            _on = _cc[_i % 2].checkbox(_lbl, value=(_k not in _hidden),
-                                       key=f"scout_sec_{_k}")
-            if not _on:
-                _new_hidden.add(_k)
+        # group the toggles so the longer per-table list stays navigable
+        _seen_groups = []
+        for _k, _lbl, _grp in SCOUT_SECTIONS:
+            if _grp not in _seen_groups:
+                _seen_groups.append(_grp)
+        for _grp in _seen_groups:
+            st.markdown(f"**{_grp}**")
+            _items = [(k, l) for k, l, g in SCOUT_SECTIONS if g == _grp]
+            _cc = st.columns(2)
+            for _i, (_k, _lbl) in enumerate(_items):
+                _on = _cc[_i % 2].checkbox(_lbl, value=(_k not in _hidden),
+                                           key=f"scout_sec_{_k}")
+                if not _on:
+                    _new_hidden.add(_k)
         if _new_hidden != _hidden:
             SU.set_setting("scout_hidden_sections", ",".join(sorted(_new_hidden)))
             _hidden = _new_hidden
@@ -443,12 +475,14 @@ def render(ctx):
                 + "</div>", unsafe_allow_html=True)
 
     # ── how they get their shots: tagged play calls (one-tap from tracker) ───
-    if _show("play_calls"):
+    # how they get their shots — each table is its own toggle (pc_offense /
+    # pc_defense / pc_tendencies / pc_handoff).
+    import pandas as pd
+    pc = sc.get("play_calls")
+    if _show("pc_offense"):
         st.markdown("<div class='lab-hdr'>How they get their shots — play calls"
                     "</div>", unsafe_allow_html=True)
-        pc = sc.get("play_calls")
         if pc and pc.get("rows"):
-            import pandas as pd
             _pcrows = sorted(pc["rows"], key=lambda r: r["share"], reverse=True)
             st.dataframe(pd.DataFrame([{
                 "Play call": r["label"], "Share": r["share"] * 100,
@@ -464,157 +498,151 @@ def render(ctx):
                 f"({pc['untagged']} untagged) — share = % of tagged shots, PPP = "
                 "points per possession. Separate from the inferred shot-source mix "
                 "on each personnel card; tag plays one-tap in the Game Tracker.")
-            # companion: what they ALLOW — set calls opponents ran on them
-            pcd = sc.get("play_calls_def")
-            if pcd and pcd.get("rows"):
-                import pandas as pd
-                st.markdown("<div class='lab-hdr'>What they allow — play calls "
-                            "defended</div>", unsafe_allow_html=True)
-                _pcdrows = sorted(pcd["rows"], key=lambda r: r["share"],
-                                  reverse=True)
-                st.dataframe(pd.DataFrame([{
-                    "Play call": r["label"], "Share": r["share"] * 100,
-                    "PPP": r["PPP"], "FG%": r["FG%"] * 100, "Poss": r["poss"],
-                } for r in _pcdrows]), hide_index=True, width="stretch",
-                    column_config={
-                        "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
-                        "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-                        "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
-                    })
-                st.caption(
-                    f"Set calls opponents ran on them, on {pcd['total_tagged']} "
-                    f"shots ({pcd['untagged']} untagged) — higher PPP allowed = a "
-                    "set to lean on against them.")
-            # cross-dimension: what each set PRODUCES — where it shoots from and
-            # the 3PA / rim / assisted / open share (the "they shoot HERE on X /
-            # hunt a 3 in transition" read, beside the play-calls table above).
-            spf = sc.get("set_profiles")
-            if spf:
-                import pandas as pd
-                st.markdown("<div class='lab-hdr'>Set tendencies — what each set "
-                            "produces</div>", unsafe_allow_html=True)
-                _sprows = sorted(spf.items(), key=lambda kv: -kv[1]["poss"])
-                st.dataframe(pd.DataFrame([{
-                    "Set": pr.get("label") or k,
-                    "3PA%": (pr.get("3PA_rate") or 0) * 100,
-                    "Rim%": (pr.get("rim_rate") or 0) * 100,
-                    "Assisted%": (pr.get("ast_rate") or 0) * 100,
-                    "Open%": (pr.get("open_rate") or 0) * 100,
-                    "Where": SC.ZONE_LABELS.get(pr.get("top_zone"), "—"),
-                    "Poss": pr["poss"],
-                } for k, pr in _sprows]), hide_index=True, width="stretch",
-                    column_config={
-                        "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
-                        "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
-                        "Assisted%": st.column_config.NumberColumn(
-                            "Assisted%", format="%.0f%%"),
-                        "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
-                    })
-                st.caption(
-                    "What each tagged set PRODUCES — 3PA% / Rim% = shot-type share, "
-                    "Assisted% = off a pass, Open% = uncontested, Where = the zone "
-                    "the set most lives in. High transition 3PA% = a get-back read.")
-            # full DHO / BLOB / SLOB breakdown (PnR-style): the set's overall
-            # efficiency, an initiator-vs-finisher split, and the hub chain.
-            ho = sc.get("handoff")
-            if ho:
-                _name_of = sc.get("name_of") or {}
-                st.markdown("<div class='lab-hdr'>Hand-off &amp; inbounds "
-                            "breakdown</div>", unsafe_allow_html=True)
-                for h in ho:
-                    _ls = [f"**{h['label']}**"]
-                    _s = h.get("set")
-                    if _s:
-                        _ls.append(
-                            f"- Set: {_s['PPP']:.2f} PPP · {_s['FG%'] * 100:.0f}% FG "
-                            f"· {_s['share'] * 100:.0f}% of tags ({_s['poss']} poss)")
-                    _i = h.get("initiator")
-                    if _i:
-                        _ls.append(
-                            f"- Initiator (set it): {_i['PPP']:.2f} PPP · "
-                            f"{_i['FG%'] * 100:.0f}% FG · {_i['poss']} poss")
-                    _f = h.get("finisher")
-                    if _f:
-                        _ls.append(
-                            f"- Finisher (got it): {_f['PPP']:.2f} PPP · "
-                            f"{_f['FG%'] * 100:.0f}% FG · "
-                            f"{_f['3PA_rate'] * 100:.0f}% 3PA · {_f['poss']} poss")
-                    _hb = h.get("hub")
-                    if _hb:
-                        _nm = _name_of.get(_hb["feeder_id"], f"#{_hb['feeder_id']}")
-                        _tg = _hb.get("target_id")
-                        _tt = (f" → {_name_of.get(_tg, '#' + str(_tg))}"
-                               if _tg is not None else "")
-                        _ls.append(f"- Hub: {_nm} ({_hb['feeds']} feeds){_tt}")
-                    st.markdown("  \n".join(_ls))
-                st.caption("The PnR-style read for DHO / BLOB / SLOB: each set's "
-                           "overall efficiency, the initiator (set it / handed off) "
-                           "vs finisher (received & shot) split, and the hub who "
-                           "initiates it.")
         else:
             st.caption("No play-call tags yet — tap an optional **Play type** "
                        "(Pick & roll, Iso, Post-up…) on shots in the Game Tracker "
                        "to scout how a team generates offense.")
+    # companion: what they ALLOW — set calls opponents ran on them
+    pcd = sc.get("play_calls_def")
+    if _show("pc_defense") and pcd and pcd.get("rows"):
+        st.markdown("<div class='lab-hdr'>What they allow — play calls "
+                    "defended</div>", unsafe_allow_html=True)
+        _pcdrows = sorted(pcd["rows"], key=lambda r: r["share"], reverse=True)
+        st.dataframe(pd.DataFrame([{
+            "Play call": r["label"], "Share": r["share"] * 100,
+            "PPP": r["PPP"], "FG%": r["FG%"] * 100, "Poss": r["poss"],
+        } for r in _pcdrows]), hide_index=True, width="stretch",
+            column_config={
+                "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+            })
+        st.caption(
+            f"Set calls opponents ran on them, on {pcd['total_tagged']} "
+            f"shots ({pcd['untagged']} untagged) — higher PPP allowed = a "
+            "set to lean on against them.")
+    # cross-dimension: what each set PRODUCES — where it shoots from and the
+    # 3PA / rim / assisted / open share ("they shoot HERE on X / hunt a 3").
+    spf = sc.get("set_profiles")
+    if _show("pc_tendencies") and spf:
+        st.markdown("<div class='lab-hdr'>Set tendencies — what each set "
+                    "produces</div>", unsafe_allow_html=True)
+        _sprows = sorted(spf.items(), key=lambda kv: -kv[1]["poss"])
+        st.dataframe(pd.DataFrame([{
+            "Set": pr.get("label") or k,
+            "3PA%": (pr.get("3PA_rate") or 0) * 100,
+            "Rim%": (pr.get("rim_rate") or 0) * 100,
+            "Assisted%": (pr.get("ast_rate") or 0) * 100,
+            "Open%": (pr.get("open_rate") or 0) * 100,
+            "Where": SC.ZONE_LABELS.get(pr.get("top_zone"), "—"),
+            "Poss": pr["poss"],
+        } for k, pr in _sprows]), hide_index=True, width="stretch",
+            column_config={
+                "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
+                "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
+                "Assisted%": st.column_config.NumberColumn(
+                    "Assisted%", format="%.0f%%"),
+                "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
+            })
+        st.caption(
+            "What each tagged set PRODUCES — 3PA% / Rim% = shot-type share, "
+            "Assisted% = off a pass, Open% = uncontested, Where = the zone "
+            "the set most lives in. High transition 3PA% = a get-back read.")
+    # full DHO / BLOB / SLOB breakdown (PnR-style): set efficiency, an
+    # initiator-vs-finisher split, and the hub chain.
+    ho = sc.get("handoff")
+    if _show("pc_handoff") and ho:
+        _name_of = sc.get("name_of") or {}
+        st.markdown("<div class='lab-hdr'>Hand-off &amp; inbounds "
+                    "breakdown</div>", unsafe_allow_html=True)
+        for h in ho:
+            _ls = [f"**{h['label']}**"]
+            _s = h.get("set")
+            if _s:
+                _ls.append(
+                    f"- Set: {_s['PPP']:.2f} PPP · {_s['FG%'] * 100:.0f}% FG "
+                    f"· {_s['share'] * 100:.0f}% of tags ({_s['poss']} poss)")
+            _i = h.get("initiator")
+            if _i:
+                _ls.append(
+                    f"- Initiator (set it): {_i['PPP']:.2f} PPP · "
+                    f"{_i['FG%'] * 100:.0f}% FG · {_i['poss']} poss")
+            _f = h.get("finisher")
+            if _f:
+                _ls.append(
+                    f"- Finisher (got it): {_f['PPP']:.2f} PPP · "
+                    f"{_f['FG%'] * 100:.0f}% FG · "
+                    f"{_f['3PA_rate'] * 100:.0f}% 3PA · {_f['poss']} poss")
+            _hb = h.get("hub")
+            if _hb:
+                _nm = _name_of.get(_hb["feeder_id"], f"#{_hb['feeder_id']}")
+                _tg = _hb.get("target_id")
+                _tt = (f" → {_name_of.get(_tg, '#' + str(_tg))}"
+                       if _tg is not None else "")
+                _ls.append(f"- Hub: {_nm} ({_hb['feeds']} feeds){_tt}")
+            st.markdown("  \n".join(_ls))
+        st.caption("The PnR-style read for DHO / BLOB / SLOB: each set's "
+                   "overall efficiency, the initiator (set it / handed off) "
+                   "vs finisher (received & shot) split, and the hub who "
+                   "initiates it.")
 
     # ── defenses they run + how they attack a defense + play × defense ───────
-    if _show("defenses"):
-        drun = sc.get("defenses_run")
-        dfaced = sc.get("defenses_faced")
-        cx = sc.get("defense_cross")
-        if (drun and drun.get("rows")) or (dfaced and dfaced.get("rows")) or \
-                (cx and cx.get("plays")):
-            import pandas as pd
-            st.markdown("<div class='lab-hdr'>Defenses they run</div>",
-                        unsafe_allow_html=True)
-            if drun and drun.get("rows"):
-                st.dataframe(pd.DataFrame([{
-                    "Defense": r["label"], "Share": r["share"] * 100,
-                    "PPP allowed": round(r["PPP"], 2), "FG%": r["FG%"] * 100,
-                    "Poss": r["poss"],
-                } for r in drun["rows"]]), hide_index=True, width="stretch",
-                    column_config={
-                        "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
-                        "PPP allowed": st.column_config.NumberColumn("PPP allowed", format="%.2f"),
-                        "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
-                    })
-                st.caption(f"The schemes this team plays on D, over "
-                           f"{drun['total_tagged']} tagged trips. Biggest share = "
-                           "what to prep your offense against; lower PPP allowed = "
-                           "the look they trust.")
-            else:
-                st.caption("No defense tags yet — set the **Defense** in the Game "
-                           "Tracker (it's sticky) to scout what a team runs.")
-            if dfaced and dfaced.get("rows"):
-                st.markdown("<div class='lab-hdr'>How they attack a defense</div>",
-                            unsafe_allow_html=True)
-                st.dataframe(pd.DataFrame([{
-                    "Defense faced": r["label"], "Share": r["share"] * 100,
-                    "PPP": round(r["PPP"], 2), "FG%": r["FG%"] * 100,
-                    "Poss": r["poss"],
-                } for r in dfaced["rows"]]), hide_index=True, width="stretch",
-                    column_config={
-                        "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
-                        "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-                        "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
-                    })
-                st.caption("How they score vs each scheme thrown at them — a low PPP "
-                           "on real volume = a defense to play against them.")
-            if cx and cx.get("plays") and cx.get("defenses"):
-                st.markdown("<div class='lab-hdr'>Play type &times; defense — PPP "
-                            "they score</div>", unsafe_allow_html=True)
-                _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
-                _grid = []
-                for pk in cx["plays"]:
-                    _r = {"Set": _pl.get(pk, pk)}
-                    for dk in cx["defenses"]:
-                        c = _mx.get(pk, {}).get(dk)
-                        _r[_dl.get(dk, dk)] = (round(c["PPP"], 2)
-                                               if c and c["stable"] else None)
-                    _grid.append(_r)
-                st.dataframe(pd.DataFrame(_grid), hide_index=True, width="stretch")
-                st.caption("PPP this team scores running each set vs each scheme "
-                           "(cells with ≥4 poss; blank = thin). Which defense to "
-                           "throw at which action.")
+    # defenses — each table its own toggle (def_run / def_attack / def_cross).
+    drun = sc.get("defenses_run")
+    if _show("def_run"):
+        st.markdown("<div class='lab-hdr'>Defenses they run</div>",
+                    unsafe_allow_html=True)
+        if drun and drun.get("rows"):
+            st.dataframe(pd.DataFrame([{
+                "Defense": r["label"], "Share": r["share"] * 100,
+                "PPP allowed": round(r["PPP"], 2), "FG%": r["FG%"] * 100,
+                "Poss": r["poss"],
+            } for r in drun["rows"]]), hide_index=True, width="stretch",
+                column_config={
+                    "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                    "PPP allowed": st.column_config.NumberColumn("PPP allowed", format="%.2f"),
+                    "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+                })
+            st.caption(f"The schemes this team plays on D, over "
+                       f"{drun['total_tagged']} tagged trips. Biggest share = "
+                       "what to prep your offense against; lower PPP allowed = "
+                       "the look they trust.")
+        else:
+            st.caption("No defense tags yet — set the **Defense** in the Game "
+                       "Tracker (it's sticky) to scout what a team runs.")
+    dfaced = sc.get("defenses_faced")
+    if _show("def_attack") and dfaced and dfaced.get("rows"):
+        st.markdown("<div class='lab-hdr'>How they attack a defense</div>",
+                    unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame([{
+            "Defense faced": r["label"], "Share": r["share"] * 100,
+            "PPP": round(r["PPP"], 2), "FG%": r["FG%"] * 100,
+            "Poss": r["poss"],
+        } for r in dfaced["rows"]]), hide_index=True, width="stretch",
+            column_config={
+                "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+            })
+        st.caption("How they score vs each scheme thrown at them — a low PPP "
+                   "on real volume = a defense to play against them.")
+    cx = sc.get("defense_cross")
+    if _show("def_cross") and cx and cx.get("plays") and cx.get("defenses"):
+        st.markdown("<div class='lab-hdr'>Play type &times; defense — PPP "
+                    "they score</div>", unsafe_allow_html=True)
+        _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
+        _grid = []
+        for pk in cx["plays"]:
+            _r = {"Set": _pl.get(pk, pk)}
+            for dk in cx["defenses"]:
+                c = _mx.get(pk, {}).get(dk)
+                _r[_dl.get(dk, dk)] = (round(c["PPP"], 2)
+                                       if c and c["stable"] else None)
+            _grid.append(_r)
+        st.dataframe(pd.DataFrame(_grid), hide_index=True, width="stretch")
+        st.caption("PPP this team scores running each set vs each scheme "
+                   "(cells with ≥4 poss; blank = thin). Which defense to "
+                   "throw at which action.")
 
     # ── where they shoot from (real x/y chart when tap data exists) ──────────
     if _show("shot_chart"):
@@ -716,7 +744,8 @@ def render(ctx):
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)
-    html_doc = SC.printable_html(sc, opp_label, hidden=_hidden, extra=_extra)
+    html_doc = SC.printable_html(sc, opp_label, hidden=_hidden, extra=_extra,
+                                 compact=_compact)
     from helpers.ui import pdf_or_html_download
     pdf_or_html_download("Scout sheet", html_doc,
                          f"scout_{sc['name'].replace(' ', '_')}",

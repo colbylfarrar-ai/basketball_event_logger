@@ -156,7 +156,18 @@ LLM-shell investment).
   league-relative whistle / lean / scoring expectation + a "value-the-ball vs attack-the-rim" read.
   Tests `tracker/test_ref_tendencies.py` (5 pass). Wired into the Officials Overview tab.
 
-**Tier 2 engine items COMPLETE.** Remaining roadmap work: the LLM Coach-Chat (large, separate effort —
-local LLM as a tool-calling shell over the engine) and the volume-gated Tier-3 items (blocked on a
-player-identity schema change / more tracked seasons). The Tier-1 late-game card stays league-rate v1
-until opponent FT/3P rates are dense.
+**Tier 2 engine items COMPLETE + DEPLOYED** (prod HEAD b6541d3, 2026-06-24).
+
+## Tier 3 — in progress
+
+- **LLM Coach-Chat: SCRAPPED** (founder decision 2026-06-24 — not pursuing the conversational layer).
+- **Player-identity carryover (the plant-now piece) — IN PROGRESS:** a stable `players.identity_id` +
+  a New-Season match UI so a returning player links across seasons (today the New Season rollover
+  archives the old row and a returning player gets a fresh player_id, so year-over-year is impossible).
+  Read-time resolution via `COALESCE(identity_id, id)` (unmatched = own identity, no mass backfill).
+  Must ship BEFORE the next rollover so the linkage exists.
+- **Season-2-gated (build after a 2nd tracked season links, ~2027):** cross-season development
+  trajectory (YoY rating/stat deltas, EB-shrunk), returning-player projection, comparable-trajectory.
+- **Volume-gated (defer until density grows):** clock/score-state lineup + tendency splits (needs a
+  persisted per-event running-margin), spacing/floor-balance index. The Tier-1 late-game card stays
+  league-rate v1 until opponent FT/3P rates are dense.

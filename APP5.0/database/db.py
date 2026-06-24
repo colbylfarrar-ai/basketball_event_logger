@@ -264,6 +264,15 @@ def initialize_database():
             "CREATE INDEX IF NOT EXISTS idx_games_team1        ON games(team1_id)",
             "CREATE INDEX IF NOT EXISTS idx_games_team2        ON games(team2_id)",
             "CREATE INDEX IF NOT EXISTS idx_players_team_arch  ON players(team_id, archived)",
+            # Cross-season player IDENTITY (Tier 3, ML_LAYER_ROADMAP): a stable
+            # person key so a returning player links across seasons. The New Season
+            # rollover archives the old row AND a returning player gets a fresh
+            # players.id, so year-over-year was impossible. NULL = "own identity";
+            # readers resolve a person as COALESCE(identity_id, id), so there's NO
+            # mass backfill and an unmatched player simply is their own identity.
+            # The New-Season match UI sets identity_id = a prior row's person key.
+            "ALTER TABLE players ADD COLUMN identity_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS idx_players_identity ON players(identity_id)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo ON game_lineup_officials(game_id, official_id)",
             # Soft-delete for refs, mirroring players.archived. game_events.official_id
             # (foul calls) references officials(id) WITHOUT cascade, so a ref who

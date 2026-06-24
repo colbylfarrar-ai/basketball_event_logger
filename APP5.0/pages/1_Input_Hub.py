@@ -211,6 +211,65 @@ with st.expander("New Season", expanded=False):
         st.cache_data.clear()
         st.rerun()
 
+# ── Returning players: link this season's roster to last season's identities ──
+# (Tier 3, ML_LAYER_ROADMAP) so year-over-year development tracks once two tracked
+# seasons exist. Dormant until the first New Season rollover creates archived rows.
+with st.expander("🔗 Returning players — link to last season", expanded=False):
+    import helpers.identity as IDN
+    st.caption("Match this season's players to the same person last season so "
+               "year-over-year development tracks once you've played two tracked "
+               "seasons. Suggestions match by name + number — confirm or override "
+               "each. Stays empty until your first New Season rollover.")
+    _id_teams = query("SELECT id, name FROM teams ORDER BY name")
+    if not _id_teams:
+        st.info("Add teams first.")
+    else:
+        _idt = st.selectbox("Team", _id_teams, format_func=lambda t: t["name"],
+                            key="idn_team_sel")
+        _sug = IDN.suggest_matches(_idt["id"])
+        if not _sug:
+            st.info("No current-season players on this team yet.")
+        elif not any(s["candidates"] or s["linked_to"] for s in _sug):
+            st.info("No prior-season players to link yet — roll over a season "
+                    "(New Season above), then returning players appear here.")
+        else:
+            _choice = {}
+            for s in _sug:
+                cand = list(s["candidates"])
+                _keys = {c["identity_key"] for c in cand}
+                if s["linked_to"] and s["linked_to"] not in _keys:
+                    cand.insert(0, {"identity_key": s["linked_to"], "name": s["name"],
+                                    "number": s["number"], "season": "linked",
+                                    "score": 1.0})
+                vals = ["__new__"] + [str(c["identity_key"]) for c in cand]
+                labmap = {"__new__": "➕ New player (no prior season)"}
+                for c in cand:
+                    labmap[str(c["identity_key"])] = (
+                        f"{c['name']} #{c['number']} · {c['season']} "
+                        f"(match {c['score'] * 100:.0f}%)")
+                if s["linked_to"]:
+                    _default = str(s["linked_to"])
+                elif cand and cand[0]["score"] >= 0.85:
+                    _default = str(cand[0]["identity_key"])
+                else:
+                    _default = "__new__"
+                _idx = vals.index(_default) if _default in vals else 0
+                _choice[s["pid"]] = st.selectbox(
+                    f"#{s['number']} {s['name']}", vals, index=_idx,
+                    format_func=lambda v, _m=labmap: _m[v],
+                    key=f"idn_{_idt['id']}_{s['pid']}")
+            if st.button("Save links", type="primary", key="idn_save"):
+                _linked = 0
+                for pid, v in _choice.items():
+                    if v == "__new__":
+                        IDN.unlink(pid)
+                    else:
+                        IDN.link(pid, int(v))
+                        _linked += 1
+                st.cache_data.clear()
+                flash("success", f"Linked {_linked} returning player(s) to last season.")
+                st.rerun()
+
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════

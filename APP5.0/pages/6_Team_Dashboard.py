@@ -1040,8 +1040,11 @@ with tab_charts:
     with ch_dscheme:
         _def_ctx = SimpleNamespace(
             team_id=team_id, gender=gender, has_tracked=has_tracked,
-            players=players, ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD,
+            players=players, tracked_ids=tuple(bundle["tracked_ids"]),
+            ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD,
             BAD=BAD, PURPLE=PURPLE, PINK=PINK,
+            located_team=_located_team, league_pps=_league_pps_located,
+            shot_model=_shot_model,
             def_view=_def_view, def_families=_def_families,
             def_profiles=_def_profiles, cross_pd=_def_cross,
             def_tovs=_def_tovs, def_fouls=_def_fouls, def_leaders=_def_leaders,

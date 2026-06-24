@@ -32,6 +32,8 @@ import streamlit as st
 
 import helpers.defenses as DEF
 import helpers.playtypes as PT
+import helpers.stats as S
+import helpers.court as court
 from helpers.cards import pctile_bar, glass
 from helpers.ui import empty_state, seg, style_fig
 
@@ -42,6 +44,8 @@ _FAM_COLOR = {
     "trap": "#f0a500", "junk": "#bc8cff", "transition": "#2dd4bf",
     "other": "#8b949e",
 }
+# key -> label for the by-defense shot court (color-by-defense facet).
+_DEF_LABEL = {k: l for k, l, _f in DEF.DEFENSES}
 
 
 def _pctile_or_thin(label, value_str, pct):
@@ -114,6 +118,66 @@ def render(ctx):
                 "sticky, so one tap covers a whole stretch. This tab fills in as "
                 "you tag.")
         return
+
+    # ══ §B0 — SHOT CHART BY DEFENSE (headline court) ═════════════════════════
+    # The court plots your OWN tap-located shots, filterable by the defense you
+    # FACED — "where do we get our looks vs a 2-3 zone vs man". located_team is
+    # own-shots only, so it lives on the offense side ("Vs defenses we face"); the
+    # "Our defense" side has no located opponent shots (same as Play Style).
+    st.markdown("<div class='pl-hdr'>Shot chart by defense</div>",
+                unsafe_allow_html=True)
+    shots = list(ctx.located_team(tid, ctx.tracked_ids) or []) if _off else []
+    if not shots:
+        st.caption(
+            "The court shows your OWN shots by the defense you FACED — flip to "
+            "**Vs defenses we face** to see it." if not _off else
+            "No tap-located shots yet — tap shot spots in the Game Tracker to "
+            "unlock the court (the tables below still work from zone data).")
+    else:
+        _seen = {s.get("defense") for s in shots if s.get("defense")}
+        lbl2key = {DEF.label(k): k for k, _l, _f in DEF.DEFENSES if k in _seen}
+        n_untagged = sum(1 for s in shots if not s.get("defense"))
+        _mode = seg("Chart mode",
+                    ["Filter to one defense", "Facet (color by defense)"],
+                    key="def_chart_mode") or "Filter to one defense"
+        if _mode.startswith("Facet"):
+            fig, n = court.shot_map_grouped(
+                shots, group_key="defense", labels=_DEF_LABEL,
+                title="Every shot, colored by the defense faced")
+            if n:
+                st.plotly_chart(fig, width="stretch", key="def_court_facet")
+                st.caption("Each colour = a defense faced · filled = make, open = "
+                           "miss · grey = untagged. Spot how your looks cluster vs "
+                           "each scheme.")
+            else:
+                st.caption("No located shots to plot.")
+        else:
+            pick = st.selectbox("Defense", ["All defenses"] + list(lbl2key),
+                                key="def_court_pick", disabled=not lbl2key,
+                                help="Filter the court to one defense you faced.")
+            _dk = lbl2key.get(pick)
+            fshots = [s for s in shots if s.get("defense") == _dk] if _dk else shots
+            view = seg("View", ["Shot map", "Hexbin (PPS)", "Quality (POE)"],
+                       key="def_court_view") or "Shot map"
+            who = pick if _dk else "All defenses"
+            if view.startswith("Shot"):
+                fig, n = court.shot_map(fshots, title=f"{who} · shot map")
+            elif view.startswith("Hexbin"):
+                fig, n = court.shot_hexbin(fshots, title=f"{who} · volume · PPS",
+                                           league_pps=ctx.league_pps(g))
+            else:
+                fig, n = court.shot_hexbin(fshots, title=f"{who} · points over expected",
+                                           model=ctx.shot_model(g), mode="poe")
+            if n:
+                st.plotly_chart(fig, width="stretch", key="def_court_filter")
+            else:
+                st.caption("No located shots for this filter.")
+            _db = S.distance_buckets(fshots)
+            if _db:
+                st.caption("By length — " + S.distance_buckets_caption(_db))
+        if n_untagged:
+            st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — set "
+                       "the defense in the tracker to sharpen the by-scheme court.")
 
     # ══ §B — family rollup (man / zone / press …) ════════════════════════════
     fam = ctx.def_families(g, tid, _off) or {}

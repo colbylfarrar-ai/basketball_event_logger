@@ -100,39 +100,19 @@ def render(ctx):
                     "the defensive-scheme deep dive.", icon="🛡️")
         return
 
-    # ── §A — side toggle + coverage ──────────────────────────────────────────
-    _side = seg("Side of the ball", ["Our defense", "Vs defenses we face"],
-                key="def_side") or "Our defense"
-    _off = _side != "Our defense"     # offense=True => the defenses we FACE
-    dv = ctx.def_view(g, tid, _off)
-    drows = dv.get("rows", [])
-    st.caption(
-        f"{'Defenses we ran (shots we allowed)' if not _off else 'Defenses we faced (our shots)'}: "
-        f"{dv.get('total_tagged', 0)} tagged · {dv.get('untagged', 0)} untagged. "
-        f"Percentile is good-oriented "
-        f"({'fewer points allowed' if not _off else 'more points scored'} = higher rank).")
-
-    if not drows and dv.get("total_tagged", 0) == 0:
-        st.info("No defense tags on these shots yet — set the **Defense** "
-                "(man, 2-3, 1-3-1, presses, traps…) in the Game Tracker; it's "
-                "sticky, so one tap covers a whole stretch. This tab fills in as "
-                "you tag.")
-        return
-
-    # ══ §B0 — SHOT CHART BY DEFENSE (headline court) ═════════════════════════
-    # The court plots your OWN tap-located shots, filterable by the defense you
-    # FACED — "where do we get our looks vs a 2-3 zone vs man". located_team is
-    # own-shots only, so it lives on the offense side ("Vs defenses we face"); the
-    # "Our defense" side has no located opponent shots (same as Play Style).
-    st.markdown("<div class='pl-hdr'>Shot chart by defense</div>",
+    # ══ SHOT CHART BY DEFENSE FACED (headline court — always shown) ══════════
+    # Plots your OWN tap-located shots, filterable by the defense you FACED —
+    # "where do we get our looks vs a 2-3 zone vs man". Own-shots only (there are
+    # no located opponent shots), so it's the same on either side toggle and it
+    # renders as soon as you have tap-located shots — even before any defense is
+    # tagged (the filter just lights up as you tag). Lives ABOVE the no-tags gate
+    # so the court is visible from day one.
+    st.markdown("<div class='pl-hdr'>Shot chart by defense faced</div>",
                 unsafe_allow_html=True)
-    shots = list(ctx.located_team(tid, ctx.tracked_ids) or []) if _off else []
+    shots = list(ctx.located_team(tid, ctx.tracked_ids) or [])
     if not shots:
-        st.caption(
-            "The court shows your OWN shots by the defense you FACED — flip to "
-            "**Vs defenses we face** to see it." if not _off else
-            "No tap-located shots yet — tap shot spots in the Game Tracker to "
-            "unlock the court (the tables below still work from zone data).")
+        st.caption("No tap-located shots yet — tap shot spots in the Game Tracker "
+                   "to unlock the court.")
     else:
         _seen = {s.get("defense") for s in shots if s.get("defense")}
         lbl2key = {DEF.label(k): k for k, _l, _f in DEF.DEFENSES if k in _seen}
@@ -175,9 +155,31 @@ def render(ctx):
             _db = S.distance_buckets(fshots)
             if _db:
                 st.caption("By length — " + S.distance_buckets_caption(_db))
-        if n_untagged:
+        if not lbl2key:
+            st.caption("Showing every located shot — tag the **Defense** on shots "
+                       "in the tracker (it's sticky) to filter this court by scheme.")
+        elif n_untagged:
             st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — set "
                        "the defense in the tracker to sharpen the by-scheme court.")
+
+    # ── §A — side toggle + coverage (analytical sections below) ──────────────
+    _side = seg("Side of the ball", ["Our defense", "Vs defenses we face"],
+                key="def_side") or "Our defense"
+    _off = _side != "Our defense"     # offense=True => the defenses we FACE
+    dv = ctx.def_view(g, tid, _off)
+    drows = dv.get("rows", [])
+    st.caption(
+        f"{'Defenses we ran (shots we allowed)' if not _off else 'Defenses we faced (our shots)'}: "
+        f"{dv.get('total_tagged', 0)} tagged · {dv.get('untagged', 0)} untagged. "
+        f"Percentile is good-oriented "
+        f"({'fewer points allowed' if not _off else 'more points scored'} = higher rank).")
+
+    if not drows and dv.get("total_tagged", 0) == 0:
+        st.info("No defense tags on these shots yet — set the **Defense** "
+                "(man, 2-3, 1-3-1, presses, traps…) in the Game Tracker; it's "
+                "sticky, so one tap covers a whole stretch. This tab fills in as "
+                "you tag.")
+        return
 
     # ══ §B — family rollup (man / zone / press …) ════════════════════════════
     fam = ctx.def_families(g, tid, _off) or {}

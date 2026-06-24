@@ -85,6 +85,40 @@ def suggest_matches(team_id, cutoff=0.55, top=3):
     return out
 
 
+def transfer_search(name_query, exclude_team_id=None, limit=8, cutoff=0.4):
+    """League-wide fuzzy lookup of ARCHIVED players for a TRANSFER-IN link — a player
+    whose prior-season row is on ANOTHER team. Coach-initiated (typed), never an auto
+    cross-team suggestion (auto would false-link every same name). Returns
+    [{identity_key, name, number, team, season, score}] best first, one row per
+    person (newest season), optionally excluding the current team.
+
+    The link itself is team-agnostic (identity_id points at a person key), so once
+    linked the transfer's identity_history spans both schools."""
+    q = _norm(name_query)
+    if not q:
+        return []
+    rows = query(
+        "SELECT p.id, p.name, p.number, p.season, p.identity_id, t.name AS team, "
+        "p.team_id FROM players p JOIN teams t ON t.id=p.team_id WHERE p.archived=1")
+    by_key = {}
+    for r in rows:
+        if exclude_team_id is not None and r["team_id"] == exclude_team_id:
+            continue
+        k = r["identity_id"] or r["id"]
+        prev = by_key.get(k)
+        if prev is None or (r["season"] or "") > (prev["season"] or ""):
+            by_key[k] = {**r, "_key": k}
+    out = []
+    for r in by_key.values():
+        sc = difflib.SequenceMatcher(None, q, _norm(r["name"])).ratio()
+        if sc >= cutoff:
+            out.append({"identity_key": r["_key"], "name": r["name"],
+                        "number": r["number"], "team": r["team"],
+                        "season": r["season"], "score": round(sc, 3)})
+    out.sort(key=lambda x: -x["score"])
+    return out[:limit]
+
+
 def link(current_pid, identity_key):
     """Mark `current_pid` as the same person as `identity_key` (a prior row's key)."""
     execute("UPDATE players SET identity_id=? WHERE id=?",

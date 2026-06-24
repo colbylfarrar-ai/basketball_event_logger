@@ -273,6 +273,12 @@ def initialize_database():
             # The New-Season match UI sets identity_id = a prior row's person key.
             "ALTER TABLE players ADD COLUMN identity_id INTEGER",
             "CREATE INDEX IF NOT EXISTS idx_players_identity ON players(identity_id)",
+            # Graduation year (Tier 3): the class year a player graduates (e.g. 2026).
+            # Nullable. On New Season rollover, players whose grad_year <= the
+            # outgoing season's end year auto-graduate (archived, not carried
+            # forward); everyone else (incl. NULL = unknown) carries to the new
+            # season pre-linked by identity. See helpers/seasons.rollover_plan.
+            "ALTER TABLE players ADD COLUMN grad_year INTEGER",
             "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo ON game_lineup_officials(game_id, official_id)",
             # Soft-delete for refs, mirroring players.archived. game_events.official_id
             # (foul calls) references officials(id) WITHOUT cascade, so a ref who

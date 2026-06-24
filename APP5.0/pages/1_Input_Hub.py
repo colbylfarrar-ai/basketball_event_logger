@@ -66,11 +66,11 @@ def load_teams():
 
 def load_players_for(team_id):
     rows = query(
-        "SELECT id, name, number, height, wingspan, weight, handedness FROM players WHERE team_id=? AND archived=0 ORDER BY name",
+        "SELECT id, name, number, grad_year, height, wingspan, weight, handedness FROM players WHERE team_id=? AND archived=0 ORDER BY name",
         (team_id,)
     )
     return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","name","number","height","wingspan","weight","handedness"])
+        columns=["id","name","number","grad_year","height","wingspan","weight","handedness"])
 
 def load_games_for_team(team_id):
     """Load all games involving team_id from the games table, presented from that team's POV."""
@@ -194,20 +194,42 @@ with st.expander("New Season", expanded=False):
     )
     new_name = st.text_input("New season name (e.g. 2026-2027)",
                              placeholder="2026-2027", key="season_label_input")
-    confirm = st.checkbox("I understand — roll over to a new season", key="new_season_confirm")
     _nm = new_name.strip()
+
+    # ── carry-forward preview (Tier 3): grad_year auto-graduates seniors; everyone
+    #    else carries to the new season pre-linked by identity. Coach overrides the
+    #    edges (a returner who LEFT, a senior who's STAYING) before confirming. ──
+    _plan = SZ.rollover_plan(_cur_label)
+    _gy = _plan["grad_year"]
+    _tn = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
+    _ret_lbl = {r["id"]: f"#{r['number']} {r['name']} · {_tn.get(r['team_id'], '?')}"
+                for r in _plan["returning"]}
+    _grad_lbl = {r["id"]: f"#{r['number']} {r['name']} · {_tn.get(r['team_id'], '?')} "
+                 f"· '{str(r['grad_year'])[-2:]}" for r in _plan["graduating"]}
+    st.caption(
+        f"Graduating class **{_gy if _gy else '—'}** — will **carry {len(_ret_lbl)}** "
+        f"returning player(s) forward (identity-linked) and **graduate "
+        f"{len(_grad_lbl)}** senior(s). Set grad years on the Players tab to drive "
+        "this; NULL grad year = carries forward.")
+    _left = st.multiselect(
+        "Returning players who LEFT the program (don't carry)", list(_ret_lbl),
+        format_func=lambda i: _ret_lbl[i], key="roll_left")
+    _stay = st.multiselect(
+        "Seniors actually STAYING (keep them)", list(_grad_lbl),
+        format_func=lambda i: _grad_lbl[i], key="roll_stay")
+    _carry = (set(_ret_lbl) - set(_left)) | set(_stay)
+
+    confirm = st.checkbox("I understand — roll over to a new season", key="new_season_confirm")
     can_go = confirm and bool(_nm) and _nm != _cur_label
     if st.button("Start New Season", type="primary", disabled=not can_go, key="new_season_btn"):
-        # Stamp the OUTGOING season's rows with its real label; new rows added
-        # after this default back to 'Current' = the new active season.
-        execute("UPDATE players  SET archived=1, season=? WHERE archived=0", (_cur_label,))
-        execute("UPDATE schedule SET season=? WHERE season='Current'", (_cur_label,))
-        execute("UPDATE games    SET season=? WHERE season='Current'", (_cur_label,))
-        execute("INSERT OR REPLACE INTO app_settings (key, value) "
-                "VALUES ('active_season', ?)", (_nm,))
+        # seasons.execute_rollover stamps+archives the outgoing season, then
+        # re-creates the carry set as fresh CURRENT rows linked to each person.
+        _n = SZ.execute_rollover(_nm, sorted(_carry), outgoing_label=_cur_label)
         invalidate("_players_orig", "players_editor", "_sched_orig", "sched_editor")
-        flash("success", f"Archived '{_cur_label}'. Now playing **{_nm}** — add new "
-              "rosters and schedules to start fresh.")
+        flash("success", f"Archived '{_cur_label}'. Now playing **{_nm}** — carried "
+              f"{_n} returning player(s) forward (identity-linked); seniors graduated. "
+              "Add any transfers-in on the Players tab + link them under Returning "
+              "players.")
         st.cache_data.clear()
         st.rerun()
 
@@ -269,6 +291,37 @@ with st.expander("🔗 Returning players — link to last season", expanded=Fals
                 st.cache_data.clear()
                 flash("success", f"Linked {_linked} returning player(s) to last season.")
                 st.rerun()
+
+        # ── transferred in? league-wide lookup (a player from another team last
+        #    season). Coach-typed so it never false-links same names; once linked,
+        #    the player's development history follows them across schools. ──
+        st.markdown("---")
+        st.markdown("**Transferred in?** Link a player who was on another team last "
+                    "season — their history follows them.")
+        _xq = st.text_input("Search last season's players by name", key="idn_xfer_q",
+                            placeholder="player name")
+        if _xq.strip():
+            _hits = IDN.transfer_search(_xq, exclude_team_id=_idt["id"])
+            if not _hits:
+                st.caption("No archived players on other teams match that name.")
+            else:
+                _cur_opts = {s["pid"]: f"#{s['number']} {s['name']}" for s in _sug}
+                for h in _hits:
+                    xc = st.columns([3, 2, 1])
+                    xc[0].caption(f"{h['name']} #{h['number']} · {h['team']} · "
+                                  f"{h['season']} ({h['score'] * 100:.0f}%)")
+                    if _cur_opts:
+                        _tgt = xc[1].selectbox(
+                            "to", list(_cur_opts), format_func=lambda p: _cur_opts[p],
+                            key=f"xfer_tgt_{h['identity_key']}",
+                            label_visibility="collapsed")
+                        if xc[2].button("Link", key=f"xfer_link_{h['identity_key']}"):
+                            IDN.link(_tgt, h["identity_key"])
+                            st.cache_data.clear()
+                            flash("success", f"Linked transfer {h['name']}.")
+                            st.rerun()
+                    else:
+                        xc[1].caption("(add to this roster first)")
 
 st.divider()
 
@@ -341,7 +394,7 @@ with tab_players:
         st.caption(EDITOR_HELP)
         orig = get_orig("_players_orig", lambda: load_players_for(team_id))
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
-            columns=["name","number","height","wingspan","weight","handedness"])
+            columns=["name","number","grad_year","height","wingspan","weight","handedness"])
 
         st.data_editor(
             display,
@@ -351,6 +404,10 @@ with tab_players:
             column_config={
                 "name":     st.column_config.TextColumn("Player Name", required=True),
                 "number":   st.column_config.NumberColumn("Number",      min_value=0, max_value=999, step=1),
+                "grad_year": st.column_config.NumberColumn(
+                    "Grad yr", min_value=2000, max_value=2100, step=1, format="%d",
+                    help="Class year (e.g. 2026). Seniors auto-graduate on New Season "
+                         "rollover; everyone else carries forward pre-linked."),
                 "height":   st.column_config.NumberColumn("Height (in)", min_value=0.0, step=0.5),
                 "wingspan": st.column_config.NumberColumn("Wingspan (in)", min_value=0.0, step=0.5),
                 "weight":   st.column_config.NumberColumn("Weight (lbs)", min_value=0.0, step=1.0),
@@ -361,18 +418,24 @@ with tab_players:
         )
 
         if st.button("Save Changes", key="save_players", type="primary"):
+            def _gy(r):
+                v = r.get("grad_year")
+                try:
+                    return int(v) if v not in (None, "") else None
+                except (ValueError, TypeError):
+                    return None
             def ins_player(r):
                 if r.get("name","").strip():
                     execute(
-                        "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness) VALUES (?,?,?,?,?,?,?)",
-                        (team_id, r["name"].strip(), int(r.get("number") or 0),
+                        "INSERT INTO players (team_id, name, number, grad_year, height, wingspan, weight, handedness) VALUES (?,?,?,?,?,?,?,?)",
+                        (team_id, r["name"].strip(), int(r.get("number") or 0), _gy(r),
                          r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
                          "left" if r.get("handedness") == "left" else "right")
                     )
             def upd_player(r):
                 execute(
-                    "UPDATE players SET team_id=?, name=?, number=?, height=?, wingspan=?, weight=?, handedness=? WHERE id=?",
-                    (team_id, r["name"].strip(), int(r.get("number") or 0),
+                    "UPDATE players SET team_id=?, name=?, number=?, grad_year=?, height=?, wingspan=?, weight=?, handedness=? WHERE id=?",
+                    (team_id, r["name"].strip(), int(r.get("number") or 0), _gy(r),
                      r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
                      "left" if r.get("handedness") == "left" else "right",
                      r["id"])

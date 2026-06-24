@@ -86,6 +86,15 @@ def _sim_bracket(g, field, n):
     return SIM.simulate_tournament(_scored(g), list(field), n=n)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _game_plan(g, a, b):
+    """Cross-team exploit matrix + defensive plan (Tier 2, ML_LAYER_ROADMAP):
+    team `a`'s set-call efficiency × team `b`'s defensive vulnerability, plus the
+    scheme to play on D against `b`. Cached on (gender, a, b)."""
+    import helpers.exploit as EX
+    return EX.game_plan(a, b, gender=g)
+
+
 scored = _scored(gender)
 tracked = _tracked(gender)
 
@@ -307,6 +316,42 @@ def _render_matchup():
                                  f"matchup_{_slug}", key="wr_sheet_dl")
             st.caption("Print-ready scouting sheet — text it straight to the "
                        "staff.")
+
+            # ── game plan vs this opponent: exploit matrix + defensive plan ──
+            # (Tier 2, ML_LAYER_ROADMAP — the cross-team bridge). A = you, B = the
+            # opponent. Tag-driven, so it lights up as play_type / defense get
+            # tagged; gated by the same co-op read rule as the tracked projection.
+            if ENT.can_see_game_tracked(AUTH.current_user(), ta, tb):
+                gp = _game_plan(gender, ta, tb)
+                off, dfn = gp["offense"], gp["defense"]
+                st.markdown(f"<div class='lab-hdr'>Game plan — {pred['a_name']} vs "
+                            f"{pred['b_name']}</div>", unsafe_allow_html=True)
+                st.caption(f"{pred['a_name']}'s set calls × {pred['b_name']}'s "
+                           "defense, joined on the tagged play-type / defense data. "
+                           "A set you run well that they give up points on = a call "
+                           "to lean on.")
+                if off["rows"]:
+                    st.markdown("**Exploit matrix — calls to lean on**")
+                    st.dataframe(pd.DataFrame([{
+                        "Set": r["label"], "Our PPP": r["our_ppp"],
+                        "Our %ile": r["our_pct"],
+                        "They allow (PPP)": r["opp_ppp"], "Edge": r["edge"],
+                        "Trust": "✓" if r["stable"] else "thin",
+                    } for r in off["rows"]]), hide_index=True, width="stretch",
+                        column_config={
+                            "Our PPP": st.column_config.NumberColumn(format="%.2f"),
+                            "They allow (PPP)": st.column_config.NumberColumn(
+                                format="%.2f"),
+                            "Edge": st.column_config.NumberColumn(format="%.2f"),
+                        })
+                st.caption(off["note"])
+                if dfn["throw"]:
+                    st.markdown("**Play on D:** " + " · ".join(
+                        f"{r['label']} ({r['ppp']:.2f} PPP)" for r in dfn["throw"]))
+                if dfn["avoid"]:
+                    st.markdown("**Don't sit in:** " + " · ".join(
+                        f"{r['label']} ({r['ppp']:.2f})" for r in dfn["avoid"]))
+                st.caption(dfn["note"])
 
 
 with tab_match:

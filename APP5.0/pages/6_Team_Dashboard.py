@@ -643,11 +643,43 @@ def _shot_model(g):
 
 
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
-def _rapm(g):
+def _rapm(g, box_prior=False):
     """League-wide two-way RAPM over the gender's tracked games (holds teammates
     AND opponents constant — needs the whole pool, not one team). inference=True
-    attaches the statsmodels 95% CI / significance companion."""
-    return RA.compute_rapm(_gender_tracked_ids(g), inference=True)
+    attaches the statsmodels 95% CI / significance companion.
+
+    box_prior=True shrinks each player toward their player_ratings box impact
+    instead of toward league average (0) — the small-sample fix that keeps stars
+    off 'average' on a ~15-game book (ML_LAYER_ROADMAP Tier 1)."""
+    prior = RA.box_prior_from_ratings(gender=g) if box_prior else None
+    return RA.compute_rapm(_gender_tracked_ids(g), inference=True, prior=prior)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _shot_quality(g):
+    """League-pooled continuous shot-quality (xPP-Q) + per-player SMOE (points over
+    expected). Returns ({pid: smoe_row}, n_shots_fit) or ({}, 0) when there aren't
+    enough located shots to fit (caller shows a fallback). Tier 2, ML_LAYER_ROADMAP."""
+    import helpers.shotquality as SQ
+    sh = S.located_shots(events=S.fetch_events(_gender_tracked_ids(g)))
+    m = SQ.fit_league_model(shots=sh)
+    return (SQ.player_smoe(shots=sh, model=m), m["n"]) if m else ({}, 0)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _rotation(tid):
+    """Stagger coverage (star floor-time + bench-only net bleed) + season foul-prone
+    list for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    import helpers.rotation_plan as RP
+    return RP.star_coverage(tid), RP.foul_prone(tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _poss_ledger(tid):
+    """Possession-value ledger (points/100 sources + outcome mix, offense & allowed)
+    for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    import helpers.possession_value as PVL
+    return PVL.team_ledger(tid)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -3377,7 +3409,15 @@ if True:
                        "player, holding teammates AND opponents constant (one ridge "
                        "regression over every tracked possession in the league). "
                        "Directional on a small book.")
-            rap = _rapm(gender)
+            _bp = st.toggle(
+                "Box-prior (anchor to box impact)", key="il_rapm_boxprior",
+                help="Shrink each player toward their box-score impact instead of "
+                     "toward league average — keeps stars off 'average' on a short "
+                     "book. Off = classic shrink-to-average RAPM.")
+            if _bp:
+                st.caption("Box-prior on: stars are anchored to their player-rating "
+                           "box impact, then moved by the possession data (gentle).")
+            rap = _rapm(gender, box_prior=_bp)
             rows_r = sorted([v for pid, v in rap.items() if pid in my_pids],
                             key=lambda v: v["RAPM"], reverse=True)
             if rows_r:
@@ -3483,6 +3523,86 @@ if True:
                         "can't separate most players.")
             else:
                 st.caption("Not enough possessions to solve RAPM for this team yet.")
+
+            # ── shot quality — SMOE (points over expected, Tier 2) ───────────
+            _sq, _sqn = _shot_quality(gender)
+            if _sq:
+                _rows_sq = sorted((v for pid, v in _sq.items() if pid in my_pids),
+                                  key=lambda v: -v["poe_shrunk"])
+                if _rows_sq:
+                    st.markdown("<div class='lab-hdr'>Shot quality — points over "
+                                "expected (SMOE)</div>", unsafe_allow_html=True)
+                    st.caption(
+                        f"Points scored vs what a league model expects from each "
+                        f"player's exact shots — continuous (x,y) + contested make "
+                        f"probability, league-pooled over {_sqn} located shots and "
+                        f"shrunk toward 0 for small samples. + = makes tough shots; "
+                        f"− = leaves points on the floor.")
+                    st.dataframe(pd.DataFrame([{
+                        "Player": v["name"], "Shots": v["n"],
+                        "PPS": v["pps"], "xPPS": v["xpps"], "SMOE": v["poe_shrunk"],
+                    } for v in _rows_sq]), hide_index=True, width="stretch",
+                        column_config={
+                            "PPS": st.column_config.NumberColumn("PPS", format="%.2f"),
+                            "xPPS": st.column_config.NumberColumn("xPPS", format="%.2f"),
+                            "SMOE": st.column_config.NumberColumn("SMOE", format="%+.2f"),
+                        })
+
+            # ── rotation: stagger coverage + foul trouble (Tier 2) ──────────
+            _cov, _prone = _rotation(team_id)
+            if _cov.get("bleed") is not None or _prone:
+                st.markdown("<div class='lab-hdr'>Rotation — stagger &amp; foul "
+                            "trouble</div>", unsafe_allow_html=True)
+                if _cov.get("stars"):
+                    _sn = " & ".join(s.get("name", "") for s in _cov["stars"])
+                    _rc = st.columns(3)
+                    _rc[0].metric("Uncovered minutes",
+                                  f"{_cov['uncovered_min_share'] * 100:.0f}%",
+                                  help=f"Share of floor time with neither {_sn} on.")
+                    _rc[1].metric("Net w/ star on",
+                                  f"{_cov['covered_net']:+.1f}"
+                                  if _cov["covered_net"] is not None else "—")
+                    _rc[2].metric("Net w/ none on",
+                                  f"{_cov['uncovered_net']:+.1f}"
+                                  if _cov["uncovered_net"] is not None else "—",
+                                  f"{-_cov['bleed']:+.1f} bleed"
+                                  if _cov["bleed"] is not None else None,
+                                  delta_color="inverse")
+                    st.caption(_cov["note"])
+                if _prone:
+                    st.markdown("**Foul-prone (season PF/32):** " + " · ".join(
+                        f"{r['name']} {r['pf32']:.1f}" + ("⚠" if r["prone"] else "")
+                        for r in _prone[:5]))
+
+            # ── possession-value ledger: points/100 sources vs leaks (Tier 2) ─
+            _pl = _poss_ledger(team_id)
+            if _pl["offense"] or _pl["defense"]:
+                st.markdown("<div class='lab-hdr'>Possession value — where points "
+                            "come from vs leak</div>", unsafe_allow_html=True)
+                st.caption("Every possession walked to its end. Offense = points we "
+                           "score / leaks we commit; Defense = what we allow / force.")
+                _plc = st.columns(2)
+                for _col, (_lbl, _lg) in zip(
+                        _plc, [("Offense", _pl["offense"]),
+                               ("Defense (allowed)", _pl["defense"])]):
+                    with _col:
+                        st.markdown(f"**{_lbl}**")
+                        if not _lg:
+                            st.caption("No possessions yet.")
+                            continue
+                        st.metric("Points / 100", f"{_lg['pts_100']:.0f}",
+                                  f"PPP {_lg['ppp']:.2f}", delta_color="off")
+                        st.dataframe(pd.DataFrame([
+                            {"Source": s["label"], "Pts/100": s["pts_100"]}
+                            for s in _lg["sources"]]), hide_index=True,
+                            width="stretch")
+                        _o = {x["key"]: x for x in _lg["outcomes"]}
+                        st.caption(
+                            f"Scored {_o['scored']['pct'] * 100:.0f}% · own board "
+                            f"{_o['oreb']['pct'] * 100:.0f}% · lost "
+                            f"{_o['lost']['pct'] * 100:.0f}% · TOV "
+                            f"{_o['turnover']['pct'] * 100:.0f}% · eFG "
+                            f"{_lg['efg'] * 100:.0f}%")
 
             # ── win probability added ────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>Win Probability Added (WPA)</div>",

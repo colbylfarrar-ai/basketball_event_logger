@@ -62,6 +62,16 @@ SCOUT_SECTIONS = [
 ]
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _xpp_model(g):
+    """League-pooled xPP-Q shot-quality model for the concession / shot-selection
+    maps (Tier 2). None when under MIN_FIT located shots — callers skip the maps."""
+    import helpers.shotquality as SQ
+    import helpers.playtypes as PT
+    return SQ.fit_league_model(
+        shots=S.located_shots(events=S.fetch_events(PT._tracked_game_ids(g))))
+
+
 def _auto_report_tips(ctx):
     """The rule-based auto scouting tips (markdown **bold**). Shared by the
     on-screen 'Scouting report' block and the printable sheet so they never drift."""
@@ -292,6 +302,43 @@ def render(ctx):
                         f"— {self_sh:.0f}% of shots self-created, {pass_sh:.0f}% "
                         "off a pass. Speeding them up or walling the paint attacks "
                         "the profile above.")
+
+    # ── self-scout: how predictable are we? (Tier 1, ML_LAYER_ROADMAP) ────────
+    # Self-scout view only — the read an opposing coach makes when prepping you:
+    # a Shannon-entropy "scoutability" score off your tagged play-call mix, plus
+    # the over-used-and-inefficient / under-used-but-efficient sets.
+    if _self and ctx.has_tracked:
+        import helpers.selfscout as SS
+        rep = SS.self_scout_report(ctx.team_id, ctx.gender)
+        off, dfn, drift = rep["offense"], rep["defense"], rep["drift"]
+        st.markdown("<div class='lab-hdr'>How scoutable are we?</div>",
+                    unsafe_allow_html=True)
+        if off["rated"]:
+            pc1, pc2, pc3 = st.columns(3)
+            pc1.metric("Offense predictability", f"{off['predictability']:.0f}/100",
+                       help="Shannon entropy of your tagged play-call mix. Higher = "
+                            "more predictable (a scout keys on you faster); lower = "
+                            "balanced, hard to game-plan.")
+            pc2.metric("Most-run set",
+                       f"{off['top_set']} · {off['top_share']:.0f}%"
+                       if off["top_set"] else "—")
+            pc3.metric("Defense predictability",
+                       f"{dfn['predictability']:.0f}/100" if dfn["rated"] else "—",
+                       help="Same entropy read on your defensive scheme mix "
+                            "(needs Defense tags on enough trips).")
+        else:
+            st.caption(f"Tag more play calls to rate predictability — "
+                       f"{off['tagged']}/{SS.MIN_TAGGED} tagged shots so far.")
+        if drift["overused"]:
+            st.markdown("**Predictable & inefficient** (a scout's gift — cut or fix):")
+            for r in drift["overused"]:
+                st.markdown(f"- {r['label']} — {r['share'] * 100:.0f}% of sets · "
+                            f"{r['PPP']:.2f} PPP ({r['pct']:.0f}th pctl)")
+        if drift["underused"]:
+            st.markdown("**Efficient but under-used** (a weapon on the shelf):")
+            for r in drift["underused"]:
+                st.markdown(f"- {r['label']} — only {r['share'] * 100:.0f}% of sets · "
+                            f"{r['PPP']:.2f} PPP ({r['pct']:.0f}th pctl)")
 
     # ── should they shoot more 3s or 2s? ─────────────────────────────────────
     if _show("breakeven"):
@@ -693,6 +740,51 @@ def render(ctx):
         zfig.update_yaxes(title="Attempts")
         ctx.style(zfig, 320)
         st.plotly_chart(zfig, width="stretch", key="scout_zones")
+
+    # ── spatial: defense concession (opponent) / shot selection (self) ───────
+    # (Tier 2, ML_LAYER_ROADMAP) — rides on the league xPP-Q model; per-zone over
+    # expected. Skips silently when the model can't fit (too few located shots).
+    _xppm = _xpp_model(ctx.gender)
+    _vis_gids = list(ctx.bundle.get("tracked_ids") or [])
+    if _xppm and _vis_gids:
+        import helpers.concession as CO
+        if _self:
+            sel = CO.shot_selection(ctx.team_id, model=_xppm, game_ids=_vis_gids)
+            if sel["overshoot"] or sel["underused"]:
+                st.markdown("<div class='lab-hdr'>Shot selection — where we force "
+                            "vs leave points</div>", unsafe_allow_html=True)
+                if sel["overshoot"]:
+                    st.markdown("**Over-used & underperforming** (stop forcing): "
+                                + " · ".join(
+                                    f"{r['label']} ({r['share'] * 100:.0f}% of shots, "
+                                    f"{r['residual']:+.2f}/shot)"
+                                    for r in sel["overshoot"]))
+                if sel["underused"]:
+                    st.markdown("**Efficient but under-used** (get more): "
+                                + " · ".join(
+                                    f"{r['label']} ({r['share'] * 100:.0f}%, "
+                                    f"{r['residual']:+.2f}/shot)"
+                                    for r in sel["underused"]))
+                st.caption(sel["note"])
+        else:
+            con = CO.defense_concession(ctx.team_id, model=_xppm, game_ids=_vis_gids)
+            if con["leaks"]:
+                st.markdown("<div class='lab-hdr'>Where this defense concedes</div>",
+                            unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame([{
+                    "Zone": r["label"], "Allowed att": r["n"],
+                    "Share": r["share"] * 100, "PPS allowed": r["pps"],
+                    "xPPS (quality)": r["xpps"], "Over expected": r["residual"],
+                } for r in con["rows"] if r["n"]]), hide_index=True, width="stretch",
+                    column_config={
+                        "Share": st.column_config.NumberColumn(format="%.0f%%"),
+                        "PPS allowed": st.column_config.NumberColumn(format="%.2f"),
+                        "xPPS (quality)": st.column_config.NumberColumn(format="%.2f"),
+                        "Over expected": st.column_config.NumberColumn(format="%+.2f"),
+                    })
+                st.caption("Attack: "
+                           + " · ".join(r["label"] for r in con["leaks"][:3])
+                           + f". {con['note']}")
 
     # ── scoring by possession length (when tracked) ──────────────────────────
     if _show("poss_length") and ctx.bundle.get("poss_length"):

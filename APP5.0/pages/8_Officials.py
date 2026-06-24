@@ -236,6 +236,23 @@ with tab_over:
                "scoring environment of their games (a property of the game, not "
                "the ref).")
 
+    # ── pre-game crew outlook (Tier 2, ML_LAYER_ROADMAP) — pick tonight's refs
+    #    → a league-relative whistle / lean / scoring expectation. ──────────────
+    with st.expander("🔮 Crew outlook — what to expect from tonight's refs"):
+        import helpers.ref_tendencies as RT
+        _by_name = {r["name"]: r["off_pk"] for r in rows}
+        _pick = st.multiselect("Officials assigned to your next game",
+                               list(_by_name), key="crew_pick")
+        if _pick:
+            _out = RT.crew_outlook([_by_name[n] for n in _pick], overview=data)
+            if _out:
+                st.markdown(" · ".join(f"`{t}`" for t in _out["tags"]))
+                st.info(_out["summary"])
+        else:
+            st.caption("Pick the officials assigned to your next game for a "
+                       "league-relative whistle / lean / scoring-environment "
+                       "outlook — value-the-ball vs attack-the-rim, before tip.")
+
     total_fouls = sum(r["fouls"] for r in rows)
     most = max(rows, key=lambda r: r["fouls"])
     busiest = max(rows, key=lambda r: r["FPG"])

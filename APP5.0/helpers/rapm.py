@@ -58,6 +58,13 @@ except Exception:
 DEFAULT_LAMBDA = 1200.0
 DEFAULT_MIN_POSS = 40   # report gate: players below this are too thin to trust
 
+# Box-prior strength (Tier 1, ML_LAYER_ROADMAP): points-per-100 of prior impact per
+# rating point above/below the ~average rating, when building the prior from
+# player_ratings. Deliberately GENTLE — the prior only re-centers the ridge; the
+# possession data still moves each player off it. 0.10 → a 90-rated player anchors at
+# ~+4 pts/100. Tunable.
+PRIOR_SCALE = 0.10
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  POSSESSION EXTRACTION
@@ -121,7 +128,8 @@ def _possessions(game_ids=None, events=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def compute_rapm(game_ids=None, events=None, lam=None,
-                 min_poss=DEFAULT_MIN_POSS, names=None, inference=False):
+                 min_poss=DEFAULT_MIN_POSS, names=None, inference=False,
+                 prior=None):
     """
     Compute two-way RAPM for every player from possession data.
 
@@ -133,6 +141,12 @@ def compute_rapm(game_ids=None, events=None, lam=None,
     auto-tunes it by cross-validation (scikit-learn RidgeCV) when sklearn is
     installed, else falls back to DEFAULT_LAMBDA; pass a number to force a value.
     The penalty actually used is reported per row as `lambda`.
+
+    `prior` — optional box-impact prior {pid: (orapm_prior, drapm_prior)} in
+    points-per-100 (see box_prior_from_ratings). When given, the ridge shrinks each
+    player TOWARD their prior instead of toward league average (0) — the standard
+    small-sample fix so stars on a ~15-game book don't collapse to average. Default
+    None reproduces the shrink-to-average behaviour exactly.
 
     `inference=True` attaches an OLS certainty companion (statsmodels) per player:
         RAPM_ols, RAPM_se, RAPM_lo, RAPM_hi (95% CI), sig (bool)
@@ -164,17 +178,33 @@ def compute_rapm(game_ids=None, events=None, lam=None,
     ymean = y.mean()
     yc = y - ymean
 
+    # ── box-impact prior (Tier 1): shrink TOWARD an informed center β0 rather than
+    # toward 0. Ridge then minimizes ‖Xβ − yc‖² + λ‖β − β0‖²; fit the residual target
+    # (yc − Xβ0) toward 0 with the same RidgeCV/closed-form path, then add β0 back.
+    # prior maps a pid to (orapm_prior, drapm_prior) in pts/100; ORAPM = 100·βᴼ and
+    # DRAPM = −100·βᴰ, so β0ᴼ = orapm/100 and β0ᴰ = −drapm/100. Default β0 = 0 ⇒
+    # identical to shrink-to-average. ──
+    beta0 = np.zeros(2 * P, dtype=float)
+    if prior:
+        for p, pr in prior.items():
+            if p not in idx or not pr:
+                continue
+            opr, dpr = pr
+            beta0[idx[p]] = (opr or 0.0) / 100.0
+            beta0[P + idx[p]] = -(dpr or 0.0) / 100.0
+    y_fit = yc - X @ beta0
+
     # ── ridge solve (no separate intercept — y is centered, so the average
-    # possession maps to β = 0 = league-average player) ──
+    # possession maps to β = β0 = the player's prior, league-average when β0 = 0) ──
     if lam is None and _HAVE_SKLEARN:
         rcv = _RidgeCV(alphas=np.logspace(2.0, 4.0, 13), fit_intercept=False)
-        rcv.fit(X, yc)
-        beta = np.asarray(rcv.coef_, dtype=float)
+        rcv.fit(X, y_fit)
+        beta = np.asarray(rcv.coef_, dtype=float) + beta0
         used_lam = float(rcv.alpha_)
     else:
         used_lam = float(lam) if lam is not None else DEFAULT_LAMBDA
         A = X.T @ X + used_lam * np.eye(2 * P)
-        beta = np.linalg.solve(A, X.T @ yc)
+        beta = np.linalg.solve(A, X.T @ y_fit) + beta0
 
     # ── optional OLS inference companion (statsmodels) ──
     ols_beta = ols_cov = None
@@ -222,3 +252,33 @@ def compute_rapm(game_ids=None, events=None, lam=None,
             })
         out[p] = row
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BOX-IMPACT PRIOR  (the informed center for box-prior RAPM)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def box_prior_from_ratings(gender=None, game_ids=None, scale=PRIOR_SCALE,
+                           center=50.0):
+    """Build a RAPM box prior {pid: (orapm_prior, drapm_prior)} from player_ratings'
+    0–100 OFFENSE / DEFENSE composites — the "shrink toward box impact" anchor that
+    keeps stars off league-average on a short book.
+
+    A rating of `center` (≈ pool average) maps to a 0 prior; each point above/below
+    nudges the prior by `scale` points-per-100 (default PRIOR_SCALE=0.10 → a 90-rated
+    player anchors at ~+4). Deliberately gentle: the prior only re-centers the ridge,
+    the possession data still pulls each player off it. Lazy-imports player_ratings to
+    keep this module's import graph light (rapm stays numpy + db only at import time).
+
+    Pass the result as compute_rapm(..., prior=box_prior_from_ratings(gender))."""
+    import helpers.player_ratings as PRt
+    rt = PRt.player_ratings(game_ids=game_ids, gender=gender)
+    prior = {}
+    for pid, r in rt.items():
+        off, dfn = r.get("OFFENSE"), r.get("DEFENSE")
+        if off is None and dfn is None:
+            continue
+        opr = ((off - center) * scale) if off is not None else 0.0
+        dpr = ((dfn - center) * scale) if dfn is not None else 0.0
+        prior[pid] = (opr, dpr)
+    return prior

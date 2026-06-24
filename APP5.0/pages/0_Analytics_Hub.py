@@ -235,6 +235,32 @@ else:
         k[4].metric("Top scorer", D["scorer"][0],
                     f"{dl:+.1f} vs avg ppg" if dl is not None else None)
 
+    # ── tagging coverage (Tier 1, ML_LAYER_ROADMAP): pool-health "% complete"
+    #    across the optional one-tap tags. Gated like the other cross-team
+    #    event-derived strips (league-wide / Co-op viewers). ──────────────────────
+    if _paid:
+        try:
+            import helpers.coverage as _COV
+            _cov = _COV.gender_coverage(_gender)
+            if _cov["games"]:
+                st.markdown("<div class='lab-hdr'>Tagging coverage — how complete "
+                            "is the capture?</div>", unsafe_allow_html=True)
+                _sg = _cov["signals"]
+                _cc = st.columns(3)
+                for _col, _key, _lbl in ((_cc[0], "play_type", "Play type"),
+                                         (_cc[1], "defense", "Defense"),
+                                         (_cc[2], "guarded_by", "Contested (guarded)")):
+                    _s = _sg[_key]
+                    _val = f"{_s['pct']:.0f}%" if _s["pct"] is not None else "—"
+                    _col.markdown(
+                        _mini(_lbl, _val, sub=f"{_s['tagged']}/{_s['total']} shots"),
+                        unsafe_allow_html=True)
+                st.caption("Optional one-tap tags drive the play-type, defense and "
+                           "shot-quality views — the higher these are, the more those "
+                           "surfaces can be trusted. Tag in the Game Tracker.")
+        except Exception:
+            pass
+
     # ── game of the season — DRAMATIZED win-prob ribbon (Paid only) ────────────
     if D["game"] and _paid:
         from helpers.win_probability import excitement_label

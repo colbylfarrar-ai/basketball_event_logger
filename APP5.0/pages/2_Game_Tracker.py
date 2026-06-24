@@ -392,6 +392,69 @@ def _render_command_center():
     except Exception:
         pass
 
+    # ── courtside decision strip (Tier 1, ML_LAYER_ROADMAP): live Leverage Index +
+    #    run alert + a late-game decision card. Reuses the SAME _QSEC=480 / 240-OT
+    #    clock the win-prob walk above uses, so there is no second clock model (the
+    #    one real correctness risk). Engine math lives in helpers/courtside.py; this
+    #    is display only. Live games only, fully guarded — any failure skips. ───────
+    if not is_tracked:
+        try:
+            import helpers.courtside as _CS
+            from helpers.ui import mini_tile as _mini2
+            _QSEC = 480
+            _tot = 4 * _QSEC + max(cur_q - 4, 0) * 240          # full game length
+            # current clock = the most recent event (latest quarter, least time left)
+            _rec = max(events_asc, key=lambda e: (e["quarter"],
+                                                  -GE.time_to_secs(e["time"]), e["id"]))
+            _rq, _rrem = _rec["quarter"], GE.time_to_secs(_rec["time"])
+            _elapsed = ((_rq - 1) * _QSEC + (_QSEC - _rrem) if _rq <= 4
+                        else 4 * _QSEC + (_rq - 5) * 240 + (240 - _rrem))
+            _sl = max(_tot - _elapsed, 0)
+            _mh = hp - ap                                       # home (t1) margin
+            _lev = _CS.leverage_now(_mh, _sl, _tot)
+            # pace for the comeback gauge: seconds per possession so far
+            _np = sum(1 for e in events_asc
+                      if e["event_type"] in ("shot", "turnover"))
+            _spp = (_elapsed / _np) if _np else 15.0
+
+            _lc = st.columns(3)
+            _lc[0].markdown(_mini2("Leverage now", _lev["tier"]), unsafe_allow_html=True)
+            _lc[1].markdown(_mini2("WP swing / basket", f"{_lev['li'] * 100:.0f}%"),
+                            unsafe_allow_html=True)
+            _lc[2].markdown(_mini2("Sec / poss", f"{_spp:.0f}"), unsafe_allow_html=True)
+
+            # run alert (t1 perspective): who is on a run + the WP it has cost
+            _run = _CS.run_alert(events_asc, t1id, total_secs=_tot)
+            if _run and _run["points"] >= 6 and abs(_run["wp_cost"]) >= 0.08:
+                _rt_name = t1name if _run["team_id"] == t1id else t2name
+                _hurt = t2name if _run["team_id"] == t1id else t1name
+                st.warning(f"🔴 {_rt_name} on a {_run['points']}-0 run — {_hurt} win "
+                           f"odds down {abs(_run['wp_cost']) * 100:.0f}%. "
+                           "Consider a timeout.")
+
+            # late-game decision card (final 3 min, league-rate v1)
+            _lead = abs(_mh)
+            if _sl <= 180 and _lead > 0:
+                _lead_team = t1name if _mh > 0 else t2name
+                _trail_team = t2name if _mh > 0 else t1name
+                with st.container(border=True):
+                    st.markdown("**Late-game decision**")
+                    if _lead == 3 and _sl <= 35:
+                        _f = _CS.foul_up_3(_sl, total_secs=_tot)
+                        st.markdown(
+                            f"⏱️ **{_lead_team} up 3, {int(_sl)}s left** — foul "
+                            f"{_f['foul_wp'] * 100:.0f}% vs guard "
+                            f"{_f['guard_wp'] * 100:.0f}% win odds · "
+                            f"**{_f['recommend'].upper()}** — {_f['note']}")
+                    _cg = _CS.comeback_gauge(-_lead, _sl, sec_per_poss=_spp)
+                    if _cg:
+                        st.markdown(
+                            f"📉 **{_trail_team} down {_cg['deficit']}** — "
+                            f"~{_cg['your_poss']:.0f} possessions left, need "
+                            f"{_cg['req_ppp_margin']:.2f} net/poss · _{_cg['label']}_")
+        except Exception:
+            pass
+
     # ── quarter scores ──────────────────────────────────────────────────────────
     qs = ls["quarters"]
     if qs:
@@ -421,6 +484,38 @@ def _render_command_center():
     st.caption("PF shading: 3 amber · 4 orange · 5 red (fouled out). "
                "MIN from event-clock elapsed time; needs the on-court five set "
                "wherever the events are logged.")
+
+    # ── foul watch: live foul-out projection for players in trouble (Tier 2,
+    #    ML_LAYER_ROADMAP). At each player's current foul pace, when do they foul
+    #    out? Same 480/240 clock as the courtside strip. Guarded — never blocks. ──
+    if not is_tracked:
+        try:
+            import helpers.rotation_plan as _RP
+            _QSEC = 480
+            _tot = 4 * _QSEC + max(cur_q - 4, 0) * 240
+            _rec = max(events_asc, key=lambda e: (e["quarter"],
+                                                  -GE.time_to_secs(e["time"]), e["id"]))
+            _rq, _rr = _rec["quarter"], GE.time_to_secs(_rec["time"])
+            _el = ((_rq - 1) * _QSEC + (_QSEC - _rr) if _rq <= 4
+                   else 4 * _QSEC + (_rq - 5) * 240 + (240 - _rr))
+            _sl = max(_tot - _el, 0)
+            _tname = {t1id: t1name, t2id: t2name}
+            _watch = []
+            for r in box_rows:
+                if r["PF"] >= 3 and r["MIN"] > 0:
+                    fp = _RP.foul_out_projection(r["PF"], r["MIN"], _sl)
+                    if fp["risk"] in ("out", "high", "med"):
+                        _watch.append((r, fp))
+            if _watch:
+                _ord = {"out": 0, "high": 1, "med": 2}
+                _watch.sort(key=lambda rf: _ord.get(rf[1]["risk"], 3))
+                st.markdown("**⚠ Foul watch**")
+                for r, fp in _watch:
+                    _emo = {"out": "🛑", "high": "🔴", "med": "🟠"}.get(fp["risk"], "")
+                    st.caption(f"{_emo} {r['Player']} "
+                               f"({_tname.get(r['_tid'], '')}) — {fp['note']}")
+        except Exception:
+            pass
 
     # ── live shot chart (tap-captured x/y from the phone or the form below) ────
     shots = query("""

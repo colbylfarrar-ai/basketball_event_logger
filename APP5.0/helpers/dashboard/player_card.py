@@ -39,6 +39,22 @@ from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            hot_zones as _hot_zones)
 
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
+_DEV_STATS = ("PPG", "RPG", "APG", "SPG", "BPG", "TPG")   # cross-season trend stats
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _class_curve(gender):
+    """League class-curve for the projection (cached — it scans every player's
+    season lines). Computed at most once per gender per 10 min."""
+    import helpers.development as DV
+    return DV.class_curve(gender)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _dev(pid, gender):
+    """Cross-season development bundle for one player (cached per pid/gender)."""
+    import helpers.development as DV
+    return DV.player_development(pid, gender=gender, curve=_class_curve(gender))
 
 
 def render_card(ctx):
@@ -551,6 +567,50 @@ def render_card(ctx):
                 and not _roles:
             st.caption("No play types tagged yet — add a one-tap Play type to a "
                        "shot in the Game Tracker to light this up.")
+
+    # ── Across seasons — development (Tier 3, ML_LAYER_ROADMAP) ───────────────
+    # Season-by-season lines + YoY progression/regression + a rough next-season
+    # projection. Auto-lights-up as rollovers link more seasons; on one season it
+    # shows the single line + the "unlocks after a 2nd season" note.
+    if paid:
+        _dv = _dev(pid, getattr(ctx, "gender", None))
+        _prog, _proj = _dv["progression"], _dv["projection"]
+        _lines = _prog["lines"]
+        st.markdown("<div class='pl-hdr'>Across seasons — development</div>",
+                    unsafe_allow_html=True)
+        if _lines:
+            st.dataframe(pd.DataFrame([{
+                "Season": L["label"], "Class": L.get("klass") or "—",
+                "Team": L["team"], "GP": L["gp"], "PPG": L["PPG"], "RPG": L["RPG"],
+                "APG": L["APG"], "SPG": L["SPG"], "BPG": L["BPG"],
+                "FG%": L["FG%"], "3P%": L["3P%"], "TS%": L["TS%"],
+            } for L in _lines]), hide_index=True, width="stretch")
+        # progression / regression (two+ rated seasons)
+        if _prog["deltas"]:
+            if _prog["headline"]:
+                st.markdown(f"**Trajectory:** {_prog['headline']}")
+            _dcols = st.columns(6)
+            for _col, _lab in zip(_dcols, _DEV_STATS):
+                _d = _prog["deltas"].get(_lab)
+                _cur = (_prog["cur"] or {}).get(_lab)
+                if _d is not None and _cur is not None:
+                    _col.metric(_lab, f"{_cur:g}",
+                                f"{_d['delta']:+.1f} {_d['trend']}",
+                                delta_color="normal" if _lab != "TPG" else "inverse")
+        # projection (two+ rated seasons) or the unlock note
+        if _proj.get("ok"):
+            st.markdown("<div class='pl-hdr'>Projected next season</div>",
+                        unsafe_allow_html=True)
+            _pcols = st.columns(6)
+            for _col, _lab in zip(_pcols, _DEV_STATS):
+                _v = _proj["proj"].get(_lab)
+                if _v is not None:
+                    _col.metric(_lab, f"{_v:g}")
+            _fc = (f" · {_proj['from_class']}→{_proj['to_class']}"
+                   if _proj.get("from_class") and _proj.get("to_class") else "")
+            st.caption(f"{_proj['note']} Basis: {_proj['basis']}{_fc}.")
+        else:
+            st.caption(_proj.get("reason", ""))
 
     # ── Career highs & milestones ─────────────────────────────────────────────
     st.markdown("<div class='pl-hdr'>Career highs & milestones</div>",

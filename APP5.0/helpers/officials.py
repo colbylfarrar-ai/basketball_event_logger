@@ -27,8 +27,14 @@ from database.db import query
 
 # ── low-level loaders ───────────────────────────────────────────────────────
 
-def _games(gender=None):
-    """Tracked games with scores, optionally limited to one gender (team1's)."""
+def _games(gender=None, allow=None):
+    """Tracked games with scores, optionally limited to one gender (team1's).
+
+    `allow` is the entitlement read-filter (a set/iterable of game ids the viewer
+    may aggregate) or None = unrestricted. A solo-paid coach passes their OWN
+    tracked games (refs/foul depth scoped to their own games); a league-wide coach
+    passes the pooled set; admin passes None.
+    """
     rows = query(
         """SELECT g.id, g.team1_id, g.team2_id, g.date,
                   g.home_score, g.away_score, t1.gender AS gender
@@ -38,6 +44,9 @@ def _games(gender=None):
     )
     if gender:
         rows = [r for r in rows if r["gender"] == gender]
+    if allow is not None:
+        allow = set(allow)
+        rows = [r for r in rows if r["id"] in allow]
     return {r["id"]: r for r in rows}
 
 
@@ -98,9 +107,11 @@ from helpers.stats import _safe   # shared definition lives in helpers.stats
 
 # ── main entry point ─────────────────────────────────────────────────────────
 
-def official_overview(gender=None):
+def official_overview(gender=None, game_ids=None):
     """
     Returns {"officials": [row, ...], "teams": {team_id: name}}.
+
+    `game_ids` is the entitlement read-filter (see _games): None = unrestricted.
 
     Each official row:
       off_pk, name, ext_id
@@ -119,7 +130,7 @@ def official_overview(gender=None):
       game_fouls       total fouls called by ANYONE in their games
       foul_share       fouls / game_fouls  (share of calls this ref made)
     """
-    games = _games(gender)
+    games = _games(gender, allow=game_ids)
     game_ids = list(games.keys())
     offs = _officials()
     worked = _worked(game_ids)
@@ -212,13 +223,15 @@ def official_overview(gender=None):
     return {"officials": rows, "teams": teams}
 
 
-def official_game_log(off_pk, gender=None):
+def official_game_log(off_pk, gender=None, game_ids=None):
     """
     Per-game detail for one official, newest first. Each row:
       game_id, date, matchup, home, away, home_score, away_score,
       fouls (this ref's calls), game_fouls (all calls), poss, ppp.
+
+    `game_ids` is the entitlement read-filter (see _games): None = unrestricted.
     """
-    games = _games(gender)
+    games = _games(gender, allow=game_ids)
     game_ids = list(games.keys())
     worked = _worked(game_ids).get(off_pk, set())
     if not worked:

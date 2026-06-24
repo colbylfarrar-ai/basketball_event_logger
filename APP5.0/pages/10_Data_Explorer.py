@@ -37,8 +37,11 @@ _lab_hero("Data Explorer", phase="ANALYZE",
 
 # ── cached engine wrappers (compute once per gender/min-games, reuse on rerun) ──
 @st.cache_data(ttl=600, show_spinner=False)
-def _table(g, mg):
-    return PR.player_stat_table(gender=g, min_games=mg)
+def _table(g, mg, gids=None):
+    # gids = read-filter (tuple of game ids) or None = unrestricted. Tuple so the
+    # cache key stays hashable.
+    return PR.player_stat_table(game_ids=(set(gids) if gids else None),
+                                gender=g, min_games=mg)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _clusters(g, mg):
@@ -68,16 +71,26 @@ if not table:
                 "more games in the Game Tracker.", icon="📊")
     st.stop()
 
-# Tier gate: individual player data is plan-level (pool-agnostic). Paid sees the
-# full ~60-column event-derived table + archetypes + shot maps; Free sees only
-# box-derivable columns (the event keys are dropped at the source so the column /
-# axis pickers below never offer them), and the event-only tabs are locked.
-_paid = ENT.has_paid_plan(AUTH.current_user())
+# Tier gate: this is a WHOLE-LEAGUE (multi-team) pool, so its event-derived depth
+# is a CROSS-TEAM aggregate → it needs the Coaches' Co-op (league-wide), not just
+# Paid (MULTI-TEAM rule). Box columns stay whole-league + public for everyone; a
+# league-wide viewer's depth is read-filtered to the games they may aggregate, so
+# a non-pooled (Solo) team's tracked depth never appears here. Own-team depth lives
+# on the Team Dashboard; a Free or Solo-paid viewer is box-only on this page.
+_ident = AUTH.current_user()
+_paid = ENT.has_paid_plan(_ident) and ENT.viewer_is_league_wide(_ident)
+if _paid:
+    _vis = ENT.visible_tracked_game_ids(_ident)   # None = admin (unrestricted)
+    if _vis is not None:
+        table = _table(gender, min_g, tuple(sorted(_vis))) or {}
+    if not table:                                 # league-wide but nothing pooled
+        _paid = False
 if not _paid:
-    table = PR.box_only_table(table)
-    st.caption("🔒 You're on the **Free** tier — box-score stats only. Tracked "
-               "analytics (ratings, usage, shot quality, archetypes, shot maps) "
-               "are a Paid feature.")
+    table = PR.box_only_table(_table(gender, min_g))
+    st.caption("🔒 Box-score stats only here. The whole-league tracked table "
+               "(ratings, usage, shot quality, archetypes, shot maps) is a "
+               "**Coaches' Co-op** feature — your own team's tracked depth is on "
+               "its Team Dashboard.")
 
 # attach archetype label (Paid only — clustering uses event-derived features),
 # build the master frame

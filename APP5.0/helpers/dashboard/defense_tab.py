@@ -30,7 +30,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import helpers.auth as AUTH
 import helpers.defenses as DEF
+import helpers.entitlement as ENT
 import helpers.playtypes as PT
 import helpers.stats as S
 import helpers.court as court
@@ -436,8 +438,13 @@ def render(ctx):
                 st.caption(f"Best disruption-to-foul tradeoff: **{DEF.label(_net)}** "
                            f"({_to[_net]} TOs forced vs {_fo.get(_net, 0)} fouls).")
 
-    # ══ §H — league rank context ═════════════════════════════════════════════
-    leaders = ctx.def_leaders(g, _off) or {}
+    # ══ §H — league rank context (cross-team → Coaches' Co-op only) ═══════════
+    # Lg avg / Lg best / Pctile compare this team against every tracked team, so the
+    # block is a cross-team aggregate: gated on league-wide (co-op). A solo coach
+    # still sees their own per-scheme PPP in the tables above; empty leaders here
+    # makes the "you vs the field" table self-skip.
+    leaders = ((ctx.def_leaders(g, _off) or {})
+               if ENT.viewer_is_league_wide(AUTH.current_user()) else {})
     _lr = []
     for k, blk in leaders.items():
         lead = blk.get("leaders", [])

@@ -714,9 +714,13 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
 # from a final score + manual box line: the five 0-100 ratings (+ Rank/2WAY that
 # ride on them), shot-creation/usage/impact (need lineups, minutes, possessions),
 # on-court rate stats (need game_event_lineup), shot quality/location (need the
-# court tap), assist-split and clutch (need event/quarter context). Everything
-# NOT listed here is box-derivable and stays Free — including eFG%/TS%, GS/G,
-# VERSATILITY, TOV%, PPP, AST/TOV and the per-game milestones.
+# court tap), assist-split and clutch (need event/quarter context). Also gated:
+# any POSSESSION-derived rate (computed via S.estimate_possessions, POSS = FGA+TOV)
+# — PPP and the possession-based TOV% — per the owner's possession carve-out
+# (FINAL 2026-06-15): the Free line is "derivable WITHOUT estimating possessions,"
+# so per-possession / per-100 rates are Paid even though their inputs are box stats.
+# Everything NOT listed here is box-derivable and stays Free — including eFG%/TS%,
+# GS/G, VERSATILITY, AST/TOV (pure box ratio) and the per-game milestones.
 EVENT_DERIVED_STATS = frozenset({
     # 0-100 ratings (gated wholesale) + the rank that rides on OVERALL
     "OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING",
@@ -738,6 +742,9 @@ EVENT_DERIVED_STATS = frozenset({
     "Transition_poss", "Transition_PPP",
     # clutch (need quarter splits from events)
     "Q4PTS", "Q4PPG", "Q4%",
+    # possession-derived rates (POSS = FGA+TOV via estimate_possessions) — Paid per
+    # the owner possession carve-out, even though their box inputs are Free.
+    "PPP", "TOV%",
 })
 
 

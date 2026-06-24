@@ -23,6 +23,8 @@ import pandas as pd
 import streamlit as st
 
 from database.db import query, execute
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 # Editable counting columns (DB column names).
 STAT_COLS = ["min", "fgm", "fga", "tpm", "tpa", "ftm", "fta",
@@ -211,11 +213,18 @@ def render_manual_box(game_id, accent="#f0a500", away="#e74c3c"):
         f" · <span style='color:#8b949e'>entered box score (not play-by-play "
         f"tracked) · {g['date'] or ''}</span></div>", unsafe_allow_html=True)
 
-    fc = st.columns(4)
-    fc[0].metric(f"{g['n1']} PPP", f"{t1['PPP']:.2f}")
-    fc[1].metric(f"{g['n1']} eFG%", f"{t1['eFG']:.0f}%")
-    fc[2].metric(f"{g['n2']} PPP", f"{t2['PPP']:.2f}")
-    fc[3].metric(f"{g['n2']} eFG%", f"{t2['eFG']:.0f}%")
+    # PPP is possession-derived (POSS = FGA+TOV) → Paid per the carve-out. eFG%
+    # (pure shooting) is box-derivable → Free. Show both for paid, eFG% only free.
+    if ENT.has_paid_plan(AUTH.current_user()):
+        fc = st.columns(4)
+        fc[0].metric(f"{g['n1']} PPP", f"{t1['PPP']:.2f}")
+        fc[1].metric(f"{g['n1']} eFG%", f"{t1['eFG']:.0f}%")
+        fc[2].metric(f"{g['n2']} PPP", f"{t2['PPP']:.2f}")
+        fc[3].metric(f"{g['n2']} eFG%", f"{t2['eFG']:.0f}%")
+    else:
+        fc = st.columns(2)
+        fc[0].metric(f"{g['n1']} eFG%", f"{t1['eFG']:.0f}%")
+        fc[1].metric(f"{g['n2']} eFG%", f"{t2['eFG']:.0f}%")
 
     def _ptable(team_id, label):
         rows = box.get(team_id, [])

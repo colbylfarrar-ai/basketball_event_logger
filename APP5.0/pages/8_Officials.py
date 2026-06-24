@@ -126,13 +126,15 @@ def _quadrant(rows, xk, yk, xlab, ylab, xfmt, yfmt, color="#bc8cff", qmin=1):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _official_overview(g):
-    return OFF.official_overview(gender=g)
+def _official_overview(g, gids=None):
+    # gids = read-filter (hashable tuple of game ids) or None = unrestricted.
+    return OFF.official_overview(gender=g, game_ids=(set(gids) if gids else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _official_game_log(off_pk, g):
-    return OFF.official_game_log(off_pk, gender=g)
+def _official_game_log(off_pk, g, gids=None):
+    return OFF.official_game_log(off_pk, gender=g,
+                                 game_ids=(set(gids) if gids else None))
 
 
 hc1, hc2 = st.columns([3, 1])
@@ -154,7 +156,13 @@ if not ENT.has_paid_plan(AUTH.current_user()):
             "officials hub.")
     st.stop()
 
-data = _official_overview(gender)
+# Read-filter: officials analytics span many teams' games, so scope them to the
+# games this viewer may aggregate — a Solo-paid coach sees refs/foul depth over
+# their OWN tracked games only; a league-wide coach sees the pooled set; admin sees
+# all. (Free is already blocked above — no box-only officials view exists.)
+_off_vis = ENT.visible_tracked_game_ids(AUTH.current_user())
+_off_gids = tuple(sorted(_off_vis)) if _off_vis is not None else None
+data = _official_overview(gender, _off_gids)
 rows = data["officials"]
 team_names = data["teams"]
 
@@ -573,7 +581,7 @@ def _fx_individual():
         else:
             st.caption("No home/away-attributable fouls.")
 
-    log = _official_game_log(r["off_pk"], gender)
+    log = _official_game_log(r["off_pk"], gender, _off_gids)
 
     # ── Foul-rate trend over time ─────────────────────────────────────────────
     if len(log) >= 2:

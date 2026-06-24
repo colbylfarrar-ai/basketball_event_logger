@@ -57,7 +57,18 @@ import helpers.auth as AUTH
 import helpers.entitlement as ENT
 
 _cfg, ACCENT = page_chrome("Players")
-_PAID = ENT.has_paid_plan(AUTH.current_user())
+# The Players page is a whole-league (multi-team) pool, so every tracked surface
+# here is a CROSS-TEAM aggregate → per the MULTI-TEAM rule it needs the Coaches'
+# Co-op (league-wide), not just Paid. Own-team tracked depth lives on the Team
+# Dashboard; on this league-wide page a solo-paid coach is box-only until they opt
+# into the pool. (`_PAID` = the effective "show tracked depth" gate for this page.)
+_ident = AUTH.current_user()
+_HAS_PAID = ENT.has_paid_plan(_ident)
+_PAID = _HAS_PAID and ENT.viewer_is_league_wide(_ident)
+# Lock copy keyed to WHY: not paid → upgrade; paid-but-solo → co-op invite.
+_LOCK = (ENT.MSG_PAID if not _HAS_PAID
+         else ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_ident)
+         else ENT.MSG_COOP_INVITE)
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 
 # Accent-tinted card glows (accent is dynamic, so these stay page-local). The
@@ -683,8 +694,7 @@ with tab_lead:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_rate:
     if not _PAID:
-        st.info("🔒 The Ratings tab — the 0-100 player ratings — is a **Paid** "
-                "feature. Upgrade to unlock.")
+        st.info(_LOCK)
     else:
         st.caption("Seven 0-100 ratings per player, each scaled so **50 = pool "
                    "average** and **+10 = one standard deviation** better. OVERALL "
@@ -1010,8 +1020,7 @@ def _fx_shot():
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_shot:
     if not _PAID:
-        st.info("🔒 The Shot Lab — shot maps, shot quality and contested-shot "
-                "splits — is a **Paid** feature. Upgrade to unlock.")
+        st.info(_LOCK)
     else:
         _fx_shot()
 
@@ -1229,11 +1238,18 @@ def _fx_prof():
                         format_func=lambda i: labels[i], key="prof_pick")
     P = order[pick]
     pid = next(k for k, v in by_pid.items() if v is P)
+    # The downloadable card bakes in paid tracked depth (ratings, USG%, percentile
+    # ranks, shot chart) — gate the export like the on-screen card. Free viewers get
+    # an upsell instead of a card that bypasses the tier via a file.
     from helpers.ui import pdf_or_html_download
-    pdf_or_html_download(
-        "Player card", _player_card(pid, gender),
-        f"card_{P['name']}".replace(" ", "_"),
-        key="prof_card_dl")
+    if _PAID:
+        pdf_or_html_download(
+            "Player card", _player_card(pid, gender),
+            f"card_{P['name']}".replace(" ", "_"),
+            key="prof_card_dl")
+    else:
+        st.caption("🔒 Download the full player card (ratings, usage, shot chart) — "
+                   "a **Paid** feature. Upgrade to unlock.")
 
     _comb = _combined(pid)
     if _comb and _comb["manual_gp"]:

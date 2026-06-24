@@ -18,7 +18,9 @@ import pandas as pd
 import streamlit as st
 from database.db import query, execute
 from helpers.ui import page_chrome, page_header, q_label
+import helpers.auth as AUTH
 import helpers.court as COURT
+import helpers.entitlement as ENT
 import helpers.court_geom as CG
 import helpers.defenses as DEF
 import helpers.fouls as FOULS
@@ -232,6 +234,14 @@ game_info   = lineup["game"]
 t1id, t2id  = game_info["team1_id"], game_info["team2_id"]
 t1name, t2name = game_info["t1_name"], game_info["t2_name"]
 is_tracked  = bool(game_info["tracked"])
+
+# Tier gate: event-logging AND the live tracked depth this screen renders (live box,
+# shot chart, win-probability, possession line, foul/bonus) are a Paid feature.
+# Tracking ANY team is allowed (track-to-scout) — the only gate is Paid; no own-team
+# or co-op restriction, so a paid coach can scout any opponent by tracking them.
+if not ENT.has_paid_plan(AUTH.current_user()):
+    st.info(ENT.MSG_PAID)
+    st.stop()
 
 # ── End / reopen, both behind a confirm dialog ──────────────────────────────────
 @st.dialog("End game?")

@@ -16,6 +16,8 @@ import streamlit as st
 
 from database.db import query
 from helpers.box_score import render_box_score
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 import helpers.predictor as PRED
 import helpers.team_ratings as TR
 
@@ -53,13 +55,18 @@ def render(ctx):
                "Projected score uses opponent-adjusted ratings with home court "
                "applied to the actual venue.")
     any_film = any((g.get("video_url") or "").strip() for g in ctx.log)
+    # An opponent's tracked rank is possession-based + cross-team → only show it for
+    # an opponent the viewer is entitled to (own-team, or league-wide + that team
+    # pooled). Free/solo viewers see "—" and the column is dropped entirely below.
+    _viewer = AUTH.current_user()
     sched_rows = []
     for g in ctx.log:
         oid = g["opp_id"]
         o_sc = ctx.scored.get(oid, {})
         o_tr = ctx.tracked.get(oid)
         ovr = o_sc.get("Rank")
-        trk_rk = o_tr.get("Rank") if o_tr else None
+        _see_opp = ENT.can_see_team_tracked(_viewer, oid)
+        trk_rk = o_tr.get("Rank") if (o_tr and _see_opp) else None
         pred = PRED.predict_game(ctx.team_id, oid, scored=ctx.scored,
                                  tracked=ctx.tracked,
                                  home=(ctx.team_id if g["site"] == "vs" else oid))
@@ -78,6 +85,11 @@ def render(ctx):
         if any_film:
             row["Film"] = (g.get("video_url") or "").strip() or None
         sched_rows.append(row)
+    # Drop the Trk Rk column entirely when the viewer can't see any opponent's
+    # tracked rank (free / solo) — no column of bare dashes, no leak.
+    if not any(r["Trk Rk"] != "—" for r in sched_rows):
+        for r in sched_rows:
+            r.pop("Trk Rk", None)
     sched_cfg = {}
     if any_film:
         sched_cfg["Film"] = st.column_config.LinkColumn(

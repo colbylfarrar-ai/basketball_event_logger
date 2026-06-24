@@ -200,10 +200,14 @@ except Exception:
 
 D = _dashboard(_gender)
 
-# Plan-level gate for the event-derived league-overview stats below (GEI, the
-# top team's possession ratings, the OVERALL rating columns). Per the gating
-# taxonomy, league-overview / leaderboard data is pool-agnostic, so has_paid_plan.
-_paid = ENT.has_paid_plan(AUTH.current_user())
+# The event-derived league-overview surfaces below (GEI/game-of-season win-prob,
+# the top team's possession gauges, the OVERALL-rating columns, the |z| miner) put
+# MULTIPLE teams in one view → cross-team aggregates that need the Coaches' Co-op
+# (league-wide), not just Paid (MULTI-TEAM rule). A Free or Solo-paid viewer gets
+# the box-level hub; own-team tracked depth lives on the Team Dashboard.
+_hub_ident = AUTH.current_user()
+_paid = (ENT.has_paid_plan(_hub_ident)
+         and ENT.viewer_is_league_wide(_hub_ident))
 
 if D.get("errors"):
     st.warning("Some dashboard data failed to load")

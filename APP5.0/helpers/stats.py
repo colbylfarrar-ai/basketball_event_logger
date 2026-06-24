@@ -1352,12 +1352,19 @@ def team_game_ids(team_id, outcome=None, tracked_only=True):
     return [g["id"] for g in team_games(team_id, outcome, tracked_only)]
 
 
-def team_summary(team_id, opp_id=None, outcome=None):
+def team_summary(team_id, opp_id=None, outcome=None, game_ids=None):
     """
     Win/loss record, Margin of Victory, points for/against per game, possessions
     per game, and ORtg/DRtg/Net over the selected (optionally W- or L-only) games.
+
+    `game_ids` is the entitlement read-filter: None = all of the team's games;
+    a set restricts every aggregation (record, possession ratings) to those games
+    so a co-op scout never sees a team's non-pooled tracked depth here.
     """
     games = team_games(team_id, outcome)
+    if game_ids is not None:
+        _allow = set(game_ids)
+        games = [g for g in games if g["id"] in _allow]
     gids = [g["id"] for g in games]
     n = len(games)
     wins = sum(1 for g in games if g["win"])

@@ -27,6 +27,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 import helpers.playtypes as PT
 import helpers.stats as S
 import helpers.team_analytics as TA
@@ -469,8 +471,12 @@ def render(ctx):
                 st.markdown(_pctile_or_thin(r["label"], val, r.get("pct")),
                             unsafe_allow_html=True)
 
-    # ══ §J — league rank context ═════════════════════════════════════════════
-    leaders = ctx.league_leaders(g, _off) or {}
+    # ══ §J — league rank context (cross-team → Coaches' Co-op only) ═══════════
+    # Lg avg / Lg best / Pctile rank this team vs every tracked team's pool — a
+    # cross-team aggregate, so gated on league-wide (co-op). Solo coaches see their
+    # own set-call PPP above; empty leaders makes the field-comparison table skip.
+    leaders = ((ctx.league_leaders(g, _off) or {})
+               if ENT.viewer_is_league_wide(AUTH.current_user()) else {})
     _lr = []
     for k, blk in leaders.items():
         lead = blk.get("leaders", [])

@@ -616,14 +616,18 @@ def _fx_team():
     m[3].metric("Margin / game", f"{r['MOV']:+.1f}")
     m[4].metric("SOS / SOR", f"{r['SOS']:.1f} / {r['SOR']:.1f}")
 
-    # both rankings in one place: league (this tab) + tracked (where possible)
+    # both rankings in one place: league (results — public) + tracked (possession
+    # NetRtg → Paid AND own-team-or-league-wide; drop the clause otherwise).
     rk = TR.team_rank(pick, scored=scored, tracked=tracked)
     _trk = rk["tracked"]
-    st.caption(
-        f"**League ranking** #{r['Rank']} of {len(scored)}  ·  "
-        + (f"**Tracked ranking** #{_trk['rank']} of {_trk['of']} "
-           f"(Power {_trk['power']}, Net {_trk['netrtg']:+.1f})"
-           if _trk else "**Tracked ranking** — not tracked yet"))
+    if not ENT.can_see_team_tracked(AUTH.current_user(), pick):
+        _trk_clause = ""                 # possession rank gated — show league only
+    elif _trk:
+        _trk_clause = (f"  ·  **Tracked ranking** #{_trk['rank']} of {_trk['of']} "
+                       f"(Power {_trk['power']}, Net {_trk['netrtg']:+.1f})")
+    else:
+        _trk_clause = "  ·  **Tracked ranking** — not tracked yet"
+    st.caption(f"**League ranking** #{r['Rank']} of {len(scored)}" + _trk_clause)
 
     mt = st.columns(3)
     mt[0].metric("vs Top 5", f"{t5_w}-{t5_l}")
@@ -1654,46 +1658,52 @@ def _fx_evr():
     #  PLAYER EDGE — league-wide player leaders in the tracked-edge metrics
     # ──────────────────────────────────────────────────────────────────────
     with lab_pl:
-        st.caption("League-wide player leaders in the **tracked-edge** reads — "
-                   "shot-making over expected, who to force off their hand, and "
-                   "who creates the most defensive win value. Gated by sample.")
-        _poe, _hand, _dwpa = _league_player_edge(gender)
-        pe1, pe2, pe3 = st.columns(3)
-        with pe1:
-            st.markdown("<div class='lab-hdr'>Shot-makers</div>",
-                        unsafe_allow_html=True)
-            st.caption("Points/shot over expected (FGA ≥ 20)")
-            if _poe:
-                st.dataframe(pd.DataFrame([
-                    {"Player": n, "Team": t, "+pts/shot": round(v, 2), "FGA": f}
-                    for v, n, t, f in _poe]), hide_index=True, width="stretch",
-                    column_config={"+pts/shot":
-                                   st.column_config.NumberColumn(format="%+.2f")})
-            else:
-                st.caption("Not enough tracked shot volume yet.")
-        with pe2:
-            st.markdown("<div class='lab-hdr'>Force off-hand</div>",
-                        unsafe_allow_html=True)
-            st.caption("Strong − weak side FG% gap (6+ each)")
-            if _hand:
-                st.dataframe(pd.DataFrame([
-                    {"Player": n, "Strong%": round(d), "Weak%": round(w),
-                     "Gap": round(g)} for g, n, t, d, w in _hand]),
-                    hide_index=True, width="stretch")
-            else:
-                st.caption("Needs tap-located shots on both sides.")
-        with pe3:
-            st.markdown("<div class='lab-hdr'>Defensive win value</div>",
-                        unsafe_allow_html=True)
-            st.caption("Def WPA — wins created on defense (4+ GP)")
-            if _dwpa:
-                st.dataframe(pd.DataFrame([
-                    {"Player": n, "Team": t, "Def WPA": round(v, 2), "GP": g}
-                    for v, n, t, g in _dwpa]), hide_index=True, width="stretch",
-                    column_config={"Def WPA":
-                                   st.column_config.NumberColumn(format="%+.2f")})
-            else:
-                st.caption("Needs more tracked games.")
+        # League-wide, multi-team player tracked depth (SMOE / hand-split / Def WPA)
+        # → Paid AND league-wide (Coaches' Co-op).
+        _pl_lock = _paid_pool_lock()
+        if _pl_lock:
+            st.info(_pl_lock)
+        else:
+            st.caption("League-wide player leaders in the **tracked-edge** reads — "
+                       "shot-making over expected, who to force off their hand, and "
+                       "who creates the most defensive win value. Gated by sample.")
+            _poe, _hand, _dwpa = _league_player_edge(gender)
+            pe1, pe2, pe3 = st.columns(3)
+            with pe1:
+                st.markdown("<div class='lab-hdr'>Shot-makers</div>",
+                            unsafe_allow_html=True)
+                st.caption("Points/shot over expected (FGA ≥ 20)")
+                if _poe:
+                    st.dataframe(pd.DataFrame([
+                        {"Player": n, "Team": t, "+pts/shot": round(v, 2), "FGA": f}
+                        for v, n, t, f in _poe]), hide_index=True, width="stretch",
+                        column_config={"+pts/shot":
+                                       st.column_config.NumberColumn(format="%+.2f")})
+                else:
+                    st.caption("Not enough tracked shot volume yet.")
+            with pe2:
+                st.markdown("<div class='lab-hdr'>Force off-hand</div>",
+                            unsafe_allow_html=True)
+                st.caption("Strong − weak side FG% gap (6+ each)")
+                if _hand:
+                    st.dataframe(pd.DataFrame([
+                        {"Player": n, "Strong%": round(d), "Weak%": round(w),
+                         "Gap": round(g)} for g, n, t, d, w in _hand]),
+                        hide_index=True, width="stretch")
+                else:
+                    st.caption("Needs tap-located shots on both sides.")
+            with pe3:
+                st.markdown("<div class='lab-hdr'>Defensive win value</div>",
+                            unsafe_allow_html=True)
+                st.caption("Def WPA — wins created on defense (4+ GP)")
+                if _dwpa:
+                    st.dataframe(pd.DataFrame([
+                        {"Player": n, "Team": t, "Def WPA": round(v, 2), "GP": g}
+                        for v, n, t, g in _dwpa]), hide_index=True, width="stretch",
+                        column_config={"Def WPA":
+                                       st.column_config.NumberColumn(format="%+.2f")})
+                else:
+                    st.caption("Needs more tracked games.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  LANDSCAPE
@@ -1725,7 +1735,13 @@ def _fx_evr():
         _style(land, 540)
         st.plotly_chart(land, width="stretch", key="lab_land")
 
-        if pteams:
+        # KenPom map is possession-based (ORtg/DRtg/Pace/Net per-100) AND multi-team
+        # → Paid + league-wide. The efficiency landscape above is box-derived (xPPG)
+        # and stays public.
+        _land_lock = _paid_pool_lock()
+        if _land_lock:
+            st.info(_land_lock)
+        elif pteams:
             _lab_hdr("Tracked KenPom map — efficiency per 100 possessions")
             ortg = [ts[t]["ORtg"] for t in pteams]
             drtg = [ts[t]["DRtg"] for t in pteams]

@@ -225,27 +225,39 @@ def render_box_score(game_id: int):
                    "unreliable for this game.")
 
     # ── season records + rankings for the header ───────────────────────────────
+    # W-L record and the results-only Power rank are box-derivable → public. The
+    # tracked rank is possession-based (NetRtg) AND league-wide, so it's gated like
+    # the analytics tabs below (can_see_game_tracked) and read-filtered to the
+    # viewer's visible set — never computed for a viewer who can't open this game's
+    # depth. This must sit ABOVE the hero so the tag never leaks pre-gate.
     scored, trk_rank = {}, {}
+    _gident = AUTH.current_user()
+    _show_trk = ENT.can_see_game_tracked(_gident, t1id, t2id, in_pool=g["in_pool"])
     try:
         scored = TR.score_ratings(gender=g["gender"])
     except Exception:
         scored = {}
         st.caption("Season records / power rankings unavailable for this game.")
-    try:
-        trk = TR.tracked_ratings(gender=g["gender"])
-        trk_rank = {tid: i + 1 for i, (tid, _) in enumerate(
-            sorted(trk.items(), key=lambda kv: -kv[1]["NetRtg"]))}
-    except Exception:
-        trk_rank = {}
-        st.caption("Tracked rankings unavailable for this game.")
+    if _show_trk:
+        try:
+            trk = TR.tracked_ratings(
+                gender=g["gender"],
+                game_ids=ENT.visible_tracked_game_ids(_gident))
+            trk_rank = {tid: i + 1 for i, (tid, _) in enumerate(
+                sorted(trk.items(), key=lambda kv: -kv[1]["NetRtg"]))}
+        except Exception:
+            trk_rank = {}
+            st.caption("Tracked rankings unavailable for this game.")
 
     def _team_tag(tid):
         s = scored.get(tid, {})
         rec = f"{s['W']}-{s['L']}" if s else "—"
         rk = f"#{s['Rank']}" if s.get("Rank") else "—"
-        tr = f"#{trk_rank[tid]}" if tid in trk_rank else "—"
-        return (f"<span style='color:#8b949e;font-size:12px'>"
-                f"{rec} · Power {rk} · tracked {tr}</span>")
+        base = f"{rec} · Power {rk}"
+        if _show_trk:                    # tracked (possession) rank: entitled only
+            tr = f"#{trk_rank[tid]}" if tid in trk_rank else "—"
+            base += f" · tracked {tr}"
+        return f"<span style='color:#8b949e;font-size:12px'>{base}</span>"
 
     # ── Scoreboard hero (always on top) ─────────────────────────────────────────
     def block(name, pts, won, color, tid):

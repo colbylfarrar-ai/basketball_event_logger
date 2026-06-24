@@ -14,6 +14,8 @@ import streamlit as st
 
 from database.db import query, execute
 from helpers.ui import AWAY, CARD_BG, GRID
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 import helpers.manual_box as MB
 import helpers.team_analytics as TA
 
@@ -34,15 +36,27 @@ def render(ctx):
 
     _mprof = MB.manual_team_profile(ctx.team_id)
     if _mprof:
+        # PPP/ORtg are possession-derived (POSS = FGA+TOV) → Paid per the carve-out,
+        # even off a hand-entered box. Games-entered + eFG% (pure shooting) are box-
+        # derivable and stay Free. Gate on can_see_team_tracked (Paid AND own-team
+        # or league-wide) — NOT has_tracked, which is False for manual-only teams.
+        _see_depth = ENT.can_see_team_tracked(AUTH.current_user(), ctx.team_id)
         st.markdown("<div class='pl-hdr'>Entered (untracked) games</div>",
                     unsafe_allow_html=True)
-        _mc = st.columns(4)
-        _mc[0].metric("Games entered", _mprof["games"])
-        _mc[1].metric("PPP", f"{_mprof['PPP']:.2f}")
-        _mc[2].metric("ORtg", f"{_mprof['ORtg']:.0f}")
-        _mc[3].metric("eFG%", f"{_mprof['off_ff']['eFG']:.0f}%")
-        st.caption("From hand-entered box scores (not play-by-play tracked) · "
-                   "possessions = FGA + TOV. Enter boxes on the Setup page.")
+        if _see_depth:
+            _mc = st.columns(4)
+            _mc[0].metric("Games entered", _mprof["games"])
+            _mc[1].metric("PPP", f"{_mprof['PPP']:.2f}")
+            _mc[2].metric("ORtg", f"{_mprof['ORtg']:.0f}")
+            _mc[3].metric("eFG%", f"{_mprof['off_ff']['eFG']:.0f}%")
+            st.caption("From hand-entered box scores (not play-by-play tracked) · "
+                       "possessions = FGA + TOV. Enter boxes on the Setup page.")
+        else:
+            _mc = st.columns(2)
+            _mc[0].metric("Games entered", _mprof["games"])
+            _mc[1].metric("eFG%", f"{_mprof['off_ff']['eFG']:.0f}%")
+            st.caption("From hand-entered box scores. Possession rates (PPP, ORtg) "
+                       "are a Paid feature.")
 
     _bytype = {}
     for r in query("""SELECT game_type, team1_id, home_score, away_score FROM games

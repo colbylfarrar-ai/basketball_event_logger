@@ -36,6 +36,7 @@ import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.seasons as SEAS
 import helpers.playtypes as PT
+import helpers.defenses as DEF
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
@@ -336,7 +337,8 @@ def render_box_score(game_id: int):
         key=f"bs{game_id}_recap")
 
     tabs = st.tabs(["Overview", "Flow", "Shooting", "Quarters",
-                    "Lineups", "Box Score", "Four Factors", "Play Types"])
+                    "Lineups", "Box Score", "Four Factors", "Play Types",
+                    "Defense"])
 
     # Each tab body is a @st.fragment so its widgets (team/player pickers,
     # lineup sliders, …) rerun only that tab instead of rebuilding all seven.
@@ -1530,6 +1532,178 @@ def render_box_score(game_id: int):
 
     with tabs[7]:
         _tab_playtypes()
+
+    # ════════════════════════════════════════════════════════════════════════
+    #  TAB 8 — DEFENSE  (the one-tap defense-scheme tag, this game)
+    # ════════════════════════════════════════════════════════════════════════
+    # The defensive companion to Play Types: PPP by the explicit `defense` scheme
+    # tag for THIS game, per team, with the play-type × defense cross-tab and the
+    # press/trap disruption (TOs + fouls per scheme). Mirrors _tab_playtypes.
+    @st.fragment
+    def _tab_defense():
+        side = st.radio("Lens", ["Our defense (we ran)", "Defenses we faced"],
+                        horizontal=True, key=f"bs{game_id}_def_side")
+        offense = side == "Defenses we faced"   # True => defenses this team FACED
+        st.caption("The one-tap **Defense** scheme tag on this game's shots — "
+                   "man / zone / press / trap / junk, ranked vs the league. PPP = "
+                   "points per possession; on defense, allowing fewer ranks higher. "
+                   "Sticky in the tracker, so one tap covers a whole stretch.")
+
+        _dcfg = {
+            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+            "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+            "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+            "Pct": st.column_config.NumberColumn("Pct", format="%.0f"),
+        }
+        _fpcfg = {
+            "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
+            "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
+            "Assisted%": st.column_config.NumberColumn("Assisted%", format="%.0f%%"),
+            "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
+            "avg s": st.column_config.NumberColumn("avg s", format="%.1f"),
+        }
+
+        for tid, nm in [(t1id, t1name), (t2id, t2name)]:
+            st.markdown(f"**{nm}**")
+            dv = DEF.team_defense_percentiles(
+                tid, gender=g["gender"], game_ids=[game_id], events=events,
+                offense=offense)
+            rows = dv["rows"]
+            if not rows:
+                st.caption("No defense tags yet — set the **Defense** (man, 2-3, "
+                           "press…) on shots in the Game Tracker; it's sticky, so "
+                           "one tap covers a whole stretch.")
+            else:
+                # KPI tiles — Most used (max share), Best / Worst by league pct
+                # (good-oriented, so it's correct on either side of the ball).
+                _ranked = [r for r in rows if r["poss"] >= 3 and r["pct"] is not None]
+                _most = max(rows, key=lambda r: r["share"], default=None)
+                _best = max(_ranked, key=lambda r: r["pct"], default=None)
+                _worst = min(_ranked, key=lambda r: r["pct"], default=None)
+                kc = st.columns(3)
+                for col, lbl, r in [(kc[0], "Most used", _most),
+                                    (kc[1], "Best", _best), (kc[2], "Worst", _worst)]:
+                    if r:
+                        col.markdown(
+                            f"<div class='kpi-tile'><div class='kpi-label'>{lbl}</div>"
+                            f"<div class='kpi-value'>{r['label']}</div>"
+                            f"<div class='kpi-sub'>{r['PPP']:.2f} PPP · "
+                            f"{r['poss']} poss</div></div>", unsafe_allow_html=True)
+                    else:
+                        col.markdown(
+                            f"<div class='kpi-tile'><div class='kpi-label'>{lbl}</div>"
+                            f"<div class='kpi-value'>—</div>"
+                            f"<div class='kpi-sub'>need 3+ poss</div></div>",
+                            unsafe_allow_html=True)
+
+                # horizontal PPP bar — one row per scheme, shaded by FG%
+                _bn = [r["label"] for r in rows]
+                _bv = [round(r["PPP"], 2) for r in rows]
+                _bc = [_heat(r["FG%"]) for r in rows]
+                _bt = [f"{r['PPP']:.2f} · {r['poss']}p" for r in rows]
+                dfig = go.Figure(go.Bar(
+                    x=_bv, y=_bn, orientation="h", marker_color=_bc,
+                    marker_line_width=0, text=_bt, textposition="auto",
+                    textfont=dict(size=11), cliponaxis=False,
+                    hovertemplate="%{y}: %{text}<extra></extra>"))
+                _style(dfig, 300)
+                dfig.update_layout(margin=dict(l=4, r=14, t=8, b=34))
+                dfig.update_xaxes(
+                    title=f"Points per possession ({'scored' if offense else 'allowed'})")
+                dfig.update_yaxes(showgrid=False, automargin=True)
+                st.plotly_chart(dfig, width="stretch",
+                                key=f"bs{game_id}_def_bar_{tid}")
+
+                # ranked table
+                df = pd.DataFrame([{
+                    "Defense": r["label"], "Poss": r["poss"],
+                    "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
+                    "Share": round(r["share"] * 100, 0),
+                    "Pct": r["pct"], "Tier": r["tier"]} for r in rows])
+                st.dataframe(df, hide_index=True, width="stretch",
+                             column_config=_dcfg, key=f"bs{game_id}_def_tbl_{tid}")
+                st.caption(f"{dv['total_tagged']} tagged · {dv['untagged']} untagged. "
+                           "Pct = league percentile · Tier shades good→poor.")
+
+                # family rollup (man / zone / press …)
+                fam = DEF.team_defense_families(
+                    tid, gender=g["gender"], game_ids=[game_id], events=events,
+                    offense=offense)
+                if fam["rows"]:
+                    famdf = pd.DataFrame([{
+                        "Family": r["label"], "Poss": r["poss"],
+                        "Share": round(r["share"] * 100, 0),
+                        "PPP": round(r["PPP"], 2)} for r in fam["rows"]])
+                    st.markdown("*By family*")
+                    st.dataframe(famdf, hide_index=True, width="stretch",
+                                 column_config={
+                                     "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
+                                     "PPP": st.column_config.NumberColumn("PPP", format="%.2f")},
+                                 key=f"bs{game_id}_def_fam_{tid}")
+
+                # scheme fingerprint (how shots vs each scheme are generated)
+                _prof = DEF.team_defense_shot_profiles(
+                    tid, gender=g["gender"], game_ids=[game_id], events=events,
+                    offense=offense)
+                if _prof:
+                    fdf = pd.DataFrame([{
+                        "Defense": p["label"],
+                        "3PA%": round(p["3PA_rate"] * 100, 0),
+                        "Rim%": round(p["rim_rate"] * 100, 0),
+                        "Assisted%": round(p["ast_rate"] * 100, 0),
+                        "Open%": round(p["open_rate"] * 100, 0),
+                        "Where": (ZONE_LABELS.get(p["top_zone"], p["top_zone"])
+                                  if p["top_zone"] else "—"),
+                        "avg s": (round(p["avg_secs"], 1)
+                                  if p["avg_secs"] is not None else None)}
+                        for p in _prof.values()])
+                    st.markdown("*Scheme fingerprint*")
+                    st.dataframe(fdf, hide_index=True, width="stretch",
+                                 column_config=_fpcfg,
+                                 key=f"bs{game_id}_def_prof_{tid}")
+
+            # ── play type × defense cross-tab (needs both tags on a shot) ───
+            cx = DEF.cross_play_defense(
+                tid, gender=g["gender"], game_ids=[game_id], events=events,
+                offense=offense)
+            if cx["plays"] and cx["defenses"]:
+                _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
+                _grid = []
+                for pk in cx["plays"]:
+                    _r = {"Set": _pl.get(pk, pk)}
+                    for dk in cx["defenses"]:
+                        c = _mx.get(pk, {}).get(dk)
+                        _r[_dl.get(dk, dk)] = (round(c["PPP"], 2)
+                                               if c and c["stable"] else None)
+                    _grid.append(_r)
+                st.markdown("*Play type × defense — PPP*")
+                st.dataframe(pd.DataFrame(_grid), hide_index=True, width="stretch",
+                             key=f"bs{game_id}_def_cross_{tid}")
+                st.caption("PPP per set vs scheme (cells with ≥4 poss; blank = thin).")
+
+            # ── disruption: turnovers + fouls per scheme ────────────────────
+            tv = DEF.team_defense_turnovers(
+                tid, gender=g["gender"], game_ids=[game_id], events=events,
+                offense=offense)
+            fl = DEF.team_defense_fouls(
+                tid, gender=g["gender"], game_ids=[game_id], events=events,
+                offense=offense)
+            if tv["rows"] or fl["rows"]:
+                _to = {r["key"]: r for r in tv["rows"]}
+                _fo = {r["key"]: r for r in fl["rows"]}
+                _keys = list(dict.fromkeys(list(_to) + list(_fo)))
+                _tcol = "TOs " + ("forced" if not offense else "committed")
+                _fcol = "Fouls " + ("committed" if not offense else "drawn")
+                ddf = pd.DataFrame([{
+                    "Defense": (_to.get(k) or _fo.get(k))["label"],
+                    _tcol: _to.get(k, {}).get("tovs", 0),
+                    _fcol: _fo.get(k, {}).get("fouls", 0)} for k in _keys])
+                st.markdown("*Disruption — turnovers & fouls per scheme*")
+                st.dataframe(ddf, hide_index=True, width="stretch",
+                             key=f"bs{game_id}_def_disrupt_{tid}")
+
+    with tabs[8]:
+        _tab_defense()
 
     st.caption("Recomputed from game_events. Box/advanced formulas in helpers/stats.py; "
                "team, shot-quality & lineup engines in helpers/team_analytics.py + "

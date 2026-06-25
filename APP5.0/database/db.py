@@ -209,6 +209,13 @@ def initialize_database():
             # whole migration loop; the app only ever writes 'right'/'left'.
             "ALTER TABLE players        ADD COLUMN handedness   TEXT    NOT NULL DEFAULT 'right'",
             "ALTER TABLE teams          ADD COLUMN district     TEXT    NOT NULL DEFAULT ''",
+            # Home state (default 'OK' — this is an Oklahoma app). Tags every team
+            # and official with a 2-letter US state so out-of-state opponents
+            # (KS/TX/AR…) and travelling refs are distinguishable. The OSSAA
+            # importer auto-detects it from team names (helpers/ossaa_sync); every
+            # existing row and every hand-entered row defaults to OK.
+            "ALTER TABLE teams          ADD COLUMN state        TEXT    NOT NULL DEFAULT 'OK'",
+            "ALTER TABLE officials      ADD COLUMN state        TEXT    NOT NULL DEFAULT 'OK'",
             "ALTER TABLE games          ADD COLUMN game_type    TEXT    NOT NULL DEFAULT 'Regular'",
             "ALTER TABLE games          ADD COLUMN video_url    TEXT    NOT NULL DEFAULT ''",
             # Exact shot location in court-feet (half-court model in helpers/court.py).

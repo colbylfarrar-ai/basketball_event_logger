@@ -32,3 +32,6 @@ database/*.db-shm
 
 # Claude Code local config (machine-specific paths)
 .claude/
+
+# OSSAA importer local HTML cache (Phase 1)
+tools/.ossaa_cache/

@@ -721,13 +721,18 @@ def _fx_team():
         else:
             st.info("No completed games.")
 
-        # upcoming (from the schedule table, unplayed)
+        # upcoming (from the games table, unplayed) — the `schedule` table is dead
+        # for the active season; games (manual or OSSAA-imported) live in `games`.
         upcoming = query(
-            """SELECT date, opponent_id, home_away, location
-               FROM schedule
-               WHERE team_id=? AND (opp_score IS NULL OR team_score IS NULL)
+            """SELECT date,
+                      CASE WHEN team1_id=? THEN team2_id ELSE team1_id END AS opponent_id,
+                      CASE WHEN team1_id=? THEN 'Home'   ELSE 'Away'    END AS home_away,
+                      location
+               FROM games
+               WHERE (team1_id=? OR team2_id=?) AND season='Current'
+                 AND (home_score IS NULL OR away_score IS NULL)
                  AND date >= date('now', 'localtime')
-               ORDER BY date""", (pick,))
+               ORDER BY date""", (pick, pick, pick, pick))
         if upcoming:
             st.markdown("**Upcoming**")
             up = [{"Date": u["date"],

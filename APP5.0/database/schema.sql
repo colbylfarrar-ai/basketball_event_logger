@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS teams (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     name      TEXT    NOT NULL UNIQUE,
     class     TEXT    NOT NULL CHECK(class IN ('B2','B1','A','2A','3A','4A','5A','6A','N/A')),
-    gender    TEXT    NOT NULL CHECK(gender IN ('M','F'))
+    gender    TEXT    NOT NULL CHECK(gender IN ('M','F')),
+    state     TEXT    NOT NULL DEFAULT 'OK'
 );
 
 CREATE TABLE IF NOT EXISTS players (
@@ -50,7 +51,8 @@ CREATE TABLE IF NOT EXISTS officials (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
     official_id INTEGER NOT NULL UNIQUE,
-    archived    INTEGER NOT NULL DEFAULT 0
+    archived    INTEGER NOT NULL DEFAULT 0,
+    state       TEXT    NOT NULL DEFAULT 'OK'
 );
 
 CREATE TABLE IF NOT EXISTS game_lineup_players (

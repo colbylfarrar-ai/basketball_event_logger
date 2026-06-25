@@ -35,6 +35,13 @@ for _level, _msg in st.session_state.pop("_flash", []):
 CLASS_OPTIONS  = ["B2", "B1", "A", "2A", "3A", "4A", "5A", "6A", "N/A"]
 GENDER_OPTIONS = ["M", "F"]
 HA_OPTIONS     = ["Home", "Away"]
+# US state codes for the team/official State tag (default OK — Oklahoma app).
+# Oklahoma + its neighbours float to the top; the rest follow alphabetically.
+STATE_OPTIONS  = ["OK", "TX", "KS", "AR", "MO", "NM", "CO", "LA", "NE",
+                  "AL","AK","AZ","CA","CT","DC","DE","FL","GA","HI","IA","ID",
+                  "IL","IN","KY","MA","MD","ME","MI","MN","MS","MT","NC","ND",
+                  "NH","NJ","NV","NY","OH","OR","PA","RI","SC","SD","TN","UT",
+                  "VA","VT","WA","WI","WV","WY"]
 
 EDITOR_HELP = ("**Click any cell to edit.** Add with the **＋** row at the bottom. "
                "To delete: tick a row's checkbox and press the **Delete** key, then **Save Changes** "
@@ -61,8 +68,8 @@ def team_names():
     return list(team_map().keys())
 
 def load_teams():
-    rows = query("SELECT id, name, class, gender FROM teams ORDER BY name")
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","class","gender"])
+    rows = query("SELECT id, name, class, gender, state FROM teams ORDER BY name")
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","class","gender","state"])
 
 def load_players_for(team_id):
     rows = query(
@@ -95,8 +102,8 @@ def load_games_for_team(team_id):
     return sort_by_date(df, ascending=False)
 
 def load_officials():
-    rows = query("SELECT id, name, official_id FROM officials WHERE archived=0 ORDER BY name")
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","official_id"])
+    rows = query("SELECT id, name, official_id, state FROM officials WHERE archived=0 ORDER BY name")
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","official_id","state"])
 
 def load_games():
     rows = query("""
@@ -337,7 +344,7 @@ tab_teams, tab_players, tab_games, tab_schedule, tab_officials, tab_archive = st
 with tab_teams:
     st.caption(EDITOR_HELP)
     orig = get_orig("_teams_orig", load_teams)
-    display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(columns=["name","class","gender"])
+    display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(columns=["name","class","gender","state"])
 
     st.data_editor(
         display,
@@ -348,17 +355,19 @@ with tab_teams:
             "name":   st.column_config.TextColumn("Team Name", required=True),
             "class":  st.column_config.SelectboxColumn("Class",  options=CLASS_OPTIONS,  required=True),
             "gender": st.column_config.SelectboxColumn("Gender", options=GENDER_OPTIONS, required=True),
+            "state":  st.column_config.SelectboxColumn("State",  options=STATE_OPTIONS, default="OK"),
         },
     )
 
     if st.button("Save Changes", key="save_teams", type="primary"):
         def ins_team(r):
             if r.get("name", "").strip():
-                execute("INSERT OR IGNORE INTO teams (name, class, gender) VALUES (?,?,?)",
-                        (r["name"].strip(), r.get("class","N/A"), r.get("gender","M")))
+                execute("INSERT OR IGNORE INTO teams (name, class, gender, state) VALUES (?,?,?,?)",
+                        (r["name"].strip(), r.get("class","N/A"), r.get("gender","M"),
+                         (r.get("state") or "OK")))
         def upd_team(r):
-            execute("UPDATE teams SET name=?, class=?, gender=? WHERE id=?",
-                    (r["name"].strip(), r["class"], r["gender"], r["id"]))
+            execute("UPDATE teams SET name=?, class=?, gender=?, state=? WHERE id=?",
+                    (r["name"].strip(), r["class"], r["gender"], (r.get("state") or "OK"), r["id"]))
         def del_team(r):
             if _gated_delete("teams", r["id"], f"team '{r.get('name','?')}'"):
                 execute("DELETE FROM teams WHERE id=?", (r["id"],))
@@ -699,7 +708,7 @@ with tab_officials:
     st.caption(EDITOR_HELP)
     orig = get_orig("_officials_orig", load_officials)
     display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
-        columns=["name", "official_id"])
+        columns=["name", "official_id", "state"])
 
     st.data_editor(
         display,
@@ -709,6 +718,7 @@ with tab_officials:
         column_config={
             "name":        st.column_config.TextColumn("Official Name", required=True),
             "official_id": st.column_config.NumberColumn("Official ID", required=True, step=1),
+            "state":       st.column_config.SelectboxColumn("State", options=STATE_OPTIONS, default="OK"),
         },
     )
 
@@ -718,12 +728,12 @@ with tab_officials:
                 # Re-adding a previously-archived ref (same official_id) revives them
                 # (un-archive); the stored name is kept, matching the tracker API.
                 execute(
-                    "INSERT INTO officials (name, official_id) VALUES (?,?) "
+                    "INSERT INTO officials (name, official_id, state) VALUES (?,?,?) "
                     "ON CONFLICT(official_id) DO UPDATE SET archived=0",
-                    (r["name"].strip(), int(r["official_id"])))
+                    (r["name"].strip(), int(r["official_id"]), (r.get("state") or "OK")))
         def upd_official(r):
-            execute("UPDATE officials SET name=?, official_id=? WHERE id=?",
-                    (r["name"].strip(), int(r["official_id"]), r["id"]))
+            execute("UPDATE officials SET name=?, official_id=?, state=? WHERE id=?",
+                    (r["name"].strip(), int(r["official_id"]), (r.get("state") or "OK"), r["id"]))
         def del_official(r):
             if _gated_delete("officials", r["id"], f"official '{r.get('name','?')}'"):
                 if delete_or_archive_official(r["id"]) == "archived":

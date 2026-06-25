@@ -102,6 +102,42 @@ def _profile_howline(pr):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+def _render_factors(ff, unit):
+    """Gated four-factors table (eFG% · OREB% · TOV% · FT-rate) per set/scheme.
+    `ff` = helpers.breakdown.play_type_factors / defense_factors output."""
+    from helpers.breakdown import MIN_POSS_DETAIL
+    st.markdown(f"<div class='pl-hdr'>Four factors by {unit}</div>",
+                unsafe_allow_html=True)
+    st.caption(
+        f"*Why* each {unit} works, not just PPP — eFG% (shooting), OREB% (second "
+        f"chances), TOV% (ball security), FT-rate (getting to the line). Each "
+        f"{unit} unlocks at {MIN_POSS_DETAIL} possessions; these splits are noisy "
+        "below that, and OREB% needs enough missed-shot boards.")
+    rows = (ff or {}).get("rows", [])
+    stable = [r for r in rows if r.get("stable")]
+    if not stable:
+        best = max((r["poss"] for r in rows), default=0)
+        st.info(f"Not enough data yet — the four-factors breakdown unlocks at "
+                f"{MIN_POSS_DETAIL} possessions per {unit} (most so far: {best}). "
+                "It fills in automatically as you tag plays.")
+        return
+    import pandas as pd
+
+    def _pct(v):
+        return f"{v * 100:.0f}%" if v is not None else "—"
+    df = pd.DataFrame([{
+        unit.title(): r["label"], "Poss": r["poss"], "PPP": f"{r['PPP']:.2f}",
+        "eFG%": _pct(r["eFG"]), "OREB%": _pct(r["OREB%"]),
+        "TOV%": _pct(r["TOV%"]), "FT-rate": f"{r['FTr']:.2f}",
+    } for r in stable])
+    st.dataframe(df, hide_index=True, width="stretch")
+    thin = sorted((r for r in rows if not r.get("stable")),
+                  key=lambda r: r["poss"], reverse=True)
+    if thin:
+        st.caption("Building toward 100: " + " · ".join(
+            f"{r['label']} {r['poss']}" for r in thin[:6]))
+
+
 @st.fragment
 def render(ctx):
     """Render the Play Style super-tab. ``ctx`` carries plain values + pre-bound
@@ -135,6 +171,10 @@ def render(ctx):
                 "type** (Pick & roll, Iso, Transition…) on shots in the Game "
                 "Tracker and this whole tab fills in. The inferred tempo/creation "
                 "cross-read below works without tags.")
+
+    # ── §A2 — FOUR FACTORS per set (gated ~100 poss) ─────────────────────────
+    if getattr(ctx, "factors", None):
+        _render_factors(ctx.factors(g, tid, _off), "play type")
 
     # ══ §B — SHOT CHART BY PLAY STYLE (headline) ═════════════════════════════
     st.markdown("<div class='pl-hdr'>Shot chart by play style</div>",

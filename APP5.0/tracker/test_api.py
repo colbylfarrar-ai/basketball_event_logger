@@ -38,7 +38,7 @@ for i in range(6):
                         (t1, f"H{i+1}", i + 1)))
     away.append(execute("INSERT INTO players (team_id,name,number) VALUES (?,?,?)",
                         (t2, f"A{i+1}", i + 10)))
-gid = execute("INSERT INTO games (team1_id,team2_id,date) VALUES (?,?, '2026-06-11')",
+gid = execute("INSERT INTO games (team1_id,team2_id,date) VALUES (?,?, date('now'))",
               (t1, t2))
 
 client = TestClient(app)

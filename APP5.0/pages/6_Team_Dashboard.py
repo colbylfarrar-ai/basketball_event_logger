@@ -83,6 +83,7 @@ import helpers.dashboard.insights_tab as DINS
 import helpers.dashboard.profile_tab as DPROF
 import helpers.dashboard.playstyle_tab as DPLAYSTYLE
 import helpers.dashboard.defense_tab as DDEFENSE
+import helpers.breakdown as BR
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
 GOOD = "#3fb950"
@@ -854,6 +855,18 @@ def _named_playtype_view(g, tid, offense):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _pt_factors(g, tid, offense):
+    """Four-factors detail (eFG/OREB%/TOV%/FT-rate) per play_type, gated."""
+    return BR.play_type_factors(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _def_factors(g, tid, offense):
+    """Four-factors detail per defense scheme, gated."""
+    return BR.defense_factors(tid, gender=g, offense=offense)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _named_sets_all(g):
     """Per-player explicit set-call PPP, ranked vs the league pool (card ctx)."""
     return PT.player_named_playtype_percentiles(gender=g)
@@ -1095,7 +1108,7 @@ with tab_charts:
             def_view=_def_view, def_families=_def_families,
             def_profiles=_def_profiles, cross_pd=_def_cross,
             def_tovs=_def_tovs, def_fouls=_def_fouls, def_leaders=_def_leaders,
-            def_players_faced=_def_players_faced)
+            def_players_faced=_def_players_faced, factors=_def_factors)
         DDEFENSE.render(_def_ctx)
 
     # ── Play Style super-tab (the explicit set-call deep dive) ──────────────
@@ -1115,7 +1128,8 @@ with tab_charts:
             role_splits=_team_role_splits_view,
             league_leaders=_named_leaders_view,
             league_pps=_league_pps_located, shot_model=_shot_model,
-            named_sets_all=_named_sets_all, set_profiles_all=_set_profiles_all)
+            named_sets_all=_named_sets_all, set_profiles_all=_set_profiles_all,
+            factors=_pt_factors)
         DPLAYSTYLE.render(_ps_ctx)
 
     if not has_tracked:

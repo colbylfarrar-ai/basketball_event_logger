@@ -834,21 +834,32 @@ def render(ctx):
                    "on real volume = a defense to play against them.")
     cx = sc.get("defense_cross")
     if _show("def_cross") and cx and cx.get("plays") and cx.get("defenses"):
+        _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
+        # only the plays/defenses that actually have a trustworthy (stable) cell —
+        # drop all-blank rows/columns so the grid isn't a sea of empties.
+        _stable = [(pk, dk) for pk in cx["plays"] for dk in cx["defenses"]
+                   if (_mx.get(pk, {}).get(dk) or {}).get("stable")]
+        _plays = [pk for pk in cx["plays"] if any(p == pk for p, _ in _stable)]
+        _defs = [dk for dk in cx["defenses"] if any(d == dk for _, d in _stable)]
         st.markdown("<div class='lab-hdr'>Play type &times; defense — PPP "
                     "they score</div>", unsafe_allow_html=True)
-        _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
-        _grid = []
-        for pk in cx["plays"]:
-            _r = {"Set": _pl.get(pk, pk)}
-            for dk in cx["defenses"]:
-                c = _mx.get(pk, {}).get(dk)
-                _r[_dl.get(dk, dk)] = (round(c["PPP"], 2)
-                                       if c and c["stable"] else None)
-            _grid.append(_r)
-        st.dataframe(pd.DataFrame(_grid), hide_index=True, width="stretch")
-        st.caption("PPP this team scores running each set vs each scheme "
-                   "(cells with ≥4 poss; blank = thin). Which defense to "
-                   "throw at which action.")
+        if len(_stable) < 2:
+            st.caption("Not enough tagged data yet — needs a set run ≥10 times "
+                       "against the same scheme. Tag play types AND defenses in the "
+                       "Game Tracker to fill this in.")
+        else:
+            _grid = []
+            for pk in _plays:
+                _r = {"Set": _pl.get(pk, pk)}
+                for dk in _defs:
+                    c = _mx.get(pk, {}).get(dk)
+                    _r[_dl.get(dk, dk)] = (round(c["PPP"], 2)
+                                           if c and c["stable"] else float("nan"))
+                _grid.append(_r)
+            st.dataframe(pd.DataFrame(_grid), hide_index=True, width="stretch")
+            st.caption("PPP this team scores running each set vs each scheme "
+                       "(cells with ≥10 poss; blank = thin). Which defense to "
+                       "throw at which action.")
 
     # ── where they shoot from (real x/y chart when tap data exists) ──────────
     if _show("shot_chart"):

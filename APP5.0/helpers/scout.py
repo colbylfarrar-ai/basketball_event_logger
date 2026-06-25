@@ -801,22 +801,29 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     cx = sc.get("defense_cross")
     if _show("def_cross") and cx and cx.get("plays") and cx.get("defenses"):
         _dl, _pl, _mx = cx["def_label"], cx["play_label"], cx["matrix"]
-        _head = "".join(f"<th class='n'>{e(_dl.get(d, d))}</th>"
-                        for d in cx["defenses"])
-        _brows = []
-        for pk in cx["plays"]:
-            _tds = []
-            for dk in cx["defenses"]:
-                c = _mx.get(pk, {}).get(dk)
-                _tds.append(f"<td class='n'>{c['PPP']:.2f} ({c['poss']})</td>"
-                            if c and c["stable"] else "<td class='n'>—</td>")
-            _brows.append(f"<tr><td>{e(_pl.get(pk, pk))}</td>{''.join(_tds)}</tr>")
-        def_html += (
-            "<h2>Play type &times; defense — PPP they score</h2>"
-            f"<table><tr><th>Set</th>{_head}</tr>{''.join(_brows)}</table>"
-            "<p class='note'>PPP this team scores running each set vs each scheme "
-            "(cells with at least 4 possessions; blank = thin). The overlap that "
-            "says which defense to throw at which action.</p>")
+        # drop all-blank rows/columns + skip the whole table if too thin, so the
+        # sheet never prints a grid of em-dashes.
+        _stable = [(pk, dk) for pk in cx["plays"] for dk in cx["defenses"]
+                   if (_mx.get(pk, {}).get(dk) or {}).get("stable")]
+        _plays = [pk for pk in cx["plays"] if any(p == pk for p, _ in _stable)]
+        _defs = [dk for dk in cx["defenses"] if any(d == dk for _, d in _stable)]
+        if len(_stable) >= 2:
+            _head = "".join(f"<th class='n'>{e(_dl.get(d, d))}</th>" for d in _defs)
+            _brows = []
+            for pk in _plays:
+                _tds = []
+                for dk in _defs:
+                    c = _mx.get(pk, {}).get(dk)
+                    _tds.append(f"<td class='n'>{c['PPP']:.2f} ({c['poss']})</td>"
+                                if c and c["stable"] else "<td class='n'>—</td>")
+                _brows.append(
+                    f"<tr><td>{e(_pl.get(pk, pk))}</td>{''.join(_tds)}</tr>")
+            def_html += (
+                "<h2>Play type &times; defense — PPP they score</h2>"
+                f"<table><tr><th>Set</th>{_head}</tr>{''.join(_brows)}</table>"
+                "<p class='note'>PPP this team scores running each set vs each "
+                "scheme (cells with ≥10 poss; blank = thin). The overlap that says "
+                "which defense to throw at which action.</p>")
 
     # ── team shot chart (inline SVG from tap-captured x/y) ──
     shot_html = ""
@@ -832,6 +839,14 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             "— the spots to take away. ● make · ✕ miss.</p>")
 
     # ── personnel cards: identity + OVR & breakdown + GS% + shots + mini chart ──
+    # Hand-entered key-player intel (coach's dropdown picks) is folded into the
+    # matching player's box here; the leftover (unmatched) intel prints in its own
+    # table below. Match by player id first, then by name.
+    _intel = extra.get("manual_intel") or []
+    _intel_by_pid = {r["pid"]: r for r in _intel if r.get("pid") is not None}
+    _intel_by_name = {str(r.get("name", "")).strip().lower(): r for r in _intel
+                      if str(r.get("name", "")).strip()}
+    _matched_intel = set()
     pers_html = ""
     if _show("personnel") and sc["personnel"]:
         mini_on = _show("shot_chart")
@@ -897,12 +912,21 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                         if _cues else "")
             note = (f"<div class='pnote'>▶ {e(p['note'])}</div>"
                     if p.get("note") else "")
+            # your hand-entered scouting note for this player, in their box
+            _mi = (_intel_by_pid.get(p.get("pid"))
+                   or _intel_by_name.get(str(p.get("name", "")).strip().lower()))
+            inote = ""
+            if _mi and str(_mi.get("note", "")).strip():
+                _mk = _mi.get("pid", str(_mi.get("name", "")).strip().lower())
+                _matched_intel.add(_mk)
+                inote = (f"<div class='pnote' style='color:#1a5fb4'>📋 "
+                         f"{e(str(_mi['note']).strip())}</div>")
             shots = p.get("shots") or []
             mini = (f"<div class='mini'>"
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
             cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{play}"
-                         f"{hand_html}{space_html}{cue_html}{note}{mini}</td>")
+                         f"{hand_html}{space_html}{cue_html}{note}{inote}{mini}</td>")
         # two cards per row
         rows = ""
         for i in range(0, len(cards), 2):
@@ -943,14 +967,20 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             f"<th class='n'>FG%</th></tr>{rowsp}</table>")
 
     # ── manual key-player intel (coach-entered; works for COLD opponents) ──
+    # Only the rows NOT already shown inside a personnel box above (matched intel
+    # rides in the player's card; the rest — e.g. for a cold opponent with no
+    # rated personnel — print here so nothing is lost).
     intel_html = ""
     intel_rows = extra.get("manual_intel") or []
     if _show("manual_intel") and intel_rows:
+        def _unmatched(r):
+            _mk = r.get("pid", str(r.get("name", "")).strip().lower())
+            return _mk not in _matched_intel
         rws = "".join(
             f"<tr><td class='n'>{e(str(r.get('num', '')))}</td>"
             f"<td>{e(str(r.get('name', '')))}</td>"
             f"<td>{e(str(r.get('note', '')))}</td></tr>"
-            for r in intel_rows if str(r.get('name', '')).strip())
+            for r in intel_rows if str(r.get('name', '')).strip() and _unmatched(r))
         if rws:
             intel_html = (
                 "<h2>Key players (your scouting)</h2><table><tr>"

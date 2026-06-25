@@ -250,11 +250,16 @@ if not ENT.can_see_tracked_game_view(_ident, game_id):
         st.caption(f"Your free game: **{_g_label(_demo)}** — pick it in the "
                    "Game selector above.")
     st.stop()
-elif not ENT.has_paid_plan(_ident):
+# Possession + efficiency depth (the poss line, win-probability, courtside
+# leverage / run-alert / late-game, foul-out projection) is Paid even on the free
+# demo game — a Free coach gets the SCORE, live box score and shot chart as the
+# hook, never possession/efficiency analytics. Guarded by _paid_view below.
+_paid_view = ENT.has_paid_plan(_ident)
+if not _paid_view:
     # On the free-demo game: make it obvious this is the one free game.
     st.success("🎁 This is your **free** game — log it below and watch the live "
-               "box score, shot chart and win-probability fill in. Upgrade to "
-               "track every game.")
+               "box score and shot chart fill in. Upgrade to unlock possession "
+               "& efficiency analytics and track every game.")
 
 # ── End / reopen, both behind a confirm dialog ──────────────────────────────────
 @st.dialog("End game?")
@@ -327,10 +332,14 @@ def _render_command_center():
     # ── scoreboard ──────────────────────────────────────────────────────────────
     sc1, sc2, sc3 = st.columns([2, 1, 2])
     sc1.metric(t1name, hp)
+    # Possession count is Paid-only — a Free demo viewer sees the period, not poss.
+    _poss_line = (f"<div style='color:var(--subtext);font-size:0.85em'>"
+                  f"poss {ls['home_poss']}–{ls['away_poss']}</div>"
+                  if _paid_view else "")
     sc2.markdown(
         f"<div style='text-align:center;padding-top:8px'>"
         f"<div style='font-size:1.3em'>{q_label(cur_q)}</div>"
-        f"<div style='color:var(--subtext);font-size:0.85em'>poss {ls['home_poss']}–{ls['away_poss']}</div>"
+        f"{_poss_line}"
         f"</div>", unsafe_allow_html=True)
     sc3.metric(t2name, ap)
 
@@ -354,6 +363,8 @@ def _render_command_center():
     #    events and renders the shared wp_ribbon. Fully guarded: any failure
     #    silently skips so live tracking is never put at risk. ──────────────────
     try:
+        if not _paid_view:
+            raise RuntimeError("paid")   # win-prob/GEI is Paid depth — skip for Free demo
         import helpers.win_probability as _WP
         from helpers.ui import wp_ribbon as _wp_ribbon, mini_tile as _mini
         from helpers.settings_utils import get_setting as _get_setting
@@ -410,7 +421,7 @@ def _render_command_center():
     #    clock the win-prob walk above uses, so there is no second clock model (the
     #    one real correctness risk). Engine math lives in helpers/courtside.py; this
     #    is display only. Live games only, fully guarded — any failure skips. ───────
-    if not is_tracked:
+    if not is_tracked and _paid_view:
         try:
             import helpers.courtside as _CS
             from helpers.ui import mini_tile as _mini2
@@ -501,7 +512,7 @@ def _render_command_center():
     # ── foul watch: live foul-out projection for players in trouble (Tier 2,
     #    ML_LAYER_ROADMAP). At each player's current foul pace, when do they foul
     #    out? Same 480/240 clock as the courtside strip. Guarded — never blocks. ──
-    if not is_tracked:
+    if not is_tracked and _paid_view:
         try:
             import helpers.rotation_plan as _RP
             _QSEC = 480

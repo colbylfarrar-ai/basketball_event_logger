@@ -120,6 +120,10 @@
     </div>
   </header>
 
+  <!-- In-place subs: swap the on-court five without leaving the tracker, so minutes
+       and +/- (which key off the lineup snapshot) stay correct. -->
+  <div id="subs-panel" hidden></div>
+
   <div id="court-wrap"></div>
   <p id="shot-caption" class="caption"></p>
 
@@ -134,12 +138,18 @@
        logged inherits it until you change it (a team stays in a D for stretches). -->
   <div id="defense-bar"></div>
 
+  <!-- Quick vs full-detail shot entry. Quick (default) = tap shooter + make/miss;
+       full adds assist / rebound / play-type rows on every shot. -->
+  <div id="flow-opts">
+    <button id="quick-toggle" class="btn ghost small" type="button"></button>
+  </div>
+
   <div id="flow"></div>
 
   <div id="action-row">
     <button id="btn-undo" class="btn warn">Undo</button>
     <button id="btn-edit-log" class="btn ghost">Edit log</button>
-    <button id="btn-leave" class="btn ghost">← Leave</button>
+    <button id="btn-leave" class="btn ghost">← Leave (saved)</button>
     <button id="btn-finish" class="btn danger">End game</button>
   </div>
 
@@ -148,6 +158,7 @@
   <!-- Clock lives down here (not the header): it's the LAST thing updated after
        logging an event, so it sits between the action row and the play-by-play. -->
   <div class="clock" aria-label="Game clock">
+    <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
     <button id="clk-min-minus" class="btn sq" type="button" aria-label="Minute down">&minus;</button>
     <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
     <button id="clk-min-plus" class="btn sq" type="button" aria-label="Minute up">+</button>

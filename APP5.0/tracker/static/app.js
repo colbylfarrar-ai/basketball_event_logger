@@ -51,6 +51,7 @@ const S = {
   quarter: 1,
   clockMin: 8,
   clockSec: 0,
+  clockRunning: false,                          // running game clock (never persisted across reload)
   defense: null,                                // sticky "current defense" tag (see DEFENSES)
   lastLive: Object.assign({}, EMPTY_LIVE),      // last synced server state (never includes queue)
   queue: [],                                    // unsynced events for current game, oldest first
@@ -59,6 +60,13 @@ const S = {
   flow: null,
   wakeLock: null
 };
+
+let clockTimer = null;   // setInterval handle for the running game clock
+
+// Quick-mode shot entry (default ON): tap shooter + make/miss only. Persisted so a
+// coach's preference sticks across games; toggled on the tracker screen.
+function quickModeOn() { return lsGet('tracker_quickmode', true); }
+function setQuickMode(v) { lsSet('tracker_quickmode', !!v); }
 
 /* ---------- fetch wrapper ---------- */
 
@@ -249,6 +257,7 @@ function localTotals() {
 /* ---------- screens ---------- */
 
 function showScreen(name) {
+  if (name !== 'tracker') stopClock();   // never let the clock run off-screen
   ['setup', 'lineup', 'tracker', 'editor'].forEach(function (n) {
     $('screen-' + n).hidden = (n !== name);
   });
@@ -788,6 +797,13 @@ function enterTracker() {
   }
   showScreen('tracker');
   syncHeaderInputs();
+  setClockBtn();
+  setQuickBtn();
+  // subs panel starts collapsed every time the tracker opens
+  const sp = $('subs-panel');
+  if (sp) sp.hidden = true;
+  const sb = $('btn-subs');
+  if (sb) sb.classList.remove('active');
   setMode(S.flow ? S.flow.mode : 'shot');
   renderScore();
   renderPBP();
@@ -819,6 +835,52 @@ function nudgeSec(delta) {
   savePrefs();
 }
 
+/* ----- running game clock -----
+   A real start/stop clock so MIN, +/-, and the live win-prob the second screen
+   draws aren't built on a clock the coach hand-winds. Every event stamps
+   time = clockStr(), so a running clock keeps that accurate automatically. The +/-
+   steppers + manual entry stay; this just adds an optional auto-tick. The clock is
+   NEVER persisted as running — a reload restores it stopped. */
+function setClockBtn() {
+  const b = $('clk-toggle');
+  if (!b) return;
+  b.innerHTML = S.clockRunning ? '&#9208;' : '&#9654;';   // ⏸ / ▶
+  b.classList.toggle('running', S.clockRunning);
+  b.setAttribute('aria-label', S.clockRunning ? 'Stop clock' : 'Start clock');
+}
+
+function tickClock() {
+  let total = S.clockMin * 60 + S.clockSec - 1;
+  if (total <= 0) {
+    total = 0;
+    stopClock();
+    toast('Clock at 0:00');
+  }
+  S.clockMin = Math.floor(total / 60);
+  S.clockSec = total % 60;
+  const mi = $('clock-min'); if (mi) mi.value = S.clockMin;
+  const se = $('clock-sec'); if (se) se.value = S.clockSec;
+  if (total % 10 === 0) savePrefs();   // throttle writes; final stop saves too
+}
+
+function startClock() {
+  if (S.clockRunning) return;
+  if (S.clockMin * 60 + S.clockSec <= 0) { toast('Set the clock first'); return; }
+  S.clockRunning = true;
+  clockTimer = setInterval(tickClock, 1000);
+  setClockBtn();
+}
+
+function stopClock() {
+  if (!S.clockRunning && !clockTimer) return;
+  S.clockRunning = false;
+  if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+  setClockBtn();
+  savePrefs();
+}
+
+function toggleClock() { if (S.clockRunning) stopClock(); else startClock(); }
+
 function renderScore() {
   if ($('screen-tracker').hidden) return;
   const t = localTotals();
@@ -845,6 +907,7 @@ function resetFlow(mode) {
     mode: mode,
     x: null, y: null,
     noLoc: false, manualType: 2, manualZone: null,  // location-less shot entry
+    expand: false,                                  // quick-mode: details revealed for this entry
     shooter: null,
     details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
     fouled: null, fouler: null, official: null,
@@ -937,7 +1000,7 @@ function makeMissRow(onResult) {
 
 const SHOT_DETAILS = [
   ['pass_from_id', 'Pass from'],
-  ['shot_created_by_id', 'Created by'],
+  ['shot_created_by_id', 'Set up by'],
   ['rebound_by_id', 'Rebound by'],
   ['blocked_by_id', 'Blocked by'],
   ['guarded_by_id', 'Guarded by']
@@ -1001,6 +1064,75 @@ function renderDefenseBar() {
   bar.appendChild(box);
 }
 
+/* ----- in-place subs (tracker screen) -----
+   Swap the on-court five without leaving the tracker. Minutes and +/- key off the
+   lineup snapshot stamped on every event (baseEvent.on_court), so keeping subs here
+   — instead of bouncing to the lineup screen mid-run — is what keeps those honest. */
+function toggleOnCourt(side, id) {
+  const arr = S.lineup[side];
+  const i = arr.indexOf(id);
+  if (i >= 0) arr.splice(i, 1);
+  else if (arr.length >= 5) { toast('Max 5 on the floor — sub one out first'); return; }
+  else arr.push(id);
+  savePrefs();
+  renderSubsPanel();
+  renderFlow();   // shooter / detail rows follow the new on-court five
+}
+
+function renderSubsPanel() {
+  const wrap = $('subs-panel');
+  if (!wrap || wrap.hidden || !S.game) return;
+  wrap.innerHTML = '';
+  ['home', 'away'].forEach(function (side) {
+    const grp = document.createElement('div');
+    grp.className = 'subs-group';
+    const h = document.createElement('span');
+    h.className = 'chip-label';
+    h.textContent = S.game[side].name + ' (' + S.lineup[side].length + '/5)';
+    grp.appendChild(h);
+    const box = document.createElement('div');
+    box.className = 'chips';
+    const teamId = S.game[side].id;
+    (S.game.players || []).filter(function (p) { return p.team_id === teamId && !p.archived; })
+      .forEach(function (p) {
+        const sel = S.lineup[side].indexOf(p.id) >= 0;
+        box.appendChild(flowBtn('#' + p.number + ' ' + p.name, 'chip' + (sel ? ' sel' : ''),
+          function () { toggleOnCourt(side, p.id); }));
+      });
+    grp.appendChild(box);
+    wrap.appendChild(grp);
+  });
+  const foot = document.createElement('div');
+  foot.className = 'subs-foot';
+  foot.appendChild(flowBtn('Full lineup / add players ›', 'btn ghost small', function () {
+    renderLineup();
+    showScreen('lineup');
+  }));
+  wrap.appendChild(foot);
+}
+
+function toggleSubsPanel(force) {
+  const wrap = $('subs-panel');
+  if (!wrap) return;
+  const show = (typeof force === 'boolean') ? force : wrap.hidden;
+  wrap.hidden = !show;
+  const b = $('btn-subs');
+  if (b) b.classList.toggle('active', show);
+  if (show) renderSubsPanel();
+}
+
+/* ----- quick-mode toggle ----- */
+function setQuickBtn() {
+  const b = $('quick-toggle');
+  if (!b) return;
+  const on = quickModeOn();
+  b.textContent = on ? '⚡ Quick shot' : '📋 Full detail';
+  b.classList.toggle('active', on);
+  b.title = on
+    ? 'Quick: tap shooter, then make/miss. Tap “+ details” on any shot for more.'
+    : 'Full detail: assist / rebound / play-type rows on every shot.';
+}
+
 function renderFlow() {
   const wrap = $('flow');
   if (!wrap) return;
@@ -1014,7 +1146,7 @@ function renderFlow() {
   if (f.mode === 'shot') {
     if (f.x == null && !f.noLoc) {
       wrap.appendChild(flowHint('Tap the court to mark a shot'));
-      wrap.appendChild(flowBtn('No location', 'btn ghost small no-loc', function () {
+      wrap.appendChild(flowBtn('No court spot', 'btn ghost small no-loc', function () {
         f.noLoc = true;
         renderFlow();
       }));
@@ -1030,21 +1162,31 @@ function renderFlow() {
     }
     wrap.appendChild(chipRow('Shooter', players, f.shooter, function (id) { f.shooter = id; renderFlow(); }));
     if (f.shooter != null) {
-      SHOT_DETAILS.forEach(function (d) {
-        wrap.appendChild(chipRow(d[1], players, f.details[d[0]],
-          function (id) { f.details[d[0]] = id; renderFlow(); }, { allowNone: true, scroll: true }));
-      });
-      wrap.appendChild(chipRow('Play type', PLAY_TYPE_KEYS, f.details.play_type,
-        function (k) { f.details.play_type = k; renderFlow(); },
-        { allowNone: true, scroll: true, labelFn: ptLabel }));
+      if (!quickModeOn() || f.expand) {
+        SHOT_DETAILS.forEach(function (d) {
+          wrap.appendChild(chipRow(d[1], players, f.details[d[0]],
+            function (id) { f.details[d[0]] = id; renderFlow(); }, { allowNone: true, scroll: true }));
+        });
+        wrap.appendChild(chipRow('Play type', PLAY_TYPE_KEYS, f.details.play_type,
+          function (k) { f.details.play_type = k; renderFlow(); },
+          { allowNone: true, scroll: true, labelFn: ptLabel }));
+      } else {
+        wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
+          function () { f.expand = true; renderFlow(); }));
+      }
       wrap.appendChild(makeMissRow(logShot));
     }
 
   } else if (f.mode === 'ft') {
     wrap.appendChild(chipRow('Shooter', players, f.shooter, function (id) { f.shooter = id; renderFlow(); }));
     if (f.shooter != null) {
-      wrap.appendChild(chipRow('Rebound by', players, f.details.rebound_by_id,
-        function (id) { f.details.rebound_by_id = id; renderFlow(); }, { allowNone: true, scroll: true }));
+      if (!quickModeOn() || f.expand) {
+        wrap.appendChild(chipRow('Rebound by', players, f.details.rebound_by_id,
+          function (id) { f.details.rebound_by_id = id; renderFlow(); }, { allowNone: true, scroll: true }));
+      } else {
+        wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
+          function () { f.expand = true; renderFlow(); }));
+      }
       wrap.appendChild(makeMissRow(logFT));
     }
 
@@ -1654,7 +1796,13 @@ function bindUI() {
   $('btn-lineup-edit-log').addEventListener('click', openEditor);
 
   // tracker header
-  $('btn-subs').addEventListener('click', function () { renderLineup(); showScreen('lineup'); });
+  $('btn-subs').addEventListener('click', function () { toggleSubsPanel(); });
+  $('quick-toggle').addEventListener('click', function () {
+    setQuickMode(!quickModeOn());
+    setQuickBtn();
+    if (S.flow) S.flow.expand = false;
+    renderFlow();
+  });
   $('q-minus').addEventListener('click', function () {
     S.quarter = Math.max(1, S.quarter - 1);
     $('q-label').textContent = qlabel(S.quarter);
@@ -1664,6 +1812,11 @@ function bindUI() {
     S.quarter = Math.min(10, S.quarter + 1);
     $('q-label').textContent = qlabel(S.quarter);
     savePrefs();
+  });
+  // Focusing a clock field while the clock is running pauses it first, so the tick
+  // can't overwrite what you type. Manual entry + steppers stay fully available.
+  ['clock-min', 'clock-sec'].forEach(function (id) {
+    $(id).addEventListener('focus', function () { if (S.clockRunning) stopClock(); });
   });
   $('clock-min').addEventListener('change', function () {
     S.clockMin = Math.max(0, Math.min(20, parseInt(this.value, 10) || 0));
@@ -1675,6 +1828,7 @@ function bindUI() {
     this.value = S.clockSec;
     savePrefs();
   });
+  $('clk-toggle').addEventListener('click', toggleClock);
   $('clk-min-minus').addEventListener('click', function () { nudgeMin(-1); });
   $('clk-min-plus').addEventListener('click', function () { nudgeMin(1); });
   $('clk-sec-minus').addEventListener('click', function () { nudgeSec(-1); });

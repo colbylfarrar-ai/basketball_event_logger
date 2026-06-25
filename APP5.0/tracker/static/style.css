@@ -284,6 +284,21 @@ button {
 .clock input::-webkit-outer-spin-button,
 .clock input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .clock .btn.sq { width: 38px; font-size: 1.05rem; }
+/* start/stop game clock: green = ready to run, red = running (tap to stop) */
+#clk-toggle { color: var(--green); border-color: var(--green); }
+#clk-toggle.running { color: var(--red); border-color: var(--red); background: var(--bg3); }
+#btn-subs.active { background: var(--gold); color: var(--bg); border-color: var(--gold); }
+/* in-place subs panel (tracker screen) */
+#subs-panel { background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+#subs-panel[hidden] { display: none; }
+.subs-group { margin-bottom: 10px; }
+.subs-group .chip-label { margin-bottom: 6px; }
+.subs-foot { margin-top: 4px; }
+/* quick / full-detail toggle row, right-aligned above the flow */
+#flow-opts { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+#flow-opts:empty { display: none; }
+#quick-toggle.active { color: var(--gold); border-color: var(--gold); }
+.flow-more { display: block; margin: 2px auto 6px; }
 .game-search {
   width: 100%;
   min-height: 44px;

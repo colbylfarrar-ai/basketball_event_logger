@@ -26,6 +26,8 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import helpers.auth as AUTH
+
 # Tell page_chrome/apply_page_config that the router owns the page config, so
 # pages skip their own set_page_config (see module docstring).
 st.session_state["_nav_router"] = True
@@ -77,5 +79,26 @@ _NAV = {
                 icon=":material/tune:"),
     ],
 }
+
+# OSSAA bulk importer is ADMIN-ONLY — hidden from non-admins' sidebar entirely
+# (the page also st.stop()s as a backstop). Resolve the role read-only here; the
+# full login flow (st.stop on sign-in / not-authorized) runs per page in
+# page_chrome, so we must NOT call require_login() from the router.
+def _is_admin() -> bool:
+    try:
+        if not AUTH.auth_enabled():
+            return True                      # auth off -> local owner is admin
+        if not getattr(st.user, "is_logged_in", False):
+            return False
+        email = (getattr(st.user, "email", "") or "").strip().lower()
+        return AUTH.lookup_role(email) == "admin"
+    except Exception:
+        return False                         # uncertain -> hide (admin-only)
+
+
+if _is_admin():
+    _NAV["Build"].append(
+        st.Page("pages/13_OSSAA_Import.py", title="OSSAA Import",
+                icon=":material/cloud_download:"))
 
 st.navigation(_NAV).run()

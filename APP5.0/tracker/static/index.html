@@ -10,6 +10,16 @@
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <link rel="stylesheet" href="/static/style.css">
 <title>APP5 Tracker</title>
+<script>
+/* Self-heal: an earlier build cached the entire schedule (13k+ games) in
+   localStorage, which froze the game picker on render. Clear an oversize cache
+   here — BEFORE app.js runs — so even a stale installed app recovers without a
+   reinstall. A normal cache (a handful of games) is a few KB, far under this. */
+try {
+  var _g = localStorage.getItem('tracker_games');
+  if (_g && _g.length > 200000) localStorage.removeItem('tracker_games');
+} catch (e) {}
+</script>
 </head>
 <body>
 
@@ -35,7 +45,7 @@
   <button id="btn-new-game" class="btn ghost" type="button">+ New game</button>
   <div id="new-game-form" hidden></div>
   <div id="gender-filter" class="chips gender-filter" role="group" aria-label="Filter by gender"></div>
-  <input id="game-search" class="game-search" type="search" placeholder="Search team or date…" autocomplete="off">
+  <input id="game-search" class="game-search" type="search" placeholder="Search a team to find any game…" autocomplete="off">
   <ul id="game-list" class="game-list"></ul>
 </section>
 

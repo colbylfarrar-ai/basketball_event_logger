@@ -381,7 +381,13 @@ async function loadGames() {
 function renderGames(games) {
   const ul = $('game-list');
   ul.innerHTML = '';
-  if (!games.length) { ul.innerHTML = '<li class="empty">No games found</li>'; return; }
+  if (!games.length) {
+    var raw = (($('game-search') || {}).value || '').trim();
+    ul.innerHTML = '<li class="empty">' + (raw
+      ? 'No games match “' + raw + '”'
+      : 'No tracked games yet — search a team above to find a game to track.') + '</li>';
+    return;
+  }
   // Hard cap the DOM so a large list (or a poisoned cache) can never freeze the
   // phone — the search box narrows it down past the cap.
   var CAP = 250;

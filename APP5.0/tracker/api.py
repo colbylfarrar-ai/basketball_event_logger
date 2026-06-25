@@ -216,10 +216,13 @@ def list_games(q: str | None = None):
             "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 100",
             (like, like))
     else:
+        # Default picker = ONLY the coach's tracked games (resume/continue). The
+        # full schedule (OSSAA import = 13k+ games) is reachable solely via ?q=
+        # search, so the picker can never auto-load a list big enough to freeze a
+        # device. New/other games: search a team name, or create one here.
         games = query(
-            f"SELECT {cols} {joins} WHERE g.season='Current' "
-            "AND (g.tracked=1 OR g.date >= date('now','-30 day')) "
-            "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 300")
+            f"SELECT {cols} {joins} WHERE g.season='Current' AND g.tracked=1 "
+            "ORDER BY g.date DESC, g.id DESC LIMIT 300")
     return {"games": games}
 
 

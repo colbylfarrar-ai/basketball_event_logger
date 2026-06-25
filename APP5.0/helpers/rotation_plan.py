@@ -28,6 +28,7 @@ from collections import defaultdict
 
 from database.db import query
 import helpers.stats as S
+from helpers.stats import _team_game_ids   # single-source shared helper
 import helpers.gameflow as GF
 import helpers.lineups as LU
 
@@ -35,12 +36,6 @@ DEFAULT_TOP = 2          # how many key players define "covered" minutes
 FOUL_LIMIT = 5           # HS foul-out
 MIN_UNC_POSS = 20        # min uncovered possessions before the bleed is trustworthy
 PRONE_PF32 = 4.0         # fouls-per-32 at/above which a player is "foul-prone"
-
-
-def _team_game_ids(team_id):
-    return [r["id"] for r in query(
-        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
-        "AND season='Current'", (team_id, team_id))]
 
 
 def _union_len(segments):

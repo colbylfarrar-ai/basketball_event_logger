@@ -4,6 +4,8 @@ test_ref_tendencies.py — unit tests for the Tier-2 pre-game crew outlook
 the league-relative synthesis (whistle / lean / scoring / confidence) is checked
 exactly, no DB.
 """
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.ref_tendencies as RT
 import helpers.officials as OFF
 

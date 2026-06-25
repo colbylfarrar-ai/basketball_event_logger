@@ -19,18 +19,8 @@ book (it's just counting).
 """
 from __future__ import annotations
 
-from database.db import query
 import helpers.stats as S
-
-
-def _team_game_ids(team_id):
-    return [r["id"] for r in query(
-        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
-        "AND season='Current'", (team_id, team_id))]
-
-
-def _safe(a, b):
-    return (a / b) if b else 0.0
+from helpers.stats import _safe, _team_game_ids   # single-source shared helpers
 
 
 def possession_ledger(team_id, offense=True, game_ids=None, events=None):

@@ -23,8 +23,8 @@ layer — reuses helpers.stats.located_shots + the xPP-Q model. No streamlit.
 """
 from __future__ import annotations
 
-from database.db import query
 import helpers.stats as S
+from helpers.stats import _team_game_ids   # single-source shared helper
 import helpers.shotquality as SQ
 
 ZONE_ORDER = S.ZONES                       # ("LC","LW","C","RW","RC")
@@ -34,12 +34,6 @@ ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
 MIN_ZONE = 5            # min attempts before a zone earns a read
 OVERSHOOT_SHARE = 0.18  # share of our shots from a zone to call it "heavily used"
 UNDERUSE_SHARE = 0.10   # share below which a good zone is "under-used"
-
-
-def _team_game_ids(team_id):
-    return [r["id"] for r in query(
-        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
-        "AND season='Current'", (team_id, team_id))]
 
 
 def allowed_shots(team_id, game_ids=None):

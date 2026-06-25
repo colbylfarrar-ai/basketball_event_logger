@@ -1394,6 +1394,14 @@ def team_summary(team_id, opp_id=None, outcome=None, game_ids=None):
 #  sparsely-tracked sample — the helpers return opportunity counts so the UI can
 #  gate on sample size.
 
+def _team_game_ids(team_id):
+    """Tracked game ids the team appears in, active season only. Single source
+    for the Tier-2 helpers (concession / possession_value / rotation_plan)."""
+    return [r["id"] for r in query(
+        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
+        "AND season='Current'", (team_id, team_id))]
+
+
 def _team_game_ids_all(team_id):
     """All game ids the team appears in (tracked or not), active season only."""
     rows = query("SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "

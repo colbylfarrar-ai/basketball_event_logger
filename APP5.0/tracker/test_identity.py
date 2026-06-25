@@ -3,6 +3,8 @@ test_identity.py — unit tests for the Tier-3 cross-season player identity engi
 (helpers/identity.py). query/execute are stubbed so the match scoring, prior-identity
 collapse, and link/unlink behavior are checked exactly, no DB.
 """
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.identity as IDN
 
 

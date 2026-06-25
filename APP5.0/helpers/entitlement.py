@@ -113,7 +113,8 @@ def pooled_game_ids() -> set[int]:
     the same real game are collapsed to one canonical (most-detailed / admin-pinned)
     row so the pool never double-counts or shows two stat lines — see game_dedup."""
     return GD.representative_game_ids(
-        {r["id"] for r in query("SELECT id FROM games WHERE in_pool=1")})
+        {r["id"] for r in query(
+            "SELECT id FROM games WHERE in_pool=1 AND season='Current'")})
 
 
 def pool_team_ids() -> set[int]:
@@ -143,7 +144,8 @@ def team_has_pooled_tracked(team_id) -> bool:
     if team_id is None:
         return False
     rows = query("SELECT 1 FROM games WHERE in_pool=1 AND tracked=1 "
-                 "AND (team1_id=? OR team2_id=?) LIMIT 1", (team_id, team_id))
+                 "AND season='Current' AND (team1_id=? OR team2_id=?) LIMIT 1",
+                 (team_id, team_id))
     return bool(rows)
 
 
@@ -196,7 +198,7 @@ def visible_tracked_game_ids(ident: dict | None) -> set[int] | None:
         ph = ",".join("?" * len(own))
         params = tuple(own) + tuple(own)
         ids |= {r["id"] for r in query(
-            f"SELECT id FROM games WHERE tracked=1 "
+            f"SELECT id FROM games WHERE tracked=1 AND season='Current' "
             f"AND (team1_id IN ({ph}) OR team2_id IN ({ph}))", params)}
     if viewer_is_league_wide(ident):
         ids |= pooled_game_ids()
@@ -216,7 +218,7 @@ def team_visible_tracked_ids(ident: dict | None, team_id) -> set[int] | None:
     # league-wide scout of another team → that team's pooled games only, with
     # duplicate tracks collapsed to the canonical (most-detailed / pinned) row.
     return GD.representative_game_ids({r["id"] for r in query(
-        "SELECT id FROM games WHERE in_pool=1 AND tracked=1 "
+        "SELECT id FROM games WHERE in_pool=1 AND tracked=1 AND season='Current' "
         "AND (team1_id=? OR team2_id=?)", (team_id, team_id))})
 
 

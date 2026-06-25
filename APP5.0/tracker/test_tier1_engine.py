@@ -6,6 +6,8 @@ import and not raise.
 """
 import inspect
 
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.courtside as CS
 import helpers.selfscout as SS
 import helpers.coverage as CV

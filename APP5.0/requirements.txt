@@ -39,4 +39,7 @@ httpx>=0.27
 # system libs — install it manually if you want it; the code prefers it when
 # importable and falls back to xhtml2pdf, then to plain HTML downloads.
 xhtml2pdf>=0.2.16
-playwright
+# Headless Chromium for the OSSAA by-date scraper (tools/ossaa_bydate.py): the
+# rankings page renders its schedule with JS, so a plain HTTP fetch sees nothing.
+# After install run `playwright install chromium` once to fetch the browser.
+playwright>=1.40

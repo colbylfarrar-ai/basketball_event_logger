@@ -6,6 +6,8 @@ plus SMOE sign + shrinkage behavior. No DB needed (shots passed directly).
 """
 import math
 
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.shotquality as SQ
 
 HOOP_Y = SQ.HOOP_Y

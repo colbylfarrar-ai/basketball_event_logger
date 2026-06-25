@@ -101,6 +101,7 @@ def _team_results(team_id):
                   g.team1_id, g.team2_id, g.home_score, g.away_score
            FROM games g
            WHERE (g.team1_id=? OR g.team2_id=?)
+             AND g.season='Current'
              AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
            ORDER BY g.date, g.id""",
         (team_id, team_id))
@@ -396,6 +397,7 @@ with tab_over:
            JOIN teams t1 ON t1.id = g.team1_id
            JOIN teams t2 ON t2.id = g.team2_id
            WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+             AND g.season='Current'
              AND t1.gender = ?
            ORDER BY g.date DESC, g.id DESC LIMIT 8""", (gender,))
     if recent:
@@ -999,7 +1001,7 @@ with tab_over:
             for tid, _, n in cold:
                 st.markdown(
                     f"**{name_of[tid]}** `{class_of[tid]}`  "
-                    f"<span style='color:#e74c3c;font-weight:700'>L{n}</span>  "
+                    f"<span style='color:var(--bad);font-weight:700'>L{n}</span>  "
                     f"({scored[tid]['W']}-{scored[tid]['L']})",
                     unsafe_allow_html=True)
 

@@ -949,8 +949,17 @@ else:
                               primary_player_id=plookup(tov_p, all_id),
                               stolen_by_id=plookup(stolen, all_id))
 
-                GE.log_event(game_id, ev, on_court, on_court_offs)
-                st.rerun()
+                # Every event type needs its primary actor; without it the row
+                # logs a NULL primary_player_id and is silently dropped from the
+                # box score (a lineup change mid-form can corrupt the selectbox).
+                if ev.get("primary_player_id") is None:
+                    _who = {"shot": "shooter", "free_throw": "shooter",
+                            "foul": "fouled player",
+                            "turnover": "player"}.get(ev["event_type"], "player")
+                    st.error(f"Pick a {_who} — event not logged.")
+                else:
+                    GE.log_event(game_id, ev, on_court, on_court_offs)
+                    st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TEAM NOTES

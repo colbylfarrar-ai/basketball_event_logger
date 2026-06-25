@@ -4,6 +4,8 @@ class_of + _trend are pure; progression/projection are tested with a stubbed
 season_lines so the YoY math + gating are exact (no DB). A final real-DB smoke
 confirms the one-season graceful path.
 """
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.development as DV
 
 

@@ -3,6 +3,8 @@ test_rollover.py — Tier-3 grad-year rollover + transfer search.
 Stubs query/execute so the carry-forward split, the rollover writes, and the
 cross-team transfer lookup are checked exactly, no DB.
 """
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.seasons as SZ
 import helpers.identity as IDN
 

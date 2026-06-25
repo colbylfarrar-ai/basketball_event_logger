@@ -361,10 +361,18 @@ with tab_teams:
 
     if st.button("Save Changes", key="save_teams", type="primary"):
         def ins_team(r):
-            if r.get("name", "").strip():
-                execute("INSERT OR IGNORE INTO teams (name, class, gender, state) VALUES (?,?,?,?)",
-                        (r["name"].strip(), r.get("class","N/A"), r.get("gender","M"),
-                         (r.get("state") or "OK")))
+            if not r.get("name", "").strip():
+                return
+            # gender is a required column, but Streamlit's data_editor doesn't
+            # enforce required= on newly-added rows — a blank here used to
+            # silently default to 'M', saving Girls teams as Boys. Reject it.
+            g = (r.get("gender") or "").strip()
+            if g not in ("M", "F"):
+                raise ValueError(
+                    f"Team '{r['name'].strip()}': pick a gender before saving.")
+            execute("INSERT OR IGNORE INTO teams (name, class, gender, state) VALUES (?,?,?,?)",
+                    (r["name"].strip(), r.get("class","N/A"), g,
+                     (r.get("state") or "OK")))
         def upd_team(r):
             execute("UPDATE teams SET name=?, class=?, gender=?, state=? WHERE id=?",
                     (r["name"].strip(), r["class"], r["gender"], (r.get("state") or "OK"), r["id"]))

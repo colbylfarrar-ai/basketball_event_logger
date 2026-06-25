@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -259,10 +260,19 @@ def post_events(game_id: int, batch: EventBatch,
             continue
         existed = query("SELECT id FROM game_events WHERE client_uuid=?", (ev.uuid,))
         on_court = [(pid, pid2team[pid]) for pid in ev.on_court if pid in pid2team]
-        eid = GE.log_event(
-            game_id,
-            ev.model_dump(exclude={"uuid", "on_court", "officials_on"}),
-            on_court, ev.officials_on, client_uuid=ev.uuid)
+        try:
+            eid = GE.log_event(
+                game_id,
+                ev.model_dump(exclude={"uuid", "on_court", "officials_on"}),
+                on_court, ev.officials_on, client_uuid=ev.uuid)
+        except sqlite3.IntegrityError:
+            # A second device won the client_uuid race after the dup-check above
+            # (offline-first PWAs replay the same tap on reconnect). The unique
+            # index rejected our duplicate insert — resolve to the row the winner
+            # wrote so the retry stays idempotent instead of 500-ing.
+            row = query("SELECT id FROM game_events WHERE client_uuid=?", (ev.uuid,))
+            eid = row[0]["id"] if row else None
+            existed = True
         results.append({
             "uuid": ev.uuid,
             "status": "duplicate" if existed else "inserted",

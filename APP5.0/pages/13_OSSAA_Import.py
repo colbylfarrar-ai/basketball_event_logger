@@ -188,6 +188,16 @@ d_from = rc[0].date_input("From", value=_today, key="rf_from")
 d_to = rc[1].date_input("To", value=_today, key="rf_to")
 rf_gender = rc[2].radio("Gender", ["Both", "Boys", "Girls"], horizontal=True, key="rf_g")
 
+# Soft season guard: by-date import intentionally has NO hard clamp (commit
+# 6ce5194 — you can backfill any date), but every imported game is stamped with
+# the active season, so a date in next year's season would silently blend years.
+# Warn when the picked range steps outside the active-season window; don't block.
+if WINDOW and (d_from.isoformat() < WINDOW[0] or d_to.isoformat() > WINDOW[1]):
+    st.warning(
+        f"Part of **{d_from.isoformat()} … {d_to.isoformat()}** falls outside the "
+        f"active **{_active}** season ({WINDOW[0]} … {WINDOW[1]}). Any games found "
+        f"there still import **as {_active}** — double-check the dates first.")
+
 if st.button("🔄 Refresh games in range", key="rf_go", type="primary"):
     lo, hi = d_from.isoformat(), d_to.isoformat()
     if lo > hi:

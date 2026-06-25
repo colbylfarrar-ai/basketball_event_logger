@@ -3,6 +3,8 @@ test_possession_value.py — unit tests for the Tier-2 possession-value ledger
 (helpers/possession_value.py). Synthetic events with a known outcome mix → exact
 arithmetic checks for both the offense and defense (allowed) sides.
 """
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.possession_value as PV
 
 

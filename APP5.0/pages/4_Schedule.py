@@ -84,11 +84,11 @@ div[data-testid="stColumn"] .stButton > button { min-height:46px; padding:4px 2p
 }
 .upset-card {
     background:linear-gradient(135deg,#1a0a0a,#2a0d0d);
-    border:1px solid #e74c3c; border-radius:12px;
+    border:1px solid var(--bad); border-radius:12px;
     padding:16px 18px; margin-bottom:10px;
 }
-.upset-title { font-size:14px; font-weight:800; color:#e74c3c; margin-bottom:6px; }
-.upset-body  { font-size:14px; color:#c9d1d9; }
+.upset-title { font-size:14px; font-weight:800; color:var(--bad); margin-bottom:6px; }
+.upset-body  { font-size:14px; color:var(--subtext); }
 .gotd-badge {
     display:inline-block; background:#0d419d; color:#fff; font-size:10px;
     font-weight:700; letter-spacing:1px; border-radius:20px; padding:3px 10px;

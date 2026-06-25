@@ -4,6 +4,8 @@ test_rotation_plan.py — unit tests for the Tier-2 stagger / foul-trouble engin
 tested exactly; the DB-coupled reads (star_coverage, foul_prone) get a structure
 smoke against the local DB.
 """
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import helpers.rotation_plan as RP
 
 

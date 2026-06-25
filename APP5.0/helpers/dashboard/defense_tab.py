@@ -115,7 +115,7 @@ def _render_factors(ff, unit):
     thin = sorted((r for r in rows if not r.get("stable")),
                   key=lambda r: r["poss"], reverse=True)
     if thin:
-        st.caption("Building toward 100: " + " · ".join(
+        st.caption(f"Building toward {MIN_POSS_DETAIL}: " + " · ".join(
             f"{r['label']} {r['poss']}" for r in thin[:6]))
 
 

@@ -28,10 +28,11 @@ from __future__ import annotations
 
 from helpers.stats import _safe, fetch_events
 
-#: Founder spec — show the full four-factors breakdown for a type once it has at
-#: least this many possessions (FGA + TOV). Tunable; per-type (not the sparser
-#: play_type × defense cross-tab, which would need a higher bar).
-MIN_POSS_DETAIL = 100
+#: Show the full four-factors breakdown for a type once it has at least this many
+#: possessions (FGA + TOV) — ~3-4 games' worth, enough for the OREB%/TOV% splits
+#: to settle. Tunable; per-type (not the sparser play_type × defense cross-tab,
+#: which would need a higher bar).
+MIN_POSS_DETAIL = 70
 
 #: OREB% needs enough missed-shot rebound chances to mean anything; below this we
 #: surface it as None even when the cell is otherwise stable.

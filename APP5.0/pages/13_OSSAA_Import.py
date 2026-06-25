@@ -2,7 +2,11 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import ast
 import datetime
+import re
+import subprocess
+import sys
 
 import pandas as pd
 import streamlit as st
@@ -12,7 +16,6 @@ from database import db
 import helpers.auth as AUTH
 import helpers.ossaa_sync as SYNC
 from tools.ossaa_import import build_plan_single, build_plan_crawl, season_window
-from tools.ossaa_refresh import fast_refresh
 
 _cfg, ACCENT = page_chrome("OSSAA Import")
 _lab_hero("OSSAA Import", phase="BUILD",
@@ -171,13 +174,12 @@ elif plan:
 # ── Refresh by date (scores + newly-scheduled games) ──────────────────────────
 st.divider()
 st.subheader("🔄 Refresh by date")
-st.caption("Re-pull a date range to fill in scores for games now played. "
-           "Existing games are never duplicated and your **tracked** games are "
-           "never touched. Built for daily in-season updates.")
-st.info("Fast: it re-fetches **only the teams already scheduled to play** in the "
-        "range (~20–40 pages for a single day, ~30s) — not the whole league. "
-        "Off-season there'll be no games. To pick up brand-new teams/games not yet "
-        "in the database, run a full Crawl above instead.")
+st.caption("Pull a date range from the **by-date** schedule to fill in scores for "
+           "games now played and add new games. Existing games are never "
+           "duplicated and your **tracked** games are never touched.")
+st.info("Efficient: one page per date covers every game that day across the state "
+        "(~5–15s for a day). Date-driven, so it **survives the yearly rollover** "
+        "with no maintenance. Shows the live/upcoming season only.")
 
 rc = st.columns([1, 1, 1])
 _today = datetime.date.today()
@@ -190,16 +192,28 @@ if st.button("🔄 Refresh games in range", key="rf_go", type="primary"):
     if lo > hi:
         st.error("‘From’ is after ‘To’.")
     else:
-        gmap = {"Both": None, "Boys": ["M"], "Girls": ["F"]}
+        _root = str(Path(__file__).resolve().parent.parent)
+        cmd = [sys.executable, "tools/ossaa_bydate.py", "--from", lo, "--to", hi]
+        if rf_gender != "Both":
+            cmd += ["--gender", rf_gender]
         try:
-            with st.status(f"Refreshing {lo} … {hi}", expanded=True) as stat:
-                res, n = fast_refresh(lo, hi, gmap[rf_gender],
-                                      log=lambda m: stat.write(m))
-                stat.update(label="Done", state="complete")
-            st.success(
-                f"Refreshed {lo} … {hi} ({n} teams checked): "
-                f"**{res['games_updated']}** scores updated, "
-                f"**{res['games_inserted']}** new games, "
-                f"{res['games_skipped']} unchanged.")
-        except Exception as exc:
-            st.error(f"Refresh failed: {exc}")
+            with st.spinner(f"Scraping the by-date schedule {lo} … {hi}…"):
+                proc = subprocess.run(cmd, cwd=_root, capture_output=True,
+                                      text=True, timeout=600)
+            if proc.returncode == 0:
+                m = re.search(r"RESULT:\s*(\{.*\})", proc.stdout)
+                res = ast.literal_eval(m.group(1)) if m else {}
+                st.success(
+                    f"Refreshed {lo} … {hi}: "
+                    f"**{res.get('games_updated', 0)}** scores updated, "
+                    f"**{res.get('games_inserted', 0)}** new games, "
+                    f"{res.get('games_skipped', 0)} unchanged.")
+                with st.expander("Log"):
+                    st.code(proc.stdout or "(no output)")
+            else:
+                st.error("Refresh failed. If this says a Chromium library is "
+                         "missing, the browser deps aren't installed on the "
+                         "server yet (one-time `playwright install-deps`).")
+                st.code((proc.stderr or proc.stdout or "")[-1800:])
+        except subprocess.TimeoutExpired:
+            st.error("Timed out (>10 min). Try a smaller date range.")

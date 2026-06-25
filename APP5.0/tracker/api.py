@@ -197,18 +197,29 @@ def _scoreboard(game_id: int) -> dict:
 
 # ── API routes ──────────────────────────────────────────────────────────────────
 @api.get("/games")
-def list_games():
-    games = query("""
-        SELECT g.id, g.date, g.tracked,
-               g.team1_id AS home_id, g.team2_id AS away_id,
-               t1.name AS home, t2.name AS away, t1.gender AS gender
-        FROM games g
-        JOIN teams t1 ON t1.id=g.team1_id
-        JOIN teams t2 ON t2.id=g.team2_id
-        WHERE g.season='Current'
-          AND (g.tracked=1 OR g.date >= date('now','-30 day'))
-        ORDER BY g.tracked DESC, g.date DESC, g.id DESC
-        LIMIT 300""")
+def list_games(q: str | None = None):
+    """Tracker game picker. Default = current-season tracked OR recent games,
+    capped — a fast, bounded list (the OSSAA importer can hold 13k+ schedule
+    rows, which froze the PWA when sent whole). Pass ?q=<text> to SEARCH every
+    current-season game by team name (also capped), so any game is reachable."""
+    cols = ("g.id, g.date, g.tracked, g.team1_id AS home_id, "
+            "g.team2_id AS away_id, t1.name AS home, t2.name AS away, "
+            "t1.gender AS gender")
+    joins = ("FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+             "JOIN teams t2 ON t2.id=g.team2_id")
+    q = (q or "").strip()
+    if len(q) >= 2:
+        like = f"%{q}%"
+        games = query(
+            f"SELECT {cols} {joins} WHERE g.season='Current' "
+            "AND (t1.name LIKE ? OR t2.name LIKE ?) "
+            "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 100",
+            (like, like))
+    else:
+        games = query(
+            f"SELECT {cols} {joins} WHERE g.season='Current' "
+            "AND (g.tracked=1 OR g.date >= date('now','-30 day')) "
+            "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 300")
     return {"games": games}
 
 

@@ -290,18 +290,53 @@ function renderGenderFilter() {
   });
 }
 
+function _genderKeep(g, gf) {
+  // stale-cache games may lack gender — never hide those.
+  return !(gf && g.gender && g.gender !== gf);
+}
+
+let _searchTimer = null;
 function applyGameFilter() {
   const el = $('game-search');
-  const q = ((el && el.value) || '').trim().toLowerCase();
+  const raw = ((el && el.value) || '').trim();
   const gf = genderFilter();
-  const list = allGames.filter(function (g) {
-    // stale-cache games may lack gender — never hide those.
-    if (gf && g.gender && g.gender !== gf) return false;
-    if (!q) return true;
-    return ((g.home || '') + ' ' + (g.away || '') + ' ' + (g.date || ''))
-      .toLowerCase().indexOf(q) !== -1;
-  });
-  renderGames(list);
+  if (raw.length >= 2) {
+    // Server-side search so ANY team's games are reachable — the default list
+    // is intentionally bounded (current-season tracked/recent), so type a team
+    // name to pull that team's games from the full schedule.
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(function () { searchGames(raw); }, 250);
+    return;
+  }
+  renderGames(allGames.filter(function (g) { return _genderKeep(g, gf); }));
+}
+
+async function searchGames(raw) {
+  const gf = genderFilter();
+  $('setup-status').textContent = 'Searching…';
+  try {
+    const res = await api('/api/games?q=' + encodeURIComponent(raw));
+    if (res.ok) {
+      const data = await res.json();
+      const list = (data.games || []).filter(function (g) { return _genderKeep(g, gf); });
+      renderGames(list);
+      $('setup-status').textContent = list.length ? '' : 'No games match “' + raw + '”';
+    } else if (res.status === 401) {
+      const tb = $('token-box'); if (tb) tb.open = true;
+      $('setup-status').textContent = 'Enter your tracker token above to search.';
+    } else {
+      $('setup-status').textContent = 'Search failed';
+    }
+  } catch (e) {
+    // offline — fall back to filtering whatever's already loaded
+    const ql = raw.toLowerCase();
+    renderGames(allGames.filter(function (g) {
+      return _genderKeep(g, gf) &&
+        ((g.home || '') + ' ' + (g.away || '') + ' ' + (g.date || ''))
+          .toLowerCase().indexOf(ql) !== -1;
+    }));
+    $('setup-status').textContent = 'Offline — searching loaded games only';
+  }
 }
 
 async function loadGames() {

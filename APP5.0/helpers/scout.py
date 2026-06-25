@@ -438,6 +438,54 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  MATCHUPS  (who-guards-whom, shared with the War Room matchup planner)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_matchups(my_team_id, opp_team_id, table, plan):
+    """Resolve a saved defender↔scorer plan into print/display rows.
+
+    `plan` = the per-coach matchup dict from scoutboard.get_plan(opp_team_id):
+    ``{scorer_key: my_defender_pid}`` where ``scorer_key`` is ``str(player_id)``
+    for a tracked opponent scorer or ``"name:"+name`` for a hand-entered (cold)
+    one. `table` = player_ratings.player_stat_table (rows carry team_id, name,
+    number, OFFENSE, DEFENSE). Mirrors the War Room planner's edge model exactly:
+    edge = your defender's DEFENSE − their scorer's OFFENSE (0-100, 50 = lg avg);
+    tag Edge ≥ +8 · Tough ≤ −8 · else Even. Streamlit-free.
+
+    Returns ``[{scorer, scorer_off, defender, defender_def, edge, tag}]`` sorted by
+    scorer OFFENSE (unrated/intel scorers last), skipping orphaned assignments."""
+    mine = {pid: r for pid, r in table.items() if r["team_id"] == my_team_id}
+    theirs = {pid: r for pid, r in table.items() if r["team_id"] == opp_team_id}
+
+    def _lbl(r):
+        return f"#{r.get('number') or ''} {r['name']}".strip()
+
+    rows = []
+    for skey, dpid in (plan or {}).items():
+        if isinstance(skey, str) and skey.startswith("name:"):
+            scorer, soff = skey[5:].strip(), None
+        else:
+            try:
+                sr = theirs.get(int(skey))
+            except (TypeError, ValueError):
+                continue
+            if not sr:
+                continue
+            scorer, soff = _lbl(sr), sr.get("OFFENSE")
+        dr = mine.get(dpid)
+        if not dr:
+            continue
+        ddef = dr.get("DEFENSE")
+        edge = (ddef - soff) if (ddef is not None and soff is not None) else None
+        tag = (("Edge" if edge >= 8 else "Tough" if edge <= -8 else "Even")
+               if edge is not None else None)
+        rows.append({"scorer": scorer, "scorer_off": soff, "defender": _lbl(dr),
+                     "defender_def": ddef, "edge": edge, "tag": tag})
+    rows.sort(key=lambda m: (m["scorer_off"] is None, -(m["scorer_off"] or 0)))
+    return rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  PRINTABLE HTML
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -500,6 +548,27 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                      f"<td class='col'><h2>Guard them</h2><ul>{guard}</ul></td>"
                      f"<td class='col'><h2>Attack them</h2><ul>{attack}</ul></td>"
                      f"</tr></table>")
+
+    # ── defensive matchups (who guards whom; shared with War Room planner) ──
+    mu_html = ""
+    mus = extra.get("matchups") or []
+    if _show("matchups") and mus:
+        _TAG = {"Edge": "✅ Edge", "Tough": "⚠ Tough", "Even": "Even"}
+        rows_mu = ""
+        for m in mus:
+            off = f"{m['scorer_off']:.0f}" if m.get("scorer_off") is not None else "—"
+            dfn = f"{m['defender_def']:.0f}" if m.get("defender_def") is not None else "—"
+            edge = (f"{_TAG.get(m['tag'], m['tag'])} ({m['edge']:+.0f})"
+                    if m.get("edge") is not None else "—")
+            rows_mu += (f"<tr><td>{e(m['scorer'])}</td><td class='n'>{off}</td>"
+                        f"<td>{e(m['defender'])}</td><td class='n'>{dfn}</td>"
+                        f"<td>{e(edge)}</td></tr>")
+        mu_html = (
+            "<h2>Defensive matchups — who guards whom</h2><table><tr>"
+            "<th>Their scorer</th><th class='n'>OFF</th><th>Your defender</th>"
+            f"<th class='n'>DEF</th><th>Edge</th></tr>{rows_mu}</table>"
+            "<p class='note'>Edge = your defender's DEFENSE − their scorer's OFFENSE "
+            "(0–100, 50 = league avg). ✅ Edge ≥ +8 · ⚠ Tough ≤ −8.</p>")
 
     # ── four factors + shooting by zone (share one row) ──
     ff_cell = ""
@@ -971,6 +1040,7 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
   Power #{sc['rank']}/{sc['of']}</div>
 <div class='rng'>{e(rng)}</div>
 {keys_html}
+{mu_html}
 {two_html}
 {_flow_open}{breakeven_html}
 {eff_html}

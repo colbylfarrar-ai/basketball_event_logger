@@ -40,6 +40,7 @@ import helpers.settings_utils as SU
 # still hides the whole bundle.
 SCOUT_SECTIONS = [
     ("keys", "Keys to the game (guard / attack)", "Overview"),
+    ("matchups", "Defensive matchups (who guards whom)", "Overview"),
     ("four_factors", "Four factors & tendencies", "Overview"),
     ("breakeven", "Should they shoot 2s or 3s?", "Overview"),
     ("auto_report", "Auto scouting report", "Overview"),
@@ -142,6 +143,110 @@ def _three_profile(ctx):
          "att": p["3PA"], "above": (p["3P%"] or 0) >= be3_pct} for p in three_p]}
 
 
+# Edge palette (mirrors the Team Dashboard GOOD/BAD without importing the page).
+_MP_GOOD, _MP_BAD = "#3fb950", "#e74c3c"
+
+
+def _render_matchups(my_team_id, opp_tid, gender, show):
+    """Who-guards-whom planner: assign each of YOUR defenders to an opponent
+    scorer, edge = your defender's DEFENSE − their scorer's OFFENSE. Saved per
+    opponent in scoutboard (kind='matchup') — the SAME store the War Room planner
+    uses, so the two stay in sync. Renders the assign UI when `show`; ALWAYS
+    returns the resolved rows for the printable sheet (helpers/scout.build_matchups).
+    Works for a cold opponent too (plans off your hand-entered intel)."""
+    import helpers.player_ratings as PR
+    tbl = PR.player_stat_table(gender=gender, min_games=1)
+    my_players = sorted([dict(r, _pid=pid) for pid, r in tbl.items()
+                         if r["team_id"] == my_team_id],
+                        key=lambda r: -(r.get("DEFENSE") or 0))
+    plan = SB.get_plan(opp_tid)
+    # drop assignments to a defender no longer on your roster (archived / left) so
+    # they neither show as a ghost nor linger in storage / on the printed sheet.
+    _my_pids = {p["_pid"] for p in my_players}
+    plan = {k: v for k, v in plan.items() if v in _my_pids}
+    if show and my_players:
+        st.markdown("<div class='lab-hdr'>Defensive matchups — who guards whom"
+                    "</div>", unsafe_allow_html=True)
+        st.caption("Assign each of your defenders to an opponent scorer. Edge = your "
+                   "defender's DEFENSE − their OFFENSE (0-100, 50 = league avg). "
+                   "Saved per opponent, shared with the War Room planner, and printed "
+                   "on the scout sheet.")
+        my_label = {p["_pid"]: f"#{p.get('number') or ''} {p['name']}".strip()
+                    for p in my_players}
+        my_def = {p["_pid"]: p.get("DEFENSE") for p in my_players}
+        can_rate = ENT.can_see_team_tracked(AUTH.current_user(), opp_tid)
+        their = []
+        if can_rate:
+            their = sorted(
+                [dict(r, _pid=pid) for pid, r in tbl.items()
+                 if r["team_id"] == opp_tid
+                 and (r.get("OFFENSE") is not None or r.get("PPG") is not None)],
+                key=lambda r: -(r.get("OFFENSE") or r.get("PPG") or 0))[:6]
+        intel = SB.get_intel(opp_tid)
+        # seed from the saved plan so saving here keeps any assignment the War Room
+        # planner made for a scorer this top-N list doesn't render (the two share
+        # ONE stored plan); the rendered rows below overwrite / clear their own.
+        new_plan = dict(plan)
+
+        # `key` is the STABLE plan key (str(pid) or 'name:'+name — shared with the
+        # War Room planner + build_matchups, so it must NOT change); `uid` is only
+        # for a unique Streamlit widget key (duplicate intel names would collide).
+        def _row(key, label, off, threat, uid):
+            cur = plan.get(key)
+            opts = [None] + [p["_pid"] for p in my_players]
+            idx = opts.index(cur) if cur in opts else 0
+            c = st.columns([3, 3, 2])
+            meta = f" · OFF {off:.0f}" if off is not None else ""
+            thr = (f"<br><span style='color:#b25e00;font-size:12px'>"
+                   f"{html.escape(threat)}</span>" if threat else "")
+            c[0].markdown(f"**{label}**{meta}{thr}", unsafe_allow_html=True)
+            pick = c[1].selectbox(
+                "Defender", opts, index=idx,
+                format_func=lambda v: "—" if v is None else my_label.get(v, str(v)),
+                key=f"scmp_{opp_tid}_{uid}", label_visibility="collapsed")
+            if pick is not None:
+                new_plan[key] = pick
+                d = my_def.get(pick)
+                if d is not None and off is not None:
+                    edge = d - off
+                    tag = ("✅ Edge" if edge >= 8 else
+                           "⚠ Tough" if edge <= -8 else "Even")
+                    clr = (_MP_GOOD if edge >= 8 else
+                           _MP_BAD if edge <= -8 else "#8b949e")
+                    c[2].markdown(f"<span style='color:{clr};font-weight:700'>{tag} "
+                                  f"({edge:+.0f})</span>", unsafe_allow_html=True)
+                else:
+                    c[2].markdown("<span style='color:#8b949e'>no edge rating</span>",
+                                  unsafe_allow_html=True)
+            else:
+                new_plan.pop(key, None)   # explicit unassign clears the saved entry
+                c[2].markdown("<span style='color:#8b949e'>unassigned</span>",
+                              unsafe_allow_html=True)
+
+        if their:
+            for p in their:
+                _pk = str(p["_pid"])
+                _row(_pk, f"#{p.get('number') or ''} {p['name']}".strip(),
+                     p.get("OFFENSE"), None, _pk)
+        elif intel:
+            st.caption("No tracked ratings for this opponent — planning off your "
+                       "hand-entered intel below.")
+            for _i, r in enumerate(intel):
+                nm = (r.get("name") or "").strip()
+                _row("name:" + nm, f"#{r.get('num', '')} {nm}".strip(), None,
+                     r.get("note"), f"i{_i}")
+        else:
+            st.caption("No rated players or hand-entered intel for this opponent "
+                       "yet — add key players in 'Manual scouting' below, then "
+                       "assign defenders here.")
+        if (their or intel) and st.button(
+                "Save matchup plan", key=f"scmp_save_{opp_tid}", type="primary"):
+            SB.save_plan(opp_tid, new_plan)
+            plan = new_plan
+            st.success("Matchup plan saved · also shows in the War Room planner.")
+    return SC.build_matchups(my_team_id, opp_tid, tbl, plan)
+
+
 @st.fragment
 def render(ctx):
     st.caption("Game-day scouting report — keys to the game, four factors & "
@@ -153,16 +258,36 @@ def render(ctx):
     _self = frame.startswith("Self")
     opp_label = "Self-scout" if _self else "Opponent scout"
 
+    # YOUR team (the dashboard team) — kept for the matchup planner even after the
+    # report rebinds onto the opponent below.
+    _my_team_id = ctx.team_id
+    _gender = ctx.gender
+    _opp_tid = None
+
     if _self:
         # self-scout: the WHOLE roster, nobody hidden
         sc = ctx.scout(ctx.team_id, ctx.gender, None, ())
     else:
-        # opponent scout: hide players who won't play (default = injured / out /
-        # suspended from their availability), still picking from the full roster
+        # opponent scout: pick ANY team this gender and scout THEM. Rebinding ctx
+        # onto that opponent makes the whole report below render for them; your own
+        # team stays in _my_team_id for the matchup planner.
+        _opts = [t for t in (getattr(ctx, "all_teams", None) or [])
+                 if t[0] != _my_team_id]
+        if not _opts:
+            st.info("No other rated teams to scout yet — add or import an opponent "
+                    "first.")
+            return
+        _tmap = dict(ctx.all_teams)
+        _opp_tid = st.selectbox(
+            "Opponent to scout", [t[0] for t in _opts],
+            format_func=lambda tid: _tmap.get(tid, str(tid)), key="scout_opp_team")
+        ctx = ctx.opp_ctx(_opp_tid)          # rebind: the report now renders for THEM
+        # hide opponent players who won't play (injured / out / suspended)
         _avail = {r["id"]: (r["availability"] or "Active") for r in query(
             "SELECT id, availability FROM players WHERE team_id=? AND archived=0",
             (ctx.team_id,))}
-        _names = {p["_pid"]: f"#{p['number']} {p['name']}" for p in ctx.players}
+        _names = {p["_pid"]: f"#{p['number']} {p['name']}" for p in ctx.players
+                  if p["_pid"] in _avail}
         _def_hide = sorted(pid for pid in _names
                            if _avail.get(pid, "Active")
                            in ("Out", "Injured", "Suspended"))
@@ -230,6 +355,15 @@ def render(ctx):
     hcols[3].metric("Def. rating", f"{trk['DRtg']:.0f}" if trk else "—")
     hcols[4].metric("Pace", f"{trk['Pace']:.0f}" if trk else "—")
 
+    # ── matchup planner (opponent scout only): your defenders ↔ their scorers,
+    # saved per opponent + synced with the War Room planner; the resolved rows
+    # print on the scout sheet. Runs before the tracked gate so it works for a
+    # cold opponent too (plans off your hand-entered intel).
+    _matchups = []
+    if not _self and _opp_tid is not None:
+        _matchups = _render_matchups(_my_team_id, _opp_tid, _gender,
+                                     _show("matchups"))
+
     if not ctx.has_tracked:
         _, _lock = ENT.tracked_gate(AUTH.current_user(), ctx.team_id,
                                     sc["has_tracked"])
@@ -248,7 +382,8 @@ def render(ctx):
                         unsafe_allow_html=True)
             SB.render_notes(ctx.team_id)
             _extra_cold = {"manual_intel": _intel,
-                           "notes": SB.get_note(ctx.team_id)}
+                           "notes": SB.get_note(ctx.team_id),
+                           "matchups": _matchups}
             st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                         unsafe_allow_html=True)
             html_doc = SC.printable_html(sc, opp_label, hidden=_hidden,
@@ -866,6 +1001,7 @@ def render(ctx):
                         if r["label"] != "Untimed" and r["FGA"]],
         "notes": ("" if _self else SB.get_note(ctx.team_id)),
         "manual_intel": ([] if _self else SB.get_intel(ctx.team_id)),
+        "matchups": _matchups,
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)

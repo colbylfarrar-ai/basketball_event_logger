@@ -3756,6 +3756,31 @@ if True:
 # ══════════════════════════════════════════════════════════════════════════════
 # The Scout tab lives in helpers/dashboard/scout_tab.py (Big Bet 5 split);
 # ctx carries the page-level shared state plus the page helpers it calls.
+
+# Opponent scout: build a ctx scoped to ANY opponent team (same shape as the
+# dashboard ctx + the same shared helpers), so the Scout tab can render the full
+# report on a team you select while keeping YOUR team for the matchup planner.
+# The entitlement read-filter is recomputed for the opponent (League-wide coach →
+# their pooled games only; cold opponent → record/rank + your hand-entered intel).
+def _opp_scout_ctx(opp_tid):
+    _ov = ENT.team_visible_tracked_ids(AUTH.current_user(), opp_tid)
+    _ovk = None if _ov is None else tuple(sorted(_ov))
+    ob = _team_bundle(opp_tid, gender, _ovk)
+    _oraw = any(g["tracked"] for g in ob["game_log"])
+    o_has, _olock = ENT.tracked_gate(AUTH.current_user(), opp_tid, _oraw)
+    return SimpleNamespace(
+        bundle=ob, players=ob["players"], team_id=opp_tid, gender=gender,
+        has_tracked=o_has, summ=ob["summary"], soff=ob["scoring_off"],
+        brk=ob["breakeven"], ff=ob["four_factors"], tb=ob["team_box"],
+        GOOD=GOOD, BAD=BAD, ACCENT=ACCENT, BLUE=BLUE, style=_style, pctf=_pctf,
+        scout=lambda _t, _g, _lim, _ex: _scout(_t, _g, _lim, _ex, _ovk),
+        archetypes=_archetypes, located_team=_located_team,
+        zone_pair_bars=_zone_pair_bars)
+
+# every rated team this gender (tid, name) for the opponent picker
+_all_teams = sorted(((tid, v.get("name", f"#{tid}")) for tid, v in scored.items()),
+                    key=lambda x: x[1])
+
 _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                              gender=gender, has_tracked=has_tracked,
                              summ=summ, soff=soff, brk=brk, ff=ff, tb=tb,
@@ -3766,7 +3791,10 @@ _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                              scout=lambda _t, _g, _lim, _ex: _scout(
                                  _t, _g, _lim, _ex, _vis_key),
                              archetypes=_archetypes, located_team=_located_team,
-                             zone_pair_bars=_zone_pair_bars)
+                             zone_pair_bars=_zone_pair_bars,
+                             # opponent scout: pick & scout any team, keep yours
+                             opp_ctx=_opp_scout_ctx, all_teams=_all_teams,
+                             my_team_id=team_id)
 with tab_scout:
     DSCOUT.render(_scout_ctx)
 

@@ -205,7 +205,10 @@ def list_games():
         FROM games g
         JOIN teams t1 ON t1.id=g.team1_id
         JOIN teams t2 ON t2.id=g.team2_id
-        ORDER BY g.date DESC, g.id DESC""")
+        WHERE g.season='Current'
+          AND (g.tracked=1 OR g.date >= date('now','-30 day'))
+        ORDER BY g.tracked DESC, g.date DESC, g.id DESC
+        LIMIT 300""")
     return {"games": games}
 
 

@@ -306,6 +306,9 @@ function applyGameFilter() {
 
 async function loadGames() {
   let games = lsGet(LS.games, null);
+  // A pre-fix cache could hold thousands of schedule games (OSSAA import) and
+  // freeze the list on render — drop an oversize cache and refetch the bounded set.
+  if (games && games.length > 400) { games = null; try { localStorage.removeItem(LS.games); } catch (e) {} }
   if (games) { allGames = games; applyGameFilter(); }
   try {
     const res = await api('/api/games');
@@ -334,7 +337,11 @@ function renderGames(games) {
   const ul = $('game-list');
   ul.innerHTML = '';
   if (!games.length) { ul.innerHTML = '<li class="empty">No games found</li>'; return; }
-  games.forEach(function (g) {
+  // Hard cap the DOM so a large list (or a poisoned cache) can never freeze the
+  // phone — the search box narrows it down past the cap.
+  var CAP = 250;
+  var shown = games.length > CAP ? games.slice(0, CAP) : games;
+  shown.forEach(function (g) {
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.className = 'game-item';
@@ -347,6 +354,11 @@ function renderGames(games) {
     li.appendChild(btn);
     ul.appendChild(li);
   });
+  if (games.length > CAP) {
+    var more = document.createElement('li'); more.className = 'empty';
+    more.textContent = 'Showing ' + CAP + ' of ' + games.length + ' — type to search.';
+    ul.appendChild(more);
+  }
 }
 
 async function selectGame(gid) {

@@ -46,8 +46,10 @@ CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ossaa_cac
 POLITE_DELAY = 1.0  # seconds between live fetches
 
 # OSSAA class token -> app teams.class enum (schema CHECK: B2,B1,A,2A,3A,4A,5A,6A,N/A)
+# OSSAA basketball DOES split Class B into B1/B2 (e.g. "ARNETT (B2)"), so map them
+# straight through. A bare "B" (rare) can't be split -> N/A.
 CLASS_MAP = {"6A": "6A", "5A": "5A", "4A": "4A", "3A": "3A", "2A": "2A", "A": "A",
-             "B": "N/A"}  # site shows only "B"; app splits B1/B2 -> can't tell, default N/A
+             "B1": "B1", "B2": "B2", "B": "N/A"}
 GENDER_MAP = {"Boys": "M", "Girls": "F"}
 
 # Out-of-state opponent detection. OSSAA lists Oklahoma teams, so anything with
@@ -128,9 +130,12 @@ def _txt(fragment: str) -> str:
 def _clean_opp_name(raw: str) -> tuple[str, str]:
     """'DOVE SCIENCE - OKC (3A)' / 'HAMMON (B-# 6)' -> (name, app_class)."""
     raw = raw.strip()
-    # opponent class lives in a trailing (CLASS) or (CLASS-# rank)
+    # opponent class lives in a trailing (CLASS) or (CLASS-# rank). Token is
+    # uppercase+digits in either order (6A, 2A, A, B1, B2) -- crucially letter+
+    # digit too. Stays uppercase-only so a real distinguishing paren like
+    # "Sequoyah (Tahlequah)" (mixed case) is NOT mistaken for a class.
     klass = "N/A"
-    m = re.search(r'\(([0-9]?[A-Z]+)(?:-#\s*\d+)?\)\s*$', raw)
+    m = re.search(r'\(([0-9A-Z]+)(?:-#\s*\d+)?\)\s*$', raw)
     if m:
         klass = CLASS_MAP.get(m.group(1), "N/A")
         raw = raw[:m.start()].strip()

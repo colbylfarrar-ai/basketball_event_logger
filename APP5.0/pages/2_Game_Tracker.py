@@ -34,7 +34,7 @@ except Exception:
     _HAVE_IMG_COORDS = False
 
 ZONES = ["LC", "LW", "C", "RW", "RC"]
-COURT_W = 340   # tap-court image px (pre-transpose width → displayed height)
+COURT_W = 265   # tap-court image px (rim at top, half-court at bottom — matches PWA)
 REFRESH_SECS = 3
 
 _cfg, ACCENT = page_chrome("Game Tracker")
@@ -814,13 +814,15 @@ else:
                         base = _court_base(W)
                         shown = (CG.court_image_with_marker(cur[0], cur[1], base=base, width=W)
                                  if cur else base)
-                        disp = shown.transpose(Image.TRANSPOSE)   # sideways: hoop right, halfcourt-POV left = top
+                        # rim at TOP, half-court at bottom — same view as the PWA
+                        # tracker court (court_geom draws rim-bottom; flip vertically).
+                        disp = shown.transpose(Image.FLIP_TOP_BOTTOM)
                         st.caption("Tap where the shot was taken")
                         val = streamlit_image_coordinates(disp, width=disp.width,
                                                           key=f"court_tap_{game_id}_{_tapgen}")
                         if val is not None:
-                            # invert the transpose: display (x,y) → original (y,x) → feet
-                            ox, oy = val["y"], val["x"]
+                            # undo the vertical flip: display y → original (H − y)
+                            ox, oy = val["x"], H - val["y"]
                             fx, fy = CG.feet_from_px(ox, oy, W, H)
                             if cur is None or abs(cur[0] - fx) > 1e-6 or abs(cur[1] - fy) > 1e-6:
                                 st.session_state[cap_key] = (fx, fy)

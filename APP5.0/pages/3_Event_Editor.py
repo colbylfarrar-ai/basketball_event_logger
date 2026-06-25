@@ -385,7 +385,7 @@ else:
 
     fc_l, fc_r = st.columns([1, 2])
     with fc_l:
-        W = 340
+        W = 265
         H = CG.image_height(W)
         base = _ee_court_base(W)
         mark = _pending or ((fx["shot_x"], fx["shot_y"])
@@ -402,14 +402,16 @@ else:
             shown = CG.court_image_with_marker(0.0, 19.0, base=base, width=W,
                                                color="#5b636e")
             _hint = True
-        disp = shown.transpose(Image.TRANSPOSE)
+        # rim at TOP, half-court at bottom — same view as the PWA tracker court
+        # (court_geom draws rim-bottom; flip vertically to match).
+        disp = shown.transpose(Image.FLIP_TOP_BOTTOM)
         st.caption("Tap where the shot was actually taken"
                    + (" — the grey dot is a placeholder, not the shot"
                       if _hint else ""))
         val = streamlit_image_coordinates(disp, width=disp.width,
                                           key=f"ee_court_{fx['id']}_{_fx_gen}")
         if val is not None:
-            ox, oy = val["y"], val["x"]      # invert the transpose
+            ox, oy = val["x"], H - val["y"]   # undo the vertical flip
             fxy = CG.feet_from_px(ox, oy, W, H)
             if (_pending is None or abs(_pending[0] - fxy[0]) > 1e-6
                     or abs(_pending[1] - fxy[1]) > 1e-6):

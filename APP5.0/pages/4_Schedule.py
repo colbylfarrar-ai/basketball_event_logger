@@ -379,6 +379,11 @@ def _day_section():
     # the loser stays muted.
     c_away = team_color(gotd["t2"], gotd["team2_id"])
     c_home = team_color(gotd["t1"], gotd["team1_id"])
+    # scored class-rank chip (ungated), same as the result cards below
+    _gsr = _ratings(gotd["gender"])
+    def _gchip(tid):
+        r = _gsr.get(tid)
+        return rank_chip(r["class"], r["ClassRank"]) if r else ""
     st.markdown(f"""
     <div class="game-hero">
         <div style="font-size:12px;color:#8b949e;margin-bottom:8px">
@@ -387,14 +392,14 @@ def _day_section():
         <table style="width:100%;border:none"><tr>
           <td style="width:42%;text-align:center">
             <div style="font-size:16px;font-weight:700;color:#c9d1d9">
-              {'▸ ' if not h_win else ''}{gotd['t2']}</div>
+              {'▸ ' if not h_win else ''}{gotd['t2']}{_gchip(gotd['team2_id'])}</div>
             <div style="font-size:46px;font-weight:900;line-height:1;
                  color:{c_away if not h_win else '#8b949e'}">{as_}</div>
           </td>
           <td style="width:16%;text-align:center;color:#8b949e;font-size:18px">@</td>
           <td style="width:42%;text-align:center">
             <div style="font-size:16px;font-weight:700;color:#c9d1d9">
-              {'▸ ' if h_win else ''}{gotd['t1']}</div>
+              {'▸ ' if h_win else ''}{gotd['t1']}{_gchip(gotd['team1_id'])}</div>
             <div style="font-size:46px;font-weight:900;line-height:1;
                  color:{c_home if h_win else '#8b949e'}">{hs}</div>
           </td>

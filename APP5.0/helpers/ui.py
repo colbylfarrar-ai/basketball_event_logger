@@ -229,21 +229,35 @@ def score_card(rows, *, footer="", footer_top=False, style_names=False):
 
     `rows` = [(name, points, won_bool), …] rendered top-to-bottom; the winner row
     gets `.score-winner`, the loser `.score-loser` — on the points cell, and on
-    the team name too when `style_names=True`. `footer` is the small meta line
-    (date / margin, may hold a badge span); `footer_top` renders it above the rows.
+    the team name too when `style_names=True`. An optional 4th element per row is
+    raw badge HTML (e.g. a rank chip from `rank_chip`) shown after the team name.
+    `footer` is the small meta line (date / margin, may hold a badge span);
+    `footer_top` renders it above the rows.
     Caller wraps the result with st.markdown(..., unsafe_allow_html=True).
     """
     body = ""
-    for name, pts, won in rows:
+    for row in rows:
+        name, pts, won = row[0], row[1], row[2]
+        badge = row[3] if len(row) > 3 else ""
         cls = "score-winner" if won else "score-loser"
         ncls = f" {cls}" if style_names else ""
         body += (
             "<div style='display:flex;justify-content:space-between;align-items:center'>"
-            f"<span class='score-card-team{ncls}'>{html.escape(str(name))}</span>"
+            f"<span class='score-card-team{ncls}'>{html.escape(str(name))}{badge}</span>"
             f"<span class='score-card-pts {cls}'>{pts}</span></div>")
     foot = f"<div class='score-card-date'>{footer}</div>" if footer else ""
     inner = (foot + body) if footer_top else (body + foot)
     return f"<div class='score-card'>{inner}</div>"
+
+
+def rank_chip(cls, rank, *, prefix=""):
+    """Small muted '<class> #<rank>' chip for score cards / headers. Returns ""
+    when `rank` is falsy (team not yet ranked) so callers append unconditionally.
+    `prefix` labels the system when needed (e.g. 'TRK ')."""
+    if not rank:
+        return ""
+    label = f"{html.escape(str(cls))} #{rank}" if cls else f"#{rank}"
+    return f"<span class='rank-chip'>{html.escape(prefix)}{label}</span>"
 
 
 def style_fig(fig, height=340, **kw):

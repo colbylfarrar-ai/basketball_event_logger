@@ -466,10 +466,20 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _assign_ranks(ratings):
-    """Add 1-based 'Rank' to each team by descending Rating (in place)."""
+    """Add a 1-based overall 'Rank' (by descending Rating within gender) plus
+    'ClassRank'/'ClassOf' (the same order partitioned by each team's class) to
+    every team, in place. Both ranking systems (score_ratings + tracked_ratings)
+    route through here, so a class rank is available anywhere a rank is."""
     order = sorted(ratings, key=lambda t: ratings[t]["Rating"], reverse=True)
     for i, t in enumerate(order, 1):
         ratings[t]["Rank"] = i
+    by_class: dict = {}
+    for t in order:                       # order already Rating-descending
+        by_class.setdefault(ratings[t].get("class", "N/A"), []).append(t)
+    for ts in by_class.values():
+        for i, t in enumerate(ts, 1):
+            ratings[t]["ClassRank"] = i
+            ratings[t]["ClassOf"] = len(ts)
 
 
 def team_rank(team_id, scored=None, tracked=None, gender=None):
@@ -505,6 +515,8 @@ def team_rank(team_id, scored=None, tracked=None, gender=None):
         if not r:
             return None
         return {"rank": r["Rank"], "of": len(ratings),
+                "class": r.get("class"),
+                "class_rank": r.get("ClassRank"), "class_of": r.get("ClassOf"),
                 "power": r["Power"], rating_name: r[rating_key]}
 
     return {

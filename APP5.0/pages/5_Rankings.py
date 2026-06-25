@@ -36,7 +36,7 @@ from database.db import query
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
-                        AWAY, gender_radio, score_card, grid as _grid,
+                        AWAY, gender_radio, score_card, rank_chip, grid as _grid,
                         page_header, lab_hero as _lab_hero, empty_state,
                         HEAT, DIVERGE)
 from helpers.cards import team_short
@@ -392,6 +392,7 @@ with tab_over:
     # ── Recent results ───────────────────────────────────────────────────────
     recent = query(
         """SELECT g.date, g.home_score, g.away_score, g.tracked,
+                  t1.id AS t1_id, t2.id AS t2_id,
                   t1.name AS t1, t2.name AS t2
            FROM games g
            JOIN teams t1 ON t1.id = g.team1_id
@@ -403,14 +404,16 @@ with tab_over:
     if recent:
         st.markdown("<div class='section-hdr'>Recent results</div>",
                     unsafe_allow_html=True)
+        # Scored class-rank chip per team (results-only ranking → ungated).
+        def _rchip(tid):
+            r = scored.get(tid)
+            return rank_chip(r["class"], r["ClassRank"]) if r else ""
         rc = st.columns(4)
         for i, g in enumerate(recent):
             t1w = g["home_score"] > g["away_score"]
-            s1 = "score-winner" if t1w else "score-loser"
-            s2 = "score-winner" if not t1w else "score-loser"
             rc[i % 4].markdown(score_card(
-                [(g['t1'], g['home_score'], t1w),
-                 (g['t2'], g['away_score'], not t1w)],
+                [(g['t1'], g['home_score'], t1w, _rchip(g['t1_id'])),
+                 (g['t2'], g['away_score'], not t1w, _rchip(g['t2_id']))],
                 footer=f"{g['date']}{' · ●' if g['tracked'] else ''}",
                 footer_top=True), unsafe_allow_html=True)
 

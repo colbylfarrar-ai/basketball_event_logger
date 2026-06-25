@@ -23,7 +23,7 @@ import streamlit as st
 from database.db import query
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
-                        score_card, team_color, empty_state)
+                        score_card, team_color, empty_state, rank_chip)
 import helpers.team_ratings as TR
 import helpers.predictor as PRED
 import helpers.stats as S
@@ -513,8 +513,16 @@ def _day_section():
         tracked_badge = ("<span class='tracked-badge'>tracked</span>"
                          if g["tracked"] else "")
 
+        # Scored class-rank chip per team (results-only ranking → ungated). The
+        # tracked/possession ranking stays behind its entitlement gate elsewhere.
+        _sr = _ratings(g["gender"])
+        def _chip(tid):
+            r = _sr.get(tid)
+            return rank_chip(r["class"], r["ClassRank"]) if r else ""
+
         st.markdown(score_card(
-            [(g['t2'], as_s, t2_win), (g['t1'], hs_s, t1_win)],
+            [(g['t2'], as_s, t2_win, _chip(g['team2_id'])),
+             (g['t1'], hs_s, t1_win, _chip(g['team1_id']))],
             footer=f"{meta}{tracked_badge}", style_names=True),
             unsafe_allow_html=True)
 

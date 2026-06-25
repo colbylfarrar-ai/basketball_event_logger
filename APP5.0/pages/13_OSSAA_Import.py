@@ -174,12 +174,13 @@ elif plan:
 # ── Refresh by date (scores + newly-scheduled games) ──────────────────────────
 st.divider()
 st.subheader("🔄 Refresh by date")
-st.caption("Pull a date range from the **by-date** schedule to fill in scores for "
-           "games now played and add new games. Existing games are never "
-           "duplicated and your **tracked** games are never touched.")
-st.info("Efficient: one page per date covers every game that day across the state "
-        "(~5–15s for a day). Date-driven, so it **survives the yearly rollover** "
-        "with no maintenance. Shows the live/upcoming season only.")
+st.caption("Pick a date (or range) and press the button — every game that day "
+           "uploads. A game already in the system just gets its **score updated**; "
+           "nothing is duplicated and your **tracked** games are never touched.")
+st.info("One page per date covers every game that day across the state (~5–15s). "
+        "Date-driven, so it **survives the yearly rollover** with no maintenance — "
+        "just keep picking dates. (The by-date source only has the current/upcoming "
+        "season, so older dates return nothing.)")
 
 rc = st.columns([1, 1, 1])
 _today = datetime.date.today()

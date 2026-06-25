@@ -32,18 +32,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.ossaa_import import Plan, app_team_name, GENDER_MAP, season_window  # noqa: E402
+from tools.ossaa_import import Plan, app_team_name, GENDER_MAP  # noqa: E402
 import helpers.ossaa_sync as SYNC  # noqa: E402
-from database import db  # noqa: E402
-
-
-def _active_window():
-    """(start,end) date window of the app's active season, + its label. The
-    by-date page always shows the live/upcoming season, so this clamp keeps a
-    refresh from stamping next-season games onto the current one."""
-    row = db.query("SELECT value FROM app_settings WHERE key='active_season'")
-    label = row[0]["value"] if row else ""
-    return season_window(label), label
 
 PAGE = "https://www.ossaarankings.com/Default.aspx?sel=schedules&spGK=Basketball{g}"
 _RE_GRID = re.compile(r'<table[^>]*GridView[^>]*>(.*?)</table>', re.S)
@@ -130,21 +120,13 @@ def build_plan(browser, lo: datetime.date, hi: datetime.date, genders, window):
 
 
 def run(lo: datetime.date, hi: datetime.date, genders, log=print):
-    """Scrape [lo,hi] for the given genders and ingest. Clamped to the active
-    season so it can't stamp next-season games onto the current one."""
-    win, label = _active_window()
-    if win:
-        slo, shi = datetime.date.fromisoformat(win[0]), datetime.date.fromisoformat(win[1])
-        lo, hi = max(lo, slo), min(hi, shi)
-        if lo > hi:
-            log(f"requested range is outside the active season ({label}); nothing to do")
-            return {"teams_created": 0, "teams_matched": 0, "games_inserted": 0,
-                    "games_skipped": 0, "games_updated": 0}
+    """Scrape the selected [lo,hi] for the given genders and ingest — whatever
+    games are on the by-date page for those dates go in, scores update in place."""
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
-            plan = build_plan(browser, lo, hi, genders, win)
+            plan = build_plan(browser, lo, hi, genders, (lo.isoformat(), hi.isoformat()))
         finally:
             browser.close()
     log(f"scraped {len(plan.games)} games, {len(plan.teams)} teams")

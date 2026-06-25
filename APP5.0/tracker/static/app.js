@@ -76,7 +76,17 @@ function api(path, opts) {
   let token = null;
   try { token = localStorage.getItem(LS.token); } catch (e) {}
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  return fetch(path, Object.assign({}, opts, { headers: headers }));
+  return fetch(path, Object.assign({}, opts, { headers: headers }))
+    .then(function (res) { _lastReached = Date.now(); return res; });
+}
+
+// navigator.onLine is unreliable on iOS standalone PWAs — it can report offline
+// while the network works fine, which greys the status dot and makes every
+// online-gated action refuse with "Needs connection". Trust onLine when true;
+// otherwise treat a real server reply within the last 60s as online.
+let _lastReached = 0;
+function isOnline() {
+  return navigator.onLine || (Date.now() - _lastReached) < 60000;
 }
 
 /* ---------- IndexedDB queue ---------- */
@@ -465,7 +475,7 @@ function toggleNewGame() {
 }
 
 async function loadTeams() {
-  if (!navigator.onLine) { NG.loaded = false; NG.status = 'Needs connection'; renderNewGame(); return; }
+  if (!isOnline()) { NG.loaded = false; NG.status = 'Needs connection'; renderNewGame(); return; }
   try {
     const res = await api('/api/teams');
     if (res.ok) {
@@ -590,7 +600,7 @@ function newTeamForm(side) {
   const btn = flowBtn('Create team', 'btn primary', async function () {
     const nm = name.value.trim();
     if (!nm) { stat.textContent = 'Name required'; return; }
-    if (!navigator.onLine) { stat.textContent = 'Needs connection'; return; }
+    if (!isOnline()) { stat.textContent = 'Needs connection'; return; }
     try {
       const res = await api('/api/teams', {
         method: 'POST',
@@ -622,7 +632,7 @@ async function createGame() {
   if (NG.sel.home == null || NG.sel.away == null) { st.textContent = 'Pick both teams'; return; }
   if (NG.sel.home === NG.sel.away) { st.textContent = 'Home and away must differ'; return; }
   if (!NG.date) { st.textContent = 'Pick a date'; return; }
-  if (!navigator.onLine) { st.textContent = 'Needs connection'; return; }
+  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
   try {
     const res = await api('/api/games', {
       method: 'POST',
@@ -746,7 +756,7 @@ function handRow(p, side) {
 
 async function setHandedness(p, value, side) {
   if (((p.handedness === 'left') ? 'left' : 'right') === value) return;  // no-op
-  if (!navigator.onLine) { toast('Needs connection to change hand'); return; }
+  if (!isOnline()) { toast('Needs connection to change hand'); return; }
   try {
     const res = await api('/api/games/' + S.gameId + '/players/' + p.id + '/handedness', {
       method: 'POST', body: JSON.stringify({ handedness: value })
@@ -772,7 +782,7 @@ async function quickAddPlayer(side) {
   const handIn = $('add-' + side + '-hand');
   const hand = (handIn && handIn.value === 'left') ? 'left' : 'right';
   if (!name) { st.textContent = 'Name required'; return; }
-  if (!navigator.onLine) { st.textContent = 'Needs connection'; return; }
+  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
   try {
     const res = await api('/api/games/' + S.gameId + '/players', {
       method: 'POST',
@@ -807,7 +817,7 @@ async function quickAddOfficial() {
   const oid = parseInt(idIn.value, 10);
   if (!name) { st.textContent = 'Name required'; return; }
   if (isNaN(oid)) { st.textContent = 'Official ID required'; return; }
-  if (!navigator.onLine) { st.textContent = 'Needs connection'; return; }
+  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
   try {
     const res = await api('/api/officials', {
       method: 'POST',
@@ -943,7 +953,7 @@ function updateSyncUI() {
 }
 
 function updateNetUI() {
-  const cls = 'dot ' + (navigator.onLine ? 'on' : 'off');
+  const cls = 'dot ' + (isOnline() ? 'on' : 'off');
   ['net-dot', 'net-dot2'].forEach(function (id) { const d = $(id); if (d) d.className = cls; });
 }
 
@@ -1701,7 +1711,7 @@ function setDrift(on) {
 // explicit re-freeze of the stored score from the event log (online-only)
 async function rescoreGame() {
   if (!S.gameId) return;
-  if (!navigator.onLine) { toast('Needs connection'); return; }
+  if (!isOnline()) { toast('Needs connection'); return; }
   try {
     const res = await api('/api/games/' + S.gameId + '/rescore', { method: 'POST' });
     if (!res.ok) { toast('Recompute failed (HTTP ' + res.status + ')'); return; }

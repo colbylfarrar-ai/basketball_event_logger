@@ -61,6 +61,48 @@ def crawl_all_gender(seed, gender, *, force=True, log=print):
     return out
 
 
+def teams_playing(lo, hi, genders=None):
+    """OSSAA ids of teams that already have a game in [lo, hi] this season — the
+    only teams worth re-fetching to refresh that range's scores. `genders` is an
+    optional list of 'M'/'F'."""
+    from database import db
+    q = ("SELECT DISTINCT t.ossaa_id oid FROM teams t "
+         "JOIN games g ON (t.id = g.team1_id OR t.id = g.team2_id) "
+         "WHERE g.date BETWEEN ? AND ? AND g.season='Current' "
+         "AND t.ossaa_id IS NOT NULL")
+    p = [lo, hi]
+    if genders:
+        q += " AND t.gender IN (%s)" % ",".join("?" * len(genders))
+        p += list(genders)
+    return [r["oid"] for r in db.query(q, tuple(p))]
+
+
+def fast_refresh(lo, hi, genders=None, *, log=print):
+    """Refresh a date range by re-fetching ONLY the teams already scheduled to
+    play in it (~20-40 pages for a single day, vs ~960 for a full crawl). Fills in
+    scores for games now played and any schedule tweaks for those teams; never
+    touches tracked games; no duplicates. Returns (ingest_result, n_fetched).
+    """
+    ids = teams_playing(lo, hi, genders)
+    log(f"{len(ids)} teams play {lo}..{hi} — fetching those pages")
+    plan = OI.Plan(window=(lo, hi))
+    for i, tid in enumerate(ids, 1):
+        try:
+            plan.add_game(OI.parse_schedule(tid, OI.fetch(tid, force=True)))
+        except Exception:
+            continue
+        if i % 20 == 0:
+            log(f"  fetched {i}/{len(ids)}")
+    rec = SYNC.reconcile(plan)
+    overrides = {}
+    for amb in rec["ambiguous"]:
+        want = SYNC._norm_tokens(amb["name"])
+        eq = [c for c in amb["candidates"] if SYNC._norm_tokens(c["name"]) == want]
+        if len(eq) == 1:
+            overrides[amb["name"]] = eq[0]["id"]
+    return SYNC.ingest(plan, overrides=overrides, update_scores=True), len(ids)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Daily OSSAA season refresh (date-range, score-update)")
     ap.add_argument("--from", dest="frm", help="start date YYYY-MM-DD")
@@ -69,6 +111,9 @@ def main(argv=None):
     ap.add_argument("--seed-boys", type=int, default=SEEDS["Boys"])
     ap.add_argument("--seed-girls", type=int, default=SEEDS["Girls"])
     ap.add_argument("--gender", choices=["Boys", "Girls", "both"], default="both")
+    ap.add_argument("--full", action="store_true",
+                    help="full BFS crawl (~960 teams) instead of the fast "
+                         "DB-seeded fetch — use to discover brand-new teams/games")
     a = ap.parse_args(argv)
 
     today = datetime.date.today()
@@ -80,18 +125,24 @@ def main(argv=None):
         lo = hi = today.isoformat()
     print(f"refresh window {lo} .. {hi}")
 
-    plan = OI.Plan(window=(lo, hi))
-    genders = [("Boys", a.seed_boys), ("Girls", a.seed_girls)]
+    genders = None
     if a.gender != "both":
-        genders = [g for g in genders if g[0] == a.gender]
-    for gender, seed in genders:
+        genders = ["M"] if a.gender == "Boys" else ["F"]
+
+    if not a.full:
+        res, n = fast_refresh(lo, hi, genders)
+        print(f"fast refresh fetched {n} teams. RESULT:", res)
+        return
+
+    plan = OI.Plan(window=(lo, hi))
+    seeds = [("Boys", a.seed_boys), ("Girls", a.seed_girls)]
+    if a.gender != "both":
+        seeds = [g for g in seeds if g[0] == a.gender]
+    for gender, seed in seeds:
         scheds = crawl_all_gender(seed, gender)
         print(f"  {gender}: {len(scheds)} teams crawled")
         for s in scheds:
             plan.add_game(s)
-    print(f"plan in window: {len(plan.teams)} teams, {len(plan.games)} games")
-
-    # conservative auto-merge (same identity words) so variant teams don't dup
     rec = SYNC.reconcile(plan)
     overrides = {}
     for amb in rec["ambiguous"]:
@@ -99,9 +150,8 @@ def main(argv=None):
         eq = [c for c in amb["candidates"] if SYNC._norm_tokens(c["name"]) == want]
         if len(eq) == 1:
             overrides[amb["name"]] = eq[0]["id"]
-
     res = SYNC.ingest(plan, overrides=overrides, update_scores=True)
-    print("RESULT:", res)
+    print("full RESULT:", res)
 
 
 if __name__ == "__main__":

@@ -11,9 +11,8 @@ from helpers.ui import page_chrome, lab_hero as _lab_hero
 from database import db
 import helpers.auth as AUTH
 import helpers.ossaa_sync as SYNC
-from tools.ossaa_import import (build_plan_single, build_plan_crawl,
-                                season_window, Plan)
-from tools.ossaa_refresh import crawl_all_gender, SEEDS
+from tools.ossaa_import import build_plan_single, build_plan_crawl, season_window
+from tools.ossaa_refresh import fast_refresh
 
 _cfg, ACCENT = page_chrome("OSSAA Import")
 _lab_hero("OSSAA Import", phase="BUILD",
@@ -172,11 +171,13 @@ elif plan:
 # ── Refresh by date (scores + newly-scheduled games) ──────────────────────────
 st.divider()
 st.subheader("🔄 Refresh by date")
-st.caption("Re-pull a date range to fill in scores for games now played and add "
-           "newly-scheduled games. Existing games are never duplicated and your "
-           "**tracked** games are never touched. Built for daily in-season updates.")
-st.info("This re-crawls the season (~5–8 min for both genders, ~half that for one) "
-        "— keep this tab open while it runs. Off-season there'll be no games.")
+st.caption("Re-pull a date range to fill in scores for games now played. "
+           "Existing games are never duplicated and your **tracked** games are "
+           "never touched. Built for daily in-season updates.")
+st.info("Fast: it re-fetches **only the teams already scheduled to play** in the "
+        "range (~20–40 pages for a single day, ~30s) — not the whole league. "
+        "Off-season there'll be no games. To pick up brand-new teams/games not yet "
+        "in the database, run a full Crawl above instead.")
 
 rc = st.columns([1, 1, 1])
 _today = datetime.date.today()
@@ -184,38 +185,21 @@ d_from = rc[0].date_input("From", value=_today, key="rf_from")
 d_to = rc[1].date_input("To", value=_today, key="rf_to")
 rf_gender = rc[2].radio("Gender", ["Both", "Boys", "Girls"], horizontal=True, key="rf_g")
 
-if st.button("🔄 Refresh games in range", key="rf_go"):
+if st.button("🔄 Refresh games in range", key="rf_go", type="primary"):
     lo, hi = d_from.isoformat(), d_to.isoformat()
     if lo > hi:
         st.error("‘From’ is after ‘To’.")
     else:
-        targets = [("Boys", SEEDS["Boys"]), ("Girls", SEEDS["Girls"])]
-        if rf_gender != "Both":
-            targets = [t for t in targets if t[0] == rf_gender]
-        rplan = Plan(window=(lo, hi))
+        gmap = {"Both": None, "Boys": ["M"], "Girls": ["F"]}
         try:
             with st.status(f"Refreshing {lo} … {hi}", expanded=True) as stat:
-                for gname, seed in targets:
-                    stat.update(label=f"Crawling {gname}…")
-                    scheds = crawl_all_gender(seed, gname, log=lambda m: stat.write(m))
-                    for s in scheds:
-                        rplan.add_game(s)
-                    stat.write(f"{gname}: {len(scheds)} teams · "
-                               f"{len(rplan.games)} games in range so far")
-                stat.update(label="Reconciling + writing to the database…")
-                rec = SYNC.reconcile(rplan)
-                ov = {}
-                for amb in rec["ambiguous"]:
-                    want = SYNC._norm_tokens(amb["name"])
-                    eq = [c for c in amb["candidates"]
-                          if SYNC._norm_tokens(c["name"]) == want]
-                    if len(eq) == 1:
-                        ov[amb["name"]] = eq[0]["id"]
-                res = SYNC.ingest(rplan, overrides=ov, update_scores=True)
+                res, n = fast_refresh(lo, hi, gmap[rf_gender],
+                                      log=lambda m: stat.write(m))
                 stat.update(label="Done", state="complete")
             st.success(
-                f"Refreshed {lo} … {hi}: **{res['games_inserted']}** new games, "
+                f"Refreshed {lo} … {hi} ({n} teams checked): "
                 f"**{res['games_updated']}** scores updated, "
-                f"{res['games_skipped']} unchanged ({res['teams_created']} new teams).")
+                f"**{res['games_inserted']}** new games, "
+                f"{res['games_skipped']} unchanged.")
         except Exception as exc:
             st.error(f"Refresh failed: {exc}")

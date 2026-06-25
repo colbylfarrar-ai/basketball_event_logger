@@ -212,6 +212,15 @@ class Plan:
     teams: dict = field(default_factory=dict)   # app_name -> (class, gender, ossaa_id|None, state)
     games: list = field(default_factory=list)   # (date, home_name, away_name, hs, as, tracked)
     seen_game_keys: set = field(default_factory=set)
+    # (start_iso, end_iso) inclusive. OSSAA team-ids are SEASON-SPECIFIC and a
+    # team page shows that id's own season, so a stale/cross-season id silently
+    # yields the wrong year. This window is the hard guard: games outside it are
+    # dropped, and a team with NO in-window game is never created. Without it the
+    # importer has no concept of season (this caused a multi-season blend once).
+    window: tuple = None
+
+    def _in_window(self, date: str) -> bool:
+        return (self.window is None) or (self.window[0] <= date <= self.window[1])
 
     def add_team(self, name, klass, gender, ossaa_id=None, state="OK"):
         if name not in self.teams:
@@ -220,8 +229,11 @@ class Plan:
     def add_game(self, sched: TeamSchedule):
         gender = sched.gender
         me = app_team_name(sched.school, gender)
+        kept = [g for g in sched.games if self._in_window(g.date)]
+        if not kept:
+            return  # this team has no games in the target season -> skip entirely
         self.add_team(me, sched.klass, gender, sched.tid, "OK")
-        for g in sched.games:
+        for g in kept:
             # OSSAA-listed opponents are Oklahoma; only sniff a state off the
             # name for non-OSSAA opponents (and strip it from the name).
             if g.opp_id:
@@ -277,18 +289,28 @@ def crawl(seed, want_class, want_gender, max_fetch, *, progress=None, force=Fals
 # --------------------------------------------------------------------------- #
 # reusable plan builders (imported by the Streamlit page; no printing)
 # --------------------------------------------------------------------------- #
-def build_plan_single(tid: int, *, force: bool = False):
-    """One team -> (Plan, [TeamSchedule])."""
+def season_window(label: str) -> tuple:
+    """'2025-2026' -> ('2025-08-01', '2026-07-31') — the whole athletic year, so
+    it captures every basketball game (late Oct .. early Apr) while excluding the
+    adjacent seasons. Returns None if the label can't be parsed (no filtering)."""
+    m = re.match(r"\s*(\d{4})\s*-\s*(\d{4})\s*$", label or "")
+    if not m:
+        return None
+    return (f"{m.group(1)}-08-01", f"{m.group(2)}-07-31")
+
+
+def build_plan_single(tid: int, *, window=None, force: bool = False):
+    """One team -> (Plan, [TeamSchedule]). `window` = (start_iso, end_iso) season guard."""
     sched = parse_schedule(tid, fetch(tid, force=force))
-    plan = Plan()
+    plan = Plan(window=window)
     plan.add_game(sched)
     return plan, [sched]
 
 
-def build_plan_crawl(seed, klass, gender, max_fetch, *, progress=None, force=False):
-    """Crawl a class -> (Plan, [TeamSchedule])."""
+def build_plan_crawl(seed, klass, gender, max_fetch, *, window=None, progress=None, force=False):
+    """Crawl a class -> (Plan, [TeamSchedule]). `window` = season date guard."""
     scheds = crawl(seed, klass, gender, max_fetch, progress=progress, force=force)
-    plan = Plan()
+    plan = Plan(window=window)
     for s in scheds:
         plan.add_game(s)
     return plan, scheds
@@ -336,9 +358,14 @@ def main(argv=None):
     ap.add_argument("--max", type=int, default=10, help="max team fetches for --crawl")
     ap.add_argument("--out", help="write the game plan to this CSV")
     ap.add_argument("--force", action="store_true", help="ignore on-disk cache")
+    ap.add_argument("--season", help="season label e.g. 2025-2026; drops games "
+                    "outside that athletic year (OSSAA ids are season-specific)")
     args = ap.parse_args(argv)
 
-    plan = Plan()
+    win = season_window(args.season) if args.season else None
+    if args.season and not win:
+        ap.error("--season must look like 2025-2026")
+    plan = Plan(window=win)
     if args.team:
         sched = parse_schedule(args.team, fetch(args.team, force=args.force))
         print(f"Team: {sched.school}  class={sched.klass}  gender={sched.gender}  "

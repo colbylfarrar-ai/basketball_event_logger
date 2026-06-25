@@ -6,9 +6,10 @@ import pandas as pd
 import streamlit as st
 
 from helpers.ui import page_chrome, lab_hero as _lab_hero
+from database import db
 import helpers.auth as AUTH
 import helpers.ossaa_sync as SYNC
-from tools.ossaa_import import build_plan_single, build_plan_crawl
+from tools.ossaa_import import build_plan_single, build_plan_crawl, season_window
 
 _cfg, ACCENT = page_chrome("OSSAA Import")
 _lab_hero("OSSAA Import", phase="BUILD",
@@ -28,9 +29,22 @@ CLASS_OPTIONS = ["6A", "5A", "4A", "3A", "2A", "A"]
 GENDER_OPTIONS = ["Boys", "Girls"]
 GMAP = {"M": "Boys", "F": "Girls"}
 
+_active = (db.query("SELECT value FROM app_settings WHERE key='active_season'")
+           or [{"value": ""}])[0]["value"]
+WINDOW = season_window(_active)  # (start, end) or None
+
 st.caption("Source: ossaarankings.com (unofficial; fetches are rate-limited). "
            "Team names get a **Boys**/**Girls** suffix, which also keeps boys & "
            "girls of the same school as separate teams.")
+if WINDOW:
+    st.warning(
+        f"⚠️ OSSAA team-ids are **season-specific** — a team page shows that id's "
+        f"own season, so a stale id silently imports the wrong year. Seed with an "
+        f"id **from the {_active} season**. Hard guard: only games dated "
+        f"{WINDOW[0]}…{WINDOW[1]} are imported; anything outside is dropped.")
+else:
+    st.warning("⚠️ OSSAA team-ids are season-specific — seed with a "
+               "current-season id.")
 
 mode = st.radio("Mode", ["Single team", "Crawl a class"], horizontal=True)
 c = st.columns(4)
@@ -60,10 +74,11 @@ if st.button("🔍 Preview plan", type="primary"):
     try:
         with st.spinner("Scraping ossaarankings.com…"):
             if mode == "Single team":
-                plan, _ = build_plan_single(int(seed))
+                plan, _ = build_plan_single(int(seed), window=WINDOW)
             else:
                 plan, _ = build_plan_crawl(int(seed), klass, gender,
-                                           int(max_fetch), progress=_progress)
+                                           int(max_fetch), window=WINDOW,
+                                           progress=_progress)
         status.empty()
         st.session_state["ossaa_plan"] = plan
     except Exception as exc:  # network / parse failure — keep the page usable
@@ -71,7 +86,11 @@ if st.button("🔍 Preview plan", type="primary"):
 
 # ── preview + import ──────────────────────────────────────────────────────────
 plan = st.session_state.get("ossaa_plan")
-if plan:
+if plan is not None and not plan.teams:
+    st.info(f"No games dated in {_active or 'the active season'} from this seed — "
+            "the team id is almost certainly from a different season. Find a "
+            "current-season id on ossaarankings and try again.")
+elif plan:
     SYNC.ensure_schema()
 
     # Classify every team vs the current DB (no writes).

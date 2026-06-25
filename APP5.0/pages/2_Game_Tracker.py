@@ -239,9 +239,22 @@ is_tracked  = bool(game_info["tracked"])
 # shot chart, win-probability, possession line, foul/bonus) are a Paid feature.
 # Tracking ANY team is allowed (track-to-scout) — the only gate is Paid; no own-team
 # or co-op restriction, so a paid coach can scout any opponent by tracking them.
-if not ENT.has_paid_plan(AUTH.current_user()):
+# EXCEPTION: a Free coach gets ONE game free (their own team's earliest) so they can
+# log it on the court tap below and watch the command center light up — the demo hook.
+_ident = AUTH.current_user()
+if not ENT.can_see_tracked_game_view(_ident, game_id):
     st.info(ENT.MSG_PAID)
+    _demo = ENT.free_demo_game_id(_ident)
+    if _demo is not None and _demo != game_id and _demo in _g_by_id:
+        st.success(ENT.MSG_FREE_DEMO)
+        st.caption(f"Your free game: **{_g_label(_demo)}** — pick it in the "
+                   "Game selector above.")
     st.stop()
+elif not ENT.has_paid_plan(_ident):
+    # On the free-demo game: make it obvious this is the one free game.
+    st.success("🎁 This is your **free** game — log it below and watch the live "
+               "box score, shot chart and win-probability fill in. Upgrade to "
+               "track every game.")
 
 # ── End / reopen, both behind a confirm dialog ──────────────────────────────────
 @st.dialog("End game?")

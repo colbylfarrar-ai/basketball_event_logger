@@ -264,7 +264,7 @@ def team_defense_shot_profiles(team_id, gender=None, game_ids=None, events=None,
 # defensive scheme. Only shots carrying BOTH tags land in a cell. Sparse by
 # nature (it needs dense double-tagging), so every consumer must gate on poss.
 def cross_play_defense(team_id, gender=None, game_ids=None, events=None,
-                       offense=True, min_poss=4):
+                       offense=True, min_poss=10):
     """play_type × defense cross-tab for a team's own shots (offense) or the shots
     it allowed (defense).
 

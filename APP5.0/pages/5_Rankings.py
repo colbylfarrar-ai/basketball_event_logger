@@ -784,6 +784,9 @@ def _fx_team():
 
     # ── Tracked deep dive (possession-based, tracked games only) ─────────────
     _lab_hdr("Tracked deep dive")
+    st.caption("“Tracked” = games logged play-by-play (the phone tracker or Game "
+               "Tracker). These possession stats need that depth — box-score-only "
+               "games don't feed them.")
     # Single-team tracked depth (AXIS 1 + AXIS 2): own team (Paid) always; another
     # team only when you're League-wide AND it has shared (pooled) tracked games —
     # a Solo coach gets the co-op invite, a non-shared team a neutral note. This is

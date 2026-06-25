@@ -47,6 +47,9 @@ import helpers.game_dedup as GD
 # ── lock / invite copy (one source so it stays consistent across surfaces) ──────
 MSG_PAID = ("🔒 Tracked analytics — shot charts, lineups, four factors and "
             "scouting — are a **Paid** feature. Upgrade to unlock.")
+MSG_FREE_DEMO = ("🎁 Your **first game is free** to try — open it to see the live "
+                 "box score, shot chart and win-probability light up. Upgrade to "
+                 "unlock tracked depth on every game.")
 MSG_COOP_INVITE = ("🔒 You're in **Solo** mode. Join the **Coaches' Co-op** in "
                    "Settings to scout every league-wide team — your tracked games "
                    "join the shared pool and you scout the whole pool in return. "
@@ -240,6 +243,38 @@ def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None):
     if team_has_pooled_tracked(team_id):
         return True, None
     return False, MSG_NOT_SHARED        # their privacy choice — neutral
+
+
+def free_demo_game_id(ident: dict | None) -> int | None:
+    """The ONE game a FREE coach may open in full tracked depth — a
+    try-before-you-buy demo. Deterministic + stable: their own team's earliest
+    game (lowest id). Paid/admin are unrestricted, so the concept doesn't apply
+    (returns None). A coach with no team, or no games yet, gets None.
+
+    Stable on purpose — keys on the immutable game id, not event counts or
+    tracked_by, so the free slot never silently moves to a different game (and
+    re-locks one the coach already saw) and it works no matter which writer
+    logged the game (PWA or the Streamlit manual form)."""
+    if ident is None or has_paid_plan(ident):
+        return None
+    own = _own_teams(ident)
+    if not own:
+        return None
+    ph = ",".join("?" * len(own))
+    rows = query(
+        f"SELECT id FROM games WHERE team1_id IN ({ph}) OR team2_id IN ({ph}) "
+        f"ORDER BY id LIMIT 1", tuple(own) + tuple(own))
+    return rows[0]["id"] if rows else None
+
+
+def can_see_tracked_game_view(ident: dict | None, game_id) -> bool:
+    """Game Tracker page (live command center + manual logging + shot chart):
+    Paid/admin see any game; a FREE coach sees ONLY their single free-demo game.
+    This is the one place a Free plan is granted tracked depth — the demo hook;
+    every other tracked surface stays gated on has_paid_plan/co-op."""
+    if has_paid_plan(ident):
+        return True
+    return game_id is not None and game_id == free_demo_game_id(ident)
 
 
 def recompute_game_pool(game_id=None) -> None:

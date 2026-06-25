@@ -60,6 +60,39 @@ CATEGORIES = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 DEFAULT_MIN_GAMES = 1   # players below this are dropped from the pool (and z-math)
 
 
+def overall_blurb(off, deff, ply, reb):
+    """One-line plain-English read of an OVERALL rating from its four 0-100
+    pillars (50 = league average) — so a coach can defend the number to a player
+    or parent ("Elite rebounding, dragged by turnovers"). Returns '' when too few
+    pillars are present to say anything. Pure + gender-neutral."""
+    pillars = [("scoring", off), ("defense", deff),
+               ("playmaking", ply), ("rebounding", reb)]
+    pillars = [(lbl, v) for lbl, v in pillars if v is not None]
+    if len(pillars) < 2:
+        return ""
+    hi_lbl, hi = max(pillars, key=lambda t: t[1])
+    lo_lbl, lo = min(pillars, key=lambda t: t[1])
+
+    def _tier(v):
+        if v >= 65:
+            return "Elite"
+        if v >= 57:
+            return "Strong"
+        if v >= 52:
+            return "Solid"
+        return ""
+
+    strength = _tier(hi)
+    weak = lo <= 43 and lo_lbl != hi_lbl
+    if strength and weak:
+        return f"{strength} {hi_lbl}, dragged by {lo_lbl}"
+    if strength:
+        return f"{strength} {hi_lbl}, no real holes" if lo >= 48 else f"{strength} {hi_lbl}"
+    if weak:
+        return f"Below-average {lo_lbl}, no standout strength"
+    return "Balanced — no standout strength or hole"
+
+
 def sample_confidence(gp):
     """Coarse reliability flag for how much to trust a player's ratings.
 

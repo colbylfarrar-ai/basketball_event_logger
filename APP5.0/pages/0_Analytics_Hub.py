@@ -216,14 +216,37 @@ if D.get("errors"):
             st.write(f"- {_msg}")
 
 if not D["scored"]:
-    st.info("No finished games yet for this league. Log games in the Input Hub and "
-            "Game Tracker to light up the dashboard.")
+    st.info("No finished games yet for this league. Here's the fastest path to "
+            "light up the dashboard — three steps:")
+    _start = [
+        ("pages/1_Input_Hub.py", "1 · Add team & roster",
+         "Create your team and add players.", ":material/edit_note:"),
+        ("pages/4_Schedule.py", "2 · Add your schedule",
+         "Put your games on the calendar.", ":material/calendar_month:"),
+        ("pages/2_Game_Tracker.py", "3 · Track or enter a game",
+         "Tap the court to log shots — your first game is free.",
+         ":material/sports_basketball:"),
+    ]
+    _scol = st.columns(3)
+    for _c, (_p, _lbl, _sub, _ic) in zip(_scol, _start):
+        with _c:
+            with st.container(border=True):
+                try:
+                    st.page_link(_p, label=f"**{_lbl}**", icon=_ic)
+                except Exception:
+                    st.markdown(f"**{_lbl}**")
+                st.caption(_sub)
+    st.caption("📱 Coaching from the bench? Open the courtside phone logger from "
+               "**Settings → Phone tracker** — fast 3-tap shot charting.")
 else:
     # ── top KPI scorecard row (with deltas vs baselines) ───────────────────────
     k = st.columns(5)
     k[0].metric("Teams rated", D["teams"])
     k[1].metric("Tracked games", D["tracked"],
-                f"{D['games_played']} played total", delta_color="off")
+                f"{D['games_played']} played total", delta_color="off",
+                help="Games logged play-by-play (phone tracker / Game Tracker). "
+                     "Tracked depth unlocks shot charts, lineups & possession "
+                     "ratings; box-score-only games still count toward standings.")
     if D["top"]:
         k[2].metric("Top team", D["top"]["name"],
                     f"Power {D['top']['Power']:.0f}", delta_color="off")

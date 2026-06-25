@@ -3403,12 +3403,16 @@ if True:
             name_by = {p["_pid"]: f"#{p['number']} {p['name']}" for p in players}
 
             # ── RAPM ────────────────────────────────────────────────────────
-            st.markdown("<div class='lab-hdr'>RAPM — regularized adjusted +/−"
-                        "</div>", unsafe_allow_html=True)
-            st.caption("Points added per 100 possessions vs a league-average "
+            st.markdown("<div class='lab-hdr'>RAPM — regularized adjusted +/− "
+                        "<span style='color:#8b949e;font-size:12px'>· experimental"
+                        "</span></div>", unsafe_allow_html=True)
+            st.caption("⚗️ Experimental — a college/pro tool on a high-school-size "
+                       "book. Points added per 100 possessions vs a league-average "
                        "player, holding teammates AND opponents constant (one ridge "
                        "regression over every tracked possession in the league). "
-                       "Directional on a small book.")
+                       "Treat as directional only: even a full HS season rarely has "
+                       "the possessions to separate most players (the wide error "
+                       "bands below are the honest signal).")
             _bp = st.toggle(
                 "Box-prior (anchor to box impact)", key="il_rapm_boxprior",
                 help="Shrink each player toward their box-score impact instead of "

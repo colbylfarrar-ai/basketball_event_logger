@@ -248,7 +248,9 @@ def cluster_players(table, k=None, features=None, seed=7):
     """
     pids, X, means, sds, feats = build_matrix(table, features)
     n = len(pids)
-    if n == 0:
+    if n < 5:
+        # k-means on a handful of players is noise dressed as taxonomy — suppress
+        # rather than emit degenerate "archetypes". Callers render "—" gracefully.
         return {"players": {}, "clusters": [], "k": 0, "features": feats}
     if k is None:
         k = _choose_k(X, seed=seed)

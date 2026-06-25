@@ -343,45 +343,51 @@ def render(ctx):
     cx = ctx.cross_pd(g, tid, _off) or {}
     plays, defs = cx.get("plays", []), cx.get("defenses", [])
     if plays and defs:
-        st.markdown("<div class='pl-hdr'>Play type × defense — how each set fares "
-                    "vs each scheme</div>", unsafe_allow_html=True)
         matrix = cx["matrix"]
         pl_lbl, df_lbl = cx["play_label"], cx["def_label"]
-        # z = PPP per (play row × defense col); text = "PPP\n(poss)"; thin cells
-        # (poss < min) are greyed via a NaN-ish marker in the annotation, not hidden.
-        z, txt = [], []
+        # z = PPP per (play row × defense col); text = "PPP\n(poss)". Thin cells
+        # (poss < min, ~10) are HIDDEN, not greyed — single-digit-possession PPP is
+        # noise dressed as a Synergy grid, and showing it costs more trust than it
+        # adds. A cell renders only when its sample is stable.
+        z, txt, _shown = [], [], 0
         for pk in plays:
             zr, tr = [], []
             for dk in defs:
                 c = matrix.get(pk, {}).get(dk)
-                if c:
+                if c and c["stable"]:
                     zr.append(round(c["PPP"], 2))
-                    star = "" if c["stable"] else "·"
-                    tr.append(f"{c['PPP']:.2f}{star}<br>{c['poss']}p")
+                    tr.append(f"{c['PPP']:.2f}<br>{c['poss']}p")
+                    _shown += 1
                 else:
                     zr.append(None)
                     tr.append("")
             z.append(zr)
-            tr_txt = tr
-            txt.append(tr_txt)
-        # good = green: on defense (offense=False) low PPP allowed is good -> reverse.
-        hm = go.Figure(go.Heatmap(
-            z=z, x=[df_lbl.get(d, d) for d in defs],
-            y=[pl_lbl.get(p, p) for p in plays],
-            text=txt, texttemplate="%{text}", textfont=dict(size=11),
-            colorscale="RdYlGn", reversescale=(not _off),
-            zmid=1.0, hoverongaps=False,
-            colorbar=dict(title="PPP"),
-            hovertemplate="%{y} vs %{x}: %{z} PPP<extra></extra>"))
-        style_fig(hm, max(300, 60 + 34 * len(plays)))
-        st.plotly_chart(hm, width="stretch", key="def_cross")
-        st.caption(
-            f"Each cell = PPP when a set call meets a scheme ({cx.get('tagged', 0)} "
-            "doubly-tagged shots). A trailing **·** marks a thin cell (< "
-            f"{4} poss) — read it as a hint, not a verdict. " +
-            ("Green = you defend that set well in that scheme; red = it burns you."
-             if not _off else
-             "Green = you attack that scheme well with that set; red = it stalls."))
+            txt.append(tr)
+        if _shown:
+            st.markdown("<div class='pl-hdr'>Play type × defense — how each set fares "
+                        "vs each scheme</div>", unsafe_allow_html=True)
+            # good = green: on defense (offense=False) low PPP allowed is good -> reverse.
+            hm = go.Figure(go.Heatmap(
+                z=z, x=[df_lbl.get(d, d) for d in defs],
+                y=[pl_lbl.get(p, p) for p in plays],
+                text=txt, texttemplate="%{text}", textfont=dict(size=11),
+                colorscale="RdYlGn", reversescale=(not _off),
+                zmid=1.0, hoverongaps=False,
+                colorbar=dict(title="PPP"),
+                hovertemplate="%{y} vs %{x}: %{z} PPP<extra></extra>"))
+            style_fig(hm, max(300, 60 + 34 * len(plays)))
+            st.plotly_chart(hm, width="stretch", key="def_cross")
+            st.caption(
+                f"Each cell = PPP when a set call meets a scheme, shown only where "
+                f"≥10 possessions back it (thinner cells are hidden — too noisy to "
+                f"trust). {cx.get('tagged', 0)} doubly-tagged shots so far. " +
+                ("Green = you defend that set well in that scheme; red = it burns you."
+                 if not _off else
+                 "Green = you attack that scheme well with that set; red = it stalls."))
+        else:
+            st.caption("Not enough doubly-tagged shots yet — a play type × defense "
+                       "cell needs ≥10 possessions to show. Keep tagging both on the "
+                       "same shots to unlock this grid.")
     elif drows:
         st.caption("Tag **both** a play type and a defense on the same shots to "
                    "unlock the play-type × defense cross-tab (the headline overlap).")

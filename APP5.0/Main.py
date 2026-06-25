@@ -63,10 +63,10 @@ _NAV = {
                 icon=":material/sports_basketball:"),
         st.Page("pages/3_Event_Editor.py", title="Event Editor",
                 icon=":material/edit:"),
+        st.Page("pages/11_Setup.py", title="Roster & District",
+                icon=":material/settings_suggest:"),
         st.Page("pages/4_Schedule.py", title="Schedule",
                 icon=":material/calendar_month:"),
-        st.Page("pages/11_Setup.py", title="Setup",
-                icon=":material/settings_suggest:"),
     ],
     "Plan & scout": [
         st.Page("pages/9_War_Room.py", title="War Room",

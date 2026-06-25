@@ -19,7 +19,7 @@ import helpers.manual_box as MB
 
 _cfg, ACCENT = page_chrome("Setup")
 
-page_header("Setup",
+page_header("Roster & District",
             sub="Set the extras the Game Tracker doesn't capture — player positions & "
                 "availability, team district, and game type. These power the depth "
                 "chart, standings and game tags. (The Input Hub & Game Tracker are "

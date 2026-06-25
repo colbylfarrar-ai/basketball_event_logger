@@ -195,6 +195,33 @@ if AUTH.auth_enabled() and _me.get("email"):
             st.rerun()
     st.divider()
 
+# ── 📱 Phone tracker — the courtside logger, one tap away ───────────────────────
+# Closes the "how do I even open it?" gap: any signed-in coach gets their own
+# auto-sign-in link here, not just the admin in the user-management block below.
+st.markdown("### 📱 Phone tracker")
+_trk_url = os.environ.get("APP5_TRACKER_URL", "").rstrip("/")
+_my_tok = (AUTH.get_tracker_token(_me["email"]) if _me.get("email")
+           else os.environ.get("TRACKER_TOKEN", ""))
+if not _trk_url:
+    st.caption("Mobile tracker URL not configured yet — the app owner sets "
+               "`APP5_TRACKER_URL` to the tracker's web address and your one-tap "
+               "phone link appears here.")
+elif _my_tok:
+    _deep = f"{_trk_url}/?t={_my_tok}"
+    st.caption("Open on your phone to log games courtside — 3-tap shots, works "
+               "offline. The link signs you in automatically, so keep it private.")
+    try:
+        st.link_button("📱 Open the phone tracker", _deep, width="stretch")
+    except Exception:
+        pass
+    st.code(_deep, language=None)
+    st.caption("On the phone: open it, then **Add to Home Screen** for an app icon. "
+               "(Install `segno` to show a scannable QR code here too.)")
+else:
+    st.caption("No tracker token yet — the courtside logger is a Paid feature. Ask "
+               "the admin to issue your token in **Account & users** below.")
+st.divider()
+
 if not AUTH.auth_enabled():
     st.info(
         "Sign-in is currently **off** — anyone who can reach this app can use "
@@ -375,6 +402,10 @@ else:
             _tok = AUTH.get_tracker_token(_email)
             if _tok:
                 st.code(_tok, language=None)
+                _trk0 = os.environ.get("APP5_TRACKER_URL", "").rstrip("/")
+                if _trk0:
+                    st.caption("One-tap phone link (auto signs in):")
+                    st.code(f"{_trk0}/?t={_tok}", language=None)
                 if st.button("Revoke token", key=f"tokrm_{_email}"):
                     AUTH.clear_tracker_token(_email)
                     st.rerun()

@@ -20,6 +20,7 @@ import helpers.stats as S
 import helpers.court_png as CP
 import helpers.playtypes as PT
 import helpers.defenses as DEF
+import helpers.player_ratings as PR
 
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
@@ -781,7 +782,13 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             br = [(lbl, p.get(k)) for k, lbl in
                   (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))]
             br = [f"{lbl} {v}" for lbl, v in br if v is not None]
-            brk = f"<div class='brk'>{e(' · '.join(br))}</div>" if br else ""
+            brk = (f"<div class='brk'>{e(' · '.join(br))} "
+                   f"<span style='color:#8b949e'>(0–100, 50 = lg avg)</span></div>"
+                   if br else "")
+            _why = PR.overall_blurb(p.get("off"), p.get("def"),
+                                    p.get("ply"), p.get("reb"))
+            if _why:
+                brk += f"<div class='brk' style='color:#b25e00'>{e(_why)}</div>"
             tp = f"{p['tp']:.0f}%" if p.get("tp") is not None else "—"
             ts = f"{p['ts']:.0f}%" if p.get("ts") is not None else "—"
             _usg = f" · USG {p['usg']:.0f}%" if p.get("usg") is not None else ""
@@ -865,6 +872,21 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             "<h2>Scoring by possession length</h2><table><tr><th>Length</th>"
             "<th class='n'>Pts/shot</th><th class='n'>FGA</th>"
             f"<th class='n'>FG%</th></tr>{rowsp}</table>")
+
+    # ── manual key-player intel (coach-entered; works for COLD opponents) ──
+    intel_html = ""
+    intel_rows = extra.get("manual_intel") or []
+    if _show("manual_intel") and intel_rows:
+        rws = "".join(
+            f"<tr><td class='n'>{e(str(r.get('num', '')))}</td>"
+            f"<td>{e(str(r.get('name', '')))}</td>"
+            f"<td>{e(str(r.get('note', '')))}</td></tr>"
+            for r in intel_rows if str(r.get('name', '')).strip())
+        if rws:
+            intel_html = (
+                "<h2>Key players (your scouting)</h2><table><tr>"
+                "<th class='n'>#</th><th>Player</th>"
+                f"<th>How to guard / threat</th></tr>{rws}</table>")
 
     # ── game-plan notes (coach prose) ──
     notes_html = ""
@@ -957,6 +979,7 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 {def_html}
 {three_html}
 {plen_html}
+{intel_html}
 {notes_html}{_flow_close}
 {shot_html}
 {pers_html}

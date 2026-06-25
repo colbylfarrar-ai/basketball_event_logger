@@ -187,8 +187,8 @@ _wr_ident = AUTH.current_user()
 _wr_league_wide = ENT.viewer_is_league_wide(_wr_ident)
 _WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
 
-tab_match, tab_season, tab_bracket, tab_lineup, tab_gloss = st.tabs(
-    ["Matchup", "Season sim", "Bracket", "Lineup", "Glossary"])
+tab_match, tab_season, tab_bracket, tab_lineup, tab_planner, tab_gloss = st.tabs(
+    ["Matchup", "Season sim", "Bracket", "Lineup", "Matchup planner", "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -767,7 +767,122 @@ with tab_lineup:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 5 — GLOSSARY
+#  TAB 5 — MATCHUP PLANNER  (who guards whom — opponent prep)
+# ══════════════════════════════════════════════════════════════════════════════
+# Deliberately NOT co-op-gated: it plans for YOUR team. Opponent OFFENSE ratings
+# show only where you may already see that team's tracked depth; otherwise the
+# planner runs off your own hand-entered Scout intel (Track A) — scouting an
+# opponent you've never tracked, without surrendering film to the pool.
+@st.fragment
+def _render_planner():
+    import helpers.scoutboard as SB
+    st.subheader("Matchup planner — who guards whom")
+    st.caption("Assign each of your defenders to an opponent scorer and see the "
+               "edge: your defender's DEFENSE vs their OFFENSE (0-100, 50 = league "
+               "avg). Uses your tracked ratings, or hand-entered intel for a team "
+               "you haven't tracked (add it on the Team Dashboard → Scout tab). "
+               "Saved per opponent.")
+
+    tbl = _wl_table(gender)
+    _id = AUTH.current_user()
+    _my_ids = [t for t in (_id.get("team_ids")
+                           or ([_id.get("team_id")] if _id.get("team_id") else []))
+               if t in name_of]
+    _my_default = _my_ids[0] if _my_ids else (order[0] if order else None)
+    if _my_default is None:
+        st.info("No rated teams yet."); return
+
+    pc = st.columns(2)
+    my_team = pc[0].selectbox(
+        "Your team", order, index=order.index(_my_default),
+        format_func=lambda t: name_of.get(t, str(t)), key="mp_my")
+    opp_opts = [t for t in order if t != my_team]
+    if not opp_opts:
+        st.info("Need at least two rated teams to plan a matchup."); return
+    opp = pc[1].selectbox("Opponent", opp_opts,
+                          format_func=lambda t: name_of.get(t, str(t)), key="mp_opp")
+
+    my_players = sorted(
+        [dict(r, _pid=pid) for pid, r in tbl.items() if r["team_id"] == my_team],
+        key=lambda r: -(r.get("DEFENSE") or 0))
+    if not my_players:
+        st.info("Your team has no rated players yet — track a game or enter a box "
+                "score first."); return
+    my_label = {p["_pid"]: f"#{p.get('number', '')} {p['name']}".strip()
+                for p in my_players}
+    my_def = {p["_pid"]: p.get("DEFENSE") for p in my_players}
+
+    can_rate = ENT.can_see_team_tracked(_id, opp)
+    their = []
+    if can_rate:
+        their = sorted(
+            [dict(r, _pid=pid) for pid, r in tbl.items()
+             if r["team_id"] == opp
+             and (r.get("OFFENSE") is not None or r.get("PPG") is not None)],
+            key=lambda r: -(r.get("OFFENSE") or r.get("PPG") or 0))[:6]
+    intel = SB.get_intel(opp)
+    if not their and not intel:
+        st.info("No rated players or hand-entered intel for this opponent yet. "
+                "Add their key players on the **Team Dashboard → Scout** tab "
+                "(Manual scouting), then plan here."); return
+
+    plan = SB.get_plan(opp)
+    new_plan = {}
+
+    def _assign_row(key, label, off_rating, threat):
+        cur = plan.get(key)
+        opts = [None] + [p["_pid"] for p in my_players]
+        idx = opts.index(cur) if cur in opts else 0
+        c = st.columns([3, 3, 2])
+        meta = (f" · OFF {off_rating:.0f}" if off_rating is not None else "")
+        thr = (f"<br><span style='color:#b25e00;font-size:12px'>{threat}</span>"
+               if threat else "")
+        c[0].markdown(f"**{label}**{meta}{thr}", unsafe_allow_html=True)
+        pick = c[1].selectbox(
+            "Defender", opts, index=idx,
+            format_func=lambda v: "—" if v is None else my_label.get(v, str(v)),
+            key=f"mp_{opp}_{key}", label_visibility="collapsed")
+        if pick is not None:
+            new_plan[key] = pick
+            d = my_def.get(pick)
+            if d is not None and off_rating is not None:
+                edge = d - off_rating
+                tag = ("✅ Edge" if edge >= 8 else "⚠ Tough" if edge <= -8 else "Even")
+                clr = (GOOD if edge >= 8 else BAD if edge <= -8 else "#8b949e")
+                c[2].markdown(f"<span style='color:{clr};font-weight:700'>{tag} "
+                              f"({edge:+.0f})</span>", unsafe_allow_html=True)
+            else:
+                c[2].markdown("<span style='color:#8b949e'>no edge rating</span>",
+                              unsafe_allow_html=True)
+        else:
+            c[2].markdown("<span style='color:#8b949e'>unassigned</span>",
+                          unsafe_allow_html=True)
+
+    st.markdown("**Their scorers → your defender**")
+    if their:
+        for p in their:
+            _assign_row(str(p["_pid"]),
+                        f"#{p.get('number', '')} {p['name']}".strip(),
+                        p.get("OFFENSE"), None)
+    else:
+        st.caption("No tracked ratings for this opponent — planning off your "
+                   "hand-entered Scout intel.")
+        for r in intel:
+            nm = (r.get("name") or "").strip()
+            _assign_row("name:" + nm,
+                        f"#{r.get('num', '')} {nm}".strip(), None, r.get("note"))
+
+    if st.button("Save matchup plan", key=f"mp_save_{opp}", type="primary"):
+        SB.save_plan(opp, new_plan)
+        st.success("Matchup plan saved.")
+
+
+with tab_planner:
+    _render_planner()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 6 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_gloss:
     glossary_tab("wr")

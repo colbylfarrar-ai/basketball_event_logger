@@ -57,6 +57,7 @@ SCOUT_SECTIONS = [
     ("shot_chart", "Shot chart", "Shooting"),
     ("zones", "Shooting by zone", "Shooting"),
     ("poss_length", "Scoring by possession length", "Shooting"),
+    ("manual_intel", "Manual scouting (key players)", "Extras"),
     ("notes", "Game-plan notes", "Extras"),
     ("play_diagrams", "Blank play diagrams (draw by hand)", "Extras"),
 ]
@@ -232,9 +233,32 @@ def render(ctx):
     if not ctx.has_tracked:
         _, _lock = ENT.tracked_gate(AUTH.current_user(), ctx.team_id,
                                     sc["has_tracked"])
-        st.warning(_lock or "No tracked-game data for this team — showing record "
-                   "& ratings only. Track a game to unlock four factors, "
-                   "tendencies & personnel.")
+        st.info(_lock or "No tracked-game data for this team — track a game to "
+                "unlock four factors, tendencies & personnel.")
+        # Cold opponent (the common case): instead of dead-ending at record + rank,
+        # let the coach hand-enter what they know and still print a real sheet —
+        # no tracking or co-op required.
+        if not _self:
+            st.markdown("<div class='lab-hdr'>Your scouting — no tracked data needed"
+                        "</div>", unsafe_allow_html=True)
+            st.caption("Hand-enter the key players and your game plan; it all prints "
+                       "on the scout sheet below.")
+            _intel = SB.render_intel(ctx.team_id)
+            st.markdown("<div class='lab-hdr'>Game-plan notes</div>",
+                        unsafe_allow_html=True)
+            SB.render_notes(ctx.team_id)
+            _extra_cold = {"manual_intel": _intel,
+                           "notes": SB.get_note(ctx.team_id)}
+            st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
+                        unsafe_allow_html=True)
+            html_doc = SC.printable_html(sc, opp_label, hidden=_hidden,
+                                         extra=_extra_cold, compact=_compact)
+            from helpers.ui import pdf_or_html_download
+            pdf_or_html_download("Scout sheet", html_doc,
+                                 f"scout_{sc['name'].replace(' ', '_')}",
+                                 key="scout_dl_cold")
+            with st.expander("Preview printable sheet"):
+                components.html(html_doc, height=620, scrolling=True)
         return
 
     # ── keys to the game ─────────────────────────────────────────────────────
@@ -487,8 +511,8 @@ def render(ctx):
                 f"{lbl} {p.get(k)}" for k, lbl in
                 (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))
                 if p.get(k) is not None)
-            bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd}</span>"
-                       if _bd else "")
+            bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd} "
+                       f"(0–100, 50 = league avg)</span>" if _bd else "")
             # measurables: height · weight · wingspan · hand
             pos_html = (f" <span style='color:#8b949e;font-size:12px'>"
                         f"{html.escape(p['pos'])}</span>" if p.get("pos") else "")
@@ -805,6 +829,14 @@ def render(ctx):
                        "half-court. If they spike in transition, get back on "
                        "defense; if half-court is weak, make them play in a crowd.")
 
+    # ── manual key-player intel (hand-entered; complements auto-personnel) ────
+    if not _self and _show("manual_intel"):
+        st.markdown("<div class='lab-hdr'>Manual scouting — key players</div>",
+                    unsafe_allow_html=True)
+        st.caption("Hand-entered intel (force-hand, who to deny, threats). Prints "
+                   "on the sheet — works even where the tracked data is thin.")
+        SB.render_intel(ctx.team_id)
+
     # ── game-plan notes (opponent scout) ─────────────────────────────────────
     if not _self and _show("notes"):
         st.markdown("<div class='lab-hdr'>Game-plan notes</div>",
@@ -833,6 +865,7 @@ def render(ctx):
         "poss_length": [r for r in (ctx.bundle.get("poss_length") or [])
                         if r["label"] != "Untimed" and r["FGA"]],
         "notes": ("" if _self else SB.get_note(ctx.team_id)),
+        "manual_intel": ([] if _self else SB.get_intel(ctx.team_id)),
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)

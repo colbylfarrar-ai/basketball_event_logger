@@ -1191,7 +1191,9 @@ def render_box_score(game_id: int):
                        "FIC = Floor Impact Counter · VPS = Hudl Value Point System "
                        "(value ÷ mistakes) · WPA = win-probability added (scoring) · "
                        "PossWPA = possession-model WPA · SMOE = FG% over expected. "
-                       "RAPM/shrunk metrics are season-scale — omitted here.")
+                       "RAPM/shrunk metrics are season-scale — omitted here. "
+                       "GS ranks THIS game only; for who's best on the season use "
+                       "OVERALL on the Players page (GS/g is just one input to it).")
 
         # ── rotation / stint timeline ───────────────────────────────────────
         st.markdown("**Rotation — who was on the floor, when**")

@@ -34,6 +34,8 @@ _lab_hero("Data Explorer", phase="ANALYZE",
           sub="Every stat, your way — filter the full table, build any scatter, "
               "map the league's playing styles, and correlate anything. Raw and "
               "dense by design; trust your own read on what matters.")
+st.caption("⚙️ Power-user tool — unfiltered access to every stat, nothing dumbed "
+           "down. New to the app? Start with **Rankings** or **Team Dashboard**.")
 
 # ── cached engine wrappers (compute once per gender/min-games, reuse on rerun) ──
 @st.cache_data(ttl=600, show_spinner=False)

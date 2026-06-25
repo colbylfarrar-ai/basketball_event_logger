@@ -160,8 +160,10 @@ STAT_DEFS = [
      "On defense, fewer points allowed ranks higher; on offense, more points scored "
      "ranks higher. Empty until coaches tag the defense in the tracker.", True),
     ("ORtg",  "Offensive Rating", "Possession & Pace", "≈ 100 · PTS / POSS",
-     "Points produced per 100 possessions (Dean Oliver). Individual ORtg uses "
-     "on-court lineup fractions since the DB has no minutes.",
+     "Points produced per 100 possessions. Possessions here = FGA + turnovers (no "
+     "0.44·FTA free-throw-trip term), so these read a touch higher than box scores "
+     "that use the full Dean Oliver formula — fine for in-app comparison. Individual "
+     "ORtg uses on-court lineup fractions since the DB has no minutes.",
      "Higher is better. Directional on this small sample.", False),
     ("DRtg",  "Defensive Rating", "Possession & Pace", "≈ 100 · opp PTS / POSS",
      "Points allowed per 100 possessions.",
@@ -221,14 +223,15 @@ STAT_DEFS = [
      "Compare to actual PPS to isolate finishing.", False),
 
     # ── 0–100 player ratings (pool-relative z-scores) ──────────────────────────
-    ("OVERALL","Overall Rating",  "Ratings", "blend of the four categories + PER + GS",
+    ("OVERALL","Overall Rating",  "Ratings", "four categories + Game Score + EFF/g + FIC/g",
      "Master 0–100 player rating. Pool-relative z-score: 50 = league average, "
      "+10 per standard deviation, clamped 0–100.",
      "70+ elite, 62+ great, 54+ above average, ~50 average. Team Power uses the "
      "same ladder (Rankings tiers).", False),
-    ("OFFENSE","Offense Rating",  "Ratings", "shooting (3PR·3P%·TS%) + finishing",
-     "0–100 offensive rating from shooting and finishing inputs (z-scaled, "
-     "50 = average).", "Higher is better.", False),
+    ("OFFENSE","Offense Rating",  "Ratings", "shooting + finishing + scoring volume (PPG + PRF/g)",
+     "0–100 offensive rating from shooting, finishing AND scoring volume (z-scaled, "
+     "50 = average) — volume is folded in so a low-usage efficient shooter doesn't "
+     "rate the same as a high-volume scorer.", "Higher is better.", False),
     ("DEFENSE","Defense Rating",  "Ratings", "stocks · STL · BLK · contest %",
      "0–100 defensive rating from disruption and contesting inputs.",
      "Higher is better; thinner signal than offense in this data.", False),
@@ -400,6 +403,16 @@ STAT_DEFS = [
      "observed 5-man lineup ratings, drawn as a network of duos.",
      "Positive = the duo outscores opponents together; compare to each player's "
      "solo on-court net to spot pairings that lift or drag.", True),
+
+    # ── platform concept (load-bearing everywhere) ───────────────────────────────
+    ("Tracked", "Tracked vs box score", "Box Score", "",
+     "Tracked = possession-level play-by-play (who shot, from where, who assisted "
+     "or defended), captured by the phone tracker or the Game Tracker. Box score = "
+     "final counting totals (PTS, REB, AST…) entered by hand. Tracked depth is a "
+     "Paid feature; box scores are always free.",
+     "Tracked unlocks shot charts, lineups, play types and on-ball defense; "
+     "box-only coaches still get the full box + standings. Cross-season player "
+     "development reads tracked games.", False),
 ]
 
 CATEGORIES = ["Box Score", "Shooting", "Playmaking", "Rebounding", "Defense",

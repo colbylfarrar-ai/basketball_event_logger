@@ -193,6 +193,12 @@ def render_card(ctx):
                                 width="stretch", key=f"pcard_gauge_{key}")
         st.caption("Each dial is a 0-100 rating; the needle mark + delta are vs the "
                    "pool average (50).")
+        _why = PR.overall_blurb(P.get("OFFENSE"), P.get("DEFENSE"),
+                                P.get("PLAYMAKING"), P.get("REBOUNDING"))
+        if _why:
+            st.markdown(f"<div style='color:{accent};font-weight:600;margin:2px 0 4px'>"
+                        f"Why this OVERALL: {html_escape(_why)}</div>",
+                        unsafe_allow_html=True)
 
     # ── signature / invented metrics (glass tiles) ────────────────────────────
     #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.

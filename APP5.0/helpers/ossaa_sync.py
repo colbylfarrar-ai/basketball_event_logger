@@ -149,11 +149,14 @@ def reconcile(plan) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-def ingest(plan, overrides=None) -> dict:
+def ingest(plan, overrides=None, update_scores=False) -> dict:
     """Write a Plan to the active DB. Returns counts. Safe to call repeatedly.
 
     Games are inserted with tracked=0 and season='Current'. Already-present games
-    are skipped, never overwritten.
+    are skipped, never overwritten — UNLESS `update_scores=True`, in which case an
+    existing UNTRACKED game whose score changed (e.g. a future game now played) is
+    updated in place. Tracked games are never touched. This is the daily-refresh
+    mode: re-pull the season and fill in / correct scores without duplicating.
 
     `overrides` = {plan_team_name: existing_team_id} from reconcile()'s ambiguous
     list — the coach's case-by-case "merge this OSSAA team onto that existing
@@ -181,11 +184,25 @@ def ingest(plan, overrides=None) -> dict:
         else:
             matched_t += 1
 
-    inserted, skipped = 0, 0
+    inserted, skipped, updated = 0, 0, 0
     for date, home, away, hs, as_, tracked in plan.games:
         h, a = team_id[home], team_id[away]
         iso = db.normalize_date(date)
-        if game_exists(h, a, iso):
+        ex = db.query(
+            "SELECT id, team1_id, home_score, away_score, tracked FROM games "
+            "WHERE date=? AND season='Current' AND "
+            "((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))",
+            (iso, h, a, a, h))
+        if ex:
+            g0 = ex[0]
+            if update_scores and not g0["tracked"] and hs is not None:
+                # map our home/away score into the stored row's orientation
+                new = (hs, as_) if g0["team1_id"] == h else (as_, hs)
+                if (g0["home_score"], g0["away_score"]) != new:
+                    db.execute("UPDATE games SET home_score=?, away_score=? WHERE id=?",
+                               (new[0], new[1], g0["id"]))
+                    updated += 1
+                    continue
             skipped += 1
             continue
         db.execute(
@@ -195,4 +212,5 @@ def ingest(plan, overrides=None) -> dict:
         inserted += 1
 
     return {"teams_created": created_t, "teams_matched": matched_t,
-            "games_inserted": inserted, "games_skipped": skipped}
+            "games_inserted": inserted, "games_skipped": skipped,
+            "games_updated": updated}

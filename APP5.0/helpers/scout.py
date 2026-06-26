@@ -25,6 +25,24 @@ import helpers.player_ratings as PR
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
 
+# Official HoopTracks mark (baked from assets/logo_mark.svg — kept self-contained
+# so the print sheet never depends on the asset file being on the server). The
+# gold "HoopTracks" text beside it always renders even where SVG is dropped
+# (the pure-pip xhtml2pdf engine), so the brand survives every print path.
+_BRAND_MARK = (
+    "<svg width='15' height='15' viewBox='0 0 64 64' style='vertical-align:-2px'>"
+    "<path d='M12 46 L23 35 L31 43 L41 38' fill='none' stroke='#f0a500' "
+    "stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/>"
+    "<circle cx='12' cy='46' r='2.9' fill='#0d1117' stroke='#f0a500' stroke-width='1.7'/>"
+    "<circle cx='23' cy='35' r='2.9' fill='#0d1117' stroke='#f0a500' stroke-width='1.7'/>"
+    "<circle cx='31' cy='43' r='2.9' fill='#0d1117' stroke='#f0a500' stroke-width='1.7'/>"
+    "<circle cx='46' cy='35' r='12' fill='#f0a500'/>"
+    "<path d='M46 23 L46 47 M34 35 L58 35' stroke='#0d1117' stroke-width='1.8' "
+    "stroke-linecap='round'/>"
+    "<path d='M40 24 C45 30 45 40 40 46' fill='none' stroke='#0d1117' stroke-width='1.5'/>"
+    "<path d='M52 24 C47 30 47 40 52 46' fill='none' stroke='#0d1117' stroke-width='1.5'/>"
+    "</svg>")
+
 # Coarse scout-section keys that were split into per-table keys (so a coach can
 # print just one table). A coach who previously hid the bundle keeps every child
 # hidden — expand the legacy parent key into its children when reading the toggle
@@ -1210,11 +1228,7 @@ table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
 @media print{{.wrap{{padding:6px 10px}} td.pcard,table.diag td{{page-break-inside:avoid}}}}
 </style></head><body><div class='wrap'>
 <table class='brandbar'><tr>
-<td class='brand'><svg width='15' height='15' viewBox='0 0 24 24'
- style='vertical-align:-2px'><circle cx='12' cy='12' r='10.5' fill='none'
- stroke='#f0a500' stroke-width='1.6'/><path d='M12 1.5V22.5 M1.5 12H22.5
- M3.8 5C8 8.5 16 8.5 20.2 5 M3.8 19C8 15.5 16 15.5 20.2 19' fill='none'
- stroke='#f0a500' stroke-width='1.1'/></svg> HoopTracks</td>
+<td class='brand'>{_BRAND_MARK} HoopTracks</td>
 <td class='brandtag'>scouting report</td></tr></table>
 <h1>SCOUT — {e(sc['name'])}</h1>
 <div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·

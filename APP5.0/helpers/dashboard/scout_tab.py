@@ -778,6 +778,12 @@ def render(ctx):
             cues_html = ("<br><span class='badge accent' style='font-size:11px'>✋ "
                          + " · ".join(html.escape(c) for c in _cues)
                          + "</span>" if _cues else "")
+            _spi = (p.get("spacing") or {}).get("index")
+            spc_html = (f"<br><span style='font-size:12px;color:#8b949e'>Floor "
+                        f"spacing <b style='color:"
+                        f"{ctx.ACCENT if _spi >= 50 else '#e74c3c'}'>{_spi}</b> "
+                        f"<span style='font-size:11px'>(0–100 vs league)</span>"
+                        f"</span>" if _spi is not None else "")
             st.markdown(
                 f"<div class='glass-tile' style='margin-bottom:8px'>"
                 f"<b>#{p['num']} {html.escape(p['name'])}</b>{pos_html} "
@@ -791,7 +797,7 @@ def render(ctx):
                 f"{extra_html}{play_html}<br>"
                 f"<span style='color:{ctx.ACCENT};font-size:13px'>▶ "
                 f"{html.escape(p['note'])}</span>"
-                + cues_html
+                + cues_html + spc_html
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"
                    f"{html.escape(bdg)}</span>" if bdg else "")
                 + "</div>", unsafe_allow_html=True)

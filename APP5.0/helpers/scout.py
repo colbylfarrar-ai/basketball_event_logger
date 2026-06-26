@@ -21,6 +21,7 @@ import helpers.court_png as CP
 import helpers.playtypes as PT
 import helpers.defenses as DEF
 import helpers.player_ratings as PR
+import helpers.spacing as SPACE
 
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
@@ -326,6 +327,12 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         shots_by_pid.setdefault(sh["player_id"], []).append(sh)
     for p in personnel:
         p["shots"] = shots_by_pid.get(p["pid"], [])
+    # ── per-player floor-spacing index (located x,y blend vs the league player
+    #    pool) — one map for the whole league, looked up per roster player. Empty
+    #    until located-shot coverage is real, so the sheet self-hides it. ────────
+    _pspace = SPACE.league_player_spacing(gender)
+    for p in personnel:
+        p["spacing"] = _pspace.get(p["pid"])
     # same located shots bucketed by the one-tap PLAY-TYPE and DEFENSE tags, for
     # filtered shot charts on the sheet (sparse until a coach tags — sections that
     # read these self-hide when empty).
@@ -994,6 +1001,9 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             if sp and sp.get("cue"):
                 space_html = ("<div class='brk'>Contest: " + e(
                     f"{sp['cliff']:+d} open vs guarded ({sp['n']})") + "</div>")
+            _spi = (p.get("spacing") or {}).get("index")
+            spc_html = (f"<div class='brk'>Floor spacing: {_spi}/100 vs league</div>"
+                        if _spi is not None else "")
             # tactical cue tag (force-hand / space dependence) — the actionable
             # directives, surfaced prominently to match the on-screen scout tab's
             # ✋ badge (previously only buried at the tail of the detail lines).
@@ -1020,7 +1030,8 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
             cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{play}"
-                         f"{hand_html}{space_html}{cue_html}{note}{inote}{mini}</td>")
+                         f"{hand_html}{space_html}{spc_html}{cue_html}{note}"
+                         f"{inote}{mini}</td>")
         # two cards per row
         rows = ""
         for i in range(0, len(cards), 2):

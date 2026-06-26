@@ -80,6 +80,34 @@ def test_spacing_index_min_pool_gate():
     assert out["index"] is None and "Too few tracked teams" in out["note"]
 
 
+def test_league_player_spacing_map_and_pool_gate():
+    # 8 players clear min_shots -> a map keyed by pid with index + components
+    players = {}
+    for pid in range(1, 9):
+        # more-corner-open shots for lower pids -> better spacing
+        c3 = 6 if pid <= 4 else 0
+        players[pid] = (
+            [_shot(21, 6, 3, False, pid) for _ in range(c3)]
+            + [_shot(3, 10, 2, True, pid) for _ in range(6 - c3 + 4)]
+        )
+    orig = SP._gender_located_by_player
+    SP._gender_located_by_player = lambda *a, **k: {p: list(s) for p, s in players.items()}
+    try:
+        m = SP.league_player_spacing("M", min_shots=4)
+        # min_pool gate: only 3 players -> empty map
+        SP._gender_located_by_player = lambda *a, **k: {1: players[1], 2: players[2], 3: players[3]}
+        thin = SP.league_player_spacing("M", min_shots=4)
+    finally:
+        SP._gender_located_by_player = orig
+    assert len(m) == 8
+    for pid in range(1, 9):
+        assert 0 <= m[pid]["index"] <= 100 and len(m[pid]["components"]) == 4
+    # better-spacing players (1-4) outrank worse (5-8) on average index
+    assert (sum(m[p]["index"] for p in (1, 2, 3, 4)) / 4
+            > sum(m[p]["index"] for p in (5, 6, 7, 8)) / 4)
+    assert thin == {}                                     # < PLAYER_MIN_POOL(8)
+
+
 def test_spacing_index_smoke_real_db():
     from database.db import query
     t = query("SELECT id, gender FROM teams LIMIT 1")

@@ -111,3 +111,49 @@ def spacing_index(team_id, gender=None, events=None, game_ids=None,
             "note": ("Floor-spacing index — the league-percentile blend of "
                      "3-point rate, open-look rate, corner-3 rate and floor "
                      "width (50 = league average, higher = better spacing).")}
+
+
+# ── per-PLAYER spacing (same components, ranked vs the player pool) ──────────────
+PLAYER_MIN_SHOTS = 20   # a player's located FGA before the read is stable
+PLAYER_MIN_POOL = 8     # qualified players needed for a meaningful percentile
+
+
+def _gender_located_by_player(gender, events=None, game_ids=None):
+    """Located shots in the gender's tracked games, grouped by the shooter
+    (``player_id``)."""
+    gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
+    if not gids:
+        return {}
+    shots = S.located_shots(game_ids=gids, events=events)
+    by_player = defaultdict(list)
+    for s in shots:
+        if s.get("player_id") is not None:
+            by_player[s["player_id"]].append(s)
+    return by_player
+
+
+def league_player_spacing(gender, events=None, game_ids=None,
+                          min_shots=PLAYER_MIN_SHOTS):
+    """{pid: {index, components, n}} for every player clearing ``min_shots``
+    located FGA, each of the four components percentile-ranked vs the qualified-
+    player pool then averaged into a 0-100 spacing index. Returns {} when the pool
+    is too thin (< PLAYER_MIN_POOL). One pass — built for the scout sheet's whole
+    roster (look each player up by pid)."""
+    by_player = _gender_located_by_player(gender, events=events, game_ids=game_ids)
+    pool = {pid: c for pid, s in by_player.items()
+            if (c := team_components(s)) and c["n"] >= min_shots}
+    if len(pool) < PLAYER_MIN_POOL:
+        return {}
+    poolvals = {key: [c[key] for c in pool.values()] for key, _, _ in COMPONENTS}
+    out = {}
+    for pid, c in pool.items():
+        comps = []
+        for key, label, hb in COMPONENTS:
+            pct = S.percentile(c[key], poolvals[key], higher_better=hb)
+            comps.append({"key": key, "label": label, "value": c[key],
+                          "pct": round(pct) if pct is not None else None})
+        valid = [x["pct"] for x in comps if x["pct"] is not None]
+        out[pid] = {
+            "index": round(sum(valid) / len(valid)) if valid else None,
+            "components": comps, "n": c["n"]}
+    return out

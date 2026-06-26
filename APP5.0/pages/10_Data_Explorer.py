@@ -46,20 +46,21 @@ def _table(g, mg, gids=None):
                                 gender=g, min_games=mg)
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _clusters(g, mg):
-    return AR.cluster_players(_table(g, mg))["players"]
+def _clusters(g, mg, vis=None):
+    return AR.cluster_players(_table(g, mg, vis))["players"]
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _stylemap(g, mg):
-    return AR.style_map(_table(g, mg))
+def _stylemap(g, mg, vis=None):
+    return AR.style_map(_table(g, mg, vis))
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _mapped(approx, team_id=None, player_id=None):
-    return S.mapped_shots(include_approx=approx, team_id=team_id, player_id=player_id)
+def _mapped(approx, team_id=None, player_id=None, vis=None):
+    return S.mapped_shots(include_approx=approx, team_id=team_id, player_id=player_id,
+                          game_ids=(set(vis) if vis else None))
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _shot_model(approx):
-    return S.distance_make_model(shots=_mapped(approx))
+def _shot_model(approx, vis=None):
+    return S.distance_make_model(shots=_mapped(approx, vis=vis))
 
 
 # ── scope ────────────────────────────────────────────────────────────────────
@@ -94,10 +95,19 @@ if not _paid:
                "**Coaches' Co-op** feature — your own team's tracked depth is on "
                "its Team Dashboard.")
 
+# Read-filter key for the cross-team DERIVED views below (archetype clusters, style
+# map, league shot maps). The main `table` is already read-filtered above, but those
+# views re-derive from the pool, so without this a league-wide viewer's NON-pooled
+# opponents would leak into them. None = admin/unrestricted; () = box-only viewer
+# (no tracked depth reaches these sections anyway).
+_vis_key = (None if (_paid and _vis is None)
+            else tuple(sorted(_vis)) if (_paid and _vis)
+            else ())
+
 # attach archetype label (Paid only — clustering uses event-derived features),
 # build the master frame
 if _paid:
-    _arche = _clusters(gender, min_g)
+    _arche = _clusters(gender, min_g, _vis_key)
     df = pd.DataFrame([{**r, "Archetype": _arche.get(pid, {}).get("archetype", "—")}
                        for pid, r in table.items()])
 else:
@@ -182,7 +192,7 @@ with t_map:
     st.info("🔒 The style map clusters players on tracked style features "
             "(usage, shot-creation, shot location) — a Paid feature.")
   else:
-    sm = _stylemap(gender, min_g)
+    sm = _stylemap(gender, min_g, _vis_key)
     pts = sm.get("points", {})
     if not pts:
         empty_state("Style map unavailable",
@@ -317,7 +327,7 @@ with t_shots:
     approx = cc[3].checkbox("Zone-approx", value=True, key="sm_approx",
                             help="Include legacy zone-only shots at their centroid.")
 
-    shots = _mapped(approx, **kw)
+    shots = _mapped(approx, vis=_vis_key, **kw)
     if not shots:
         empty_state("No shots in this view",
                     "Track a game with the court tap, or keep zone-approx on.",
@@ -326,7 +336,7 @@ with t_shots:
         n_real = sum(1 for s in shots if not s["approx"])
         st.caption(f"**{len(shots)}** shots · {n_real} located, "
                    f"{len(shots) - n_real} zone-approx.")
-        league = _mapped(approx)                              # pooled color/model
+        league = _mapped(approx, vis=_vis_key)                # pooled color/model
         lpps = (sum(s["value"] for s in league if s["make"]) / len(league)
                 if league else 1.0)
         if ctype.startswith("Hexbin"):
@@ -336,7 +346,7 @@ with t_shots:
             st.caption("Hexagon size = shots from that spot; colour = points per "
                        f"shot (green above league {lpps:.2f}, red below).")
         elif ctype.startswith("Points"):
-            model = _shot_model(approx)
+            model = _shot_model(approx, vis=_vis_key)
             fig, _n = court.shot_hexbin(shots, title="Points over expected",
                                         model=model, mode="poe")
             st.plotly_chart(fig, width="stretch", key="sm_poe")
@@ -345,7 +355,7 @@ with t_shots:
                        "from that spot (green = beating the shot's difficulty, "
                        "red = below). Shot *quality*, not just makes.")
         elif ctype.startswith("Expected"):
-            model = _shot_model(approx)
+            model = _shot_model(approx, vis=_vis_key)
             fig = court.expected_points_surface(model, shots=shots, overlay=True,
                                                 title="Expected points per shot")
             st.plotly_chart(fig, width="stretch", key="sm_xpts")

@@ -13,6 +13,7 @@ import helpers.change_requests as CR
 
 _cfg, ACCENT = page_chrome("Input Hub")
 _me = AUTH.current_user()
+_is_admin = (_me or {}).get("role") == "admin"
 
 
 def _gated_delete(table, target_id, label):
@@ -190,146 +191,151 @@ def flash(level, msg):
 #  NEW SEASON
 # ══════════════════════════════════════════════════════════════════════════════
 
-with st.expander("New Season", expanded=False):
-    _cur_label = SZ.active_label()
-    st.warning(
-        f"Current season: **{_cur_label}**. Rolling over archives all current "
-        "players, schedules **and games** under that label, then starts a fresh "
-        "season. Nothing is deleted — past seasons become an open archive (free, "
-        "full depth, visible to everyone), and current-season stats stop blending "
-        "with last year's."
-    )
-    new_name = st.text_input("New season name (e.g. 2026-2027)",
-                             placeholder="2026-2027", key="season_label_input")
-    _nm = new_name.strip()
+if _is_admin:
+    with st.expander("New Season", expanded=False):
+        _cur_label = SZ.active_label()
+        st.warning(
+            f"Current season: **{_cur_label}**. Rolling over archives all current "
+            "players, schedules **and games** under that label, then starts a fresh "
+            "season. Nothing is deleted — past seasons become an open archive (free, "
+            "full depth, visible to everyone), and current-season stats stop blending "
+            "with last year's."
+        )
+        new_name = st.text_input("New season name (e.g. 2026-2027)",
+                                 placeholder="2026-2027", key="season_label_input")
+        _nm = new_name.strip()
 
-    # ── carry-forward preview (Tier 3): grad_year auto-graduates seniors; everyone
-    #    else carries to the new season pre-linked by identity. Coach overrides the
-    #    edges (a returner who LEFT, a senior who's STAYING) before confirming. ──
-    _plan = SZ.rollover_plan(_cur_label)
-    _gy = _plan["grad_year"]
-    _tn = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
-    _ret_lbl = {r["id"]: f"#{r['number']} {r['name']} · {_tn.get(r['team_id'], '?')}"
-                for r in _plan["returning"]}
-    _grad_lbl = {r["id"]: f"#{r['number']} {r['name']} · {_tn.get(r['team_id'], '?')} "
-                 f"· '{str(r['grad_year'])[-2:]}" for r in _plan["graduating"]}
-    st.caption(
-        f"Graduating class **{_gy if _gy else '—'}** — will **carry {len(_ret_lbl)}** "
-        f"returning player(s) forward (identity-linked) and **graduate "
-        f"{len(_grad_lbl)}** senior(s). Set grad years on the Players tab to drive "
-        "this; NULL grad year = carries forward.")
-    _left = st.multiselect(
-        "Returning players who LEFT the program (don't carry)", list(_ret_lbl),
-        format_func=lambda i: _ret_lbl[i], key="roll_left")
-    _stay = st.multiselect(
-        "Seniors actually STAYING (keep them)", list(_grad_lbl),
-        format_func=lambda i: _grad_lbl[i], key="roll_stay")
-    _carry = (set(_ret_lbl) - set(_left)) | set(_stay)
+        # ── carry-forward preview (Tier 3): grad_year auto-graduates seniors; everyone
+        #    else carries to the new season pre-linked by identity. Coach overrides the
+        #    edges (a returner who LEFT, a senior who's STAYING) before confirming. ──
+        _plan = SZ.rollover_plan(_cur_label)
+        _gy = _plan["grad_year"]
+        _tn = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
+        _ret_lbl = {r["id"]: f"#{r['number']} {r['name']} · {_tn.get(r['team_id'], '?')}"
+                    for r in _plan["returning"]}
+        _grad_lbl = {r["id"]: f"#{r['number']} {r['name']} · {_tn.get(r['team_id'], '?')} "
+                     f"· '{str(r['grad_year'])[-2:]}" for r in _plan["graduating"]}
+        st.caption(
+            f"Graduating class **{_gy if _gy else '—'}** — will **carry {len(_ret_lbl)}** "
+            f"returning player(s) forward (identity-linked) and **graduate "
+            f"{len(_grad_lbl)}** senior(s). Set grad years on the Players tab to drive "
+            "this; NULL grad year = carries forward.")
+        _left = st.multiselect(
+            "Returning players who LEFT the program (don't carry)", list(_ret_lbl),
+            format_func=lambda i: _ret_lbl[i], key="roll_left")
+        _stay = st.multiselect(
+            "Seniors actually STAYING (keep them)", list(_grad_lbl),
+            format_func=lambda i: _grad_lbl[i], key="roll_stay")
+        _carry = (set(_ret_lbl) - set(_left)) | set(_stay)
 
-    confirm = st.checkbox("I understand — roll over to a new season", key="new_season_confirm")
-    can_go = confirm and bool(_nm) and _nm != _cur_label
-    if st.button("Start New Season", type="primary", disabled=not can_go, key="new_season_btn"):
-        # seasons.execute_rollover stamps+archives the outgoing season, then
-        # re-creates the carry set as fresh CURRENT rows linked to each person.
-        _n = SZ.execute_rollover(_nm, sorted(_carry), outgoing_label=_cur_label)
-        invalidate("_players_orig", "players_editor", "_sched_orig", "sched_editor")
-        flash("success", f"Archived '{_cur_label}'. Now playing **{_nm}** — carried "
-              f"{_n} returning player(s) forward (identity-linked); seniors graduated. "
-              "Add any transfers-in on the Players tab + link them under Returning "
-              "players.")
-        st.cache_data.clear()
-        st.rerun()
+        confirm = st.checkbox("I understand — roll over to a new season", key="new_season_confirm")
+        can_go = confirm and bool(_nm) and _nm != _cur_label
+        if st.button("Start New Season", type="primary", disabled=not can_go, key="new_season_btn"):
+            # seasons.execute_rollover stamps+archives the outgoing season, then
+            # re-creates the carry set as fresh CURRENT rows linked to each person.
+            _n = SZ.execute_rollover(_nm, sorted(_carry), outgoing_label=_cur_label)
+            invalidate("_players_orig", "players_editor", "_sched_orig", "sched_editor")
+            flash("success", f"Archived '{_cur_label}'. Now playing **{_nm}** — carried "
+                  f"{_n} returning player(s) forward (identity-linked); seniors graduated. "
+                  "Add any transfers-in on the Players tab + link them under Returning "
+                  "players.")
+            st.cache_data.clear()
+            st.rerun()
 
-# ── Returning players: link this season's roster to last season's identities ──
-# (Tier 3, ML_LAYER_ROADMAP) so year-over-year development tracks once two tracked
-# seasons exist. Dormant until the first New Season rollover creates archived rows.
-with st.expander("🔗 Returning players — link to last season", expanded=False):
-    import helpers.identity as IDN
-    st.caption("Match this season's players to the same person last season so "
-               "year-over-year development tracks once you've played two tracked "
-               "seasons. Suggestions match by name + number — confirm or override "
-               "each. Stays empty until your first New Season rollover.")
-    _id_teams = query("SELECT id, name FROM teams ORDER BY name")
-    if not _id_teams:
-        st.info("Add teams first.")
-    else:
-        _idt = st.selectbox("Team", _id_teams, format_func=lambda t: t["name"],
-                            key="idn_team_sel")
-        _sug = IDN.suggest_matches(_idt["id"])
-        if not _sug:
-            st.info("No current-season players on this team yet.")
-        elif not any(s["candidates"] or s["linked_to"] for s in _sug):
-            st.info("No prior-season players to link yet — roll over a season "
-                    "(New Season above), then returning players appear here.")
+    # ── Returning players: link this season's roster to last season's identities ──
+    # (Tier 3, ML_LAYER_ROADMAP) so year-over-year development tracks once two tracked
+    # seasons exist. Dormant until the first New Season rollover creates archived rows.
+    with st.expander("🔗 Returning players — link to last season", expanded=False):
+        import helpers.identity as IDN
+        st.caption("Match this season's players to the same person last season so "
+                   "year-over-year development tracks once you've played two tracked "
+                   "seasons. Suggestions match by name + number — confirm or override "
+                   "each. Stays empty until your first New Season rollover.")
+        _id_teams = query("SELECT id, name FROM teams ORDER BY name")
+        if not _id_teams:
+            st.info("Add teams first.")
         else:
-            _choice = {}
-            for s in _sug:
-                cand = list(s["candidates"])
-                _keys = {c["identity_key"] for c in cand}
-                if s["linked_to"] and s["linked_to"] not in _keys:
-                    cand.insert(0, {"identity_key": s["linked_to"], "name": s["name"],
-                                    "number": s["number"], "season": "linked",
-                                    "score": 1.0})
-                vals = ["__new__"] + [str(c["identity_key"]) for c in cand]
-                labmap = {"__new__": "➕ New player (no prior season)"}
-                for c in cand:
-                    labmap[str(c["identity_key"])] = (
-                        f"{c['name']} #{c['number']} · {c['season']} "
-                        f"(match {c['score'] * 100:.0f}%)")
-                if s["linked_to"]:
-                    _default = str(s["linked_to"])
-                elif cand and cand[0]["score"] >= 0.85:
-                    _default = str(cand[0]["identity_key"])
-                else:
-                    _default = "__new__"
-                _idx = vals.index(_default) if _default in vals else 0
-                _choice[s["pid"]] = st.selectbox(
-                    f"#{s['number']} {s['name']}", vals, index=_idx,
-                    format_func=lambda v, _m=labmap: _m[v],
-                    key=f"idn_{_idt['id']}_{s['pid']}")
-            if st.button("Save links", type="primary", key="idn_save"):
-                _linked = 0
-                for pid, v in _choice.items():
-                    if v == "__new__":
-                        IDN.unlink(pid)
-                    else:
-                        IDN.link(pid, int(v))
-                        _linked += 1
-                st.cache_data.clear()
-                flash("success", f"Linked {_linked} returning player(s) to last season.")
-                st.rerun()
-
-        # ── transferred in? league-wide lookup (a player from another team last
-        #    season). Coach-typed so it never false-links same names; once linked,
-        #    the player's development history follows them across schools. ──
-        st.markdown("---")
-        st.markdown("**Transferred in?** Link a player who was on another team last "
-                    "season — their history follows them.")
-        _xq = st.text_input("Search last season's players by name", key="idn_xfer_q",
-                            placeholder="player name")
-        if _xq.strip():
-            _hits = IDN.transfer_search(_xq, exclude_team_id=_idt["id"])
-            if not _hits:
-                st.caption("No archived players on other teams match that name.")
+            _idt = st.selectbox("Team", _id_teams, format_func=lambda t: t["name"],
+                                key="idn_team_sel")
+            _sug = IDN.suggest_matches(_idt["id"])
+            if not _sug:
+                st.info("No current-season players on this team yet.")
+            elif not any(s["candidates"] or s["linked_to"] for s in _sug):
+                st.info("No prior-season players to link yet — roll over a season "
+                        "(New Season above), then returning players appear here.")
             else:
-                _cur_opts = {s["pid"]: f"#{s['number']} {s['name']}" for s in _sug}
-                for h in _hits:
-                    xc = st.columns([3, 2, 1])
-                    xc[0].caption(f"{h['name']} #{h['number']} · {h['team']} · "
-                                  f"{h['season']} ({h['score'] * 100:.0f}%)")
-                    if _cur_opts:
-                        _tgt = xc[1].selectbox(
-                            "to", list(_cur_opts), format_func=lambda p: _cur_opts[p],
-                            key=f"xfer_tgt_{h['identity_key']}",
-                            label_visibility="collapsed")
-                        if xc[2].button("Link", key=f"xfer_link_{h['identity_key']}"):
-                            IDN.link(_tgt, h["identity_key"])
-                            st.cache_data.clear()
-                            flash("success", f"Linked transfer {h['name']}.")
-                            st.rerun()
+                _choice = {}
+                for s in _sug:
+                    cand = list(s["candidates"])
+                    _keys = {c["identity_key"] for c in cand}
+                    if s["linked_to"] and s["linked_to"] not in _keys:
+                        cand.insert(0, {"identity_key": s["linked_to"], "name": s["name"],
+                                        "number": s["number"], "season": "linked",
+                                        "score": 1.0})
+                    vals = ["__new__"] + [str(c["identity_key"]) for c in cand]
+                    labmap = {"__new__": "➕ New player (no prior season)"}
+                    for c in cand:
+                        labmap[str(c["identity_key"])] = (
+                            f"{c['name']} #{c['number']} · {c['season']} "
+                            f"(match {c['score'] * 100:.0f}%)")
+                    if s["linked_to"]:
+                        _default = str(s["linked_to"])
+                    elif cand and cand[0]["score"] >= 0.85:
+                        _default = str(cand[0]["identity_key"])
                     else:
-                        xc[1].caption("(add to this roster first)")
+                        _default = "__new__"
+                    _idx = vals.index(_default) if _default in vals else 0
+                    _choice[s["pid"]] = st.selectbox(
+                        f"#{s['number']} {s['name']}", vals, index=_idx,
+                        format_func=lambda v, _m=labmap: _m[v],
+                        key=f"idn_{_idt['id']}_{s['pid']}")
+                if st.button("Save links", type="primary", key="idn_save"):
+                    _linked = 0
+                    for pid, v in _choice.items():
+                        if v == "__new__":
+                            IDN.unlink(pid)
+                        else:
+                            IDN.link(pid, int(v))
+                            _linked += 1
+                    st.cache_data.clear()
+                    flash("success", f"Linked {_linked} returning player(s) to last season.")
+                    st.rerun()
 
+            # ── transferred in? league-wide lookup (a player from another team last
+            #    season). Coach-typed so it never false-links same names; once linked,
+            #    the player's development history follows them across schools. ──
+            st.markdown("---")
+            st.markdown("**Transferred in?** Link a player who was on another team last "
+                        "season — their history follows them.")
+            _xq = st.text_input("Search last season's players by name", key="idn_xfer_q",
+                                placeholder="player name")
+            if _xq.strip():
+                _hits = IDN.transfer_search(_xq, exclude_team_id=_idt["id"])
+                if not _hits:
+                    st.caption("No archived players on other teams match that name.")
+                else:
+                    _cur_opts = {s["pid"]: f"#{s['number']} {s['name']}" for s in _sug}
+                    for h in _hits:
+                        xc = st.columns([3, 2, 1])
+                        xc[0].caption(f"{h['name']} #{h['number']} · {h['team']} · "
+                                      f"{h['season']} ({h['score'] * 100:.0f}%)")
+                        if _cur_opts:
+                            _tgt = xc[1].selectbox(
+                                "to", list(_cur_opts), format_func=lambda p: _cur_opts[p],
+                                key=f"xfer_tgt_{h['identity_key']}",
+                                label_visibility="collapsed")
+                            if xc[2].button("Link", key=f"xfer_link_{h['identity_key']}"):
+                                IDN.link(_tgt, h["identity_key"])
+                                st.cache_data.clear()
+                                flash("success", f"Linked transfer {h['name']}.")
+                                st.rerun()
+                        else:
+                            xc[1].caption("(add to this roster first)")
+
+else:
+    st.info("🔒 **New Season rollover** and **returning-player linking** are "
+            "admin-only — they archive the whole league season and link cross-season "
+            "identities, so a single trusted hand runs them. Ask your admin.")
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════

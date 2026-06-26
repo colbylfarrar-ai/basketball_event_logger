@@ -138,21 +138,12 @@ def _vs_topn(results, topn_set):
     return w, l
 
 
-def _filter_rows(rows, key):
-    """Class multiselect + min-games slider. Returns the filtered rows."""
-    classes = sorted({r["class"] for r in rows},
-                     key=lambda c: TR._CLASS_RANK.get(c, 99))
-    max_gp = max((r["GP"] for r in rows), default=1)
-    c1, c2 = st.columns([2, 1])
-    picked = c1.multiselect("Class", classes, default=classes,
-                            key=f"{key}_cls")
-    if max_gp > 1:
-        min_gp = c2.slider("Min games played", 1, int(max_gp), 1,
-                           key=f"{key}_gp")
-    else:
-        min_gp = 1
+def _filter_rows(rows, key=None):
+    """Filter rows by the PAGE-LEVEL Class + min-games selection (set once at the
+    top of the page — see _PICKED_CLASSES / _MIN_GP). No longer renders its own
+    widgets; `key` is accepted for backward-compat and ignored."""
     return [r for r in rows
-            if r["class"] in picked and r["GP"] >= min_gp]
+            if r["class"] in _PICKED_CLASSES and r["GP"] >= _MIN_GP]
 
 
 # ── futuristic-lab UI helpers ─────────────────────────────────────────────────
@@ -357,6 +348,22 @@ TOP25 = {tid for tid, r in scored.items() if r["Rank"] <= 25}
 # Solo coach's tracked depth.
 pack = _tracked_pack(gender, tracked, _VISK)
 
+# Page-level Class + Min-games filter — set the scope ONCE here (instead of each
+# tab rendering its own copy) so a coach picks classes + a games threshold and
+# every ranking view (Overview leaders / signature metrics / standings / table,
+# and the Tracked table) follows the same scope. The league pulse + recent results
+# stay league-wide by design.
+_rk_classes = sorted({r["class"] for r in scored.values()},
+                     key=lambda c: TR._CLASS_RANK.get(c, 99))
+_rk_maxgp = max((r["GP"] for r in scored.values()), default=1)
+st.markdown("<div class='section-hdr'>Filters</div>", unsafe_allow_html=True)
+_rkf1, _rkf2 = st.columns([2, 1])
+_PICKED_CLASSES = _rkf1.multiselect("Class", _rk_classes, default=_rk_classes,
+                                    key="rk_class_page")
+_MIN_GP = (_rkf2.slider("Min games played", 1, int(_rk_maxgp), 1, key="rk_mingp_page")
+           if _rk_maxgp > 1 else 1)
+st.caption("Class / min-games scope every ranking view below.")
+
 (tab_over, tab_team, tab_cmp, tab_track, tab_chart, tab_evr,
  tab_gloss) = st.tabs(
     ["Overview", "Team", "Compare", "Tracked", "Team Charts",
@@ -424,21 +431,11 @@ with tab_over:
                 footer=f"{g['date']}{' · ●' if g['tracked'] else ''}",
                 footer_top=True), unsafe_allow_html=True)
 
-    # ── Filters (drive team leaders, signature metrics & rankings table) ──────
-    st.markdown("<div class='section-hdr'>Filters</div>", unsafe_allow_html=True)
-    st.caption("Class / minimum-games filters apply to the team leaders, "
-               "signature metrics, advanced standings and the rankings table "
-               "below. The league pulse and recent results stay league-wide.")
-    _ov_classes = sorted({r["class"] for r in all_rows},
-                         key=lambda c: TR._CLASS_RANK.get(c, 99))
-    _ov_maxgp = max((r["GP"] for r in all_rows), default=1)
-    _fc1, _fc2 = st.columns([2, 1])
-    _ov_pick = _fc1.multiselect("Class", _ov_classes, default=_ov_classes,
-                                key="ov_cls")
-    _ov_mingp = (_fc2.slider("Min games played", 1, int(_ov_maxgp), 1, key="ov_gp")
-                 if _ov_maxgp > 1 else 1)
+    # Scope from the PAGE-LEVEL Class / Min-games filter (set once at the top) —
+    # drives the team leaders, signature metrics, advanced standings and the
+    # rankings table below. The league pulse + recent results stay league-wide.
     ov_tids = [t for t in sorted(scored, key=lambda t: scored[t]["Rank"])
-               if scored[t]["class"] in _ov_pick and scored[t]["GP"] >= _ov_mingp]
+               if scored[t]["class"] in _PICKED_CLASSES and scored[t]["GP"] >= _MIN_GP]
     ov_rows = [scored[t] for t in ov_tids]
     ov_set = set(ov_tids)
 

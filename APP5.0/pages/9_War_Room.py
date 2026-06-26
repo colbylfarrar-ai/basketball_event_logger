@@ -36,6 +36,7 @@ import helpers.simulation as SIM
 import helpers.player_ratings as PR
 import helpers.lineups as LU
 import helpers.team_analytics as TA
+import helpers.spacing as SPACE
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 from database.db import query
@@ -180,6 +181,13 @@ def _wl_table(g):
 @st.cache_data(ttl=600, show_spinner=False)
 def _wl_ctx(g):
     return TA.lineup_engine_context(g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _wl_player_spacing(g):
+    """League per-player floor-spacing map for the 'Floor spacing' preset lens
+    (empty until located-shot coverage is real)."""
+    return SPACE.league_player_spacing(g)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -623,6 +631,46 @@ with tab_lineup:
             _chosen = st.multiselect("Lineup (up to 5)", list(_lab), default=_def5,
                                      format_func=lambda pid: _lab[pid],
                                      max_selections=5, key="wl1_pick")
+            # ⚡ engine-built preset fives — top 5 by each lens, auto-rated. Gated
+            # like the projection itself (own team on any Paid plan; another team
+            # is Co-op only), so it never leaks another team's depth.
+            if ENT.can_see_team_tracked(AUTH.current_user(), _t):
+                def _use_preset(pids):
+                    st.session_state["wl1_pick"] = list(pids)
+                with st.expander("⚡ Preset lineups — the best five for each lens"):
+                    _presets = TA.preset_lineups(
+                        _rows, _wl_ctx(gender), _t,
+                        spacing_map=_wl_player_spacing(gender))
+                    if not _presets:
+                        st.caption("Need at least 5 rated players to build presets.")
+                    for _i, _pz in enumerate(_presets):
+                        _pp = _pz.get("pred") or {}
+                        _netv = (f"{_pp['NetRtg']:+.1f}"
+                                 if _pp.get("NetRtg") is not None else "—")
+                        _ortv = (f"{_pp['ORtg']:.0f}"
+                                 if _pp.get("ORtg") is not None else "—")
+                        _drtv = (f"{_pp['DRtg']:.0f}"
+                                 if _pp.get("DRtg") is not None else "—")
+                        _pc1, _pc2 = st.columns([5, 1])
+                        with _pc1:
+                            st.markdown(
+                                f"<div style='margin-bottom:2px'><b>"
+                                f"{' / '.join(_pz['labels'])}</b> "
+                                f"<span style='color:#8b949e;font-size:12px'>proj "
+                                f"Net {_netv} · ORtg {_ortv} · DRtg {_drtv}</span>"
+                                f"<br><span style='font-size:13px'>"
+                                + " · ".join(f"#{x['num']} {x['name']}"
+                                             for x in _pz["players"])
+                                + "</span></div>", unsafe_allow_html=True)
+                        with _pc2:
+                            st.button("Use", key=f"wl1_use_{_i}",
+                                      on_click=_use_preset,
+                                      args=([x["pid"] for x in _pz["players"]],))
+                    if _presets:
+                        st.caption("Each five = the roster's top 5 by that lens, run "
+                                   "through the same projection as the manual pick. "
+                                   "Sorted by projected Net; identical fives merge "
+                                   "their labels. Tap **Use** to load one above.")
             if _chosen and not ENT.can_see_team_tracked(AUTH.current_user(), _t):
                 st.info("🔒 Lineup projections & observed-together ratings for "
                         "another team are a **Coaches' Co-op** feature — your own "

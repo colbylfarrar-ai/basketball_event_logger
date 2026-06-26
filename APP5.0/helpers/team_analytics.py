@@ -1859,3 +1859,79 @@ def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None,
         if tracked_ids else None,
         "streaks": streaks_and_form(game_log),
     }
+
+
+# ── engine-built preset lineups (top-5 by each lens, auto-rated) ────────────────
+# Each preset = the roster's top five by one lens, run through the same
+# possession-calibrated lineup_prediction as a manual pick. Identical fives
+# collapse (their lens labels merge), so a coach sees every distinct five once.
+def preset_lineups(player_rows, ctx, team_id, spacing_map=None, size=5):
+    """Generate ranked preset fives from a team's player_stat_table rows.
+
+    ``player_rows`` are PR.player_stat_table dicts each carrying ``_pid`` (the
+    War Room shape). ``ctx`` is lineup_engine_context(...). ``spacing_map`` is an
+    optional {pid: {index,...}} from spacing.league_player_spacing for the "Floor
+    spacing" lens. Returns a list of
+    {labels:[...], players:[{pid,name,num}], pred: lineup_prediction(...) | None},
+    one row per DISTINCT five (sorted by projected Net desc), or [] when the team
+    has fewer than ``size`` rated players. Pure data + the shared predictor."""
+    rated = [r for r in player_rows if r.get("_pid") is not None]
+    if len(rated) < size:
+        return []
+    smap = spacing_map or {}
+
+    def _spacing(r):
+        return (smap.get(r.get("_pid")) or {}).get("index")
+
+    # (label, value_fn, lower_is_better, (gate_key, gate_min) | None)
+    specs = [
+        ("Best overall",       lambda r: r.get("OVERALL"),    False, None),
+        ("Best offense",       lambda r: r.get("OFFENSE"),    False, None),
+        ("Best defense",       lambda r: r.get("DEFENSE"),    False, None),
+        ("Best 3-pt shooting", lambda r: r.get("3P%"),        False, ("3PA", 15)),
+        ("Best free throws",   lambda r: r.get("FT%"),        False, ("FTA", 10)),
+        ("Turnover creators",  lambda r: r.get("SPG"),        False, None),
+        ("Floor spacing",      _spacing,                      False, None),
+        ("Best rebounding",    lambda r: r.get("REBOUNDING"), False, None),
+        ("Best playmaking",    lambda r: r.get("PLAYMAKING"), False, None),
+        ("Rim protection",     lambda r: r.get("BPG"),        False, None),
+        ("Best two-way",       lambda r: r.get("2WAY"),       False, None),
+        ("Ball security",      lambda r: r.get("TOV%"),       True,  ("USG%", 12)),
+        ("Clutch (Q4)",        lambda r: r.get("Q4PPG"),      False, None),
+    ]
+
+    out = []
+    seen = {}     # frozenset(pids) -> index into out
+    for label, fn, lower, gate in specs:
+        cand = []
+        for r in rated:
+            v = fn(r)
+            if v is None:
+                continue
+            if gate and (r.get(gate[0]) or 0) < gate[1]:
+                continue
+            cand.append((v, r))
+        if len(cand) < size:
+            continue
+        cand.sort(key=lambda t: t[0], reverse=not lower)
+        five = [r for _, r in cand[:size]]
+        key = frozenset(r["_pid"] for r in five)
+        if key in seen:
+            out[seen[key]]["labels"].append(label)
+            continue
+        try:
+            pred = lineup_prediction(rated, [r["_pid"] for r in five], ctx, team_id)
+        except Exception:
+            pred = None
+        seen[key] = len(out)
+        out.append({
+            "labels": [label],
+            "players": [{"pid": r["_pid"], "name": r["name"],
+                         "num": r.get("number")} for r in five],
+            "pred": pred})
+
+    def _net(o):
+        p = o.get("pred") or {}
+        return p.get("NetRtg") if p.get("NetRtg") is not None else -1e9
+    out.sort(key=_net, reverse=True)
+    return out

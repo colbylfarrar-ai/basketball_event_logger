@@ -38,7 +38,7 @@ from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, rank_chip, grid as _grid,
                         page_header, lab_hero as _lab_hero, empty_state,
-                        HEAT, DIVERGE)
+                        seg as _rkseg, HEAT, DIVERGE)
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
@@ -522,36 +522,6 @@ with tab_over:
             st.caption("Grouped by district (set on the Setup page); teams with no "
                        "district fall back to their class. GB = games behind leader.")
 
-        with st.expander("Advanced standings — every team, every composite"):
-            adv = []
-            for t in ov_tids:
-                r = scored[t]
-                f = form_stats.get(t, {})
-                adv.append({
-                    "Rank": r["Rank"], "Team": r["name"], "Class": r["class"],
-                    "W-L": f"{r['W']}-{r['L']}", "Power": r["Power"],
-                    "Dominance": f.get("Dominance"),
-                    "Consistency": f.get("Consistency"),
-                    "Clutch": f.get("Clutch"), "Momentum": f.get("Momentum"),
-                    "MOV": round(f.get("MOV", 0), 1),
-                    "Volatility": round(f.get("Volatility", 0), 1),
-                    "Pyth W": round(f.get("Pyth_W", 0), 1),
-                    "Luck (W)": round(f.get("Luck_wins", 0), 2),
-                })
-            adv_df = pd.DataFrame(adv)
-            st.dataframe(
-                adv_df, hide_index=True, width="stretch",
-                height=min(640, 60 + 32 * len(adv_df)),
-                column_config={
-                    k: st.column_config.ProgressColumn(k, format="%.0f", min_value=0,
-                                                       max_value=100)
-                    for k in ("Power", "Dominance", "Consistency", "Clutch",
-                              "Momentum")})
-            st.download_button("Advanced standings (CSV)",
-                               adv_df.to_csv(index=False),
-                               file_name=f"advanced_standings_{gender}.csv",
-                               mime="text/csv", key="dl_adv")
-
         st.markdown("<div class='section-hdr'>Rankings table</div>",
                     unsafe_allow_html=True)
         df = pd.DataFrame(ov_rows)[[
@@ -566,8 +536,33 @@ with tab_over:
                           for t in ov_tids]
         except Exception:
             pass
+        # Advanced composites (was a separate "Advanced standings" table) folded
+        # in as a column set — one team table, you pick which stats to see.
+        for _ck, _src, _rnd in [("Dominance", "Dominance", None),
+                                ("Consistency", "Consistency", None),
+                                ("Clutch", "Clutch", None),
+                                ("Momentum", "Momentum", None),
+                                ("Volatility", "Volatility", 1),
+                                ("Pyth W", "Pyth_W", 1),
+                                ("Luck (W)", "Luck_wins", 2)]:
+            df[_ck] = [(round(form_stats.get(t, {}).get(_src, 0), _rnd)
+                        if _rnd is not None else form_stats.get(t, {}).get(_src))
+                       for t in ov_tids]
+
+        _core_cols = ["Rank", "Team", "Class", "W", "L", "Power", "Rating",
+                      "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]
+        if "Form" in df.columns:
+            _core_cols.append("Form")
+        _comp_cols = ["Rank", "Team", "Class", "Power", "MOV", "Dominance",
+                      "Consistency", "Clutch", "Momentum", "Volatility",
+                      "Pyth W", "Luck (W)"]
+        _colset = _rkseg("Columns", ["Core", "Composites", "All"],
+                         default="Core", key="rk_ov_cols") or "Core"
+        _show = (_core_cols if _colset == "Core"
+                 else _comp_cols if _colset == "Composites"
+                 else list(df.columns))
         st.dataframe(
-            df, hide_index=True, width="stretch",
+            df[_show], hide_index=True, width="stretch",
             height=min(720, 60 + 35 * len(df)),
             column_config={
                 "Power": st.column_config.ProgressColumn(
@@ -600,7 +595,31 @@ with tab_over:
                 "Form": st.column_config.LineChartColumn(
                     "Margin trend", y_min=-30, y_max=30,
                     help="Scoring margin over the last 7 games (oldest → newest)."),
+                "Dominance": st.column_config.ProgressColumn(
+                    "Dominance", format="%.0f", min_value=0, max_value=100,
+                    help="How decisively they beat the teams they should."),
+                "Consistency": st.column_config.ProgressColumn(
+                    "Consistency", format="%.0f", min_value=0, max_value=100,
+                    help="How repeatable their game-to-game performance is."),
+                "Clutch": st.column_config.ProgressColumn(
+                    "Clutch", format="%.0f", min_value=0, max_value=100,
+                    help="Performance in close, late-game situations."),
+                "Momentum": st.column_config.ProgressColumn(
+                    "Momentum", format="%.0f", min_value=0, max_value=100,
+                    help="Recent form trend — rising or fading."),
+                "Volatility": st.column_config.NumberColumn(
+                    "Volatility",
+                    help="Swing in game-to-game margin (lower = steadier)."),
+                "Pyth W": st.column_config.NumberColumn(
+                    "Pyth W",
+                    help="Pythagorean expected wins from points scored/allowed."),
+                "Luck (W)": st.column_config.NumberColumn(
+                    "Luck (W)", format="%.2f",
+                    help="Actual wins minus Pythagorean expected wins."),
             })
+        st.caption("Columns: **Core** = ratings & scoring · **Composites** = "
+                   "Dominance / Consistency / Clutch / Momentum & luck · **All** "
+                   "= everything. Scope set by the Class / min-games filter above.")
         st.download_button("Rankings (CSV)",
                            df.drop(columns=["Form"], errors="ignore").to_csv(index=False),
                            file_name=f"rankings_{gender}.csv", mime="text/csv",

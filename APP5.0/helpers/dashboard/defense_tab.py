@@ -224,6 +224,35 @@ def render(ctx):
         f"Percentile is good-oriented "
         f"({'fewer points allowed' if not _off else 'more points scored'} = higher rank).")
 
+    # ══ on-ball defenders (the `guarded_by_id` tag — independent of the scheme
+    #    tag, so it sits ABOVE the no-scheme-tags early return below). Dormant
+    #    until coaches tap WHO contested; fills in as coverage grows. ═══════════
+    if getattr(ctx, "defender_profiles", None):
+        _dp = ctx.defender_profiles(g, tid) or {}
+        _drows = _dp.get("rows", [])
+        if _drows:
+            st.markdown("<div class='pl-hdr'>On-ball defenders — FG% allowed when "
+                        "contesting</div>", unsafe_allow_html=True)
+            _dd = pd.DataFrame([{
+                "Defender": r["name"], "Contested": r["contested"],
+                "FG% allowed": round(r["FGpct"] * 100, 1),
+                "PPS allowed": round(r["PPS"], 2),
+                "2P% allowed": round(r["twos_pct"] * 100, 1),
+                "3P% allowed": round(r["threes_pct"] * 100, 1),
+            } for r in _drows])
+            st.dataframe(
+                _dd, hide_index=True, width="stretch",
+                column_config={
+                    "FG% allowed": st.column_config.ProgressColumn(
+                        "FG% allowed", format="%.1f", min_value=0, max_value=100,
+                        help="Field-goal % on the shots this defender contested — "
+                             "LOWER is better on-ball defense."),
+                    "PPS allowed": st.column_config.NumberColumn(
+                        "PPS allowed", format="%.2f",
+                        help="Points per contested shot allowed. Lower is better."),
+                })
+            st.caption(_dp.get("note", ""))
+
     if not drows and dv.get("total_tagged", 0) == 0:
         st.info("No defense tags on these shots yet — set the **Defense** "
                 "(man, 2-3, 1-3-1, presses, traps…) in the Game Tracker; it's "

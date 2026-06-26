@@ -67,6 +67,7 @@ import helpers.networks as NW
 import helpers.lineups as LU
 import helpers.playtypes as PT
 import helpers.defenses as DEF
+import helpers.exploit as EXPL
 import helpers.matchups as MU
 import helpers.gameflow as GF
 import helpers.fouls as FL
@@ -991,6 +992,13 @@ def _def_leaders(g, offense):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _defender_profiles(g, tid):
+    """Per-defender on-ball FG%/PPS allowed (the `guarded_by_id` tag). Dormant
+    until coaches tag who contested — fills in as coverage grows."""
+    return EXPL.defender_profiles(tid, gender=g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _def_players_faced(g):
     """Per-player PPP vs each defense faced, ranked vs the league pool (card ctx)."""
     return DEF.player_defenses_faced(gender=g)
@@ -1156,7 +1164,7 @@ if _tdview == "Charts":
             def_profiles=_def_profiles, cross_pd=_def_cross,
             def_tovs=_def_tovs, def_fouls=_def_fouls, def_leaders=_def_leaders,
             def_players_faced=_def_players_faced, factors=_def_factors,
-            is_current=_is_cur_season)
+            defender_profiles=_defender_profiles, is_current=_is_cur_season)
         DDEFENSE.render(_def_ctx)
 
     # ── Play Style super-tab (the explicit set-call deep dive) ──────────────

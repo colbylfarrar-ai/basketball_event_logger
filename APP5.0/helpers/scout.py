@@ -568,6 +568,47 @@ def _pf(frac, dp=0):
     return f"{frac * 100:.{dp}f}%" if frac is not None else "—"
 
 
+def usage_map_html(situations, kind, title, row_hdr="Set"):
+    """Share-by-situation usage map as a self-styled, print-safe colored HTML
+    table — the scout-sheet twin of the Situational tab's plotly heatmaps.
+
+    ``kind`` = 'plays' (offense set-usage) or 'defenses' (defense-scheme usage);
+    each cell is that set/scheme's % share of the situation's tagged possessions,
+    gold-shaded by intensity. Every cell carries its own background + text colour
+    so it reads on both the dark app screen and the white printed page. Returns
+    '' when there's no tagged data (so the sheet self-hides it)."""
+    e = html.escape
+    if not situations:
+        return ""
+    base, sits = situations[0], situations[1:]
+    rows = [r for r in base.get(kind, []) if r.get("poss", 0) > 0][:8]
+    if not rows or not sits:
+        return ""
+    _c = "padding:3px 4px;text-align:center;font-size:9px"
+    th = "".join(
+        f"<td style='background:#d8d8d8;color:#111;font-weight:600;{_c}'>"
+        f"{e(s['label'])}</td>" for s in sits)
+    body = ""
+    for r in rows:
+        cells = ""
+        for s in sits:
+            share = next((x["share"] for x in s.get(kind, [])
+                          if x["key"] == r["key"]), 0.0)
+            pct = round(share * 100)
+            if pct:
+                a = min(1.0, share / 0.5)          # full gold by ~50% share
+                cells += (f"<td style='background:rgba(240,165,0,{a:.2f});"
+                          f"color:#111;{_c}'>{pct}%</td>")
+            else:
+                cells += f"<td style='background:#f3f3f3;color:#bbb;{_c}'>·</td>"
+        body += (f"<tr><td style='background:#e8e8e8;color:#111;font-weight:600;"
+                 f"padding:3px 4px;font-size:9px'>{e(r['label'])}</td>{cells}</tr>")
+    return (f"<h2>{e(title)}</h2>"
+            "<table style='border-collapse:collapse;width:100%;margin-bottom:6px'>"
+            f"<tr><td style='background:#d8d8d8;color:#111;font-weight:600;"
+            f"padding:3px 4px;font-size:9px'>{e(row_hdr)}</td>{th}</tr>{body}</table>")
+
+
 def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     """A print-ready scouting sheet (browser → Print → PDF, or the in-app
     preview). Zero hard dependencies — table-based so the xhtml2pdf fallback
@@ -1254,6 +1295,13 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                 sit_html += ("<p class='note'>Offensive profile by quarter, score "
                              "state and running game; PPP = points per possession. "
                              "'Go-to set' needs tagged plays.</p>")
+            # share-by-situation usage maps (offense sets + defensive schemes) —
+            # the scout-sheet twin of the Situational tab heatmaps; self-hide empty.
+            sit_html += usage_map_html(sit.get("situations") or [], "plays",
+                                       "Set-usage map — share by situation", "Set")
+            sit_html += usage_map_html(sit.get("situations") or [], "defenses",
+                                       "Defense-usage map — share by situation",
+                                       "Scheme")
 
     return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
 <title>Scout · {e(sc['name'])}</title>

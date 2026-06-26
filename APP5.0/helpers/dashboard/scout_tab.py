@@ -1006,6 +1006,14 @@ def render(ctx):
             st.caption("Their offense by quarter, score state, and whether they're on "
                        "a run. PPP = points per possession; 'Go-to set' needs tagged "
                        "plays. The full Situational tab is on the Team Dashboard.")
+            # share-by-situation usage maps (offense sets + defensive schemes),
+            # same colored tables that print on the scout sheet; self-hide empty.
+            for _kind, _ttl, _rh in (
+                    ("plays", "Set-usage map — share by situation", "Set"),
+                    ("defenses", "Defense-usage map — share by situation", "Scheme")):
+                _umap = SC.usage_map_html(sit.get("situations") or [], _kind, _ttl, _rh)
+                if _umap:
+                    st.markdown(_umap, unsafe_allow_html=True)
         else:
             st.caption("Not enough tracked possessions yet — fills in as games are "
                        "logged (and sharpens once shots carry a **Play type**).")

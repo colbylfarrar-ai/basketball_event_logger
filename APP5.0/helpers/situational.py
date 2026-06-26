@@ -116,6 +116,7 @@ def _off_totals(evs, team_id):
     """Team's OWN offensive totals over a slice (tagged OR untagged plays), so a
     situation has a true scoring line even where few plays carry a set tag."""
     FGA = FGM = FG3M = FTM = TOV = PTS = 0
+    secs_sum = secs_n = 0
     for e in evs:
         if e.get("shooter_team_id") != team_id:
             continue
@@ -135,12 +136,21 @@ def _off_totals(evs, team_id):
                 PTS += 1
         elif et == "turnover":
             TOV += 1
+        # avg possession LENGTH: shots + turnovers end a possession and carry its
+        # duration in possession_secs (~16% are untimed, 0 -> skipped).
+        if et in ("shot", "turnover"):
+            _ps = e.get("possession_secs") or 0
+            if _ps > 0:
+                secs_sum += _ps
+                secs_n += 1
     poss = FGA + TOV
     return {
         "poss": poss, "PTS": PTS, "FGA": FGA,
         "PPP": (PTS / poss) if poss else 0.0,
         "eFG": ((FGM + 0.5 * FG3M) / FGA) if FGA else 0.0,
         "FG%": (FGM / FGA) if FGA else 0.0,
+        "secs": (secs_sum / secs_n) if secs_n else None,
+        "timed_poss": secs_n,
     }
 
 
@@ -206,6 +216,7 @@ def team_situational(team_id, events, gender=None, min_poss=SIT_MIN_POSS):
         "key": "all", "label": "All possessions", "group": "All",
         "off_poss": base_off["poss"], "PPP": base_off["PPP"],
         "eFG": base_off["eFG"], "FG%": base_off["FG%"],
+        "secs": base_off["secs"],
         "plays": base_plays, "top_play": base_plays[0] if base_plays else None,
         "defenses": _build(events)[2], "top_def": None,
         "tagged_poss": sum(p["poss"] for p in base_plays),
@@ -224,7 +235,7 @@ def team_situational(team_id, events, gender=None, min_poss=SIT_MIN_POSS):
         situations.append({
             "key": key, "label": label, "group": group,
             "off_poss": off["poss"], "PPP": off["PPP"],
-            "eFG": off["eFG"], "FG%": off["FG%"],
+            "eFG": off["eFG"], "FG%": off["FG%"], "secs": off["secs"],
             "plays": plays, "top_play": plays[0] if plays else None,
             "defenses": defs, "top_def": defs[0] if defs else None,
             "tagged_poss": tagged, "stable": off["poss"] >= min_poss,
@@ -245,7 +256,7 @@ def team_situational(team_id, events, gender=None, min_poss=SIT_MIN_POSS):
         tp = s["top_play"]
         rows.append({
             "label": s["label"], "poss": s["off_poss"], "PPP": s["PPP"],
-            "FG%": s["FG%"],
+            "FG%": s["FG%"], "secs": s["secs"],
             "top": (f"{tp['label']} {tp['share'] * 100:.0f}%" if tp else "—"),
         })
 

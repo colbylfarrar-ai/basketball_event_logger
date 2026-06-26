@@ -79,6 +79,7 @@ def render(ctx):
     for s in sits[1:]:
         arows.append({
             "Situation": s["label"], "Group": s["group"], "Poss": s["off_poss"],
+            "Poss len": (round(s["secs"], 1) if s.get("secs") is not None else None),
             "PPP": round(s["PPP"], 2), "eFG%": round(s["eFG"] * 100),
             "FG%": round(s["FG%"] * 100),
             "Go-to set": _fmt_top(s["top_play"]),
@@ -88,13 +89,20 @@ def render(ctx):
     adf = pd.DataFrame(arows)
     st.dataframe(adf.drop(columns=["_thin"]), hide_index=True, width="stretch",
                  column_config={
+                     "Poss len": st.column_config.NumberColumn(
+                         "Poss len", format="%.1f s",
+                         help="Average possession length (seconds) in this "
+                              "situation — tempo. ~16% of plays are untimed and "
+                              "excluded."),
                      "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
                      "eFG%": st.column_config.NumberColumn("eFG%", format="%d%%"),
                      "FG%": st.column_config.NumberColumn("FG%", format="%d%%"),
                  }, key="sit_headline")
+    _blen = (f" · {baseline['secs']:.1f}s/poss"
+             if baseline.get("secs") is not None else "")
     st.caption(
         f"Baseline (all possessions): **{baseline['PPP']:.2f} PPP** · "
-        f"{baseline['eFG'] * 100:.0f}% eFG over {baseline['off_poss']} poss. "
+        f"{baseline['eFG'] * 100:.0f}% eFG{_blen} over {baseline['off_poss']} poss. "
         "Compare each situation's PPP to that. 'Go-to set' / 'Defense run' need "
         "tagged plays; '—' = untagged. Situations under "
         f"{__import__('helpers.situational', fromlist=['SIT_MIN_POSS']).SIT_MIN_POSS} "

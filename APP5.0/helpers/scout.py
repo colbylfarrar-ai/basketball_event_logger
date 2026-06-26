@@ -337,6 +337,20 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         _dk = DEF._norm(sh.get("defense"))
         if _dk:
             shots_by_def.setdefault(_dk, []).append(sh)
+    # the DEFENSIVE flip side: shots opponents took AGAINST this team (shooter is
+    # the other team in this team's games). play_type = the action the OPPONENT ran
+    # (what this team's D gives up); defense = the scheme THIS team was running
+    # (what each of their defenses gives up). Same events / visible game set.
+    opp_shots = ([s for s in S.located_shots(game_ids=list(gids), events=ev)
+                  if s["team_id"] != team_id] if gids else [])
+    shots_allowed_by_play, shots_allowed_by_def = {}, {}
+    for sh in opp_shots:
+        _pk = sh.get("play_type")
+        if _pk:
+            shots_allowed_by_play.setdefault(_pk, []).append(sh)
+        _dk = DEF._norm(sh.get("defense"))
+        if _dk:
+            shots_allowed_by_def.setdefault(_dk, []).append(sh)
 
     # ── how they get their shots: explicit one-tap play-call tags ─────────────
     # The literal set call a coach taps on a shot in the tracker (pnr / iso /
@@ -455,7 +469,9 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         "guard": guard, "attack": attack, "personnel": personnel,
         "zones": zones, "zones_by_type": zones_by_type,
         "team_shots": team_shots, "shots_by_play": shots_by_play,
-        "shots_by_def": shots_by_def, "play_calls": play_calls,
+        "shots_by_def": shots_by_def,
+        "shots_allowed_by_play": shots_allowed_by_play,
+        "shots_allowed_by_def": shots_allowed_by_def, "play_calls": play_calls,
         "play_calls_def": play_calls_def,
         "defenses_run": defenses_run, "defenses_faced": defenses_faced,
         "defense_families": defense_families, "defense_cross": defense_cross,
@@ -890,11 +906,20 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                        for i in range(0, len(cells), 3))
         return f"<h2>{title}</h2><table class='diag'>{grid}</table>"
 
+    _DEF_LABELS = [(k, lbl) for k, lbl, *_ in DEF.DEFENSES]
+    # offense: how THEY shoot, by the action they ran / the defense they faced
     sbp_html = _shot_grid(sc.get("shots_by_play") or {}, PT.NAMED_PLAY_TYPES,
-                          "Shot charts by play type", "shot_by_play")
-    sbd_html = _shot_grid(sc.get("shots_by_def") or {},
-                          [(k, lbl) for k, lbl, *_ in DEF.DEFENSES],
-                          "Shot charts by defense faced", "shot_by_def")
+                          "Shot charts by play type (their offense)", "shot_by_play")
+    sbd_html = _shot_grid(sc.get("shots_by_def") or {}, _DEF_LABELS,
+                          "Shot charts by defense faced (their offense)", "shot_by_def")
+    # defense: what they ALLOW — opponents' shots by the action run on them /
+    # by the scheme this team was running.
+    sbpd_html = _shot_grid(sc.get("shots_allowed_by_play") or {}, PT.NAMED_PLAY_TYPES,
+                           "Shots allowed by play type (their defense)",
+                           "shot_by_play_def")
+    sbdd_html = _shot_grid(sc.get("shots_allowed_by_def") or {}, _DEF_LABELS,
+                           "Shots allowed by defensive scheme (their defense)",
+                           "shot_by_def_def")
 
     # ── personnel cards: identity + OVR & breakdown + GS% + shots + mini chart ──
     # Hand-entered key-player intel (coach's dropdown picks) is folded into the
@@ -1267,8 +1292,10 @@ table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
 {shot_html}
 {sbp_html}
 {sbd_html}
+{sbpd_html}
+{sbdd_html}
 {pers_html}
 {diag_html}
 <div class='foot'>Made with <b style='color:#f0a500'>HoopTracks</b> ·
-  hooptracks.com{(' · ' + today) if today else ''}</div>
+  app.hooptracks.com{(' · ' + today) if today else ''}</div>
 </div></body></html>"""

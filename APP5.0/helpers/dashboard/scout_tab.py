@@ -59,8 +59,10 @@ SCOUT_SECTIONS = [
     ("def_cross", "Play type × defense cross-tab", "Defense (schemes)"),
     ("def_concession", "Where their defense concedes", "Defense (schemes)"),
     ("shot_chart", "Shot chart", "Shooting"),
-    ("shot_by_play", "Shot charts by play type", "Shooting"),
-    ("shot_by_def", "Shot charts by defense faced", "Shooting"),
+    ("shot_by_play", "Shot charts by play type (their offense)", "Shooting"),
+    ("shot_by_def", "Shot charts by defense faced (their offense)", "Shooting"),
+    ("shot_by_play_def", "Shots allowed by play type (their defense)", "Shooting"),
+    ("shot_by_def_def", "Shots allowed by defensive scheme (their defense)", "Shooting"),
     ("zones", "Shooting by zone", "Shooting"),
     ("zone_xfg", "Zone shooting vs expected", "Shooting"),
     ("guarded_split", "Contested vs open (eFG)", "Shooting"),
@@ -1016,11 +1018,15 @@ def render(ctx):
                        for i in range(0, len(cells), 4))
         st.markdown(f"<table>{grid}</table>", unsafe_allow_html=True)
 
+    _deflabels = [(k, lbl) for k, lbl, *_ in _DEF.DEFENSES]
     _shot_grid_ui(sc.get("shots_by_play") or {}, _PT.NAMED_PLAY_TYPES,
-                  "Shot charts by play type", "shot_by_play")
-    _shot_grid_ui(sc.get("shots_by_def") or {},
-                  [(k, lbl) for k, lbl, *_ in _DEF.DEFENSES],
-                  "Shot charts by defense faced", "shot_by_def")
+                  "Shot charts by play type (their offense)", "shot_by_play")
+    _shot_grid_ui(sc.get("shots_by_def") or {}, _deflabels,
+                  "Shot charts by defense faced (their offense)", "shot_by_def")
+    _shot_grid_ui(sc.get("shots_allowed_by_play") or {}, _PT.NAMED_PLAY_TYPES,
+                  "Shots allowed by play type (their defense)", "shot_by_play_def")
+    _shot_grid_ui(sc.get("shots_allowed_by_def") or {}, _deflabels,
+                  "Shots allowed by defensive scheme (their defense)", "shot_by_def_def")
 
     # ── shooting by zone (2s vs 3s) ─────────────────────────────────────────
     if _show("zones") and ctx.bundle.get("zones_by_type"):

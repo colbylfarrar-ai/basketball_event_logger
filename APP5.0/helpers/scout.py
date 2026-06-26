@@ -1006,6 +1006,104 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             "<th class='n'>Pts/shot</th><th class='n'>FGA</th>"
             f"<th class='n'>FG%</th></tr>{rowsp}</table>")
 
+    # ── scoring by quarter ──
+    qs_html = ""
+    qs = extra.get("quarter_split")
+    if _show("quarter_split") and qs:
+        rows = "".join(
+            f"<tr><td>Q{r['q']}</td><td class='n'>{r['pts']}</td>"
+            f"<td class='n'>{r['opp']}</td><td class='n'>{r['margin']:+d}</td>"
+            f"<td class='n'>{_pf(r['efg'])}</td><td class='n'>{_pf(r['oefg'])}</td></tr>"
+            for r in qs)
+        qs_html = (
+            "<h2>Scoring by quarter</h2><table><tr><th>Qtr</th><th class='n'>Pts</th>"
+            "<th class='n'>Opp</th><th class='n'>+/-</th><th class='n'>eFG</th>"
+            f"<th class='n'>opp eFG</th></tr>{rows}</table>")
+
+    # ── contested vs open (eFG) ──
+    gs_html = ""
+    gsd = extra.get("guarded_split")
+    if _show("guarded_split") and gsd:
+        rows = "".join(
+            f"<tr><td>{e(r['label'])}</td><td class='n'>{_pf(r['g_efg'])}</td>"
+            f"<td class='n'>{_pf(r['o_efg'])}</td><td class='n'>{_pf(r['share'])}</td></tr>"
+            for r in gsd)
+        gs_html = (
+            "<h2>Contested vs open (eFG)</h2><table><tr><th>Shots</th>"
+            "<th class='n'>Guarded eFG</th><th class='n'>Open eFG</th>"
+            f"<th class='n'>Contested%</th></tr>{rows}</table>"
+            "<p class='note'>A big open − guarded gap = a shooter who needs space "
+            "(close out hard); a small one = contest-proof (deny the catch).</p>")
+
+    # ── zone shooting vs a league baseline (xFG) ──
+    zx_html = ""
+    zx = extra.get("zone_xfg")
+    if _show("zone_xfg") and zx:
+        rows = "".join(
+            f"<tr><td>{e(r['label'])}</td><td class='n'>{r['fga']}</td>"
+            f"<td class='n'>{_pf(r['fg'])}</td><td class='n'>{_pf(r['xfg'])}</td>"
+            f"<td class='n'>{('%+.0f%%' % (r['diff'] * 100)) if r['diff'] is not None else '—'}</td></tr>"
+            for r in zx)
+        zx_html = (
+            "<h2>Zone shooting vs expected</h2><table><tr><th>Zone</th>"
+            "<th class='n'>FGA</th><th class='n'>FG%</th><th class='n'>xFG%</th>"
+            f"<th class='n'>+/-</th></tr>{rows}</table>"
+            "<p class='note'>FG% against a league baseline for those shots. Positive "
+            "= they shoot it better than expected (take it away); negative = live with it.</p>")
+
+    # ── self-created vs assisted ──
+    cr_html = ""
+    cr = extra.get("creation")
+    if _show("creation") and cr:
+        rows = "".join(
+            f"<tr><td>{e(r['label'])}</td><td class='n'>{r['fga']}</td>"
+            f"<td class='n'>{_pf(r['fg'])}</td><td class='n'>{_pf(r['efg'])}</td>"
+            f"<td class='n'>{r['pps']:.2f}</td></tr>" for r in cr)
+        cr_html = (
+            "<h2>Self-created vs assisted</h2><table><tr><th>Shot origin</th>"
+            "<th class='n'>FGA</th><th class='n'>FG%</th><th class='n'>eFG</th>"
+            f"<th class='n'>Pts/shot</th></tr>{rows}</table>"
+            "<p class='note'>Heavy self-created = shot-maker reliant (key the "
+            "creators, make role players beat you); heavy assisted = ball movement "
+            "(jump the first pass).</p>")
+
+    # ── where their defense concedes (allowed shot quality by zone) ──
+    con_html = ""
+    con = extra.get("def_concession")
+    if _show("def_concession") and con and con.get("rows"):
+        rows = "".join(
+            f"<tr><td>{e(r['label'])}</td><td class='n'>{r['n']}</td>"
+            f"<td class='n'>{_pf(r['share'])}</td><td class='n'>{r['pps']:.2f}</td>"
+            f"<td class='n'>{r['xpps']:.2f}</td><td class='n'>{r['residual']:+.2f}</td></tr>"
+            for r in con["rows"]
+            if r.get("n") and r.get("pps") is not None and r.get("xpps") is not None
+            and r.get("residual") is not None)
+        if rows:
+            con_html = (
+                "<h2>Where their defense concedes</h2><table><tr><th>Zone</th>"
+                "<th class='n'>Allowed</th><th class='n'>Share</th>"
+                "<th class='n'>PPS</th><th class='n'>xPPS</th><th class='n'>+/-</th>"
+                f"</tr>{rows}</table>"
+                f"<p class='note'>{e(con.get('note', ''))} Positive +/- = a spot they "
+                "give up better-than-expected looks — attack it.</p>")
+
+    # ── how scoutable are they (play-call predictability) ──
+    pred_html = ""
+    pr = extra.get("predictability")
+    if _show("predictability") and pr and pr.get("rated"):
+        who = "We are" if pr.get("is_self") else "They are"
+        head = (f"<li><b>{who} {pr['off_pred']:.0f}/100 predictable on offense</b> "
+                "— higher = a scout keys on them faster. Most-run: "
+                f"{e(pr.get('top_set') or '—')} ({(pr.get('top_share') or 0):.0f}%).</li>")
+        ou = "".join(
+            f"<li>{e(r['label'])} — {r['share'] * 100:.0f}% of sets · {r['PPP']:.2f} "
+            "PPP (predictable &amp; inefficient — sit on it)</li>"
+            for r in (pr.get("overused") or []))
+        un = "".join(
+            f"<li>{e(r['label'])} — only {r['share'] * 100:.0f}% · {r['PPP']:.2f} PPP "
+            "(efficient but under-run)</li>" for r in (pr.get("underused") or []))
+        pred_html = f"<h2>How scoutable are they?</h2><ul>{head}{ou}{un}</ul>"
+
     # ── manual key-player intel (coach-entered; works for COLD opponents) ──
     # Only the rows NOT already shown inside a personnel box above (matched intel
     # rides in the player's card; the rest — e.g. for a cold opponent with no
@@ -1132,6 +1230,12 @@ table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
 {def_html}
 {three_html}
 {plen_html}
+{qs_html}
+{gs_html}
+{zx_html}
+{cr_html}
+{con_html}
+{pred_html}
 {intel_html}
 {notes_html}{_flow_close}
 {shot_html}

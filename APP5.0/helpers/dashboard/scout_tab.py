@@ -45,6 +45,7 @@ SCOUT_SECTIONS = [
     ("breakeven", "Should they shoot 2s or 3s?", "Overview"),
     ("auto_report", "Auto scouting report", "Overview"),
     ("efficiency", "Efficiency summary", "Overview"),
+    ("predictability", "How scoutable are they", "Overview"),
     ("personnel", "Personnel (player breakdown)", "Personnel"),
     ("player_plays", "Player play-type mix (on personnel cards)", "Personnel"),
     ("three_profile", "Per-player 3-point profile", "Personnel"),
@@ -52,13 +53,18 @@ SCOUT_SECTIONS = [
     ("pc_defense", "What they allow — play calls defended", "Offense (play calls)"),
     ("pc_tendencies", "Set tendencies — what each set produces", "Offense (play calls)"),
     ("pc_handoff", "Hand-off & inbounds breakdown", "Offense (play calls)"),
+    ("creation", "Self-created vs assisted", "Offense (play calls)"),
     ("def_run", "Defenses they run", "Defense (schemes)"),
     ("def_attack", "How they attack a defense", "Defense (schemes)"),
     ("def_cross", "Play type × defense cross-tab", "Defense (schemes)"),
+    ("def_concession", "Where their defense concedes", "Defense (schemes)"),
     ("shot_chart", "Shot chart", "Shooting"),
     ("shot_by_play", "Shot charts by play type", "Shooting"),
     ("shot_by_def", "Shot charts by defense faced", "Shooting"),
     ("zones", "Shooting by zone", "Shooting"),
+    ("zone_xfg", "Zone shooting vs expected", "Shooting"),
+    ("guarded_split", "Contested vs open (eFG)", "Shooting"),
+    ("quarter_split", "Scoring by quarter", "Shooting"),
     ("poss_length", "Scoring by possession length", "Shooting"),
     ("manual_intel", "Manual scouting (key players)", "Extras"),
     ("notes", "Game-plan notes", "Extras"),
@@ -143,6 +149,92 @@ def _three_profile(ctx):
     return {"be3_pct": be3_pct, "players": [
         {"label": f"#{p['number']} {p['name']}", "p3": p["3P%"] or 0,
          "att": p["3PA"], "above": (p["3P%"] or 0) >= be3_pct} for p in three_p]}
+
+
+# ── builders for the extra "Super Scout Sheet" print sections (from ctx.bundle
+#    + a couple of helpers); each returns a display-ready structure or None ──────
+def _quarter_split(ctx):
+    qb = ctx.bundle.get("quarter_boxes") or {}
+    out = []
+    for q in sorted(k for k in qb if isinstance(k, int)):
+        tb, ob = qb[q]["team"], qb[q]["opp"]
+        if not (tb.get("FGA") or ob.get("FGA")):
+            continue
+        out.append({"q": q, "pts": tb["PTS"], "opp": ob["PTS"],
+                    "margin": tb["PTS"] - ob["PTS"],
+                    "efg": S.efg(tb), "oefg": S.efg(ob)})
+    return out or None
+
+
+def _guarded_split(ctx):
+    gd = ctx.bundle.get("guarded_detail")
+    if not gd:
+        return None
+    out = []
+    ov = gd.get("overall")
+    if ov and ov.get("all", {}).get("FGA"):
+        out.append({"label": "All shots", "g_efg": ov["guarded"]["eFG"],
+                    "o_efg": ov["unguarded"]["eFG"], "share": ov["guard_share"]})
+    for tk, lbl in (("2", "2-pointers"), ("3", "3-pointers")):
+        c = (gd.get("by_type") or {}).get(tk)
+        if c and c.get("all", {}).get("FGA"):
+            out.append({"label": lbl, "g_efg": c["guarded"]["eFG"],
+                        "o_efg": c["unguarded"]["eFG"], "share": c["guard_share"]})
+    return out or None
+
+
+def _zone_xfg_rows(ctx):
+    zx = ctx.bundle.get("zone_xfg") or {}
+    out = []
+    for z in S.ZONES:
+        c = zx.get(z)
+        if not c or not c.get("FGA"):
+            continue
+        fg, xfg = c.get("FG%"), c.get("xFG%")
+        out.append({"label": SC.ZONE_LABELS[z], "fga": c["FGA"], "fg": fg,
+                    "xfg": xfg,
+                    "diff": (fg - xfg) if (fg is not None and xfg is not None) else None})
+    return out or None
+
+
+def _creation_rows(ctx):
+    crb = ctx.bundle.get("creation_breakdown")
+    if not crb:
+        return None
+    out = []
+    for k, lbl in (("self", "Self-created"), ("asst", "Assisted"), ("total", "All")):
+        c = crb.get(k)
+        if c and c.get("FGA"):
+            out.append({"label": lbl, "fga": c["FGA"], "fg": c["FG%"],
+                        "efg": c["eFG"], "pps": c["PPS"]})
+    return out or None
+
+
+def _concession(ctx):
+    try:
+        import helpers.concession as CO
+        model = _xpp_model(ctx.gender)
+        gids = list(ctx.bundle.get("tracked_ids") or [])
+        if not model or not gids:
+            return None
+        return CO.defense_concession(ctx.team_id, model=model, game_ids=gids)
+    except Exception:
+        return None
+
+
+def _predict(ctx, is_self):
+    try:
+        import helpers.selfscout as SS
+        rep = SS.self_scout_report(ctx.team_id, ctx.gender)
+        off = rep["offense"]
+        if not off.get("rated"):
+            return None
+        return {"is_self": is_self, "off_pred": off["predictability"],
+                "top_set": off.get("top_set"), "top_share": off.get("top_share"),
+                "rated": True, "overused": rep["drift"]["overused"],
+                "underused": rep["drift"]["underused"]}
+    except Exception:
+        return None
 
 
 # Edge palette (mirrors the Team Dashboard GOOD/BAD without importing the page).
@@ -1024,6 +1116,67 @@ def render(ctx):
                     unsafe_allow_html=True)
         SB.render_notes(ctx.team_id)
 
+    # ── Super Scout Sheet extra sections (computed once; on-screen parity for
+    #    the new printable tables — each self-hides when its data is empty) ──────
+    _qsplit = _quarter_split(ctx)
+    _gsplit = _guarded_split(ctx)
+    _zxfg = _zone_xfg_rows(ctx)
+    _creat = _creation_rows(ctx)
+    _conc = (None if _self else _concession(ctx))
+    _pred = _predict(ctx, _self)
+    if _show("predictability") and _pred:
+        st.markdown("<div class='lab-hdr'>How scoutable are they?</div>",
+                    unsafe_allow_html=True)
+        st.markdown(f"**{_pred['off_pred']:.0f}/100 predictable on offense** — higher "
+                    "= a scout keys on them faster. Most-run: "
+                    f"{_pred.get('top_set') or '—'} ({(_pred.get('top_share') or 0):.0f}%).")
+        for r in (_pred.get("overused") or []):
+            st.markdown(f"- Predictable & inefficient: **{r['label']}** — "
+                        f"{r['share'] * 100:.0f}% · {r['PPP']:.2f} PPP")
+        for r in (_pred.get("underused") or []):
+            st.markdown(f"- Efficient but under-run: **{r['label']}** — "
+                        f"{r['share'] * 100:.0f}% · {r['PPP']:.2f} PPP")
+    if _show("quarter_split") and _qsplit:
+        st.markdown("<div class='lab-hdr'>Scoring by quarter</div>",
+                    unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame([
+            {"Qtr": f"Q{r['q']}", "Pts": r["pts"], "Opp": r["opp"],
+             "+/-": r["margin"], "eFG%": round(r["efg"] * 100),
+             "Opp eFG%": round(r["oefg"] * 100)} for r in _qsplit]),
+            hide_index=True, width="stretch")
+    if _show("guarded_split") and _gsplit:
+        st.markdown("<div class='lab-hdr'>Contested vs open (eFG)</div>",
+                    unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame([
+            {"Shots": r["label"], "Guarded eFG": round(r["g_efg"] * 100),
+             "Open eFG": round(r["o_efg"] * 100),
+             "Contested%": round(r["share"] * 100)} for r in _gsplit]),
+            hide_index=True, width="stretch")
+    if _show("zone_xfg") and _zxfg:
+        st.markdown("<div class='lab-hdr'>Zone shooting vs expected</div>",
+                    unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame([
+            {"Zone": r["label"], "FGA": r["fga"],
+             "FG%": round((r["fg"] or 0) * 100), "xFG%": round((r["xfg"] or 0) * 100),
+             "+/-": round((r["diff"] or 0) * 100)} for r in _zxfg]),
+            hide_index=True, width="stretch")
+    if _show("creation") and _creat:
+        st.markdown("<div class='lab-hdr'>Self-created vs assisted</div>",
+                    unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame([
+            {"Origin": r["label"], "FGA": r["fga"], "FG%": round(r["fg"] * 100),
+             "eFG": round(r["efg"] * 100), "Pts/shot": round(r["pps"], 2)}
+            for r in _creat]), hide_index=True, width="stretch")
+    if not _self and _show("def_concession") and _conc and _conc.get("rows"):
+        st.markdown("<div class='lab-hdr'>Where their defense concedes</div>",
+                    unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame([
+            {"Zone": r["label"], "Allowed": r["n"], "Share": round(r["share"] * 100),
+             "PPS": round(r["pps"], 2), "xPPS": round(r["xpps"], 2),
+             "+/-": round(r["residual"], 2)} for r in _conc["rows"]
+            if r.get("n") and r.get("pps") is not None and r.get("xpps") is not None
+            and r.get("residual") is not None]), hide_index=True, width="stretch")
+
     # ── printable export (always available; honours the section picks above) ──
     # Page-derived blocks the build_scout engine doesn't own, fed to the printable
     # sheet so it reaches parity with this tab (breakeven, efficiency, auto-report,
@@ -1048,6 +1201,13 @@ def render(ctx):
         "notes": ("" if _self else SB.get_note(ctx.team_id)),
         "manual_intel": ([] if _self else SB.get_intel(ctx.team_id)),
         "matchups": _matchups,
+        # "Super Scout Sheet" extra sections (computed once above; self-hide empty)
+        "quarter_split": _qsplit,
+        "guarded_split": _gsplit,
+        "zone_xfg": _zxfg,
+        "creation": _creat,
+        "def_concession": _conc,
+        "predictability": _pred,
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)

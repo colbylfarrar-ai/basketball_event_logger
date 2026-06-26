@@ -101,7 +101,7 @@ def require_full_user(request: Request) -> dict:
 
 # The gate guards /api only — the PWA shell (/, /static, /sw.js) must load
 # without headers so the app can boot and show its token prompt.
-app = FastAPI(title="APP5 Tracker")
+app = FastAPI(title="HoopTracks")
 api = APIRouter(prefix="/api", dependencies=[Depends(current_api_user)])
 
 

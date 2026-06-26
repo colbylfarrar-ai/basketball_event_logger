@@ -287,7 +287,13 @@ def require_login() -> dict:
         return _LOCAL_IDENTITY
 
     if not getattr(st.user, "is_logged_in", False):
-        st.title("🏀 APP5 Analytics")
+        from pathlib import Path as _P
+        try:
+            _wm = (_P(__file__).resolve().parent.parent / "assets"
+                   / "logo_wordmark.svg").read_text(encoding="utf-8")
+            st.image(_wm, width=320)
+        except Exception:
+            st.title("🏀 HoopTracks")
         st.write("Sign in to continue.")
         if st.button("Sign in", type="primary"):
             st.login()

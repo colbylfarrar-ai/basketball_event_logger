@@ -24,7 +24,8 @@ from pathlib import Path
 
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_ROOT))
 
 import helpers.auth as AUTH
 
@@ -38,11 +39,29 @@ try:
     _wide = get_all_settings().get("wide_mode", "1") == "1"
 except Exception:
     _wide = True
+_ASSETS = _ROOT / "assets"
+_FAVICON = _ASSETS / "logo_mark.png"      # raster favicon (tools/make_brand.py)
 st.set_page_config(
-    page_title="APP5 Analytics", page_icon="🏀",
+    page_title="HoopTracks",
+    page_icon=str(_FAVICON) if _FAVICON.exists() else "🏀",
     layout="wide" if _wide else "centered",
     initial_sidebar_state="expanded",
 )
+
+# Brand lockup pinned to the TOP of the sidebar (above the nav) on every page, via
+# st.logo. Two jobs: the app self-identifies as HoopTracks instead of a bare URL,
+# and every shared screenshot carries the wordmark for free. The vector SVGs are
+# the source of truth (crisp at any size, font rendered browser-side so no server
+# font dependency); st.image accepts the raw SVG markup. icon_image is the square
+# mark shown when the sidebar is collapsed.
+try:
+    st.logo(
+        (_ASSETS / "logo_wordmark.svg").read_text(encoding="utf-8"),
+        icon_image=(_ASSETS / "logo_mark.svg").read_text(encoding="utf-8"),
+        size="large", link="https://hooptracks.com",
+    )
+except Exception:
+    pass
 
 # Build → Analyze → Plan: the program's workflow, made legible in the sidebar.
 _NAV = {

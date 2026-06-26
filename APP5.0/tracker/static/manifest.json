@@ -1,6 +1,6 @@
 {
-  "name": "APP5 Tracker",
-  "short_name": "Tracker",
+  "name": "HoopTracks",
+  "short_name": "HoopTracks",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

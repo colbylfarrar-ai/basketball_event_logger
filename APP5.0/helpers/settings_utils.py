@@ -186,15 +186,17 @@ def apply_page_config(settings: dict = None, title: str = None) -> None:
     if settings is None:
         settings = get_all_settings()
     wide = settings.get("wide_mode", DEFAULTS["wide_mode"]) == "1"
+    from pathlib import Path
+    _favicon = Path(__file__).resolve().parent.parent / "assets" / "logo_mark.png"
     try:
         st.set_page_config(
-            page_title=f"{title} · APP5" if title else "Analytics Hub · APP5",
-            page_icon="🏀",
+            page_title=f"{title} · HoopTracks" if title else "HoopTracks",
+            page_icon=str(_favicon) if _favicon.exists() else "🏀",
             layout="wide" if wide else "centered",
             initial_sidebar_state="expanded",
         )
     except Exception:
-        pass  # Already set by APP.py — ignore
+        pass  # Already set by Main.py — ignore
 
 
 def apply_theme_css(settings: dict = None) -> None:

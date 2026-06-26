@@ -46,6 +46,12 @@ def is_three(x, y):
     return shot_distance(x, y) >= THREE_R
 
 
+def is_corner_three(x, y):
+    """A corner 3 — beyond the line via the straight corner segment (not the arc).
+    The shortest, highest-value 3 and the signature floor-spacing shot."""
+    return abs(x) >= CORNER_X and (y - HOOP_Y) <= CBREAK
+
+
 def shot_value(x, y):
     """Point value of a make from this spot: 3 beyond the arc, else 2."""
     return 3 if is_three(x, y) else 2

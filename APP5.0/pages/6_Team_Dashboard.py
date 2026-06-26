@@ -68,6 +68,7 @@ import helpers.lineups as LU
 import helpers.playtypes as PT
 import helpers.defenses as DEF
 import helpers.exploit as EXPL
+import helpers.spacing as SPACE
 import helpers.matchups as MU
 import helpers.gameflow as GF
 import helpers.fouls as FL
@@ -676,6 +677,13 @@ def _league_pps_located(g):
 def _shot_model(g):
     """League distance×value make-rate model for points-over-expected heat."""
     return S.distance_make_model(events=S.fetch_events(_gender_tracked_ids(g)))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _spacing(g, tid):
+    """Floor-spacing index — located-shot (x,y) blend vs the gender league pool.
+    None until the team + pool clear the volume gates (graceful while thin)."""
+    return SPACE.spacing_index(tid, gender=g)
 
 
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
@@ -1372,6 +1380,26 @@ if _tdview == "Charts":
             _shp, _shc, _shm = st.tabs(
                 ["Shot Profile", "Contest", "Creation & Shot-making"])
             with _shp:
+                # ── floor-spacing index (located-shot x,y blend vs league) ────
+                _sp = _spacing(gender, team_id)
+                if _sp.get("index") is not None:
+                    st.markdown("<div class='lab-hdr'>Floor-spacing index</div>",
+                                unsafe_allow_html=True)
+                    _spa, _spb = st.columns([1, 2])
+                    with _spa:
+                        st.plotly_chart(
+                            _pp_gauge(_sp["index"], "Spacing",
+                                      ACCENT if _sp["index"] >= 50 else AWAY),
+                            width="stretch", key="sp_gauge")
+                    with _spb:
+                        _sph = ""
+                        for _c in _sp["components"]:
+                            _sv = (f"{_c['value']:.1f} ft" if _c["key"] == "x_spread"
+                                   else f"{_c['value'] * 100:.0f}%")
+                            _sph += _pctile_bar(_c["label"], _sv, _c["pct"])
+                        st.markdown(_sph, unsafe_allow_html=True)
+                    st.caption(_sp["note"] + f"  ·  {_sp['n']} located shots over a "
+                               f"{_sp['pool_n']}-team pool.")
                 sm = st.columns(6)
                 sm[0].metric("eFG%", _pctf(S.efg(tb)))
                 sm[1].metric("TS%", _pctf(S.ts(tb)))

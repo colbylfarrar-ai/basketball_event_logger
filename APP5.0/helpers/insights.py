@@ -234,8 +234,33 @@ def _g_playstyle(row, pools, d):
             "n": poss}
 
 
+def _g_situational(row, pools, d):
+    """Situational scoring: a player's PPP swing in a game situation (4th quarter /
+    early) vs their OWN overall rate. Reads the precomputed situational edge — the
+    'who shows up late' read, quarter-based so it needs no score-margin context."""
+    sit = d.get("situational")
+    if not sit or (sit.get("poss") or 0) < 8:
+        return None
+    delta = sit.get("delta")
+    if delta is None:
+        return None
+    z = delta / 0.25                  # ~PPP-swing sd; manual scale like _g_playtype
+    if abs(z) < MIN_Z:
+        return None
+    label = (sit.get("label") or "this stretch").lower()
+    here, over, n = sit["ppp_here"], sit["ppp_overall"], sit["poss"]
+    if delta >= 0:
+        txt = (f"**Steps up in the {label}** — **{here:.2f} PPP vs {over:.2f} "
+               f"overall** ({n} poss); wants the ball in the moment.")
+    else:
+        txt = (f"**Cools in the {label}** — **{here:.2f} PPP vs {over:.2f} "
+               f"overall** ({n} poss); press them when it matters.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Situational", "n": n}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
-               _g_consistency, _g_defense, _g_playtype, _g_playstyle]
+               _g_consistency, _g_defense, _g_playtype, _g_playstyle,
+               _g_situational]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -252,7 +277,7 @@ def _derive(row):
 
 
 def league_insights(table, *, guarded=None, q4=None, playtypes=None,
-                    playstyles=None, top=3):
+                    playstyles=None, situational=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
@@ -275,6 +300,8 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
             d["playtype"] = playtypes[pid]
         if playstyles and pid in playstyles:
             d["playstyle"] = playstyles[pid]
+        if situational and pid in situational:
+            d["situational"] = situational[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -425,11 +452,20 @@ def playtype_profile_edges(events):
     return out
 
 
+def situational_edges(events):
+    """{pid: {'label','ppp_here','ppp_overall','poss','delta'}} — each player's most
+    notable quarter-based scoring swing (4th-quarter clutch vs their overall). Reads
+    situational.player_situational_edges; empty until games carry enough per-player
+    shots, so it lights up as tracking fills in."""
+    import helpers.situational as SIT
+    return SIT.player_situational_edges(events)
+
+
 def build_feed(table, events, *, top=3):
     """One-call insight feed: precomputes the event-derived splits (guarded-cliff,
-    Q4) and runs the miner. ``{pid: [insight,...]}``. Wrap heavy calls in a cache
-    at the page level."""
-    guarded = q4 = pt = ps = None
+    Q4, signature play_type, situational) and runs the miner. ``{pid: [insight,...]}``.
+    Wrap heavy calls in a cache at the page level."""
+    guarded = q4 = pt = ps = sit = None
     try:
         guarded = guarded_cliffs(events)
     except Exception:
@@ -446,5 +482,9 @@ def build_feed(table, events, *, top=3):
         ps = playtype_profile_edges(events)
     except Exception:
         pass
+    try:
+        sit = situational_edges(events)
+    except Exception:
+        pass
     return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
-                           playstyles=ps, top=top)
+                           playstyles=ps, situational=sit, top=top)

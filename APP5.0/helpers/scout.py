@@ -460,6 +460,17 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
                              f"({(_pr['open_rate'] * 100):.0f}% open) — close "
                              "out hard and switch screens cleanly.")
 
+    # ── situational tendencies: play_type/defense usage by quarter / score / run.
+    # Reuses the events fetched + entitlement-scoped above, from team_id's own
+    # game-state perspective. Dormant until shots carry play_type/defense tags.
+    situational = None
+    if ev:
+        try:
+            import helpers.situational as SIT
+            situational = SIT.team_situational(team_id, ev, gender=gender)
+        except Exception:
+            situational = None
+
     return {
         "name": name, "class": s.get("class", "N/A"),
         "record": f"{s.get('W',0)}-{s.get('L',0)}",
@@ -472,7 +483,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         "shots_by_def": shots_by_def,
         "shots_allowed_by_play": shots_allowed_by_play,
         "shots_allowed_by_def": shots_allowed_by_def, "play_calls": play_calls,
-        "play_calls_def": play_calls_def,
+        "play_calls_def": play_calls_def, "situational": situational,
         "defenses_run": defenses_run, "defenses_faced": defenses_faced,
         "defense_families": defense_families, "defense_cross": defense_cross,
         "set_profiles": set_profiles, "feeders": feeders, "handoff": handoff,
@@ -1205,6 +1216,34 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
         diag_html = ("<h2>Play diagrams — draw by hand</h2>" + legend +
                      f"<table class='diag'>{rows}</table>")
 
+    # ── situational tendencies (play/defense usage by quarter / score / run) ──
+    sit_html = ""
+    sit = sc.get("situational")
+    if _show("situational") and sit and sit.get("rows"):
+        rows_sit = "".join(
+            f"<tr><td>{e(r['label'])}</td>"
+            f"<td class='n'>{r['poss']}</td>"
+            f"<td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
+            f"<td>{e(r['top'])}</td></tr>" for r in sit["rows"])
+        if rows_sit:
+            sit_html = (
+                "<h2>Situational tendencies — when they run it</h2><table><tr>"
+                "<th>Situation</th><th class='n'>Poss</th><th class='n'>PPP</th>"
+                f"<th class='n'>FG%</th><th>Go-to set</th></tr>{rows_sit}</table>")
+            conc = sit.get("concentration") or []
+            if conc:
+                bits = " · ".join(
+                    f"{e(c['play_label'])} in {e(c['sit_label'])} "
+                    f"({c['lift']:.1f}×)" for c in conc[:4])
+                sit_html += (f"<p class='note'><b>Situational sets:</b> {bits}. "
+                             "Offensive profile by quarter, score state and running "
+                             "game; PPP = points per possession.</p>")
+            else:
+                sit_html += ("<p class='note'>Offensive profile by quarter, score "
+                             "state and running game; PPP = points per possession. "
+                             "'Go-to set' needs tagged plays.</p>")
+
     return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
 <title>Scout · {e(sc['name'])}</title>
 <style>
@@ -1279,6 +1318,7 @@ table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
 {report_html}
 {pc_html}
 {def_html}
+{sit_html}
 {three_html}
 {plen_html}
 {qs_html}

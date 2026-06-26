@@ -83,7 +83,9 @@ import helpers.dashboard.insights_tab as DINS
 import helpers.dashboard.profile_tab as DPROF
 import helpers.dashboard.playstyle_tab as DPLAYSTYLE
 import helpers.dashboard.defense_tab as DDEFENSE
+import helpers.dashboard.situational_tab as DSITUATIONAL
 import helpers.breakdown as BR
+import helpers.situational as SIT
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
 GOOD = "#3fb950"
@@ -970,6 +972,15 @@ def _def_players_faced(g):
     return DEF.player_defenses_faced(gender=g)
 
 
+# ── SITUATIONAL views (helpers/situational.py — the Situational super-tab) ────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _situational_view(g, tid):
+    """play_type / defense usage + scoring by quarter / score-state / on-a-run, for
+    one team's tracked games (events scoped via _team_game_ids — a team is already
+    one gender, so g is signature-parity only)."""
+    return SIT.team_situational(tid, S.fetch_events(S._team_game_ids(tid)), gender=g)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _scoring_buckets(_ids):
     """Scoring buckets (paint/2nd-chance/off-TO/fast-break/bench) over the games."""
@@ -1097,9 +1108,10 @@ with tab_lab:
         ["Advanced", "Build", "Impact Lab"])
 
 with tab_charts:
-    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps, ch_dscheme) = st.tabs(
+    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps, ch_dscheme,
+     ch_sit) = st.tabs(
         ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
-         "Quarters", "Play Style", "Defense Scheme"])
+         "Quarters", "Play Style", "Defense Scheme", "Situational"])
 
     # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
     # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
@@ -1139,6 +1151,18 @@ with tab_charts:
             named_sets_all=_named_sets_all, set_profiles_all=_set_profiles_all,
             factors=_pt_factors)
         DPLAYSTYLE.render(_ps_ctx)
+
+    # ── Situational super-tab (play_type/defense by quarter/score/run) ──────
+    # Modular renderer in helpers/dashboard/situational_tab.py; self-gates on
+    # has_tracked internally (own @st.fragment), so NOT in the empty-state loop.
+    with ch_sit:
+        _sit_ctx = SimpleNamespace(
+            team_id=team_id, gender=gender, has_tracked=has_tracked,
+            players=players, tracked_ids=tuple(bundle["tracked_ids"]),
+            ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
+            PURPLE=PURPLE, PINK=PINK,
+            situational=_situational_view)
+        DSITUATIONAL.render(_sit_ctx)
 
     if not has_tracked:
         for _ch in (ch_sc, ch_sh, ch_rb, ch_df, ch_tr):

@@ -58,6 +58,7 @@ SCOUT_SECTIONS = [
     ("def_attack", "How they attack a defense", "Defense (schemes)"),
     ("def_cross", "Play type × defense cross-tab", "Defense (schemes)"),
     ("def_concession", "Where their defense concedes", "Defense (schemes)"),
+    ("situational", "Situational tendencies — by quarter, score, run", "Situational"),
     ("shot_chart", "Shot chart", "Shooting"),
     ("shot_by_play", "Shot charts by play type (their offense)", "Shooting"),
     ("shot_by_def", "Shot charts by defense faced (their offense)", "Shooting"),
@@ -975,6 +976,33 @@ def render(ctx):
             st.caption("PPP this team scores running each set vs each scheme "
                        "(cells with ≥10 poss; blank = thin). Which defense to "
                        "throw at which action.")
+
+    # ── situational tendencies (play/defense usage by quarter / score / run) ──
+    sit = sc.get("situational")
+    if _show("situational"):
+        st.markdown("<div class='lab-hdr'>Situational tendencies — when they run it"
+                    "</div>", unsafe_allow_html=True)
+        if sit and sit.get("rows"):
+            st.dataframe(pd.DataFrame([{
+                "Situation": r["label"], "Poss": r["poss"],
+                "PPP": round(r["PPP"], 2), "FG%": r["FG%"] * 100,
+                "Go-to set": r["top"],
+            } for r in sit["rows"]]), hide_index=True, width="stretch",
+                column_config={
+                    "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                    "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
+                })
+            conc = sit.get("concentration") or []
+            if conc:
+                st.caption("Situational sets: " + " · ".join(
+                    f"{c['play_label']} in {c['sit_label']} ({c['lift']:.1f}× usage)"
+                    for c in conc[:4]))
+            st.caption("Their offense by quarter, score state, and whether they're on "
+                       "a run. PPP = points per possession; 'Go-to set' needs tagged "
+                       "plays. The full Situational tab is on the Team Dashboard.")
+        else:
+            st.caption("Not enough tracked possessions yet — fills in as games are "
+                       "logged (and sharpens once shots carry a **Play type**).")
 
     # ── where they shoot from (real x/y chart when tap data exists) ──────────
     if _show("shot_chart"):

@@ -255,27 +255,43 @@ else:
     if not _dupe_opts:
         st.info("No other same-gender team to merge into this one.")
     else:
-        dupe_id = mc[1].selectbox("Duplicate (folded in, then deleted)", _dupe_opts,
-                                  format_func=lambda i: _tl[i], key="merge_dupe")
-        _u = SYNC.team_usage(dupe_id)
-        if _u:
-            st.caption("Duplicate currently holds — " + " · ".join(
-                f"{n} {tc}" for tc, n in sorted(_u.items())))
-        else:
-            st.caption("Duplicate has no games/players — it'll just be removed.")
-        _ok = st.checkbox(f"Permanently delete “{_tl[dupe_id]}” and move its data "
-                          f"into “{_tl[keep_id]}”.", key="merge_confirm")
-        if st.button("🔀 Merge teams", type="primary", disabled=not _ok):
-            try:
-                res = SYNC.merge_teams(keep_id, dupe_id)
+        dupe_ids = mc[1].multiselect(
+            "Duplicates (folded in, then deleted)", _dupe_opts,
+            format_func=lambda i: _tl[i], key="merge_dupe",
+            help="Pick EVERY duplicate of the keeper — out-of-state teams often "
+                 "come in under 2–5 slightly different names; they all fold in at "
+                 "once.")
+        if dupe_ids:
+            _tot = {}
+            for _d in dupe_ids:
+                for tc, n in SYNC.team_usage(_d).items():
+                    _tot[tc] = _tot.get(tc, 0) + n
+            if _tot:
+                st.caption(f"{len(dupe_ids)} duplicate(s) hold — " + " · ".join(
+                    f"{n} {tc}" for tc, n in sorted(_tot.items())))
+            else:
+                st.caption(f"{len(dupe_ids)} duplicate(s) have no games/players — "
+                           "they'll just be removed.")
+            _names = ", ".join(f"“{_tl[i]}”" for i in dupe_ids)
+            _ok = st.checkbox(
+                f"Permanently delete {len(dupe_ids)} duplicate(s) — {_names} — and "
+                f"move all their data into “{_tl[keep_id]}”.", key="merge_confirm")
+            if st.button(f"🔀 Merge {len(dupe_ids)} team(s)", type="primary",
+                         disabled=not _ok):
+                _done, _fail = [], []
+                for _d in dupe_ids:
+                    try:
+                        _done.append(SYNC.merge_teams(keep_id, _d)["dupe"])
+                    except Exception as exc:
+                        _fail.append(f"{_tl.get(_d, _d)}: {exc}")
                 try:  # nudge other coaches' cached league views to refresh
                     db.execute("UPDATE app_settings SET value=CAST(value AS INTEGER)+1 "
                                "WHERE key='data_version'")
                 except Exception:
                     pass
-                _m = ", ".join(f"{n} {tc}" for tc, n in sorted(res["moved"].items()))
                 st.cache_data.clear()
-                st.success(f"Merged “{res['dupe']}” into “{res['keep']}”. "
-                           f"Moved {_m or 'nothing'}. Duplicate deleted.")
-            except Exception as exc:
-                st.error(f"Merge failed: {exc}")
+                if _done:
+                    st.success(f"Folded {len(_done)} team(s) into “{_tl[keep_id]}”: "
+                               + ", ".join(f"“{n}”" for n in _done) + ".")
+                if _fail:
+                    st.error("Some merges failed — " + " · ".join(_fail))

@@ -1059,10 +1059,13 @@ def _matchup_grid(g, tid, _ids):
 #       rendered BELOW at module level — the sub-tab objects are module globals)
 #    tab_gloss   → Glossary
 # ══════════════════════════════════════════════════════════════════════════════
-(tab_over, tab_scout, tab_insights, tab_players, tab_prof, tab_sched, tab_charts,
- tab_lab, tab_gloss) = st.tabs(
-    ["Overview", "Scout", "Insights", "Players", "Player Profile", "Schedule",
-     "Charts", "Lab", "Glossary"])
+# Lazy-load: a top-level "View" segmented_control instead of st.tabs, so only
+# the chosen view's heavy queries run each rerun (st.tabs computes every tab).
+# Inner sub-tabs (Charts/Lab) keep their st.tabs; the @st.fragment bodies keep
+# their own fast reruns. Switching View reruns the page once.
+_TD_VIEWS = ["Overview", "Scout", "Insights", "Players", "Player Profile",
+             "Schedule", "Charts", "Lab", "Glossary"]
+_tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view") or "Overview"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1084,7 +1087,7 @@ _over_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 2 — PLAYERS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_over:
+if _tdview == "Overview":
     DOVER.render(_over_ctx)
 
 
@@ -1105,7 +1108,7 @@ _players_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 3 — SCHEDULE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_players:
+if _tdview == "Players":
     DPLAY.render(_players_ctx)
 
 
@@ -1119,19 +1122,19 @@ _sched_ctx = SimpleNamespace(bundle=bundle, rec=rec, log=log, scored=scored,
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 4 — CHARTS  (5 sub-tabs: Scoring · Shooting · Rebounding · Defense · Trends)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_sched:
+if _tdview == "Schedule":
     DSCHED.render(_sched_ctx)
 
 
 # The analyst toys live under one Lab tab — Scout and the game-prep charts
 # stop competing with the correlation heatmap for a coach's attention. Created
 # before tab_charts so the ch_* objects exist for every with-block below.
-with tab_lab:
+if _tdview == "Lab":
     st.caption("Analyst tools — deeper dives beyond the game-prep core.")
     (ch_adv, ch_bld, ch_impact) = st.tabs(
         ["Advanced", "Build", "Impact Lab"])
 
-with tab_charts:
+if _tdview == "Charts":
     (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps, ch_dscheme,
      ch_sit) = st.tabs(
         ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
@@ -3007,8 +3010,9 @@ def _fx_chqt():
 # ══════════════════════════════════════════════════════════════════════════════
 #  CHARTS ▸ ADVANCED  (the futuristic analytics lab: 5 sub-tabs)
 # ══════════════════════════════════════════════════════════════════════════════
-with ch_qt:
-    _fx_chqt()
+if _tdview == "Charts":
+    with ch_qt:
+        _fx_chqt()
 
 
 @st.fragment
@@ -3441,8 +3445,9 @@ def _fx_chadv():
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 7 — INSIGHTS
 # ══════════════════════════════════════════════════════════════════════════════
-with ch_adv:
-    _fx_chadv()
+if _tdview == "Lab":
+    with ch_adv:
+        _fx_chadv()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3451,7 +3456,7 @@ with ch_adv:
 # Helper tab dissolved: matchup Predictor removed, Lineup creator moved to the War
 # Room page, Impact Lab moved here under Charts. `if True:` preserves the moved
 # Impact-Lab block's original indentation (no wholesale re-indent).
-if True:
+if _tdview == "Lab":
     h_impact = ch_impact
 
     # fragment: the WPA model radio lives INSIDE, so switching models reruns
@@ -3859,7 +3864,7 @@ _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                              # opponent scout: pick & scout any team, keep yours
                              opp_ctx=_opp_scout_ctx, all_teams=_all_teams,
                              my_team_id=team_id)
-with tab_scout:
+if _tdview == "Scout":
     DSCOUT.render(_scout_ctx)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3867,7 +3872,7 @@ with tab_scout:
 # ══════════════════════════════════════════════════════════════════════════════
 _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
                                 has_tracked=has_tracked)
-with tab_insights:
+if _tdview == "Insights":
     DINS.render(_insights_ctx)
 
 
@@ -4267,11 +4272,12 @@ def _fx_chbld():
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 9 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
-with ch_bld:
-    _fx_chbld()
+if _tdview == "Lab":
+    with ch_bld:
+        _fx_chbld()
 
 
-with tab_gloss:
+if _tdview == "Glossary":
     glossary_tab("ta_gloss")
 
 
@@ -4300,5 +4306,5 @@ _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
                             ptable_full=_ptable_full,
                             pp_zone_tables=_pp_zone_tables,
                             render_profile=_render_profile)
-with tab_prof:
+if _tdview == "Player Profile":
     DPROF.render(_prof_ctx)

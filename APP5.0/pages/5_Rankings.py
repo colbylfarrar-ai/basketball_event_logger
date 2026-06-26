@@ -1,23 +1,24 @@
 """
 5_Rankings.py — the league-wide view: team rankings, deep dives and charts.
 
-League-wide tabs:
+League-wide views (a lazy segmented_control — only the chosen view computes):
   • Overview    — the source of truth. Results-only "Score" power ratings for
                   every team, with Class / min-games filters that drive the team
                   leaders, signature metrics and the rankings table.
+  • Compare     — two teams head-to-head: side-by-side metrics, past meetings,
+                  predicted score and (tracked) the four-factor edge. Promoted to
+                  #2 as the one genuine opponent-prep tool here.
   • Team        — the per-team deep dive (record, vs top 10, vs class, schedule,
-                  percentile profile) moved out of Overview into its own tab.
+                  percentile profile + tracked possession deep dive).
   • Tracked     — possession-based ratings over tracked games only (the full
                   tracked stat set), with a per-team tracked schedule that opens
                   the full box score.
-  • Team Charts — how teams score / win, quarter breakdown, who can shoot, shot
-                  volume — built from tracked-game events. A team filter takes
-                  teams out of the graphs and a per-stat bar gallery covers the
-                  headline team stats.
-  • League      — futuristic league-wide analytics over every team (landscape,
-                  tiers, Pythagoras, momentum, win network). The whole-league
-                  companion to the Tracked tab. (Matchup predictions + sims now
-                  live on the War Room page.)
+  • League landscape — the cross-team analytics lab. An inner Section selector
+                  folds in two former views: "Team Charts" (how teams score / win,
+                  quarter breakdown, who can shoot, shot volume — per-team tracked
+                  charts) and "League Lab" (whole-league landscape, tiers,
+                  Pythagoras, momentum, win network). Only the chosen Section runs.
+                  (Matchup predictions + sims live on the War Room page.)
 
 All rating math lives in helpers/team_ratings.py; this page is display + controls.
 """
@@ -368,8 +369,11 @@ st.caption("Class / min-games scope every ranking view below.")
 # view's heavy queries run each rerun (st.tabs computes every tab body). The
 # page-level Class / min-games filter above scopes them all. The @st.fragment
 # view bodies keep their own fast reruns; switching View reruns the page once.
-_RK_VIEWS = ["Overview", "Team", "Compare", "Tracked", "Team Charts",
-             "League", "Glossary"]
+# Compare promoted to #2 (the real opponent-prep tool); Team Charts + League
+# folded into one "League landscape" view (both render the same possession pack)
+# with an inner lazy Section selector so only the chosen sub-view computes.
+_RK_VIEWS = ["Overview", "Compare", "Team", "Tracked", "League landscape",
+             "Glossary"]
 _view = _rkseg("View", _RK_VIEWS, default="Overview", key="rk_view") or "Overview"
 
 
@@ -394,17 +398,17 @@ if _view == "Overview":
         "bridge. **Power** is 0-100 (50 = league average, +10 per std dev); "
         "**Rating** is points vs an average team on a neutral floor.")
 
-    # ── League pulse ─────────────────────────────────────────────────────────
-    st.markdown("<div class='section-hdr'>League pulse</div>",
-                unsafe_allow_html=True)
-    lp = st.columns(5)
-    lp[0].metric("Teams", len(all_rows))
-    lp[1].metric("Games", int(sum(r["GP"] for r in all_rows) // 2))
-    lp[2].metric("Avg PPG", f"{sum(r['PPG'] for r in all_rows)/len(all_rows):.1f}")
-    lp[3].metric("Avg PA/G", f"{sum(r['oPPG'] for r in all_rows)/len(all_rows):.1f}")
+    # ── League pulse (DEMOTED to a one-line caption) ─────────────────────────
+    # League-wide counts are context, not decisions — a thin caption instead of a
+    # 5-metric row so the leaderboards and rankings table rise to the top.
     tracked_ct = sum(1 for g in TR._finished_games(gender=gender,
                                                    tracked_only=True))
-    lp[4].metric("Tracked games", tracked_ct)
+    st.caption(
+        f"**League pulse** — {len(all_rows)} teams · "
+        f"{int(sum(r['GP'] for r in all_rows) // 2)} games · "
+        f"avg {sum(r['PPG'] for r in all_rows)/len(all_rows):.1f}–"
+        f"{sum(r['oPPG'] for r in all_rows)/len(all_rows):.1f} PPG · "
+        f"{tracked_ct} tracked")
 
     # ── Recent results ───────────────────────────────────────────────────────
     recent = query(
@@ -806,16 +810,18 @@ def _fx_team():
                             key=lambda kv: TR._CLASS_RANK.get(kv[0], 99))]
             st.dataframe(pd.DataFrame(cls_rows), hide_index=True,
                          width="stretch")
-        st.markdown("**Offense vs defense**")
-        bar = go.Figure()
-        bar.add_trace(go.Bar(
-            x=["Adj O", "Adj D"], y=[r["xPPG"], r["xoPPG"]],
-            marker_color=[ACCENT, AWAY],
-            text=[r["xPPG"], r["xoPPG"]], textposition="outside",
-            marker_line_width=0))
-        bar.update_yaxes(title="Points / game (opp-adjusted)")
-        _style(bar, 240)
-        st.plotly_chart(bar, width="stretch")
+        # The Adj-O/Adj-D bar just re-plots the xPPG/xoPPG metrics shown above —
+        # demoted to an expander so the column reads cleaner.
+        with st.expander("Offense vs defense — chart"):
+            bar = go.Figure()
+            bar.add_trace(go.Bar(
+                x=["Adj O", "Adj D"], y=[r["xPPG"], r["xoPPG"]],
+                marker_color=[ACCENT, AWAY],
+                text=[r["xPPG"], r["xoPPG"]], textposition="outside",
+                marker_line_width=0))
+            bar.update_yaxes(title="Points / game (opp-adjusted)")
+            _style(bar, 240)
+            st.plotly_chart(bar, width="stretch")
 
         # scoring profile in wins vs losses (from final scores)
         wins = [g for g in results if g["won"]]
@@ -1555,15 +1561,8 @@ def _fx_chart():
                    "(FGA + TOV possessions — shots + turnovers).")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  TAB 5 — EVERYTHING  (whole-league analytics + matchup predictor)
-# ══════════════════════════════════════════════════════════════════════════════
-if _view == "Team Charts":
-    _chart_lock = _paid_pool_lock()
-    if _chart_lock:
-        st.info(_chart_lock)
-    else:
-        _fx_chart()
+# _fx_chart() is now rendered under the merged "League landscape" view (below),
+# not its own top-level view — see the League-landscape gate near the page tail.
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1829,7 +1828,8 @@ def _fx_evr():
             _style(kp, 460)
             st.plotly_chart(kp, width="stretch", key="lab_kenpom")
             st.caption("For a single team's gauges and Team-DNA radar, open that "
-                       "team in **Team Analytics → Advanced → Efficiency & DNA**.")
+                       "team in **Team Dashboard → Lab → Advanced** (Efficiency & "
+                       "DNA).")
         else:
             empty_state("No tracked games yet",
                         "Track games to unlock the possession-based KenPom map.")
@@ -2149,8 +2149,24 @@ def _fx_evr():
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 6 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
-if _view == "League":
-    _fx_evr()
+# ── Merged "League landscape" view ───────────────────────────────────────────
+# Team Charts (per-team tracked charts) + League (whole-league lab) were two
+# top-level views over the same possession pack. They fold into one view with an
+# inner segmented Section selector so only the chosen sub-view's heavy fragment
+# runs (st.tabs would compute both bodies — segmented keeps it lazy). Each
+# sub-view keeps its ORIGINAL gating: Team Charts behind _paid_pool_lock,
+# League (_fx_evr) ungated as before.
+if _view == "League landscape":
+    _ll = _rkseg("Section", ["Team Charts", "League Lab"],
+                 default="Team Charts", key="rk_ll_section") or "Team Charts"
+    if _ll == "Team Charts":
+        _chart_lock = _paid_pool_lock()
+        if _chart_lock:
+            st.info(_chart_lock)
+        else:
+            _fx_chart()
+    else:
+        _fx_evr()
 
 
 if _view == "Glossary":

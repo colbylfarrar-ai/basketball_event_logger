@@ -74,18 +74,31 @@ def _gender_located_by_team(gender, events=None, game_ids=None):
 
 
 def spacing_index(team_id, gender=None, events=None, game_ids=None,
-                  min_shots=MIN_SHOTS):
+                  min_shots=MIN_SHOTS, team_game_ids=None):
     """A team's floor-spacing index — the league-percentile blend of the four
     located-shot components.
 
     Returns {'index': 0-100 or None, 'components': [{key,label,value,pct}],
              'n': located FGA, 'pool_n': qualified teams, 'note': str}. ``index``
     is None (with an explanatory note) until the team clears ``min_shots`` and the
-    pool clears MIN_POOL — graceful while located-shot coverage is still thin."""
+    pool clears MIN_POOL — graceful while located-shot coverage is still thin.
+
+    ``team_game_ids`` (AXIS-2 read-filter) scopes the TEAM's OWN components to the
+    viewer's visible games for this team, while the percentile pool stays
+    gender-wide. None = unrestricted (own team / admin). An empty collection means
+    the viewer may see none of this team's games → no spacing read (never falls
+    back to the full sample)."""
     by_team = _gender_located_by_team(gender, events=events, game_ids=game_ids)
     pool = {tid: c for tid, s in by_team.items()
             if (c := team_components(s)) and c["n"] >= min_shots}
-    me = pool.get(team_id) or team_components(by_team.get(team_id, []))
+    if team_game_ids is not None:
+        # read-filtered: recompute the team's own components from ONLY its visible
+        # games (empty → no read, never the full sample).
+        me = (team_components(S.located_shots(game_ids=list(team_game_ids),
+                                              team_id=team_id))
+              if team_game_ids else None)
+    else:
+        me = pool.get(team_id) or team_components(by_team.get(team_id, []))
 
     if not me or me["n"] < min_shots:
         return {"index": None, "components": [], "n": me["n"] if me else 0,

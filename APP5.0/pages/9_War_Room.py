@@ -88,24 +88,35 @@ def _sim_bracket(g, field, n):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _game_plan(g, a, b):
+def _game_plan(g, a, b, avis=None, bvis=None):
     """Cross-team exploit matrix + defensive plan (Tier 2, ML_LAYER_ROADMAP):
     team `a`'s set-call efficiency × team `b`'s defensive vulnerability, plus the
-    scheme to play on D against `b`. Cached on (gender, a, b)."""
+    scheme to play on D against `b`. `avis`/`bvis` are each team's AXIS-2 visible
+    game-id tuple (None = own/admin = full) so a non-pooled team's tendencies never
+    leak. Cached on (gender, a, b, avis, bvis)."""
     import helpers.exploit as EX
-    return EX.game_plan(a, b, gender=g)
+    return EX.game_plan(a, b, gender=g, my_game_ids=avis, opp_game_ids=bvis)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _scheme_proj(g, a, b):
+def _scheme_proj(g, a, b, avis=None, bvis=None):
     """Scheme-based (play_type-share) matchup projection — VERY experimental,
     gated to 150 tagged set calls per team. Possessions from the two teams'
-    tracked pace when available. Cached on (gender, a, b)."""
+    tracked pace when available. `avis`/`bvis` read-filter each team's leg. Cached
+    on (gender, a, b, avis, bvis)."""
     import helpers.exploit as EX
     tr = _tracked(g)
     pa, pb = tr.get(a, {}).get("Pace"), tr.get(b, {}).get("Pace")
     poss = (pa + pb) / 2.0 if pa and pb else 68.0
-    return EX.scheme_projection(a, b, gender=g, poss=poss)
+    return EX.scheme_projection(a, b, gender=g, poss=poss,
+                                a_game_ids=avis, b_game_ids=bvis)
+
+
+def _vis_tuple(ident, team_id):
+    """AXIS-2 read-filter for one team as a hashable cache key: None = own/admin
+    (unrestricted), else the sorted tuple of that team's pooled (visible) games."""
+    _v = ENT.team_visible_tracked_ids(ident, team_id)
+    return None if _v is None else tuple(sorted(_v))
 
 
 scored = _scored(gender)
@@ -341,8 +352,10 @@ def _render_matchup():
             # (Tier 2, ML_LAYER_ROADMAP — the cross-team bridge). A = you, B = the
             # opponent. Tag-driven, so it lights up as play_type / defense get
             # tagged; gated by the same co-op read rule as the tracked projection.
-            if ENT.can_see_game_tracked(AUTH.current_user(), ta, tb):
-                gp = _game_plan(gender, ta, tb)
+            _gp_user = AUTH.current_user()
+            if ENT.can_see_game_tracked(_gp_user, ta, tb):
+                gp = _game_plan(gender, ta, tb,
+                                _vis_tuple(_gp_user, ta), _vis_tuple(_gp_user, tb))
                 off, dfn = gp["offense"], gp["defense"]
                 st.markdown(f"<div class='lab-hdr'>Game plan — {pred['a_name']} vs "
                             f"{pred['b_name']}</div>", unsafe_allow_html=True)
@@ -377,7 +390,8 @@ def _render_matchup():
                             if _thin_def else "") + dfn["note"])
 
                 # ── EXPERIMENTAL: scheme-based projection (gated 150 set calls) ──
-                sp = _scheme_proj(gender, ta, tb)
+                sp = _scheme_proj(gender, ta, tb,
+                                  _vis_tuple(_gp_user, ta), _vis_tuple(_gp_user, tb))
                 with st.expander("🧪 Experimental — scheme-based projection",
                                  expanded=False):
                     if sp is None:

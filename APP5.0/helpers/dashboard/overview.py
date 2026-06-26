@@ -127,36 +127,37 @@ def render(ctx):
                          help="Possession-based power over tracked games (sparse "
                               "sample — directional).")
 
-        # ── efficiency rankings vs league ──────────────────────────────────
+        # ── efficiency rankings vs league (DEMOTED into an expander) ────────
+        # Restates the tracked metric row above + the per-stat four-factor
+        # percentile bars below — collapsed so the top of the card paints fast.
         if ctx.sc_track:
-            st.markdown("<div class='lab-hdr'>Efficiency rankings — vs league"
-                        "</div>", unsafe_allow_html=True)
-            pool_o = [r["ORtg"] for r in ctx.tracked.values()]
-            pool_d = [r["DRtg"] for r in ctx.tracked.values()]
-            pool_n = [r["NetRtg"] for r in ctx.tracked.values()]
-            pool_p = [r["Pace"] for r in ctx.tracked.values()]
-            metrics = [
-                ("Offense", ctx.sc_track["ORtg"], pool_o, True),
-                ("Defense", ctx.sc_track["DRtg"], pool_d, False),
-                ("Net rating", ctx.sc_track["NetRtg"], pool_n, True),
-                ("Pace", ctx.sc_track["Pace"], pool_p, True),
-            ]
-            bars = []
-            for lbl, val, pool, hb in metrics:
-                pct = TA.percentile(val, pool, higher_better=hb) or 0
-                bars.append((lbl, pct, val))
-            ef = go.Figure(go.Bar(
-                x=[b[1] for b in bars], y=[b[0] for b in bars], orientation="h",
-                marker_color=[ctx.GOOD if b[1] >= 50 else ctx.BAD for b in bars],
-                marker_line_width=0,
-                text=[f"{b[1]:.0f}th pct ({b[2]:.1f})" for b in bars],
-                textposition="auto"))
-            ef.update_xaxes(title="League percentile", range=[0, 100])
-            ctx.style(ef, 240)
-            ef.update_layout(margin=dict(l=4, r=14, t=6, b=30))
-            st.plotly_chart(ef, width="stretch", key="ov_effrank")
-            st.caption(f"Where this team ranks among the {len(ctx.tracked)} tracked "
-                       "teams in the league (100 = best).")
+            with st.expander("Efficiency rankings — vs league"):
+                pool_o = [r["ORtg"] for r in ctx.tracked.values()]
+                pool_d = [r["DRtg"] for r in ctx.tracked.values()]
+                pool_n = [r["NetRtg"] for r in ctx.tracked.values()]
+                pool_p = [r["Pace"] for r in ctx.tracked.values()]
+                metrics = [
+                    ("Offense", ctx.sc_track["ORtg"], pool_o, True),
+                    ("Defense", ctx.sc_track["DRtg"], pool_d, False),
+                    ("Net rating", ctx.sc_track["NetRtg"], pool_n, True),
+                    ("Pace", ctx.sc_track["Pace"], pool_p, True),
+                ]
+                bars = []
+                for lbl, val, pool, hb in metrics:
+                    pct = TA.percentile(val, pool, higher_better=hb) or 0
+                    bars.append((lbl, pct, val))
+                ef = go.Figure(go.Bar(
+                    x=[b[1] for b in bars], y=[b[0] for b in bars], orientation="h",
+                    marker_color=[ctx.GOOD if b[1] >= 50 else ctx.BAD for b in bars],
+                    marker_line_width=0,
+                    text=[f"{b[1]:.0f}th pct ({b[2]:.1f})" for b in bars],
+                    textposition="auto"))
+                ef.update_xaxes(title="League percentile", range=[0, 100])
+                ctx.style(ef, 240)
+                ef.update_layout(margin=dict(l=4, r=14, t=6, b=30))
+                st.plotly_chart(ef, width="stretch", key="ov_effrank")
+                st.caption(f"Where this team ranks among the {len(ctx.tracked)} "
+                           "tracked teams in the league (100 = best).")
 
     # ── best players ──────────────────────────────────────────────────────────
     st.markdown("<div class='lab-hdr'>Who carries them</div>",
@@ -181,25 +182,16 @@ def render(ctx):
                     f"{p['APG']:.1f} ast</div>"
                     f"</div>", unsafe_allow_html=True)
 
-        lc, rc = st.columns(2)
-        with lc:
-            st.markdown("**Scoring leaders** — points / game")
-            sl = sorted([p for p in ctx.players if p["PPG"] is not None],
-                        key=lambda p: p["PPG"], reverse=True)[:7]
-            st.plotly_chart(
-                ctx.leader_bar(sl, "PPG", lambda r: f"#{r['number']} {r['name']}",
-                            lambda r: r["PPG"], lambda v: f"{v:.1f}",
-                            color=ctx.ACCENT, height=260),
-                width="stretch", key="ov_ppg")
-        with rc:
-          if ctx.has_tracked and rated:   # OVERALL leaderboard — tracked-only
-            st.markdown("**Top rated** — OVERALL")
-            ol = sorted(rated, key=lambda p: p["OVERALL"], reverse=True)[:7]
-            st.plotly_chart(
-                ctx.leader_bar(ol, "OVERALL", lambda r: f"#{r['number']} {r['name']}",
-                            lambda r: r["OVERALL"], lambda v: f"{v:.0f}",
-                            color="#56d4dd", height=260),
-                width="stretch", key="ov_ovr")
+        # Scoring leaders full-width. The top-3 OVERALL hero cards above ARE the
+        # OVERALL leaderboard now — the old "Top rated" bar duplicated them.
+        st.markdown("**Scoring leaders** — points / game")
+        sl = sorted([p for p in ctx.players if p["PPG"] is not None],
+                    key=lambda p: p["PPG"], reverse=True)[:7]
+        st.plotly_chart(
+            ctx.leader_bar(sl, "PPG", lambda r: f"#{r['number']} {r['name']}",
+                        lambda r: r["PPG"], lambda v: f"{v:.1f}",
+                        color=ctx.ACCENT, height=260),
+            width="stretch", key="ov_ppg")
 
     # ── four factors & scoring mix — every stat aligned to the league ───────────
     if ctx.has_tracked:
@@ -294,21 +286,22 @@ def render(ctx):
         _ff_card(_d[2], "DREB%", "dreb", "opp_orb", True, "{:.1f}%")
         _ff_card(_d[3], "Opp FT rate", "opp_ftr", "ftr", False, "{:.3f}", scale=1.0)
 
-        st.markdown("<div class='lab-hdr' style='margin-top:12px'>Key stats — vs "
-                    "league</div>", unsafe_allow_html=True)
-        _k1 = st.columns(4)
-        _stat_card(_k1[0], "TS%", "ts", True, "{:.1f}%", 100.0, "true shooting")
-        _stat_card(_k1[1], "FG%", "fg", True, "{:.1f}%", 100.0, "field goal")
-        _stat_card(_k1[2], "3P%", "tp", True, "{:.1f}%", 100.0, "three-point")
-        _stat_card(_k1[3], "Paint FG%", "paint", True, "{:.1f}%", 100.0, "at the rim")
-        _k2 = st.columns(4)
-        _stat_card(_k2[0], "AST/TO", "ast_tov", True, "{:.2f}", 1.0, "ball security")
-        _stat_card(_k2[1], "STL%", "stl_rate", True, "{:.1f}%", 1.0, "steals / 100")
-        _stat_card(_k2[2], "ORtg", "ortg", True, "{:.1f}", 1.0, "pts / 100")
-        _stat_card(_k2[3], "DRtg", "drtg", False, "{:.1f}", 1.0, "allowed / 100")
-        st.caption("Each card: this team's value (green = beats what they allow / "
-                   f"red = worse), opponent value, league average over the "
-                   f"{len(lpools)} tracked teams, and league rank + percentile bar.")
+        # Key stats DEMOTED into an expander — ORtg/DRtg restate the metric row,
+        # the shooting splits restate the four-factor eFG card. Collapsed by default.
+        with st.expander("Key stats — vs league"):
+            _k1 = st.columns(4)
+            _stat_card(_k1[0], "TS%", "ts", True, "{:.1f}%", 100.0, "true shooting")
+            _stat_card(_k1[1], "FG%", "fg", True, "{:.1f}%", 100.0, "field goal")
+            _stat_card(_k1[2], "3P%", "tp", True, "{:.1f}%", 100.0, "three-point")
+            _stat_card(_k1[3], "Paint FG%", "paint", True, "{:.1f}%", 100.0, "at the rim")
+            _k2 = st.columns(4)
+            _stat_card(_k2[0], "AST/TO", "ast_tov", True, "{:.2f}", 1.0, "ball security")
+            _stat_card(_k2[1], "STL%", "stl_rate", True, "{:.1f}%", 1.0, "steals / 100")
+            _stat_card(_k2[2], "ORtg", "ortg", True, "{:.1f}", 1.0, "pts / 100")
+            _stat_card(_k2[3], "DRtg", "drtg", False, "{:.1f}", 1.0, "allowed / 100")
+            st.caption("Each card: this team's value (green = beats what they allow / "
+                       f"red = worse), opponent value, league average over the "
+                       f"{len(lpools)} tracked teams, and league rank + percentile bar.")
 
         st.markdown("**Where the points come from**")
         dn = CARDS.scoring_donut(

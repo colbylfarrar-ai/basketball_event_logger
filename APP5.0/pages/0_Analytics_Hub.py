@@ -38,8 +38,17 @@ import helpers.entitlement as ENT
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _dashboard(gender):
-    """Everything the executive dashboard renders, in one cached bundle."""
+def _dashboard(gender, vis=None):
+    """Everything the executive dashboard renders, in one cached bundle.
+
+    `vis` (a tuple of visible tracked game ids, or None = unrestricted) is the
+    AXIS-2 read-filter for the cross-team TRACKED surfaces ONLY — efficiency
+    gauges, scoring leaders and the game-of-season GEI scope to these games so a
+    non-pooled Solo team's depth never surfaces. Results-only surfaces (power
+    ratings, form) stay public. An empty `vis` = no tracked depth (not the full
+    sample, which the _game_filter empty=all rule would otherwise yield)."""
+    _gids = None if vis is None else set(vis)
+    _no_depth = vis is not None and not vis      # empty visible set → no depth
     d = {"teams": 0, "tracked": 0, "players": 0, "games_played": 0,
          "scored": {}, "form": {}, "top": None, "hot": None,
          "scorer": None, "leaders": [], "scorer_rows": [], "game": None,
@@ -97,8 +106,9 @@ def _dashboard(gender):
         _fail("Power rankings", e)
 
     try:
-        # tracked efficiency for the top team's gauges
-        tracked = TR.tracked_ratings(gender=gender)
+        # tracked efficiency for the top team's gauges (read-filtered)
+        tracked = ({} if _no_depth
+                   else TR.tracked_ratings(gender=gender, game_ids=_gids))
         if tracked:
             d["avg_ortg"] = sum(t["ORtg"] for t in tracked.values()) / len(tracked)
             d["top_trk"] = tracked.get(top_tid)
@@ -106,8 +116,10 @@ def _dashboard(gender):
         _fail("Efficiency gauges", e)
 
     try:
-        # player scoring leaderboard with per-game PTS sparkline
-        table = PR.player_stat_table(gender=gender, min_games=1)
+        # player scoring leaderboard with per-game PTS sparkline (read-filtered)
+        table = ({} if _no_depth
+                 else PR.player_stat_table(gender=gender, min_games=1,
+                                           game_ids=_gids))
         d["players"] = len(table)
         if table:
             gbox = S.player_game_boxes()
@@ -137,8 +149,11 @@ def _dashboard(gender):
     try:
         # game of the season (highest GEI)
         best = None
-        for gid in [r["id"] for r in query(
-                "SELECT id FROM games WHERE tracked=1 AND season='Current'")]:
+        _gei_ids = [r["id"] for r in query(
+            "SELECT id FROM games WHERE tracked=1 AND season='Current'")]
+        if _gids is not None:                         # read-filter the GEI pool
+            _gei_ids = [g for g in _gei_ids if g in _gids]
+        for gid in _gei_ids:
             g = query("""SELECT g.team1_id t1, g.team2_id t2, t1.name n1, t2.name n2,
                                 g.home_score hs, g.away_score aws,
                                 t1.gender gen FROM games g
@@ -198,8 +213,6 @@ try:
 except Exception:
     pass
 
-D = _dashboard(_gender)
-
 # The event-derived league-overview surfaces below (GEI/game-of-season win-prob,
 # the top team's possession gauges, the OVERALL-rating columns, the |z| miner) put
 # MULTIPLE teams in one view → cross-team aggregates that need the Coaches' Co-op
@@ -208,6 +221,15 @@ D = _dashboard(_gender)
 _hub_ident = AUTH.current_user()
 _paid = (ENT.has_paid_plan(_hub_ident)
          and ENT.viewer_is_league_wide(_hub_ident))
+# AXIS-2 read-filter for the cross-team tracked surfaces, resolved BEFORE the
+# dashboard pass. Only a Paid league-wide viewer gets tracked depth, scoped to the
+# games they may aggregate (own ∪ pooled); a non-pooled Solo team never leaks in.
+# Free/Solo pass None so the PUBLIC box surfaces (top scorer name/PPG, counts) stay
+# whole-league — their tracked columns (OVERALL etc.) are gated off at display.
+_civ = ENT.visible_tracked_game_ids(_hub_ident) if _paid else None  # None = unrestricted
+_hub_vis = None if _civ is None else tuple(sorted(_civ))
+
+D = _dashboard(_gender, _hub_vis)
 
 if D.get("errors"):
     st.warning("Some dashboard data failed to load")

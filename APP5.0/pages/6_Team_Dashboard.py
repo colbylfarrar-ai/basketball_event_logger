@@ -5,9 +5,10 @@ Pick one team and read everything about it across these tabs:
 
   • Overview   — a coach's one-glance card: record, power ratings, best players,
                  four-factor snapshot, scoring mix and the margin trend.
-  • Players    — the roster localized: ratings compared, leader bars, a scatter
-                 map and shot-selection breakdown. (The lineup simulator now lives
-                 under Helper → Lineup.)
+  • Roster     — the roster scan (ratings compared, leader bars, scatter maps,
+                 shot-selection breakdown) and a "Player" drill-down sub-view that
+                 opens one player's full card. The two share this view via an inner
+                 selector. (The lineup simulator now lives under Helper → Lineup.)
   • Schedule   — the full schedule, record vs each class, and any tracked game's
                  complete box score on demand.
   • Charts     — the analytics wall (Scoring · Shooting · Rebounding · Defense ·
@@ -680,10 +681,15 @@ def _shot_model(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _spacing(g, tid):
+def _spacing(g, tid, vis=None):
     """Floor-spacing index — located-shot (x,y) blend vs the gender league pool.
+    `vis` (the team's visible tracked games; None = own team / admin = full)
+    read-filters the TEAM's own components so a league-wide scout never aggregates
+    its non-pooled Solo games — the percentile pool stays gender-wide.
     None until the team + pool clear the volume gates (graceful while thin)."""
-    return SPACE.spacing_index(tid, gender=g)
+    return SPACE.spacing_index(
+        tid, gender=g,
+        team_game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
@@ -711,19 +717,24 @@ def _shot_quality(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _rotation(tid):
+def _rotation(tid, vis=None):
     """Stagger coverage (star floor-time + bench-only net bleed) + season foul-prone
-    list for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    list for one team (Tier 2, ML_LAYER_ROADMAP). `vis` read-filters to the viewer's
+    visible games for this team (None = own/admin = full). Only reached when
+    has_tracked, so vis is None or a non-empty pooled set — never empty."""
     import helpers.rotation_plan as RP
-    return RP.star_coverage(tid), RP.foul_prone(tid)
+    gids = list(vis) if vis else None
+    return RP.star_coverage(tid, game_ids=gids), RP.foul_prone(tid, game_ids=gids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _poss_ledger(tid):
+def _poss_ledger(tid, vis=None):
     """Possession-value ledger (points/100 sources + outcome mix, offense & allowed)
-    for one team (Tier 2, ML_LAYER_ROADMAP). Cached on team id."""
+    for one team (Tier 2, ML_LAYER_ROADMAP). `vis` read-filters to the viewer's
+    visible games (None = own/admin = full); only reached when has_tracked."""
     import helpers.possession_value as PVL
-    return PVL.team_ledger(tid)
+    gids = list(vis) if vis else None
+    return PVL.team_ledger(tid, game_ids=gids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1079,7 +1090,11 @@ def _matchup_grid(g, tid, _ids):
 # the chosen view's heavy queries run each rerun (st.tabs computes every tab).
 # Inner sub-tabs (Charts/Lab) keep their st.tabs; the @st.fragment bodies keep
 # their own fast reruns. Switching View reruns the page once.
-_TD_VIEWS = ["Overview", "Scout", "Insights", "Players", "Player Profile",
+# Players (roster scan) + Player Profile (one-player drill) fold into one "Roster"
+# view with an inner lazy selector — scan the roster, switch to drill into a name.
+# Only the chosen sub-view's fragment runs (see the Roster gate near the file tail,
+# after _prof_ctx is built).
+_TD_VIEWS = ["Overview", "Scout", "Insights", "Roster",
              "Schedule", "Charts", "Lab", "Glossary"]
 _tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view") or "Overview"
 
@@ -1121,11 +1136,13 @@ _players_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                                player_leaderboards=_player_leaderboards)
 
 
+# _players_ctx is rendered under the merged "Roster" view (file tail), alongside
+# the Player Profile drill — not its own top-level view anymore.
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 3 — SCHEDULE
 # ══════════════════════════════════════════════════════════════════════════════
-if _tdview == "Players":
-    DPLAY.render(_players_ctx)
 
 
 # The Schedule tab lives in helpers/dashboard/sched.py — the first carved-out
@@ -1381,7 +1398,7 @@ if _tdview == "Charts":
                 ["Shot Profile", "Contest", "Creation & Shot-making"])
             with _shp:
                 # ── floor-spacing index (located-shot x,y blend vs league) ────
-                _sp = _spacing(gender, team_id)
+                _sp = _spacing(gender, team_id, _vis_key)
                 if _sp.get("index") is not None:
                     st.markdown("<div class='lab-hdr'>Floor-spacing index</div>",
                                 unsafe_allow_html=True)
@@ -3658,7 +3675,7 @@ if _tdview == "Lab":
                         })
 
             # ── rotation: stagger coverage + foul trouble (Tier 2) ──────────
-            _cov, _prone = _rotation(team_id)
+            _cov, _prone = _rotation(team_id, _vis_key)
             if _cov.get("bleed") is not None or _prone:
                 st.markdown("<div class='lab-hdr'>Rotation — stagger &amp; foul "
                             "trouble</div>", unsafe_allow_html=True)
@@ -3684,7 +3701,7 @@ if _tdview == "Lab":
                         for r in _prone[:5]))
 
             # ── possession-value ledger: points/100 sources vs leaks (Tier 2) ─
-            _pl = _poss_ledger(team_id)
+            _pl = _poss_ledger(team_id, _vis_key)
             if _pl["offense"] or _pl["defense"]:
                 st.markdown("<div class='lab-hdr'>Possession value — where points "
                             "come from vs leak</div>", unsafe_allow_html=True)
@@ -4342,5 +4359,17 @@ _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
                             ptable_full=_ptable_full,
                             pp_zone_tables=_pp_zone_tables,
                             render_profile=_render_profile)
-if _tdview == "Player Profile":
-    DPROF.render(_prof_ctx)
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB — ROSTER  (Players roster scan + Player Profile drill, merged)
+# ══════════════════════════════════════════════════════════════════════════════
+# One top-level view, two lazy sub-views behind a segmented selector: "Roster"
+# (the whole-roster scan — DPLAY) and "Player" (drill into one name — DPROF, which
+# carries its own player selectbox). Only the chosen branch's @st.fragment runs,
+# so the heavy roster wall and the heavy player card never compute together.
+if _tdview == "Roster":
+    _rv = _seg("View", ["Roster", "Player"], default="Roster",
+               key="td_roster_view") or "Roster"
+    if _rv == "Roster":
+        DPLAY.render(_players_ctx)
+    else:
+        DPROF.render(_prof_ctx)

@@ -276,6 +276,29 @@ def _render_matchups(my_team_id, opp_tid, gender, show):
     my_players = sorted([dict(r, _pid=pid) for pid, r in tbl.items()
                          if r["team_id"] == my_team_id],
                         key=lambda r: -(r.get("DEFENSE") or 0))
+    # AXIS-2 read-filter for the OPPONENT's ratings (their OFFENSE is event-derived
+    # tracked depth). own team / admin → full (None); a league-wide scout → ONLY the
+    # opponent's POOLED games, rebuilt from the filtered set so their non-shared Solo
+    # games never feed OFFENSE; not entitled / not pooled → no opponent ratings. Used
+    # for BOTH the on-screen scorer list and the printable (build_matchups), so
+    # neither leaks. (can_see_team_tracked is a bare boolean — it MUST be paired with
+    # the read-filter, which is what team_visible_tracked_ids gives us.)
+    _viewer = AUTH.current_user()
+    _ovis = ENT.team_visible_tracked_ids(_viewer, opp_tid)
+    if not ENT.can_see_team_tracked(_viewer, opp_tid):
+        _otbl = {}
+    elif _ovis is None:                       # own team / admin → full depth
+        _otbl = {pid: r for pid, r in tbl.items() if r["team_id"] == opp_tid}
+    elif _ovis:                               # league-wide scout → pooled games only
+        _otbl = {pid: r for pid, r in PR.player_stat_table(
+                     gender=gender, min_games=1,
+                     game_ids=tuple(sorted(_ovis))).items()
+                 if r["team_id"] == opp_tid}
+    else:                                     # league-wide but opponent not pooled
+        _otbl = {}
+    # Two-team table for the printable: my players (own depth) + opponent (filtered).
+    _mtbl = {pid: r for pid, r in tbl.items() if r["team_id"] == my_team_id}
+    _mtbl.update(_otbl)
     plan = SB.get_plan(opp_tid)
     # drop assignments to a defender no longer on your roster (archived / left) so
     # they neither show as a ghost nor linger in storage / on the printed sheet.
@@ -291,14 +314,12 @@ def _render_matchups(my_team_id, opp_tid, gender, show):
         my_label = {p["_pid"]: f"#{p.get('number') or ''} {p['name']}".strip()
                     for p in my_players}
         my_def = {p["_pid"]: p.get("DEFENSE") for p in my_players}
-        can_rate = ENT.can_see_team_tracked(AUTH.current_user(), opp_tid)
-        their = []
-        if can_rate:
-            their = sorted(
-                [dict(r, _pid=pid) for pid, r in tbl.items()
-                 if r["team_id"] == opp_tid
-                 and (r.get("OFFENSE") is not None or r.get("PPG") is not None)],
-                key=lambda r: -(r.get("OFFENSE") or r.get("PPG") or 0))[:6]
+        # opponent scorers from the read-filtered table (empty when not entitled
+        # or the opponent shared nothing) — no bare-boolean leak.
+        their = sorted(
+            [dict(r, _pid=pid) for pid, r in _otbl.items()
+             if (r.get("OFFENSE") is not None or r.get("PPG") is not None)],
+            key=lambda r: -(r.get("OFFENSE") or r.get("PPG") or 0))[:6]
         intel = SB.get_intel(opp_tid)
         # seed from the saved plan so saving here keeps any assignment the War Room
         # planner made for a scorer this top-N list doesn't render (the two share
@@ -361,7 +382,7 @@ def _render_matchups(my_team_id, opp_tid, gender, show):
             SB.save_plan(opp_tid, new_plan)
             plan = new_plan
             st.success("Matchup plan saved · also shows in the War Room planner.")
-    return SC.build_matchups(my_team_id, opp_tid, tbl, plan)
+    return SC.build_matchups(my_team_id, opp_tid, _mtbl, plan)
 
 
 @st.fragment

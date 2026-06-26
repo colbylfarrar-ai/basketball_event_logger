@@ -36,18 +36,18 @@ def render(ctx):
         col.metric(f"vs {cls}", f"{w}-{l}")
 
     if rvc:
-        st.markdown("<div class='lab-hdr'>Record vs each class</div>",
-                    unsafe_allow_html=True)
-        rcfig = go.Figure()
-        rcfig.add_trace(go.Bar(x=cls_order, y=[rvc[c][0] for c in cls_order],
-                               name="Wins", marker_color=ctx.GOOD))
-        rcfig.add_trace(go.Bar(x=cls_order, y=[rvc[c][1] for c in cls_order],
-                               name="Losses", marker_color=ctx.BAD))
-        rcfig.update_layout(barmode="stack")
-        rcfig.update_yaxes(title="Games")
-        rcfig.update_xaxes(title="Opponent class")
-        ctx.style(rcfig, 300)
-        st.plotly_chart(rcfig, width="stretch", key="sc_rvc")
+        # The chart restates the metric row above — demoted to an expander.
+        with st.expander("Record vs each class — chart"):
+            rcfig = go.Figure()
+            rcfig.add_trace(go.Bar(x=cls_order, y=[rvc[c][0] for c in cls_order],
+                                   name="Wins", marker_color=ctx.GOOD))
+            rcfig.add_trace(go.Bar(x=cls_order, y=[rvc[c][1] for c in cls_order],
+                                   name="Losses", marker_color=ctx.BAD))
+            rcfig.update_layout(barmode="stack")
+            rcfig.update_yaxes(title="Games")
+            rcfig.update_xaxes(title="Opponent class")
+            ctx.style(rcfig, 300)
+            st.plotly_chart(rcfig, width="stretch", key="sc_rvc")
 
     st.markdown("<div class='lab-hdr'>Schedule</div>", unsafe_allow_html=True)
     st.caption("Opponent ranking (everything / tracked when possible), opponent "

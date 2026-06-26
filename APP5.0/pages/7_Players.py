@@ -299,41 +299,52 @@ min_games = c2.slider("Minimum games played", 1, 16, 2, 1,
                            "Ratings are recomputed against whoever qualifies.")
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _stat_table(g, mg):
-    return PR.player_stat_table(gender=g, min_games=mg)
+def _stat_table(g, mg, vis=None):
+    # vis = tuple of visible tracked game ids (the AXIS-2 read-filter); None =
+    # unrestricted (admin). NOTE _game_filter treats an empty/falsy game_ids as
+    # "whole tracked sample", so an empty visible set must NEVER reach here — the
+    # caller downgrades to box-only instead (see the table-build block below).
+    return PR.player_stat_table(gender=g, min_games=mg,
+                                game_ids=(list(vis) if vis else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _zone_tables():
-    """Per-player zone + guarded/open + hand-side splits (whole tracked sample)."""
-    ev = S.fetch_events()
+def _zone_tables(vis=None):
+    """Per-player zone + guarded/open + hand-side splits, read-filtered to the
+    viewer's visible games (vis None = whole tracked sample, for admin)."""
+    ev = S.fetch_events(list(vis) if vis else None)
     return (S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev),
             S.player_hand_splits(events=ev))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _shot_model():
-    """League distance×value make-rate model for the points-over-expected heat."""
-    return S.distance_make_model(events=S.fetch_events())
+def _shot_model(vis=None):
+    """League distance×value make-rate model for the points-over-expected heat,
+    read-filtered to the viewer's visible games (vis None = whole sample)."""
+    return S.distance_make_model(events=S.fetch_events(list(vis) if vis else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _named_sets(g):
-    """Per-player play-type PPP, league-percentiled vs the gender pool."""
-    return PT.player_named_playtype_percentiles(gender=g)
+def _named_sets(g, vis=None):
+    """Per-player play-type PPP, league-percentiled vs the visible pool
+    (vis None = whole gender pool, for admin)."""
+    return PT.player_named_playtype_percentiles(
+        gender=g, game_ids=(list(vis) if vis else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _role_splits(g):
-    """Per-player screen-action handler/roller splits (scoped to gender's games)."""
-    gids = PT._tracked_game_ids(g)
+def _role_splits(g, vis=None):
+    """Per-player screen-action handler/roller splits, read-filtered to the
+    viewer's visible games (vis None = whole gender pool, for admin)."""
+    gids = list(vis) if vis else PT._tracked_game_ids(g)
     return PT.player_role_splits(game_ids=gids) if gids else {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _set_profiles(g):
-    """Per-player set-call shot profiles (scoped to gender's games)."""
-    gids = PT._tracked_game_ids(g)
+def _set_profiles(g, vis=None):
+    """Per-player set-call shot profiles, read-filtered to the viewer's visible
+    games (vis None = whole gender pool, for admin)."""
+    gids = list(vis) if vis else PT._tracked_game_ids(g)
     return PT.player_playtype_shot_profiles(game_ids=gids) if gids else {}
 
 
@@ -357,6 +368,32 @@ if not table:
                 cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     st.stop()
 
+# AXIS-2 read-filter: a Paid + League-wide (Co-op) viewer may aggregate ONLY the
+# tracked games they're entitled to (own ∪ pooled). A non-pooled Solo team's
+# tracked depth must never surface on this whole-league page. Mirrors
+# pages/10_Data_Explorer.py. `_vis_key` (None = admin/unrestricted, else a tuple)
+# is threaded into every cross-team builder below.
+_vis_key = None
+if _PAID:
+    _vis = ENT.visible_tracked_game_ids(_ident)        # None = admin (unrestricted)
+    if _vis is not None:
+        if _vis:                                       # non-empty visible set → scope
+            _vis_key = tuple(sorted(_vis))
+            _ftab = _stat_table(gender, min_games, _vis_key)
+            if _ftab:
+                table = _ftab                          # tracked depth → visible set only
+            else:
+                _PAID = False                          # league-wide but nothing matched →
+                _vis_key = None                        # box-only display
+        else:
+            # league-wide but ZERO visible tracked games → box-only. CRITICAL: never
+            # pass an empty filter to _stat_table — _game_filter treats empty as the
+            # whole sample, which would re-leak the full corpus.
+            _PAID = False
+            _vis_key = None
+# Free / Solo-paid keep the unfiltered table — box columns are public league-wide;
+# their tracked columns are gated off at display by _PAID, so _vis_key stays None.
+
 rows = sorted(table.values(), key=lambda r: (r["Rank"] or 1e9))
 by_pid = table
 
@@ -376,16 +413,18 @@ st.markdown(
     f"{_ovr_chip}"
     "</div>", unsafe_allow_html=True)
 
-# per-player zone splits + guarded/open (shared by Shot Lab, Compare, Profile)
-zsplits, zguard, hsplits = _zone_tables()
+# per-player zone splits + guarded/open (shared by Shot Lab, Compare, Profile),
+# read-filtered to the viewer's visible games.
+zsplits, zguard, hsplits = _zone_tables(_vis_key)
 
 
 # ── full-pool data for the Lab tab (badges/archetypes/stabilized/matchups all
 #    run on every qualified player, not the slider-filtered set; cached so they
 #    don't recompute on the main page's interactions) ──────────────────────────
 @st.cache_data(ttl=600, show_spinner=False)
-def _table_full(g):
-    return PR.player_stat_table(gender=g, min_games=1)
+def _table_full(g, vis=None):
+    return PR.player_stat_table(gender=g, min_games=1,
+                                game_ids=(list(vis) if vis else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -408,9 +447,9 @@ def _foulft():
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _player_card(pid, g):
-    """Printable HTML player report card (cached per player/gender)."""
-    return RP.player_card_html(pid, gender=g, table=_table_full(g))
+def _player_card(pid, g, vis=None):
+    """Printable HTML player report card (cached per player/gender/visible-set)."""
+    return RP.player_card_html(pid, gender=g, table=_table_full(g, vis))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -420,18 +459,18 @@ def _combined(pid):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _lab_badges(g):
-    return BG.award_badges(_table_full(g))
+def _lab_badges(g, vis=None):
+    return BG.award_badges(_table_full(g, vis))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _lab_clusters(g):
-    return ARC.cluster_players(_table_full(g))
+def _lab_clusters(g, vis=None):
+    return ARC.cluster_players(_table_full(g, vis))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _lab_stab(g):
-    return SH.stabilize_table(_table_full(g))
+def _lab_stab(g, vis=None):
+    return SH.stabilize_table(_table_full(g, vis))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -932,7 +971,7 @@ def _fx_shot():
     ec1, ec2 = st.columns([3, 2])
     with ec1:
         # Unified shot surface: dots / points-over-expected heat / zone fallback.
-        if not _shot_panel(pl_shots, zone_data=pl_zone, model=_shot_model(),
+        if not _shot_panel(pl_shots, zone_data=pl_zone, model=_shot_model(_vis_key),
                            key="lab_player", title=PL["name"]):
             empty_state("No located shots yet",
                         "Tap shots in the Game Tracker to build this player's "
@@ -1137,7 +1176,7 @@ def _fx_cmp():
                     # player shot explorer has, now on the head-to-head view.
                     if not _shot_panel(
                             p_shots, zone_data=zsplits.get(p_pid, {}),
-                            model=_shot_model(), key=f"cmp_court_{sfx}",
+                            model=_shot_model(_vis_key), key=f"cmp_court_{sfx}",
                             title=P["name"], height=380):
                         st.caption(f"{P['name']}: no shot locations or zones "
                                    "logged yet.")
@@ -1242,7 +1281,7 @@ def _fx_prof():
     from helpers.ui import pdf_or_html_download
     if _PAID:
         pdf_or_html_download(
-            "Player card", _player_card(pid, gender),
+            "Player card", _player_card(pid, gender, _vis_key),
             f"card_{P['name']}".replace(" ", "_"),
             key="prof_card_dl")
     else:
@@ -1271,11 +1310,12 @@ def _fx_prof():
     render_card(SimpleNamespace(
         P=P, pid=pid, rows=rows, paid=_PAID, accent=ACCENT,
         zsplits=zsplits, zguard=zguard, hsplits=hsplits,
-        badges=_lab_badges(gender).get(pid, []),
-        archetype=_lab_clusters(gender)["players"].get(pid, {}).get("archetype"),
+        badges=_lab_badges(gender, _vis_key).get(pid, []),
+        archetype=_lab_clusters(gender, _vis_key)["players"].get(pid, {}).get("archetype"),
         pgb=_pgb(), located=_player_located(pid), foulft=_foulft().get(pid),
-        named_sets=_named_sets(gender).get(pid), role_splits=_role_splits(gender).get(pid),
-        set_profiles=_set_profiles(gender).get(pid),
+        named_sets=_named_sets(gender, _vis_key).get(pid),
+        role_splits=_role_splits(gender, _vis_key).get(pid),
+        set_profiles=_set_profiles(gender, _vis_key).get(pid),
     ))
 
 
@@ -1293,15 +1333,15 @@ def _fx_plab():
                "stabilized stats for the small sample, and who-guarded-whom "
                "matchup intelligence. Computed over the full pool (min 1 game).")
     _TIER_COLOR = {"Gold": "#f0c000", "Silver": "#c0c8d0", "Bronze": "#cd7f32"}
-    ltab = _table_full(gender)
+    ltab = _table_full(gender, _vis_key)
     if not ltab:
         empty_state("No player data yet",
                     "No tracked-game player data for this league yet — track a "
                     "game and the Lab lights up.")
     else:
-        lbadges = _lab_badges(gender)
-        lclusters = _lab_clusters(gender)
-        lstab = _lab_stab(gender)
+        lbadges = _lab_badges(gender, _vis_key)
+        lclusters = _lab_clusters(gender, _vis_key)
+        lstab = _lab_stab(gender, _vis_key)
         lnames = _lab_names(gender)
         lab_pid_label = {pid: f"#{r['number']} {r['name']} · {r['team']}"
                          for pid, r in ltab.items()}

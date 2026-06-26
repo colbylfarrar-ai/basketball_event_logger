@@ -308,6 +308,17 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         shots_by_pid.setdefault(sh["player_id"], []).append(sh)
     for p in personnel:
         p["shots"] = shots_by_pid.get(p["pid"], [])
+    # same located shots bucketed by the one-tap PLAY-TYPE and DEFENSE tags, for
+    # filtered shot charts on the sheet (sparse until a coach tags — sections that
+    # read these self-hide when empty).
+    shots_by_play, shots_by_def = {}, {}
+    for sh in team_shots:
+        _pk = sh.get("play_type")
+        if _pk:
+            shots_by_play.setdefault(_pk, []).append(sh)
+        _dk = DEF._norm(sh.get("defense"))
+        if _dk:
+            shots_by_def.setdefault(_dk, []).append(sh)
 
     # ── how they get their shots: explicit one-tap play-call tags ─────────────
     # The literal set call a coach taps on a shot in the tracker (pnr / iso /
@@ -425,7 +436,8 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         "factors": factors, "strengths": strengths, "weaknesses": weaknesses,
         "guard": guard, "attack": attack, "personnel": personnel,
         "zones": zones, "zones_by_type": zones_by_type,
-        "team_shots": team_shots, "play_calls": play_calls,
+        "team_shots": team_shots, "shots_by_play": shots_by_play,
+        "shots_by_def": shots_by_def, "play_calls": play_calls,
         "play_calls_def": play_calls_def,
         "defenses_run": defenses_run, "defenses_faced": defenses_faced,
         "defense_families": defense_families, "defense_cross": defense_cross,
@@ -838,6 +850,34 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             f"<p class='note'>{fga} located attempts · {fgm}/{fga} · {pct:.0f}% "
             "— the spots to take away. ● make · ✕ miss.</p>")
 
+    # ── shot charts split by one-tap PLAY-TYPE and DEFENSE tag (filtered courts) ─
+    # A small court per tag (≥5 located shots). Self-hides when a team isn't tagged
+    # — so an entry-level coach never sees it and an all-in one gets the depth.
+    def _shot_grid(groups, labels, title, key):
+        if not (_show(key) and groups):
+            return ""
+        cells = []
+        for k, lbl in labels:
+            shots = groups.get(k) or []
+            if len(shots) < 5:
+                continue
+            fgm, fga = sum(1 for s in shots if s.get("make")), len(shots)
+            cells.append(
+                f"<td><div class='diaglabel'>{e(lbl)} — {fgm}/{fga} "
+                f"({100 * fgm / fga:.0f}%)</div>"
+                f"{CP.shot_chart_png(shots, width=150)}</td>")
+        if not cells:
+            return ""
+        grid = "".join(f"<tr>{''.join(cells[i:i + 3])}</tr>"
+                       for i in range(0, len(cells), 3))
+        return f"<h2>{title}</h2><table class='diag'>{grid}</table>"
+
+    sbp_html = _shot_grid(sc.get("shots_by_play") or {}, PT.NAMED_PLAY_TYPES,
+                          "Shot charts by play type", "shot_by_play")
+    sbd_html = _shot_grid(sc.get("shots_by_def") or {},
+                          [(k, lbl) for k, lbl, *_ in DEF.DEFENSES],
+                          "Shot charts by defense faced", "shot_by_def")
+
     # ── personnel cards: identity + OVR & breakdown + GS% + shots + mini chart ──
     # Hand-entered key-player intel (coach's dropdown picks) is folded into the
     # matching player's box here; the leftover (unmatched) intel prints in its own
@@ -1062,9 +1102,22 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 .flow2 h2{{break-after:avoid;-webkit-column-break-after:avoid}}
 .flow2 table,.flow2 ul,.flow2 .note,.flow2 .notes-box,.flow2 .hb{{
   break-inside:avoid;-webkit-column-break-inside:avoid}}
+table.brandbar{{width:100%;border-collapse:collapse;border-bottom:2px solid #f0a500;
+  margin-bottom:6px}}
+table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
+.brand{{color:#f0a500;font-weight:800;font-size:14px;letter-spacing:.2px}}
+.brandtag{{text-align:right;color:#999;font-size:9px;text-transform:uppercase;
+  letter-spacing:1.2px}}
 @page{{margin:.4in}}
 @media print{{.wrap{{padding:6px 10px}} td.pcard,table.diag td{{page-break-inside:avoid}}}}
 </style></head><body><div class='wrap'>
+<table class='brandbar'><tr>
+<td class='brand'><svg width='15' height='15' viewBox='0 0 24 24'
+ style='vertical-align:-2px'><circle cx='12' cy='12' r='10.5' fill='none'
+ stroke='#f0a500' stroke-width='1.6'/><path d='M12 1.5V22.5 M1.5 12H22.5
+ M3.8 5C8 8.5 16 8.5 20.2 5 M3.8 19C8 15.5 16 15.5 20.2 19' fill='none'
+ stroke='#f0a500' stroke-width='1.1'/></svg> HoopTracks</td>
+<td class='brandtag'>scouting report</td></tr></table>
 <h1>SCOUT — {e(sc['name'])}</h1>
 <div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
   Power #{sc['rank']}/{sc['of']}</div>
@@ -1082,7 +1135,10 @@ table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
 {intel_html}
 {notes_html}{_flow_close}
 {shot_html}
+{sbp_html}
+{sbd_html}
 {pers_html}
 {diag_html}
-<div class='foot'>Analytics Hub{(' · ' + today) if today else ''}</div>
+<div class='foot'>Made with <b style='color:#f0a500'>HoopTracks</b> ·
+  hooptracks.com{(' · ' + today) if today else ''}</div>
 </div></body></html>"""

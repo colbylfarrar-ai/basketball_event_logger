@@ -56,6 +56,8 @@ SCOUT_SECTIONS = [
     ("def_attack", "How they attack a defense", "Defense (schemes)"),
     ("def_cross", "Play type × defense cross-tab", "Defense (schemes)"),
     ("shot_chart", "Shot chart", "Shooting"),
+    ("shot_by_play", "Shot charts by play type", "Shooting"),
+    ("shot_by_def", "Shot charts by defense faced", "Shooting"),
     ("zones", "Shooting by zone", "Shooting"),
     ("poss_length", "Scoring by possession length", "Shooting"),
     ("manual_intel", "Manual scouting (key players)", "Extras"),
@@ -875,6 +877,39 @@ def render(ctx):
             _sc_db = S.distance_buckets(_sc_shots)
             if _sc_db:
                 st.caption("By length — " + S.distance_buckets_caption(_sc_db))
+
+    # ── shot charts split by one-tap play-type / defense tag (filtered courts) ──
+    # Same static PNG courts the print sheet uses (so what you see is what prints).
+    import helpers.court_png as _CP
+    import helpers.playtypes as _PT
+    import helpers.defenses as _DEF
+
+    def _shot_grid_ui(groups, labels, header, key):
+        if not (_show(key) and groups):
+            return
+        cells = []
+        for k, lbl in labels:
+            shots = groups.get(k) or []
+            if len(shots) < 5:
+                continue
+            fgm, fga = sum(1 for s in shots if s.get("make")), len(shots)
+            cells.append(
+                f"<td style='text-align:center;padding:4px;vertical-align:top'>"
+                f"<div style='font-size:11px;color:#8b949e'>{html.escape(lbl)} — "
+                f"{fgm}/{fga} ({100 * fgm / fga:.0f}%)</div>"
+                f"{_CP.shot_chart_png(shots, width=150)}</td>")
+        if not cells:
+            return
+        st.markdown(f"<div class='lab-hdr'>{header}</div>", unsafe_allow_html=True)
+        grid = "".join(f"<tr>{''.join(cells[i:i + 4])}</tr>"
+                       for i in range(0, len(cells), 4))
+        st.markdown(f"<table>{grid}</table>", unsafe_allow_html=True)
+
+    _shot_grid_ui(sc.get("shots_by_play") or {}, _PT.NAMED_PLAY_TYPES,
+                  "Shot charts by play type", "shot_by_play")
+    _shot_grid_ui(sc.get("shots_by_def") or {},
+                  [(k, lbl) for k, lbl, *_ in _DEF.DEFENSES],
+                  "Shot charts by defense faced", "shot_by_def")
 
     # ── shooting by zone (2s vs 3s) ─────────────────────────────────────────
     if _show("zones") and ctx.bundle.get("zones_by_type"):

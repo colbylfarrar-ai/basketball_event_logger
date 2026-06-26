@@ -83,4 +83,32 @@ ok(edges[99]["label"] == "4th quarter" and edges[99]["delta"] > 0,
 # below-sample players are dropped
 ok(SIT.player_situational_edges(clutch[:3]) == {}, "thin sample -> no edges")
 
+# ── regression: score-state replay RESETS per game (margin must not accumulate
+#    across a team's many tracked games — the "Close only shows 3 poss" bug) ────
+def _g(e, gid):
+    e["game_id"] = gid
+    return e
+
+multi = []
+# Game 101: A blows B out -> ends ~ +20, so the LAST events are "leading big".
+for i in range(12):
+    multi.append(_g(ev("shot", 1, f"7:{50 - i:02d}", A, 30, "make", 2, "pnr"), 101))
+# Game 102: A vs B trade baskets -> the score stays within +/-5 (a CLOSE game).
+for i in range(10):
+    team = A if i % 2 == 0 else B
+    multi.append(_g(ev("shot", 1, f"7:{50 - i:02d}", team, 30 if team == A else 40,
+                       "make", 2, "iso"), 102))
+
+SIT.annotate(multi, A)
+# every Game-102 event must see a small (within-game) margin — NOT A's +20 from
+# game 101 carried over.
+g102 = [e for e in multi if e["game_id"] == 102]
+ok(all(abs(e["_sit"]["margin"]) <= SIT.CLOSE for e in g102),
+   "margin resets per game (Game 102 stays within +/-5, no carryover)")
+res_m = SIT.team_situational(A, multi)
+_close = next((s for s in res_m["situations"] if s["key"] == "close"), None)
+ok(_close is not None and _close["off_poss"] >= 8,
+   "Close (+/-5) captures the whole close game, not just the opening tip")
+# without the per-game reset this would be ~1-3; with it, all of game 102 counts.
+
 print(f"\nALL {PASS} CHECKS PASSED")

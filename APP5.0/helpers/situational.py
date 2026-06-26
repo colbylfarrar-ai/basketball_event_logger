@@ -32,6 +32,7 @@ LEAD = 6                   # margin >= +LEAD  -> leading
 TRAIL = -6                 # margin <= TRAIL  -> trailing
 TRAIL10 = -10              # margin <= TRAIL10 -> down 10+
 CLOSE = 5                  # |margin| <= CLOSE -> one-possession-ish game
+_UNSET = object()          # sentinel: forces a game-state reset on the first event
 
 _PLAY_KEYS = {k for k, _ in NAMED_PLAY_TYPES}
 _PLAY_LABELS = dict(NAMED_PLAY_TYPES)
@@ -81,11 +82,22 @@ def annotate(events, team_id):
     only made FG/FT move the margin / run streak; everything else inherits the
     state at its moment. ``run`` is 'us' / 'opp' / None (>= RUN_PTS unanswered).
     Returns the same list (mutated)."""
-    order = sorted(events, key=_elapsed)
+    # Replay each GAME from 0-0 — margin/run are WITHIN-game state and must reset
+    # at every game boundary, or the score-state accumulates across the team's
+    # many tracked games (a winning team reads "leading" forever and "close" only
+    # for the opening tip). Sort by (game, elapsed) so each game's pass is intact.
+    order = sorted(events, key=lambda e: (e.get("game_id") or 0, _elapsed(e)))
     margin = 0          # team_id - opponent, BEFORE the next event
     run_owner = None
     run_pts = 0
+    _cur_game = _UNSET
     for e in order:
+        gid = e.get("game_id")
+        if gid != _cur_game:           # new game → reset the score-state replay
+            _cur_game = gid
+            margin = 0
+            run_owner = None
+            run_pts = 0
         run = None
         if run_pts >= RUN_PTS and run_owner is not None:
             run = "us" if run_owner == team_id else "opp"

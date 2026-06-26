@@ -158,6 +158,65 @@ def render_intel(team_id, *, key_prefix="si") -> list:
     return cur
 
 
+# ── per-PLAYER freeform notes (kind='pnotes', JSON {str(pid): note}) ─────────────
+# A direct, jot-a-note-on-every-player layer, distinct from the structured key-
+# player intel above: one free-text note per rostered player, printed in that
+# player's box on the scout sheet. Per-coach, same coach_notes table, no schema.
+def get_player_notes(team_id, email=None) -> dict:
+    raw = get_note(team_id, kind="pnotes", email=email)
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return ({str(k): str(v) for k, v in d.items() if str(v).strip()}
+                if isinstance(d, dict) else {})
+    except Exception:
+        return {}
+
+
+def save_player_notes(team_id, notes, email=None) -> None:
+    clean = {str(k): str(v).strip()
+             for k, v in (notes or {}).items() if str(v).strip()}
+    save_note(team_id, json.dumps(clean), kind="pnotes", email=email)
+
+
+def render_player_notes(team_id, personnel, *, key_prefix="ppn") -> dict:
+    """A free-text note for EACH personnel player (read-only Player column, you
+    edit the Note). Saved per-coach; each note prints in that player's box."""
+    import pandas as pd
+    cur = get_player_notes(team_id)
+    pid_by_label, rows = {}, []
+    for p in (personnel or []):
+        pid = p.get("pid")
+        if pid is None:
+            continue
+        lbl = f"#{p.get('num') or ''} {p.get('name')}".strip()
+        pid_by_label[lbl] = pid
+        rows.append({"Player": lbl, "Note": cur.get(str(pid), "")})
+    if not rows:
+        st.caption("No tracked personnel to note yet.")
+        return cur
+    df = pd.DataFrame(rows, columns=["Player", "Note"])
+    edited = st.data_editor(
+        df, key=f"{key_prefix}_{team_id}", hide_index=True, width="stretch",
+        disabled=["Player"],
+        column_config={
+            "Player": st.column_config.TextColumn("Player", width="medium"),
+            "Note": st.column_config.TextColumn(
+                "Your note (prints on the sheet)", width="large"),
+        })
+    if st.button("Save player notes", key=f"{key_prefix}_save_{team_id}"):
+        out = {}
+        for row in edited.to_dict("records"):
+            pid = pid_by_label.get((row.get("Player") or "").strip())
+            if pid is not None and str(row.get("Note") or "").strip():
+                out[str(pid)] = str(row["Note"]).strip()
+        save_player_notes(team_id, out)
+        st.success("Player notes saved.")
+        return get_player_notes(team_id)
+    return cur
+
+
 # ── matchup plan (per-coach): {their_scorer_key: my_defender_pid} per opponent ──
 # Stored in coach_notes under kind='matchup' as JSON, keyed by the OPPONENT team_id
 # (the team_id arg). Lets a coach save "put my #4 on their #11" assignments. No

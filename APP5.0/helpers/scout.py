@@ -765,6 +765,13 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
         li = "".join(f"<li>{_md_bold(t)}</li>" for t in tips)
         report_html = f"<h2>Scouting report</h2><ul>{li}</ul>"
 
+    # ── coach's custom team note (the Custom notes editor; prints verbatim) ──
+    coach_html = ""
+    _coach = str(extra.get("coach_note") or "").strip()
+    if _show("custom_notes") and _coach:
+        coach_html = (f"<h2>Coach's notes</h2><p class='note' "
+                      f"style='white-space:pre-wrap'>{e(_coach)}</p>")
+
     # ── how they get their shots: tagged play calls (one-tap from the tracker) ─
     # Each table is independently toggleable (pc_offense / pc_defense /
     # pc_tendencies / pc_handoff) so a coach can print just the one or two they
@@ -991,6 +998,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     # matching player's box here; the leftover (unmatched) intel prints in its own
     # table below. Match by player id first, then by name.
     _intel = extra.get("manual_intel") or []
+    _pnotes = extra.get("player_notes") or {}     # {str(pid): freeform note}
     _intel_by_pid = {r["pid"]: r for r in _intel if r.get("pid") is not None}
     _intel_by_name = {str(r.get("name", "")).strip().lower(): r for r in _intel
                       if str(r.get("name", "")).strip()}
@@ -1072,13 +1080,18 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                 _matched_intel.add(_mk)
                 inote = (f"<div class='pnote' style='color:#1a5fb4'>📋 "
                          f"{e(str(_mi['note']).strip())}</div>")
+            # your freeform per-player note (the Custom notes editor)
+            _cn = _pnotes.get(str(p.get("pid")))
+            cnote = (f"<div class='pnote' style='color:#0a7d33'>&#9998; "
+                     f"{e(str(_cn).strip())}</div>"
+                     if _cn and str(_cn).strip() else "")
             shots = p.get("shots") or []
             mini = (f"<div class='mini'>"
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
             cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{play}"
                          f"{hand_html}{space_html}{spc_html}{cue_html}{note}"
-                         f"{inote}{mini}</td>")
+                         f"{inote}{cnote}{mini}</td>")
         # two cards per row
         rows = ""
         for i in range(0, len(cards), 2):
@@ -1377,6 +1390,7 @@ table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
 <div class='rng'>{e(rng)}</div>
 {keys_html}
 {report_html}
+{coach_html}
 {pers_html}
 {intel_html}
 {mu_html}

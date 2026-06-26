@@ -48,6 +48,7 @@ SCOUT_SECTIONS = [
     ("predictability", "How scoutable are they", "Overview"),
     ("personnel", "Personnel (player breakdown)", "Personnel"),
     ("player_plays", "Player play-type mix (on personnel cards)", "Personnel"),
+    ("custom_notes", "Custom notes (per player + a team note)", "Personnel"),
     ("three_profile", "Per-player 3-point profile", "Personnel"),
     ("pc_offense", "Play calls — how they get their shots", "Offense (play calls)"),
     ("pc_defense", "What they allow — play calls defended", "Offense (play calls)"),
@@ -497,8 +498,16 @@ def render(ctx):
             st.markdown("<div class='lab-hdr'>Game-plan notes</div>",
                         unsafe_allow_html=True)
             SB.render_notes(ctx.team_id)
+            st.markdown("<div class='lab-hdr'>Custom team note</div>",
+                        unsafe_allow_html=True)
+            SB.render_notes(ctx.team_id, kind="cnote", key_prefix="cn",
+                            label="Custom team note", height=120,
+                            placeholder="Anything to print on the sheet — emphasis, "
+                                        "reminders, special situations…")
             _extra_cold = {"manual_intel": _intel,
                            "notes": SB.get_note(ctx.team_id),
+                           "player_notes": SB.get_player_notes(ctx.team_id),
+                           "coach_note": SB.get_note(ctx.team_id, kind="cnote"),
                            "matchups": _matchups}
             st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                         unsafe_allow_html=True)
@@ -618,6 +627,20 @@ def render(ctx):
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"
                    f"{html.escape(bdg)}</span>" if bdg else "")
                 + "</div>", unsafe_allow_html=True)
+
+    # ── custom notes: a freeform note per player + a custom team note ─────────
+    # Both print on the scout sheet; available for self- and opponent-scouts.
+    if _show("custom_notes"):
+        with st.expander("✎ Custom notes — per player + a team note (print on the "
+                         "sheet)"):
+            if sc.get("personnel"):
+                st.markdown("**Player notes** — one per player")
+                SB.render_player_notes(ctx.team_id, sc["personnel"])
+            st.markdown("**Custom team note**")
+            SB.render_notes(ctx.team_id, kind="cnote", key_prefix="cn",
+                            label="Custom team note", height=120,
+                            placeholder="Anything to print on the sheet — emphasis, "
+                                        "reminders, special situations…")
 
     # ── manual key-player intel (hand-entered; complements auto-personnel) ────
     if not _self and _show("manual_intel"):
@@ -1276,6 +1299,8 @@ def render(ctx):
                         if r["label"] != "Untimed" and r["FGA"]],
         "notes": ("" if _self else SB.get_note(ctx.team_id)),
         "manual_intel": ([] if _self else SB.get_intel(ctx.team_id)),
+        "player_notes": SB.get_player_notes(ctx.team_id),
+        "coach_note": SB.get_note(ctx.team_id, kind="cnote"),
         "matchups": _matchups,
         # "Super Scout Sheet" extra sections (computed once above; self-hide empty)
         "quarter_split": _qsplit,

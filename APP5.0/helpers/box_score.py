@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
-from helpers.ui import team_color
+from helpers.ui import team_color, glossary_key
 import helpers.cards as CARDS
 import helpers.stats as S
 import helpers.win_probability as WP
@@ -1291,6 +1291,8 @@ def render_box_score(game_id: int):
             "+/-": st.column_config.NumberColumn("+/-", format="%d"),
             "GS": st.column_config.NumberColumn("GS", format="%.1f"),
         }
+        glossary_key("MIN", "PTS", "FG%", "3P%", "FT%", "REB", "AST", "STL",
+                     "BLK", "TOV", "PF", "+/-", "SC", "eFG%", "TS%", "GS")
         for tid, nm in [(t2id, t2name), (t1id, t1name)]:
             st.markdown(f"**{nm}**")
             df = make_df(tid)

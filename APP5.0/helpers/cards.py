@@ -266,6 +266,32 @@ def bar_h(names, vals, texts, color="#f0a500", height=None):
     return fig
 
 
+def scoring_donut(pts2, pts3, ptft, *, colors, hole=0.55, height=300,
+                  title=None, ft_label="Free throw", center=None,
+                  center_size=15, margin_top=10, ring=False):
+    """Shared 2-pt / 3-pt / FT points-by-source donut (box score, overview,
+    player card, team dashboard). ``colors`` is the 3-tuple of slice colours
+    (caller passes its accent/away palette). ``center`` is optional hole-
+    annotation HTML; ``ring`` draws the dark slice separator the box score uses.
+    Returns a plotly Figure — caller does the st.plotly_chart."""
+    mk = dict(colors=list(colors))
+    if ring:
+        mk["line"] = dict(color="#0d1117", width=2)
+    fig = go.Figure(go.Pie(
+        labels=["2-pt", "3-pt", ft_label], values=[pts2, pts3, ptft],
+        hole=hole, sort=False, textinfo="label+percent", marker=mk))
+    lay = dict(template="plotly_dark", height=height, showlegend=False,
+               paper_bgcolor="rgba(0,0,0,0)",
+               margin=dict(l=10, r=10, t=margin_top, b=10))
+    if title:
+        lay["title"] = dict(text=title, x=0.5, font=dict(size=13))
+    if center:
+        lay["annotations"] = [dict(text=center, x=0.5, y=0.5, showarrow=False,
+                                   font=dict(size=center_size, color="#f0f6fc"))]
+    fig.update_layout(**lay)
+    return fig
+
+
 # ── gauges ────────────────────────────────────────────────────────────────────
 def gauge_dial(value, title, color, ref=50, vmax=100, vmin=0):
     """0-vmax indicator dial with a delta vs ``ref`` (default 50 = pool average).

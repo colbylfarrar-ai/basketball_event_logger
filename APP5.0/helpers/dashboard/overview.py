@@ -14,6 +14,7 @@ import streamlit as st
 
 from database.db import query, execute
 from helpers.ui import AWAY, CARD_BG, GRID
+import helpers.cards as CARDS
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.manual_box as MB
@@ -310,20 +311,11 @@ def render(ctx):
                    f"{len(lpools)} tracked teams, and league rank + percentile bar.")
 
         st.markdown("**Where the points come from**")
-        dn = go.Figure(go.Pie(
-            labels=["2-pt", "3-pt", "Free throw"],
-            values=[ctx.soff["pts2"], ctx.soff["pts3"], ctx.soff["ptsft"]],
-            hole=0.55, sort=False,
-            marker=dict(colors=[ctx.ACCENT, ctx.BLUE, ctx.GREY]),
-            textinfo="label+percent"))
-        dn.update_layout(
-            template="plotly_dark", height=300,
-            paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
-            margin=dict(l=10, r=10, t=30, b=10),
-            annotations=[dict(text=f"{ctx.soff['pct_paint']*100:.0f}%<br>"
-                                   "<span style='font-size:10px'>in paint</span>",
-                              x=0.5, y=0.5, font=dict(size=15),
-                              showarrow=False)])
+        dn = CARDS.scoring_donut(
+            ctx.soff["pts2"], ctx.soff["pts3"], ctx.soff["ptsft"],
+            colors=(ctx.ACCENT, ctx.BLUE, ctx.GREY), height=300, margin_top=30,
+            center=f"{ctx.soff['pct_paint']*100:.0f}%<br>"
+                   "<span style='font-size:10px'>in paint</span>")
         st.plotly_chart(dn, width="stretch", key="ov_src")
 
     # ── game-by-game: margin paired with offense/defense (APP3 trend charts) ────

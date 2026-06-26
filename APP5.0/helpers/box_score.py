@@ -23,6 +23,7 @@ import streamlit as st
 
 from database.db import query
 from helpers.ui import team_color
+import helpers.cards as CARDS
 import helpers.stats as S
 import helpers.win_probability as WP
 import helpers.team_analytics as TA
@@ -748,17 +749,10 @@ def render_box_score(game_id: int):
         for di, (col, nm, tb, clr) in enumerate([(d1, t2name, atb, away), (d2, t1name, htb, accent)]):
             vals = [tb["2PM"]*2, tb["3PM"]*3, tb["FTM"]]
             tot = sum(vals)
-            don = go.Figure(go.Pie(
-                labels=["2-pt", "3-pt", "Free throws"], values=vals, hole=0.62,
-                marker=dict(colors=[clr, BLUE, "#8b949e"],
-                            line=dict(color="#0d1117", width=2)),
-                textinfo="label+percent", sort=False))
-            don.update_layout(
-                template="plotly_dark", height=300, showlegend=False,
-                paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=10, r=10, t=40, b=10),
-                title=dict(text=nm, x=0.5, font=dict(size=13)),
-                annotations=[dict(text=f"<b>{tot}</b><br>pts", x=0.5, y=0.5,
-                                  font=dict(size=18, color="#f0f6fc"), showarrow=False)])
+            don = CARDS.scoring_donut(
+                *vals, colors=(clr, BLUE, "#8b949e"), hole=0.62, height=300,
+                title=nm, ft_label="Free throws", ring=True, margin_top=40,
+                center=f"<b>{tot}</b><br>pts", center_size=18)
             col.plotly_chart(don, width="stretch", key=f"bs{game_id}_donut{di}")
 
         # shot distribution by zone, split 2 vs 3

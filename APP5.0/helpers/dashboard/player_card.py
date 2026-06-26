@@ -34,7 +34,7 @@ import helpers.playtypes as PT
 from helpers.ui import empty_state, rgb as _rgb, style_fig as _style, CARD_BG, GRID
 from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
-                           gauge_dial)
+                           gauge_dial, scoring_donut as _donut)
 from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            hot_zones as _hot_zones)
 
@@ -333,16 +333,9 @@ def render_card(ctx):
         # points by source
         pts2, pts3, ptsf = P["2PM"] * 2, P["3PM"] * 3, P["FTM"]
         if pts2 + pts3 + ptsf > 0:
-            dn = go.Figure(go.Pie(
-                labels=["2-pt", "3-pt", "FT"], values=[pts2, pts3, ptsf],
-                hole=0.55, sort=False,
-                marker=dict(colors=[accent, "#58a6ff", "#8b949e"]),
-                textinfo="label+percent"))
-            dn.update_layout(
-                template="plotly_dark", height=260,
-                paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
-                margin=dict(l=10, r=10, t=30, b=10),
-                title=dict(text="Points by source", font=dict(size=13)))
+            dn = _donut(pts2, pts3, ptsf, colors=(accent, "#58a6ff", "#8b949e"),
+                        height=260, margin_top=30, ft_label="FT",
+                        title="Points by source")
             st.plotly_chart(dn, width="stretch", key="pcard_src")
 
     with right:

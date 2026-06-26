@@ -46,7 +46,8 @@ from helpers.ui import (page_chrome, page_header, rgb as _rgb,
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
-                           gauge_dial as _pp_gauge, gauge_range, bar_h)
+                           gauge_dial as _pp_gauge, gauge_range, bar_h,
+                           scoring_donut as _donut)
 from helpers.court import (shot_chart as _shot_chart, hot_zones as _hot_zones,
                            shot_map as _shot_map, shot_hexbin as _shot_hexbin,
                            zone_leader_map as _zone_leader_map)
@@ -1227,15 +1228,8 @@ with tab_charts:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**Points by source**")
-                dn = go.Figure(go.Pie(
-                    labels=["2-pt", "3-pt", "Free throw"],
-                    values=[soff["pts2"], soff["pts3"], soff["ptsft"]],
-                    hole=0.55, sort=False,
-                    marker=dict(colors=[ACCENT, BLUE, GREY]),
-                    textinfo="label+percent"))
-                dn.update_layout(template="plotly_dark", height=300,
-                                 paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
-                                 margin=dict(l=10, r=10, t=10, b=10))
+                dn = _donut(soff["pts2"], soff["pts3"], soff["ptsft"],
+                            colors=(ACCENT, BLUE, GREY), height=300)
                 st.plotly_chart(dn, width="stretch", key="sc_src")
             with c2:
                 st.markdown("**Scoring by quarter** — points / game")
@@ -2056,20 +2050,10 @@ with tab_charts:
                 st.plotly_chart(dfg, width="stretch", key="df_shoot")
             with c2:
                 st.markdown("**Opponent scoring sources**")
-                ddn = go.Figure(go.Pie(
-                    labels=["2-pt", "3-pt", "Free throw"],
-                    values=[sdef["pts2"], sdef["pts3"], sdef["ptsft"]],
-                    hole=0.55, sort=False,
-                    marker=dict(colors=[AWAY, "#f0a500", GREY]),
-                    textinfo="label+percent"))
-                ddn.update_layout(
-                    template="plotly_dark", height=300,
-                    paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    annotations=[dict(text=f"{sdef['pct_paint']*100:.0f}%<br>"
-                                           "<span style='font-size:10px'>in paint"
-                                           "</span>", x=0.5, y=0.5,
-                                      font=dict(size=15), showarrow=False)])
+                ddn = _donut(sdef["pts2"], sdef["pts3"], sdef["ptsft"],
+                             colors=(AWAY, "#f0a500", GREY), height=300,
+                             center=f"{sdef['pct_paint']*100:.0f}%<br>"
+                                    "<span style='font-size:10px'>in paint</span>")
                 st.plotly_chart(ddn, width="stretch", key="df_src")
 
             # opponent zone profile — separated into 2s and 3s

@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query, execute
-from helpers.ui import AWAY, CARD_BG, GRID
+from helpers.ui import AWAY, CARD_BG, GRID, seg as _segc
 import helpers.cards as CARDS
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
@@ -331,114 +331,122 @@ def render(ctx):
             legend=dict(orientation="h", y=-0.28))
         return fig
 
-    st.markdown("<div class='lab-hdr'>Points scored &amp; allowed — all games"
-                "</div>", unsafe_allow_html=True)
-    _gx = [f"{g['date'][5:]} {g['site']} {g['opp'][:10]}" for g in ctx.log]
-    _mv = [g["margin"] for g in ctx.log]
-    _cm = [ctx.GOOD if m >= 0 else ctx.BAD for m in _mv]
-    fA = go.Figure()
-    fA.add_trace(go.Bar(
-        x=_gx, y=_mv, name="MOV", marker_color=_cm, opacity=0.55,
-        marker_line_width=0, hovertemplate="%{x}<br>MOV %{y:+d}<extra></extra>"))
-    fA.add_trace(go.Scatter(
-        x=_gx, y=[g["pf"] for g in ctx.log], name="Scored", yaxis="y2",
-        mode="lines+markers", line=dict(color=ctx.ACCENT, width=2),
-        marker=dict(size=6), hovertemplate="%{x}<br>Scored %{y}<extra></extra>"))
-    fA.add_trace(go.Scatter(
-        x=_gx, y=[g["pa"] for g in ctx.log], name="Allowed", yaxis="y2",
-        mode="lines+markers", line=dict(color=AWAY, width=2, dash="dot"),
-        marker=dict(size=6), hovertemplate="%{x}<br>Allowed %{y}<extra></extra>"))
-    _dual_axis(fA, "Points")
-    st.plotly_chart(fA, width="stretch", key="ov_ptsmov")
-    st.caption("MOV bars (green win / red loss) on the left axis; points scored "
-               "and allowed on the right — every completed game.")
-
+    # All four trend charts share MOV/margin bars on y1 + a line set on y2, so
+    # they fold into one chart with a "View" switcher (less scroll, same data).
     _trend = ctx.bundle["trend"] if ctx.has_tracked else []
-    if _trend:
-        _tx = [f"{e['date'][5:]} vs {e['opp'][:10]}" for e in _trend]
-        _tm = [e["margin"] for e in _trend]
-        _tc = [ctx.GOOD if m >= 0 else ctx.BAD for m in _tm]
 
-        st.markdown("<div class='lab-hdr'>Off &amp; Def rating — tracked games"
-                    "</div>", unsafe_allow_html=True)
-        fB = go.Figure()
-        fB.add_trace(go.Bar(
+    # shot-creation mix shares per logged game (None where the game isn't tracked)
+    cbg_ov = ctx.bd.get("creation_by_game", {}) if ctx.has_tracked else {}
+    _self_sh, _crt_sh = [], []
+    for g in ctx.log:
+        c = cbg_ov.get(g["game_id"])
+        if c and (c["self_FGA"] + c["asst_FGA"]):
+            _tot = c["self_FGA"] + c["asst_FGA"]
+            _self_sh.append(100 * c["self_FGA"] / _tot)
+            _crt_sh.append(100 * c["asst_FGA"] / _tot)
+        else:
+            _self_sh.append(None)
+            _crt_sh.append(None)
+    _has_creation = any(v is not None for v in _self_sh)
+
+    _opts = ["Scoring"]
+    if _trend:
+        _opts += ["Rating", "Per poss"]
+    if _has_creation:
+        _opts += ["Creation mix"]
+
+    st.markdown("<div class='lab-hdr'>Game-by-game trend</div>",
+                unsafe_allow_html=True)
+    _view = (_segc("Overlay", _opts, default="Scoring", key="ov_trend_view")
+             if len(_opts) > 1 else "Scoring") or "Scoring"
+
+    _gx = [f"{g['date'][5:]} {g['site']} {g['opp'][:10]}" for g in ctx.log]
+    _gmv = [g["margin"] for g in ctx.log]
+    _gc = [ctx.GOOD if m >= 0 else ctx.BAD for m in _gmv]
+    _tx = [f"{e['date'][5:]} vs {e['opp'][:10]}" for e in _trend]
+    _tm = [e["margin"] for e in _trend]
+    _tc = [ctx.GOOD if m >= 0 else ctx.BAD for m in _tm]
+
+    fig = go.Figure()
+    if _view == "Rating":
+        fig.add_trace(go.Bar(
             x=_tx, y=_tm, name="MOV", marker_color=_tc, opacity=0.55,
             marker_line_width=0,
             hovertemplate="%{x}<br>MOV %{y:+.0f}<extra></extra>"))
-        fB.add_trace(go.Scatter(
+        fig.add_trace(go.Scatter(
             x=_tx, y=[e["ORtg"] for e in _trend], name="ORtg", yaxis="y2",
             mode="lines+markers", line=dict(color=ctx.ACCENT, width=2),
-            marker=dict(size=6), hovertemplate="%{x}<br>ORtg %{y:.1f}<extra></extra>"))
-        fB.add_trace(go.Scatter(
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>ORtg %{y:.1f}<extra></extra>"))
+        fig.add_trace(go.Scatter(
             x=_tx, y=[e["DRtg"] for e in _trend], name="DRtg", yaxis="y2",
             mode="lines+markers", line=dict(color=ctx.BLUE, width=2, dash="dot"),
-            marker=dict(size=6), hovertemplate="%{x}<br>DRtg %{y:.1f}<extra></extra>"))
-        _dual_axis(fB, "Rating")
-        st.plotly_chart(fB, width="stretch", key="ov_ortgmov")
-
-        st.markdown("<div class='lab-hdr'>Points per possession — tracked games"
-                    "</div>", unsafe_allow_html=True)
-        fC = go.Figure()
-        fC.add_trace(go.Bar(
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>DRtg %{y:.1f}<extra></extra>"))
+        _dual_axis(fig, "Rating")
+        _cap = ("MOV bars (green win / red loss); offensive and defensive rating "
+                "(points per 100 possessions) on the right axis — tracked games.")
+    elif _view == "Per poss":
+        fig.add_trace(go.Bar(
             x=_tx, y=_tm, name="MOV", marker_color=_tc, opacity=0.45,
             marker_line_width=0,
             hovertemplate="%{x}<br>MOV %{y:+.0f}<extra></extra>"))
-        fC.add_trace(go.Scatter(
+        fig.add_trace(go.Scatter(
             x=_tx, y=[e["PPP"] for e in _trend], name="PPP", yaxis="y2",
             mode="lines+markers", line=dict(color=ctx.ACCENT, width=2),
-            marker=dict(size=6), hovertemplate="%{x}<br>PPP %{y:.3f}<extra></extra>"))
-        fC.add_trace(go.Scatter(
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>PPP %{y:.3f}<extra></extra>"))
+        fig.add_trace(go.Scatter(
             x=_tx, y=[e["oPPP"] for e in _trend], name="oPPP", yaxis="y2",
             mode="lines+markers", line=dict(color=AWAY, width=2, dash="dot"),
-            marker=dict(size=6), hovertemplate="%{x}<br>oPPP %{y:.3f}<extra></extra>"))
-        _dual_axis(fC, "PPP")
-        st.plotly_chart(fC, width="stretch", key="ov_pppmov")
-
-    # ── margin trend (+ shot-creation mix lines) ───────────────────────────────
-    st.markdown("<div class='lab-hdr'>Margin trend</div>",
-                unsafe_allow_html=True)
-    gx = [f"{g['date'][5:]} {g['site']} {g['opp'][:10]}" for g in ctx.log]
-    mv = [g["margin"] for g in ctx.log]
-    colors = [ctx.GOOD if g["won"] else ctx.BAD for g in ctx.log]
-    mfig = go.Figure(go.Bar(
-        x=gx, y=mv, name="Margin", marker_color=colors, marker_line_width=0,
-        text=[f"{g['pf']}-{g['pa']}" for g in ctx.log], textposition="outside",
-        textfont=dict(size=9),
-        hovertemplate="%{x}<br>Margin %{y:+d}<extra></extra>"))
-    mfig.add_hline(y=0, line=dict(color="#30363d"))
-    # overlay % of FG self-created vs % created (off a pass) per tracked game
-    cbg_ov = ctx.bd.get("creation_by_game", {}) if ctx.has_tracked else {}
-    if cbg_ov:
-        self_sh, crt_sh = [], []
-        for g in ctx.log:
-            c = cbg_ov.get(g["game_id"])
-            if c and (c["self_FGA"] + c["asst_FGA"]):
-                tot = c["self_FGA"] + c["asst_FGA"]
-                self_sh.append(100 * c["self_FGA"] / tot)
-                crt_sh.append(100 * c["asst_FGA"] / tot)
-            else:
-                self_sh.append(None)
-                crt_sh.append(None)
-        mfig.add_trace(go.Scatter(
-            x=gx, y=self_sh, name="% FG self-created", yaxis="y2",
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>oPPP %{y:.3f}<extra></extra>"))
+        _dual_axis(fig, "PPP")
+        _cap = ("MOV bars; points per possession scored (PPP) vs allowed (oPPP) "
+                "on the right axis — tracked games.")
+    elif _view == "Creation mix":
+        fig.add_trace(go.Bar(
+            x=_gx, y=_gmv, name="Margin", marker_color=_gc, marker_line_width=0,
+            text=[f"{g['pf']}-{g['pa']}" for g in ctx.log], textposition="outside",
+            textfont=dict(size=9),
+            hovertemplate="%{x}<br>Margin %{y:+d}<extra></extra>"))
+        fig.add_hline(y=0, line=dict(color="#30363d"))
+        fig.add_trace(go.Scatter(
+            x=_gx, y=_self_sh, name="% FG self-created", yaxis="y2",
             mode="lines+markers", connectgaps=True,
             line=dict(color=ctx.ACCENT, width=2.5), marker=dict(size=6),
             hovertemplate="%{x}<br>Self-created %{y:.0f}%<extra></extra>"))
-        mfig.add_trace(go.Scatter(
-            x=gx, y=crt_sh, name="% FG created (off pass)", yaxis="y2",
+        fig.add_trace(go.Scatter(
+            x=_gx, y=_crt_sh, name="% FG created (off pass)", yaxis="y2",
             mode="lines+markers", connectgaps=True,
             line=dict(color=ctx.BLUE, width=2.5), marker=dict(size=6),
             hovertemplate="%{x}<br>Created %{y:.0f}%<extra></extra>"))
-        mfig.update_layout(
+        ctx.style(fig, 380)
+        fig.update_layout(
             yaxis=dict(title="Margin"),
             yaxis2=dict(title="Share of FG %", overlaying="y", side="right",
                         range=[0, 100], showgrid=False, zerolinecolor="#30363d"))
-    else:
-        mfig.update_yaxes(title="Margin")
-    mfig.update_xaxes(tickangle=-45)
-    ctx.style(mfig, 380)
-    st.plotly_chart(mfig, width="stretch", key="ov_margin")
-    st.caption("Bars: green = win, red = loss (final score labelled). Lines (right "
-               "axis): the share of made/attempted FGs that were self-created (no "
-               "pass) vs created off a pass, each tracked game.")
+        fig.update_xaxes(tickangle=-45)
+        _cap = ("Bars: green = win, red = loss (final score labelled). Lines (right "
+                "axis): the share of made/attempted FGs that were self-created (no "
+                "pass) vs created off a pass, each tracked game.")
+    else:  # Scoring — every completed game
+        fig.add_trace(go.Bar(
+            x=_gx, y=_gmv, name="MOV", marker_color=_gc, opacity=0.55,
+            marker_line_width=0,
+            hovertemplate="%{x}<br>MOV %{y:+d}<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=_gx, y=[g["pf"] for g in ctx.log], name="Scored", yaxis="y2",
+            mode="lines+markers", line=dict(color=ctx.ACCENT, width=2),
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>Scored %{y}<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=_gx, y=[g["pa"] for g in ctx.log], name="Allowed", yaxis="y2",
+            mode="lines+markers", line=dict(color=AWAY, width=2, dash="dot"),
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>Allowed %{y}<extra></extra>"))
+        _dual_axis(fig, "Points")
+        _cap = ("MOV bars (green win / red loss) on the left axis; points scored "
+                "and allowed on the right — every completed game.")
+    st.plotly_chart(fig, width="stretch", key="ov_trend")
+    st.caption(_cap)

@@ -184,29 +184,45 @@ def _guarded_split(ctx):
 
 
 def _zone_xfg_rows(ctx):
-    zx = ctx.bundle.get("zone_xfg") or {}
+    # split 2s vs 3s per zone, each vs a league baseline (xFG%)
+    zbt = ctx.bundle.get("zone_xfg_by_type") or {}
+    z2, z3 = (zbt.get("2") or {}), (zbt.get("3") or {})
     out = []
     for z in S.ZONES:
-        c = zx.get(z)
-        if not c or not c.get("FGA"):
+        c2, c3 = (z2.get(z) or {}), (z3.get(z) or {})
+        if not (c2.get("FGA") or c3.get("FGA")):
             continue
-        fg, xfg = c.get("FG%"), c.get("xFG%")
-        out.append({"label": SC.ZONE_LABELS[z], "fga": c["FGA"], "fg": fg,
-                    "xfg": xfg,
-                    "diff": (fg - xfg) if (fg is not None and xfg is not None) else None})
+        out.append({"label": SC.ZONE_LABELS[z],
+                    "fga2": c2.get("FGA", 0), "fg2": c2.get("FG%"), "xfg2": c2.get("xFG%"),
+                    "fga3": c3.get("FGA", 0), "fg3": c3.get("FG%"), "xfg3": c3.get("xFG%")})
     return out or None
 
 
 def _creation_rows(ctx):
+    # creation_breakdown buckets are self / created(off a screen) / pass / both /
+    # total. Self-created = self+created (no pass); Assisted = pass+both.
     crb = ctx.bundle.get("creation_breakdown")
     if not crb:
         return None
+
+    def _agg(*keys):
+        cells = [crb[k] for k in keys if crb.get(k)]
+        fga = sum(c["FGA"] for c in cells)
+        if not fga:
+            return None
+        fgm = sum(c["FGM"] for c in cells)
+        tpm = sum(c.get("3PM", 0) for c in cells)
+        pts = sum(c.get("PTS", 0) for c in cells)
+        return {"fga": fga, "fg": fgm / fga, "efg": (fgm + 0.5 * tpm) / fga,
+                "pps": pts / fga}
+
     out = []
-    for k, lbl in (("self", "Self-created"), ("asst", "Assisted"), ("total", "All")):
-        c = crb.get(k)
-        if c and c.get("FGA"):
-            out.append({"label": lbl, "fga": c["FGA"], "fg": c["FG%"],
-                        "efg": c["eFG"], "pps": c["PPS"]})
+    for lbl, ks in (("Self-created", ("self", "created")),
+                    ("Assisted (off a pass)", ("pass", "both")),
+                    ("All shots", ("total",))):
+        a = _agg(*ks)
+        if a:
+            out.append({"label": lbl, **a})
     return out or None
 
 
@@ -226,12 +242,15 @@ def _predict(ctx, is_self):
     try:
         import helpers.selfscout as SS
         rep = SS.self_scout_report(ctx.team_id, ctx.gender)
-        off = rep["offense"]
-        if not off.get("rated"):
+        off, dfn = rep["offense"], rep["defense"]
+        if not (off.get("rated") or dfn.get("rated")):
             return None
-        return {"is_self": is_self, "off_pred": off["predictability"],
-                "top_set": off.get("top_set"), "top_share": off.get("top_share"),
-                "rated": True, "overused": rep["drift"]["overused"],
+        return {"is_self": is_self,
+                "off_rated": bool(off.get("rated")), "off_pred": off.get("predictability"),
+                "off_top": off.get("top_set"), "off_share": off.get("top_share"),
+                "def_rated": bool(dfn.get("rated")), "def_pred": dfn.get("predictability"),
+                "def_top": dfn.get("top_set"), "def_share": dfn.get("top_share"),
+                "overused": rep["drift"]["overused"],
                 "underused": rep["drift"]["underused"]}
     except Exception:
         return None
@@ -1127,9 +1146,16 @@ def render(ctx):
     if _show("predictability") and _pred:
         st.markdown("<div class='lab-hdr'>How scoutable are they?</div>",
                     unsafe_allow_html=True)
-        st.markdown(f"**{_pred['off_pred']:.0f}/100 predictable on offense** — higher "
-                    "= a scout keys on them faster. Most-run: "
-                    f"{_pred.get('top_set') or '—'} ({(_pred.get('top_share') or 0):.0f}%).")
+        if _pred.get("off_rated"):
+            st.markdown(f"**{_pred['off_pred']:.0f}/100 predictable on offense** — "
+                        "higher = a scout keys on them faster. Most-run: "
+                        f"{_pred.get('off_top') or '—'} "
+                        f"({(_pred.get('off_share') or 0):.0f}%).")
+        if _pred.get("def_rated"):
+            st.markdown(f"**{_pred['def_pred']:.0f}/100 predictable on defense** — "
+                        "their scheme mix. Most-run: "
+                        f"{_pred.get('def_top') or '—'} "
+                        f"({(_pred.get('def_share') or 0):.0f}%).")
         for r in (_pred.get("overused") or []):
             st.markdown(f"- Predictable & inefficient: **{r['label']}** — "
                         f"{r['share'] * 100:.0f}% · {r['PPP']:.2f} PPP")
@@ -1153,12 +1179,14 @@ def render(ctx):
              "Contested%": round(r["share"] * 100)} for r in _gsplit]),
             hide_index=True, width="stretch")
     if _show("zone_xfg") and _zxfg:
-        st.markdown("<div class='lab-hdr'>Zone shooting vs expected</div>",
-                    unsafe_allow_html=True)
+        st.markdown("<div class='lab-hdr'>Zone shooting vs expected (2s &amp; 3s)"
+                    "</div>", unsafe_allow_html=True)
         st.dataframe(pd.DataFrame([
-            {"Zone": r["label"], "FGA": r["fga"],
-             "FG%": round((r["fg"] or 0) * 100), "xFG%": round((r["xfg"] or 0) * 100),
-             "+/-": round((r["diff"] or 0) * 100)} for r in _zxfg]),
+            {"Zone": r["label"],
+             "2P att": r["fga2"], "2P FG%": round((r["fg2"] or 0) * 100),
+             "2P xFG%": round((r["xfg2"] or 0) * 100),
+             "3P att": r["fga3"], "3P FG%": round((r["fg3"] or 0) * 100),
+             "3P xFG%": round((r["xfg3"] or 0) * 100)} for r in _zxfg]),
             hide_index=True, width="stretch")
     if _show("creation") and _creat:
         st.markdown("<div class='lab-hdr'>Self-created vs assisted</div>",

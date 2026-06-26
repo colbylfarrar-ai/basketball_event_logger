@@ -1053,21 +1053,27 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             "<p class='note'>A big open − guarded gap = a shooter who needs space "
             "(close out hard); a small one = contest-proof (deny the catch).</p>")
 
-    # ── zone shooting vs a league baseline (xFG) ──
+    # ── zone shooting vs a league baseline (xFG), split 2s vs 3s ──
     zx_html = ""
     zx = extra.get("zone_xfg")
     if _show("zone_xfg") and zx:
+        def _xcell(fg, xfg):
+            if fg is None:
+                return "—"
+            d = (f" ({'%+.0f' % ((fg - xfg) * 100)})" if xfg is not None else "")
+            return f"{fg * 100:.0f}%{d}"
         rows = "".join(
-            f"<tr><td>{e(r['label'])}</td><td class='n'>{r['fga']}</td>"
-            f"<td class='n'>{_pf(r['fg'])}</td><td class='n'>{_pf(r['xfg'])}</td>"
-            f"<td class='n'>{('%+.0f%%' % (r['diff'] * 100)) if r['diff'] is not None else '—'}</td></tr>"
+            f"<tr><td>{e(r['label'])}</td>"
+            f"<td class='n'>{r['fga2']}</td><td class='n'>{_xcell(r['fg2'], r['xfg2'])}</td>"
+            f"<td class='n'>{r['fga3']}</td><td class='n'>{_xcell(r['fg3'], r['xfg3'])}</td></tr>"
             for r in zx)
         zx_html = (
             "<h2>Zone shooting vs expected</h2><table><tr><th>Zone</th>"
-            "<th class='n'>FGA</th><th class='n'>FG%</th><th class='n'>xFG%</th>"
-            f"<th class='n'>+/-</th></tr>{rows}</table>"
-            "<p class='note'>FG% against a league baseline for those shots. Positive "
-            "= they shoot it better than expected (take it away); negative = live with it.</p>")
+            "<th class='n'>2P att</th><th class='n'>2P FG% (vs x)</th>"
+            "<th class='n'>3P att</th><th class='n'>3P FG% (vs x)</th></tr>"
+            f"{rows}</table>"
+            "<p class='note'>FG% vs a league baseline (xFG%) for those shots, split "
+            "2s vs 3s. The (±) is over/under expected — positive = take it away.</p>")
 
     # ── self-created vs assisted ──
     cr_html = ""
@@ -1105,14 +1111,20 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                 f"<p class='note'>{e(con.get('note', ''))} Positive +/- = a spot they "
                 "give up better-than-expected looks — attack it.</p>")
 
-    # ── how scoutable are they (play-call predictability) ──
+    # ── how scoutable are they (play-call + defense-scheme predictability) ──
     pred_html = ""
     pr = extra.get("predictability")
-    if _show("predictability") and pr and pr.get("rated"):
+    if _show("predictability") and pr and (pr.get("off_rated") or pr.get("def_rated")):
         who = "We are" if pr.get("is_self") else "They are"
-        head = (f"<li><b>{who} {pr['off_pred']:.0f}/100 predictable on offense</b> "
-                "— higher = a scout keys on them faster. Most-run: "
-                f"{e(pr.get('top_set') or '—')} ({(pr.get('top_share') or 0):.0f}%).</li>")
+        head = ""
+        if pr.get("off_rated"):
+            head += (f"<li><b>{who} {pr['off_pred']:.0f}/100 predictable on offense</b> "
+                     "— higher = a scout keys on them faster. Most-run: "
+                     f"{e(pr.get('off_top') or '—')} ({(pr.get('off_share') or 0):.0f}%).</li>")
+        if pr.get("def_rated"):
+            head += (f"<li><b>{who} {pr['def_pred']:.0f}/100 predictable on defense</b> "
+                     "— their scheme mix. Most-run: "
+                     f"{e(pr.get('def_top') or '—')} ({(pr.get('def_share') or 0):.0f}%).</li>")
         ou = "".join(
             f"<li>{e(r['label'])} — {r['share'] * 100:.0f}% of sets · {r['PPP']:.2f} "
             "PPP (predictable &amp; inefficient — sit on it)</li>"

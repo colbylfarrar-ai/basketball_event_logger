@@ -95,6 +95,18 @@ def _game_plan(g, a, b):
     return EX.game_plan(a, b, gender=g)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _scheme_proj(g, a, b):
+    """Scheme-based (play_type-share) matchup projection — VERY experimental,
+    gated to 150 tagged set calls per team. Possessions from the two teams'
+    tracked pace when available. Cached on (gender, a, b)."""
+    import helpers.exploit as EX
+    tr = _tracked(g)
+    pa, pb = tr.get(a, {}).get("Pace"), tr.get(b, {}).get("Pace")
+    poss = (pa + pb) / 2.0 if pa and pb else 68.0
+    return EX.scheme_projection(a, b, gender=g, poss=poss)
+
+
 scored = _scored(gender)
 tracked = _tracked(gender)
 
@@ -351,7 +363,46 @@ def _render_matchup():
                 if dfn["avoid"]:
                     st.markdown("**Don't sit in:** " + " · ".join(
                         f"{r['label']} ({r['ppp']:.2f})" for r in dfn["avoid"]))
-                st.caption(dfn["note"])
+                _thin_def = bool(dfn["throw"] or dfn["avoid"]) and not any(
+                    r["stable"] for r in dfn["throw"] + dfn["avoid"])
+                st.caption(("⚠ Thin sample — lean on scouting, not these splits. "
+                            if _thin_def else "") + dfn["note"])
+
+                # ── EXPERIMENTAL: scheme-based projection (gated 150 set calls) ──
+                sp = _scheme_proj(gender, ta, tb)
+                with st.expander("🧪 Experimental — scheme-based projection",
+                                 expanded=False):
+                    if sp is None:
+                        st.caption("No overlapping tagged play types between these "
+                                   "two teams yet — tag set calls + the defense "
+                                   "scheme in the Game Tracker to unlock this.")
+                    else:
+                        st.caption(
+                            "A different lens than the rating-based line above: it "
+                            "weights each team's actual **play-type share** by the "
+                            "matchup-expected points per type (your offense + their "
+                            "per-type defense − the league baseline). **Very "
+                            "experimental** on this little tagged data — a research "
+                            "cross-check, not the official odds. The Monte-Carlo "
+                            "line above stays authoritative.")
+                        if not sp["stable"]:
+                            st.warning("⚠ " + sp["note"])
+                        _m = st.columns(3)
+                        _m[0].metric(f"{team_short(pred['a_name'])} pts", sp["a_pts"])
+                        _m[1].metric(f"{team_short(pred['b_name'])} pts", sp["b_pts"])
+                        _m[2].metric("Scheme margin", f"{sp['margin']:+d}",
+                                     help="From the play-type mix, not the ratings.")
+                        if sp["rows_a"]:
+                            st.markdown(f"**{pred['a_name']} — projected points by "
+                                        "set call**")
+                            st.dataframe(pd.DataFrame([{
+                                "Set": r["label"], "Share": f"{r['share'] * 100:.0f}%",
+                                "Our PPP": r["off_ppp"], "They allow": r["opp_allowed"],
+                                "Lg avg": r["lg_ppp"], "Exp PPP": r["exp_ppp"],
+                            } for r in sp["rows_a"]]), hide_index=True,
+                                width="stretch")
+                        st.caption(f"Based on {sp['tagged_min']} tagged set calls "
+                                   f"(smallest leg) · ~{sp['poss']} possessions/game.")
 
 
 with tab_match:
@@ -601,13 +652,16 @@ with tab_lineup:
                 if _ovis is not None:
                     _gids = [g for g in _gids if g in _ovis]
                 _obs = LU.custom_unit(_t, list(_chosen), game_ids=_gids) if _gids else None
-                if _obs and _obs.get("poss"):
+                if _obs and _obs.get("poss", 0) >= 40:
                     st.markdown("**Observed together — tracked games**")
                     _oc = st.columns(4)
                     _oc[0].metric("Net / 100", f"{_obs['Net']:+.1f}")
                     _oc[1].metric("ORtg", f"{_obs['ORtg']:.1f}")
                     _oc[2].metric("DRtg", f"{_obs['DRtg']:.1f}")
                     _oc[3].metric("Possessions", f"{_obs['poss']:.0f}")
+                elif _obs and _obs.get("poss"):
+                    st.caption(f"Only {_obs['poss']:.0f} possessions together so far — "
+                               "need ~40 for a reliable observed Net. Keep tracking.")
                 else:
                     st.caption("This five hasn't shared the floor in tracked games "
                                "— no observed rating.")
@@ -642,7 +696,9 @@ with tab_lineup:
                             _nn = _lineup_net(gender, _t, tuple(_nw))
                             if _nn is not None:
                                 _swaps.append((_nn - _base, _out, _bp))
-                    _ups = sorted([sw for sw in _swaps if sw[0] > 0.05],
+                    # +0.3 Net floor: below that a swap is inside projection noise
+                    # for these small tracked samples (was 0.05 → false positives).
+                    _ups = sorted([sw for sw in _swaps if sw[0] > 0.3],
                                   key=lambda sw: -sw[0])[:3]
                     _nmap = {r["_pid"]: r for r in _rows}
                     st.markdown("**Best bench swaps**")
@@ -750,13 +806,16 @@ with tab_lineup:
                     _gids = [g for g in _gids if g in _ovis]
                 _obs = LU.custom_unit(_tid, [r["pid"] for r in _sel],
                                       game_ids=_gids) if _gids else None
-                if _obs and _obs.get("poss"):
+                if _obs and _obs.get("poss", 0) >= 40:
                     st.markdown("**Observed together — tracked games**")
                     _oc = st.columns(4)
                     _oc[0].metric("Net / 100", f"{_obs['Net']:+.1f}")
                     _oc[1].metric("ORtg", f"{_obs['ORtg']:.1f}")
                     _oc[2].metric("DRtg", f"{_obs['DRtg']:.1f}")
                     _oc[3].metric("Possessions", f"{_obs['poss']:.0f}")
+                elif _obs and _obs.get("poss"):
+                    st.caption(f"Only {_obs['poss']:.0f} possessions together so far — "
+                               "need ~40 for a reliable observed Net. Keep tracking.")
                 else:
                     st.caption("This five hasn't shared the floor in tracked games — no "
                                "observed rating.")

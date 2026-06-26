@@ -574,12 +574,35 @@ with tab_over:
             height=min(720, 60 + 35 * len(df)),
             column_config={
                 "Power": st.column_config.ProgressColumn(
-                    "Power", format="%.1f", min_value=0, max_value=100),
-                "Rating": st.column_config.NumberColumn("Rating", format="%.2f"),
-                "SOS": st.column_config.NumberColumn("SOS", format="%.2f"),
-                "SOR": st.column_config.NumberColumn("SOR", format="%.2f"),
+                    "Power", format="%.1f", min_value=0, max_value=100,
+                    help="Opponent-adjusted power rating on a 0–100 scale — the "
+                         "headline strength number (50 ≈ league average)."),
+                "Rating": st.column_config.NumberColumn(
+                    "Rating", format="%.2f",
+                    help="SRS-style net rating: average scoring margin adjusted "
+                         "for strength of schedule. 0 = average."),
+                "PPG": st.column_config.NumberColumn(
+                    "PPG", help="Points scored per game."),
+                "oPPG": st.column_config.NumberColumn(
+                    "oPPG", help="Opponent points per game (points allowed)."),
+                "MOV": st.column_config.NumberColumn(
+                    "MOV", help="Average margin of victory (PPG − oPPG)."),
+                "xPPG": st.column_config.NumberColumn(
+                    "xPPG", help="Schedule-adjusted points scored — what they'd "
+                                 "score against an average team."),
+                "xoPPG": st.column_config.NumberColumn(
+                    "xoPPG", help="Schedule-adjusted points allowed."),
+                "SOS": st.column_config.NumberColumn(
+                    "SOS", format="%.2f",
+                    help="Strength of schedule — the average rating of opponents "
+                         "faced."),
+                "SOR": st.column_config.NumberColumn(
+                    "SOR", format="%.2f",
+                    help="Strength of record — how impressive the W–L is given "
+                         "the schedule played."),
                 "Form": st.column_config.LineChartColumn(
-                    "Margin trend", y_min=-30, y_max=30),
+                    "Margin trend", y_min=-30, y_max=30,
+                    help="Scoring margin over the last 7 games (oldest → newest)."),
             })
         st.download_button("Rankings (CSV)",
                            df.drop(columns=["Form"], errors="ignore").to_csv(index=False),

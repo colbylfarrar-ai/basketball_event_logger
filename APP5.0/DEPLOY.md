@@ -108,7 +108,11 @@ the prereqs first or `python3 -m venv` errors with "ensurepip is not available":
 
 ```bash
 sudo apt update
-sudo apt install -y python3-venv python3-pip git build-essential
+# python3-dev + libcairo2-dev + pkg-config are REQUIRED for the PDF-export chain:
+# xhtml2pdf → svglib → rlpycairo → pycairo ships NO wheel and builds from source,
+# so a clean box without these fails `pip install` while compiling pycairo.
+sudo apt install -y python3-venv python3-pip git build-essential \
+                    python3-dev libcairo2-dev pkg-config
 sudo -iu app5
 git clone https://github.com/colbylfarrar-ai/basketball_event_logger.git ~/app5
 cd ~/app5/APP5.0          # ← the app lives in this subfolder; every step below runs here

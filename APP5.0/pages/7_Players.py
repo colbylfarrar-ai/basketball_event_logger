@@ -1132,20 +1132,15 @@ def _fx_cmp():
                 p_pid = next(k for k, v in by_pid.items() if v is P)
                 p_shots = _player_located(p_pid)
                 with col:
-                    if p_shots:
-                        fig, _n = _shot_map(
-                            p_shots, f"{P['name']} · {len(p_shots)} located",
-                            height=380)
-                        st.plotly_chart(fig, width="stretch", key=f"cmp_court_{sfx}")
-                    else:
-                        fig, ok = _shot_chart(zsplits.get(p_pid, {}), P["name"],
-                                              height=380)
-                        if ok:
-                            st.plotly_chart(fig, width="stretch",
-                                            key=f"cmp_court_{sfx}")
-                        else:
-                            st.caption(f"{P['name']}: no shot locations or zones "
-                                       "logged yet.")
+                    # Shared shot surface: dots / points-over-expected heat /
+                    # zone fallback — same POE "Heat vs xPts" toggle the single-
+                    # player shot explorer has, now on the head-to-head view.
+                    if not _shot_panel(
+                            p_shots, zone_data=zsplits.get(p_pid, {}),
+                            model=_shot_model(), key=f"cmp_court_{sfx}",
+                            title=P["name"], height=380):
+                        st.caption(f"{P['name']}: no shot locations or zones "
+                                   "logged yet.")
 
         # side-by-side percentile bars vs the pool
         st.markdown("<div class='pl-hdr'>League percentiles</div>",

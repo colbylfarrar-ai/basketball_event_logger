@@ -364,16 +364,19 @@ _MIN_GP = (_rkf2.slider("Min games played", 1, int(_rk_maxgp), 1, key="rk_mingp_
            if _rk_maxgp > 1 else 1)
 st.caption("Class / min-games scope every ranking view below.")
 
-(tab_over, tab_team, tab_cmp, tab_track, tab_chart, tab_evr,
- tab_gloss) = st.tabs(
-    ["Overview", "Team", "Compare", "Tracked", "Team Charts",
-     "League", "Glossary"])
+# Lazy-load: a "View" segmented_control instead of st.tabs, so only the chosen
+# view's heavy queries run each rerun (st.tabs computes every tab body). The
+# page-level Class / min-games filter above scopes them all. The @st.fragment
+# view bodies keep their own fast reruns; switching View reruns the page once.
+_RK_VIEWS = ["Overview", "Team", "Compare", "Tracked", "Team Charts",
+             "League", "Glossary"]
+_view = _rkseg("View", _RK_VIEWS, default="Overview", key="rk_view") or "Overview"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 1 — OVERVIEW  (source of truth: scored ratings)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_over:
+if _view == "Overview":
     all_rows = list(scored.values())
 
     def _form_leader(metric, hi=True, need=None, pool=None):
@@ -1018,11 +1021,11 @@ def _fx_team():
                 st.plotly_chart(fdm, width="stretch")
 
 
-with tab_team:
+if _view == "Team":
     _fx_team()
 
 
-with tab_over:
+if _view == "Overview":
     # ── Hot & cold (current streaks across the league) ───────────────────────
     streaks = []
     for tid in scored:
@@ -1158,7 +1161,7 @@ def _fx_track():
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 5 — TEAM CHARTS  (tracked-event driven, cross-team) + STAT LAB explorer
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_track:
+if _view == "Tracked":
     _trk_lock = _paid_pool_lock()
     if _trk_lock:
         st.info(_trk_lock)
@@ -1555,7 +1558,7 @@ def _fx_chart():
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 5 — EVERYTHING  (whole-league analytics + matchup predictor)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_chart:
+if _view == "Team Charts":
     _chart_lock = _paid_pool_lock()
     if _chart_lock:
         st.info(_chart_lock)
@@ -2146,11 +2149,11 @@ def _fx_evr():
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 6 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_evr:
+if _view == "League":
     _fx_evr()
 
 
-with tab_gloss:
+if _view == "Glossary":
     glossary_tab("rank_gloss")
 
 
@@ -2297,5 +2300,5 @@ def _fx_cmp():
             st.info("Four-factor & efficiency compare needs both teams tracked.")
 
 
-with tab_cmp:
+if _view == "Compare":
     _fx_cmp()

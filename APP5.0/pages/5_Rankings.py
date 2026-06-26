@@ -281,9 +281,16 @@ _lab_hero("Rankings", phase="ANALYZE",
 
 gender = gender_radio()
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _score_ratings(g):
+@st.cache_resource(show_spinner=False)
+def _score_ratings_fp(g, _fp):
+    # cache_resource survives the app-wide st.cache_data.clear() on every write;
+    # keyed on the results fingerprint so the ~0.5s league rating recomputes only
+    # when a score moves. Read-only output → safe to share.
     return TR.score_ratings(gender=g)
+
+
+def _score_ratings(g):
+    return _score_ratings_fp(g, TR.results_fingerprint())
 
 
 @st.cache_data(ttl=600, show_spinner=False)

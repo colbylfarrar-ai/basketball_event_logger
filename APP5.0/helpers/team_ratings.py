@@ -258,6 +258,19 @@ def _sos_bump(sos, pts_per_sd):
 #  SCORE VERSION  (results-only, all teams)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def results_fingerprint():
+    """Cheap signature of every finished-game SCORE — (count, ΣhomeScore,
+    ΣawayScore, max game id). Changes iff a score is added or edited, NOT on
+    event-location/tag edits. Lets the pages cache score_ratings (results-only,
+    ~0.5s over the full league once the OSSAA schedule is loaded) so it survives
+    an Event Editor session and the app's cache-clear storms, recomputing only
+    when a score actually moves. Single aggregate query, a few ms."""
+    r = query("SELECT COUNT(*) c, COALESCE(SUM(home_score),0) h, "
+              "COALESCE(SUM(away_score),0) a, COALESCE(MAX(id),0) m "
+              "FROM games WHERE home_score IS NOT NULL AND away_score IS NOT NULL")[0]
+    return (r["c"], r["h"], r["a"], r["m"])
+
+
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
                   reg=DEFAULT_REG, season="Current", sos_weight=DEFAULT_SOS_WEIGHT):
     """

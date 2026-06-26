@@ -142,6 +142,10 @@ def _render_factors(ff, unit):
 def render(ctx):
     """Render the Play Style super-tab. ``ctx`` carries plain values + pre-bound
     page-cached callables (see module docstring / the page call site)."""
+    if not getattr(ctx, "is_current", True):
+        st.info("Play-type tags are current-season only — switch to the current "
+                "season to view this tab.")
+        return
     g, tid = ctx.gender, ctx.team_id
     st.markdown("<div class='pl-hdr'>Play style — the explicit set-call deep dive"
                 "</div>", unsafe_allow_html=True)

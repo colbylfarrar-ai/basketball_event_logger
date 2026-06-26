@@ -86,6 +86,7 @@ import helpers.dashboard.defense_tab as DDEFENSE
 import helpers.dashboard.situational_tab as DSITUATIONAL
 import helpers.breakdown as BR
 import helpers.situational as SIT
+import helpers.seasons as SEAS
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
 GOOD = "#3fb950"
@@ -470,13 +471,31 @@ team_id = c2.selectbox("Team", order_ids, index=default_idx,
                        key="ta_team")
 team = team_by_id[team_id]
 
+# Season picker — view a past/archived season's game data. Only appears once a
+# season has been rolled over (archived labels exist); the current season is the
+# default so the whole page is byte-identical when no archive exists. Tag-dependent
+# super-tabs (play style / defense scheme / situational) stay current-season.
+_season_opts = SEAS.season_options()
+if len(_season_opts) > 1:
+    _slbl = c2.selectbox(
+        "Season", [l for _v, l in _season_opts], key="ta_season",
+        help="View a past season's game data. Play-type / defense / situational "
+             "tags are current-season only.")
+    season_pick = next(v for v, l in _season_opts if l == _slbl)
+else:
+    season_pick = SEAS.ACTIVE
+_is_cur_season = SEAS.is_current(season_pick)
+
 @st.cache_data(ttl=600, show_spinner=False)
-def _team_bundle(tid, g, vis=None):
+def _team_bundle(tid, g, vis=None, season="Current"):
     # `vis` (tuple of game ids, or None) is the entitlement read-filter: None for
     # own team / admin (full depth); a League-wide coach scouting another team
     # passes that team's POOLED game ids so its Solo-tracked games stay private.
+    # `season` scopes the whole bundle to one season (default = current). It is in
+    # the cache key, so switching seasons re-derives instead of serving stale data.
     return TA.team_bundle(tid, gender=g, min_games=1,
-                          visible_game_ids=(set(vis) if vis is not None else None))
+                          visible_game_ids=(set(vis) if vis is not None else None),
+                          season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -724,9 +743,9 @@ def _scout(tid, g, limit=7, excl=(), vis=None):
 # scouting another team gets only that team's POOLED games, so its Solo-tracked
 # games stay private. Threaded into the bundle + scout so the page's tracked depth
 # is computed over exactly the visible set.
-_vis = ENT.team_visible_tracked_ids(AUTH.current_user(), team_id)
+_vis = ENT.team_visible_tracked_ids(AUTH.current_user(), team_id, season=season_pick)
 _vis_key = None if _vis is None else tuple(sorted(_vis))
-bundle = _team_bundle(team_id, gender, _vis_key)
+bundle = _team_bundle(team_id, gender, _vis_key, season=season_pick)
 log = bundle["game_log"]
 rec = bundle["record"]
 players = bundle["players"]
@@ -1128,7 +1147,8 @@ with tab_charts:
             def_view=_def_view, def_families=_def_families,
             def_profiles=_def_profiles, cross_pd=_def_cross,
             def_tovs=_def_tovs, def_fouls=_def_fouls, def_leaders=_def_leaders,
-            def_players_faced=_def_players_faced, factors=_def_factors)
+            def_players_faced=_def_players_faced, factors=_def_factors,
+            is_current=_is_cur_season)
         DDEFENSE.render(_def_ctx)
 
     # ── Play Style super-tab (the explicit set-call deep dive) ──────────────
@@ -1149,7 +1169,7 @@ with tab_charts:
             league_leaders=_named_leaders_view,
             league_pps=_league_pps_located, shot_model=_shot_model,
             named_sets_all=_named_sets_all, set_profiles_all=_set_profiles_all,
-            factors=_pt_factors)
+            factors=_pt_factors, is_current=_is_cur_season)
         DPLAYSTYLE.render(_ps_ctx)
 
     # ── Situational super-tab (play_type/defense by quarter/score/run) ──────
@@ -1161,7 +1181,7 @@ with tab_charts:
             players=players, tracked_ids=tuple(bundle["tracked_ids"]),
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
             PURPLE=PURPLE, PINK=PINK,
-            situational=_situational_view)
+            situational=_situational_view, is_current=_is_cur_season)
         DSITUATIONAL.render(_sit_ctx)
 
     if not has_tracked:

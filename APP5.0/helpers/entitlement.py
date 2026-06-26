@@ -107,14 +107,16 @@ def viewer_is_league_wide(ident: dict | None) -> bool:
 viewer_in_pool = viewer_is_league_wide
 
 
-def pooled_game_ids() -> set[int]:
+def pooled_game_ids(season="Current") -> set[int]:
     """Tracked game ids in the shared pool (games.in_pool = 1) — the read-filter
     candidate set for every LEAGUE-WIDE tracked aggregation. Duplicate tracks of
     the same real game are collapsed to one canonical (most-detailed / admin-pinned)
-    row so the pool never double-counts or shows two stat lines — see game_dedup."""
+    row so the pool never double-counts or shows two stat lines — see game_dedup.
+    `season` defaults to the active season; in_pool is frozen at rollover, so an
+    archived label returns exactly what was shared THAT season (no leak)."""
     return GD.representative_game_ids(
         {r["id"] for r in query(
-            "SELECT id FROM games WHERE in_pool=1 AND season='Current'")})
+            "SELECT id FROM games WHERE in_pool=1 AND season=?", (season,))})
 
 
 def pool_team_ids() -> set[int]:
@@ -138,14 +140,14 @@ def _own_teams(ident: dict | None) -> set:
     return {int(t)} if t is not None else set()
 
 
-def team_has_pooled_tracked(team_id) -> bool:
+def team_has_pooled_tracked(team_id, season="Current") -> bool:
     """Does this team appear in ≥1 pooled tracked game (its depth is share-to-scout
-    visible to any league-wide coach)?"""
+    visible to any league-wide coach) in `season`?"""
     if team_id is None:
         return False
     rows = query("SELECT 1 FROM games WHERE in_pool=1 AND tracked=1 "
-                 "AND season='Current' AND (team1_id=? OR team2_id=?) LIMIT 1",
-                 (team_id, team_id))
+                 "AND season=? AND (team1_id=? OR team2_id=?) LIMIT 1",
+                 (season, team_id, team_id))
     return bool(rows)
 
 
@@ -185,32 +187,34 @@ def can_see_game_tracked(ident: dict | None, team1_id, team2_id,
     return team_has_pooled_tracked(team1_id) or team_has_pooled_tracked(team2_id)
 
 
-def visible_tracked_game_ids(ident: dict | None) -> set[int] | None:
+def visible_tracked_game_ids(ident: dict | None, season="Current") -> set[int] | None:
     """The set of tracked game ids whose DEPTH this viewer may aggregate — the
     read-filter's teeth. None means UNRESTRICTED (admin / local owner). Otherwise:
     own-team tracked games ∪ (the pooled set, if League-wide). A Solo coach gets
-    own games only; a Free viewer gets an empty set (depth is gated upstream)."""
+    own games only; a Free viewer gets an empty set (depth is gated upstream).
+    `season` scopes to the active season by default (archived labels view history)."""
     if ident and ident.get("role") == "admin":
         return None
     ids: set[int] = set()
     own = _own_teams(ident)
     if own:
         ph = ",".join("?" * len(own))
-        params = tuple(own) + tuple(own)
+        params = (season,) + tuple(own) + tuple(own)
         ids |= {r["id"] for r in query(
-            f"SELECT id FROM games WHERE tracked=1 AND season='Current' "
+            f"SELECT id FROM games WHERE tracked=1 AND season=? "
             f"AND (team1_id IN ({ph}) OR team2_id IN ({ph}))", params)}
     if viewer_is_league_wide(ident):
-        ids |= pooled_game_ids()
+        ids |= pooled_game_ids(season)
     return GD.representative_game_ids(ids)   # one canonical row per double-tracked game
 
 
-def team_visible_tracked_ids(ident: dict | None, team_id) -> set[int] | None:
+def team_visible_tracked_ids(ident: dict | None, team_id, season="Current") -> set[int] | None:
     """The tracked game ids of ONE team whose depth this viewer may aggregate.
     None = unrestricted (own team / admin → the team's full tracked depth).
     A league-wide scout of another team → only that team's POOLED games (so a
     coach who opponent-tracked this team while League-wide shares those, but the
-    team's own Solo games stay private). Used to scope the team dashboard bundle."""
+    team's own Solo games stay private). Used to scope the team dashboard bundle.
+    `season` scopes the pooled-visibility query (frozen in_pool → correct history)."""
     if ident and ident.get("role") == "admin":
         return None
     if team_id is not None and int(team_id) in _own_teams(ident):
@@ -218,8 +222,8 @@ def team_visible_tracked_ids(ident: dict | None, team_id) -> set[int] | None:
     # league-wide scout of another team → that team's pooled games only, with
     # duplicate tracks collapsed to the canonical (most-detailed / pinned) row.
     return GD.representative_game_ids({r["id"] for r in query(
-        "SELECT id FROM games WHERE in_pool=1 AND tracked=1 AND season='Current' "
-        "AND (team1_id=? OR team2_id=?)", (team_id, team_id))})
+        "SELECT id FROM games WHERE in_pool=1 AND tracked=1 AND season=? "
+        "AND (team1_id=? OR team2_id=?)", (season, team_id, team_id))})
 
 
 def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None):

@@ -385,13 +385,24 @@ def shooting_breakeven(box):
 #  PLAYERS ON THE TEAM  (filtered slice of the league-wide player table)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_player_rows(team_id, gender=None, min_games=1):
+def team_player_rows(team_id, gender=None, min_games=1, season="Current"):
     """
     Every eligible player on `team_id`, each row the full flat stat line from
     PR.player_stat_table (ratings are still pool-relative to the whole league,
     so they're comparable to players on other teams). Sorted by OVERALL desc.
+
+    For an ARCHIVED season the league pool is scoped to that season's tracked
+    games, so ratings/percentiles reflect that year — not the current roster.
     """
-    table = PR.player_stat_table(gender=gender, min_games=min_games)
+    if season and season != "Current":
+        gids = [r["id"] for r in query(
+            "SELECT id FROM games WHERE tracked=1 AND season=?", (season,))]
+        if not gids:
+            return []                    # no tracked games that season → no rows
+        table = PR.player_stat_table(game_ids=set(gids), gender=gender,
+                                     min_games=min_games)
+    else:
+        table = PR.player_stat_table(gender=gender, min_games=min_games)
     rows = []
     for pid, r in table.items():
         if r["team_id"] == team_id:
@@ -1802,7 +1813,8 @@ def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None,
                              "creation_by_game": {}, "quarter": {}},
         "quarter_boxes": quarter_boxes(team_id, tracked_ids, events=events)
         if tracked_ids else {},
-        "players": team_player_rows(team_id, gender=gender, min_games=min_games),
+        "players": team_player_rows(team_id, gender=gender, min_games=min_games,
+                                    season=season),
         # ── deep analytics (tracked only) ──────────────────────────────────
         "zones": zone_splits(team_id, tracked_ids, events=events)
         if tracked_ids else None,

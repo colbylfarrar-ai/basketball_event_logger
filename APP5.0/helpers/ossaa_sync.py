@@ -96,6 +96,88 @@ def get_or_create_team(name: str, klass: str, gender: str, ossaa_id=None, state=
         raise
 
 
+# --------------------------------------------------------------------------- #
+#  ADMIN TEAM MERGE  (fold a duplicate team into a keeper)
+#  Out-of-state opponents sometimes import under slightly different names that no
+#  auto-match catches; an admin folds the dupe into the real team here.
+# --------------------------------------------------------------------------- #
+_TEAM_ID_COLS = ("team_id", "team1_id", "team2_id", "opponent_id")
+
+
+def _team_ref_columns():
+    """[(table, column), …] — every column across the live schema that holds a
+    team id. Introspected (not hardcoded) so migration-added tables (coach_teams,
+    app_users, coach_notes, …) are covered automatically."""
+    out = []
+    for t in db.query("SELECT name FROM sqlite_master WHERE type='table' "
+                      "AND name NOT LIKE 'sqlite_%'"):
+        name = t["name"]
+        if name == "teams":
+            continue
+        for c in db.query(f"PRAGMA table_info({name})"):
+            if c["name"] in _TEAM_ID_COLS:
+                out.append((name, c["name"]))
+    return out
+
+
+def team_usage(team_id) -> dict:
+    """{'table.col': row_count} for every place a team id appears (merge preview)."""
+    usage = {}
+    for tbl, col in _team_ref_columns():
+        n = db.query(f"SELECT COUNT(*) AS c FROM {tbl} WHERE {col}=?",
+                     (team_id,))[0]["c"]
+        if n:
+            usage[f"{tbl}.{col}"] = n
+    return usage
+
+
+def merge_teams(keep_id, dupe_id) -> dict:
+    """Fold ``dupe_id`` into ``keep_id``: reassign every team-id reference, fix the
+    per-id UI settings (team_color::<id>), then delete the now-orphaned dupe team.
+    Returns ``{'moved': {table.col: n}, 'keep': name, 'dupe': name}``.
+
+    SAFE: refuses self-merge and cross-gender merge (Boys ≠ Girls). Uses
+    UPDATE OR IGNORE so a row that would collide on a UNIQUE (e.g. a coach already
+    staffing BOTH teams, or the same game already on the keeper) is dropped instead
+    of erroring — then the dupe is deletable cleanly. NOTE: most team FKs are
+    ON DELETE CASCADE, so we REASSIGN before deleting, never rely on the delete."""
+    keep_id, dupe_id = int(keep_id), int(dupe_id)
+    if keep_id == dupe_id:
+        raise ValueError("keep and dupe are the same team")
+    k = db.query("SELECT id, name, gender FROM teams WHERE id=?", (keep_id,))
+    d = db.query("SELECT id, name, gender FROM teams WHERE id=?", (dupe_id,))
+    if not k or not d:
+        raise ValueError("team not found")
+    if k[0]["gender"] != d[0]["gender"]:
+        raise ValueError("refusing to merge across gender (Boys vs Girls)")
+
+    moved = {}
+    for tbl, col in _team_ref_columns():
+        n = db.query(f"SELECT COUNT(*) AS c FROM {tbl} WHERE {col}=?",
+                     (dupe_id,))[0]["c"]
+        if not n:
+            continue
+        db.execute(f"UPDATE OR IGNORE {tbl} SET {col}=? WHERE {col}=?",
+                   (keep_id, dupe_id))
+        # whatever couldn't move (UNIQUE collision vs the keeper) is a real dup row
+        db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (dupe_id,))
+        moved[f"{tbl}.{col}"] = n
+
+    # per-id UI settings (e.g. team_color::<id>): rehome onto the keeper, or drop
+    # if the keeper already has one.
+    for r in db.query("SELECT key FROM app_settings WHERE key LIKE ?",
+                      (f"%::{dupe_id}",)):
+        key = r["key"]
+        newkey = key.rsplit("::", 1)[0] + f"::{keep_id}"
+        if db.query("SELECT 1 FROM app_settings WHERE key=?", (newkey,)):
+            db.execute("DELETE FROM app_settings WHERE key=?", (key,))
+        else:
+            db.execute("UPDATE app_settings SET key=? WHERE key=?", (newkey, key))
+
+    db.execute("DELETE FROM teams WHERE id=?", (dupe_id,))
+    return {"moved": moved, "keep": k[0]["name"], "dupe": d[0]["name"]}
+
+
 def game_exists(team1_id: int, team2_id: int, date: str, season: str = "Current") -> bool:
     """True if that matchup already exists on that date IN THIS SEASON, either
     home/away order. Season-scoped so the same fixture can legitimately recur in a

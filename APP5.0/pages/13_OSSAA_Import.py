@@ -228,3 +228,54 @@ if st.button("🔄 Refresh games in range", key="rf_go", type="primary"):
                 st.code((proc.stderr or proc.stdout or "")[-1800:])
         except subprocess.TimeoutExpired:
             st.error("Timed out (>10 min). Try a smaller date range.")
+
+
+# ── Merge duplicate teams (admin) ─────────────────────────────────────────────
+st.divider()
+st.subheader("🔀 Merge duplicate teams")
+st.caption("Out-of-state opponents sometimes import under slightly different names "
+           "(e.g. ‘Springdale’ vs ‘Springdale AR’) that no auto-match catches. Pick "
+           "the team to KEEP and the duplicate to fold into it — every game, "
+           "schedule row and player moves over, then the duplicate is deleted. "
+           "Same-gender only · permanent.")
+
+_mteams = db.query("SELECT id, name, class, gender, COALESCE(state,'OK') AS state "
+                   "FROM teams ORDER BY name COLLATE NOCASE")
+if len(_mteams) < 2:
+    st.info("Need at least two teams to merge.")
+else:
+    _tl = {t["id"]: f"{t['name']} · {t['class']} {GMAP.get(t['gender'], '?')} · {t['state']}"
+           for t in _mteams}
+    _gender_of = {t["id"]: t["gender"] for t in _mteams}
+    mc = st.columns(2)
+    keep_id = mc[0].selectbox("Keep (survivor)", [t["id"] for t in _mteams],
+                              format_func=lambda i: _tl[i], key="merge_keep")
+    _dupe_opts = [t["id"] for t in _mteams
+                  if t["id"] != keep_id and _gender_of[t["id"]] == _gender_of[keep_id]]
+    if not _dupe_opts:
+        st.info("No other same-gender team to merge into this one.")
+    else:
+        dupe_id = mc[1].selectbox("Duplicate (folded in, then deleted)", _dupe_opts,
+                                  format_func=lambda i: _tl[i], key="merge_dupe")
+        _u = SYNC.team_usage(dupe_id)
+        if _u:
+            st.caption("Duplicate currently holds — " + " · ".join(
+                f"{n} {tc}" for tc, n in sorted(_u.items())))
+        else:
+            st.caption("Duplicate has no games/players — it'll just be removed.")
+        _ok = st.checkbox(f"Permanently delete “{_tl[dupe_id]}” and move its data "
+                          f"into “{_tl[keep_id]}”.", key="merge_confirm")
+        if st.button("🔀 Merge teams", type="primary", disabled=not _ok):
+            try:
+                res = SYNC.merge_teams(keep_id, dupe_id)
+                try:  # nudge other coaches' cached league views to refresh
+                    db.execute("UPDATE app_settings SET value=CAST(value AS INTEGER)+1 "
+                               "WHERE key='data_version'")
+                except Exception:
+                    pass
+                _m = ", ".join(f"{n} {tc}" for tc, n in sorted(res["moved"].items()))
+                st.cache_data.clear()
+                st.success(f"Merged “{res['dupe']}” into “{res['keep']}”. "
+                           f"Moved {_m or 'nothing'}. Duplicate deleted.")
+            except Exception as exc:
+                st.error(f"Merge failed: {exc}")

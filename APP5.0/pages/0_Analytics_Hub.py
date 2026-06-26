@@ -447,15 +447,24 @@ def _search_notables(gender):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _league_intel(gender):
+def _league_intel(gender, vis=None):
     """The biggest auto-mined league signals — the 'what the data noticed' strip
-    that makes the hub feel alive. Top |z| insight lines across the whole pool."""
+    that makes the hub feel alive. Top |z| insight lines across the pool.
+
+    ``vis`` is the entitlement read-filter: ``None`` = unrestricted (admin), else a
+    tuple of the tracked game ids this viewer may aggregate (own + pooled), so a
+    non-pooled team's private tracked depth never leaks into the mined insights."""
     import helpers.player_ratings as _PR
     import helpers.stats as _S
     import helpers.insights as _IN
     import helpers.playtypes as _PT
-    table = _PR.player_stat_table(gender=gender, min_games=2)
-    gids = _PT._tracked_game_ids(gender)
+    if vis is None:                      # admin / unrestricted → whole league
+        table = _PR.player_stat_table(gender=gender, min_games=2)
+        gids = _PT._tracked_game_ids(gender)
+    else:                                # league-wide viewer → own + pooled only
+        _gset = set(vis)
+        table = _PR.player_stat_table(game_ids=_gset, gender=gender, min_games=2)
+        gids = list(_gset)
     ev = _S.fetch_events(gids) if gids else []
     feed = _IN.build_feed(table, ev, top=1) if (table and ev) else {}
     import re as _re
@@ -472,7 +481,9 @@ if D["scored"]:
 
     # ── what the data noticed — league-wide auto-insights (Paid, event-derived) ─
     if _paid:
-        _intel = _league_intel(_gender)
+        _civ = ENT.visible_tracked_game_ids(_hub_ident)
+        _intel = _league_intel(_gender,
+                               None if _civ is None else tuple(sorted(_civ)))
         if _intel:
             st.markdown("<div class='lab-hdr'>What the data noticed</div>",
                         unsafe_allow_html=True)

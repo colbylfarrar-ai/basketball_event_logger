@@ -71,7 +71,7 @@ def _doc(title, body):
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
             f"<title>{e(title)}</title><style>{_CSS}</style></head><body>{body}"
-            f"<div class='wrap'><div class='foot'>Made with HoopTracks · hooptracks.com"
+            f"<div class='wrap'><div class='foot'>Made with HoopTracks · app.hooptracks.com"
             f"{(' · ' + _today()) if _today() else ''}.</div></div></body></html>")
 
 

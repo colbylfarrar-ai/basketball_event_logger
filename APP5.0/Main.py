@@ -58,7 +58,7 @@ try:
     st.logo(
         (_ASSETS / "logo_wordmark.svg").read_text(encoding="utf-8"),
         icon_image=(_ASSETS / "logo_mark.svg").read_text(encoding="utf-8"),
-        size="large", link="https://hooptracks.com",
+        size="large", link="https://app.hooptracks.com",
     )
 except Exception:
     pass

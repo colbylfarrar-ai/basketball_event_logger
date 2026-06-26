@@ -1358,538 +1358,543 @@ with tab_charts:
 
         # ───────────────────────────────────────────── SHOOTING ─────────────
         with ch_sh:
-            sm = st.columns(6)
-            sm[0].metric("eFG%", _pctf(S.efg(tb)))
-            sm[1].metric("TS%", _pctf(S.ts(tb)))
-            sm[2].metric("FG%", _pctf(S.fg_pct(tb)))
-            sm[3].metric("3P%", _pctf(S.fg3_pct(tb)))
-            sm[4].metric("Paint FG%", _pctf(S.paint_fg_pct(tb)))
-            sm[5].metric("SCE", f"{S.shot_efficiency(tb):.3f}",
-                         help="Scoring efficiency = (PTS − FT) / (2PA·2 + 3PA·3) "
-                              "— FG points as a share of the max possible.")
+            _shp, _shc, _shm = st.tabs(
+                ["Shot Profile", "Contest", "Creation & Shot-making"])
+            with _shp:
+                sm = st.columns(6)
+                sm[0].metric("eFG%", _pctf(S.efg(tb)))
+                sm[1].metric("TS%", _pctf(S.ts(tb)))
+                sm[2].metric("FG%", _pctf(S.fg_pct(tb)))
+                sm[3].metric("3P%", _pctf(S.fg3_pct(tb)))
+                sm[4].metric("Paint FG%", _pctf(S.paint_fg_pct(tb)))
+                sm[5].metric("SCE", f"{S.shot_efficiency(tb):.3f}",
+                             help="Scoring efficiency = (PTS − FT) / (2PA·2 + 3PA·3) "
+                                  "— FG points as a share of the max possible.")
 
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**Shot diet** — attempts by type")
-                paint2 = tb["paint_FGA"]
-                mid2 = tb["2PA"] - paint2
-                sd = go.Figure(go.Bar(
-                    x=[paint2, mid2, tb["3PA"]],
-                    y=["Paint 2s", "Other 2s", "3s"], orientation="h",
-                    marker_color=[ACCENT, "#d29922", BLUE], marker_line_width=0,
-                    text=[paint2, mid2, tb["3PA"]], textposition="auto"))
-                sd.update_xaxes(title="Attempts")
-                _style(sd, 280)
-                sd.update_layout(margin=dict(l=4, r=14, t=10, b=30))
-                st.plotly_chart(sd, width="stretch", key="sh_diet")
-            with c2:
-                st.markdown("**Make rate by type**")
-                splits = [("FG%", S.fg_pct(tb)), ("2P%", S.fg2_pct(tb)),
-                          ("3P%", S.fg3_pct(tb)), ("Paint%", S.paint_fg_pct(tb)),
-                          ("FT%", S.ft_pct(tb)), ("eFG%", S.efg(tb)),
-                          ("TS%", S.ts(tb))]
-                sf = go.Figure(go.Bar(
-                    x=[s[0] for s in splits], y=[s[1] * 100 for s in splits],
-                    marker_color=ACCENT, marker_line_width=0,
-                    text=[f"{s[1]*100:.0f}" for s in splits], textposition="auto"))
-                sf.update_yaxes(title="%")
-                _style(sf, 280)
-                st.plotly_chart(sf, width="stretch", key="sh_splits")
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**Shot diet** — attempts by type")
+                    paint2 = tb["paint_FGA"]
+                    mid2 = tb["2PA"] - paint2
+                    sd = go.Figure(go.Bar(
+                        x=[paint2, mid2, tb["3PA"]],
+                        y=["Paint 2s", "Other 2s", "3s"], orientation="h",
+                        marker_color=[ACCENT, "#d29922", BLUE], marker_line_width=0,
+                        text=[paint2, mid2, tb["3PA"]], textposition="auto"))
+                    sd.update_xaxes(title="Attempts")
+                    _style(sd, 280)
+                    sd.update_layout(margin=dict(l=4, r=14, t=10, b=30))
+                    st.plotly_chart(sd, width="stretch", key="sh_diet")
+                with c2:
+                    st.markdown("**Make rate by type**")
+                    splits = [("FG%", S.fg_pct(tb)), ("2P%", S.fg2_pct(tb)),
+                              ("3P%", S.fg3_pct(tb)), ("Paint%", S.paint_fg_pct(tb)),
+                              ("FT%", S.ft_pct(tb)), ("eFG%", S.efg(tb)),
+                              ("TS%", S.ts(tb))]
+                    sf = go.Figure(go.Bar(
+                        x=[s[0] for s in splits], y=[s[1] * 100 for s in splits],
+                        marker_color=ACCENT, marker_line_width=0,
+                        text=[f"{s[1]*100:.0f}" for s in splits], textposition="auto"))
+                    sf.update_yaxes(title="%")
+                    _style(sf, 280)
+                    st.plotly_chart(sf, width="stretch", key="sh_splits")
 
-            # zone analysis — separated into 2s and 3s
-            st.markdown("<div class='lab-hdr'>Zone analysis — where they shoot "
-                        "(2s vs 3s)</div>", unsafe_allow_html=True)
-            zo = zones["off"]
-            zbt = bundle["zones_by_type"]["off"]   # {'all','2','3': {zone: agg}}
-            zc1, zc2 = st.columns(2)
-            with zc1:
-                st.markdown("**Attempts by zone**")
-                st.plotly_chart(_zone_pair_bars(
-                    zbt["2"], zbt["3"], "2-pt", "3-pt",
-                    lambda a: a["FGA"], "Attempts",
-                    text_fn=lambda a: a["FGA"] or ""),
-                    width="stretch", key="sh_zfa_t")
-            with zc2:
-                st.markdown("**FG% by zone**")
-                st.plotly_chart(_zone_pair_bars(
-                    zbt["2"], zbt["3"], "2P%", "3P%",
-                    lambda a: a["FG%"] * 100, "FG%",
-                    text_fn=lambda a: f"{a['FG%']*100:.0f}%" if a["FGA"] else "—"),
-                    width="stretch", key="sh_zfg_t")
+                # zone analysis — separated into 2s and 3s
+                st.markdown("<div class='lab-hdr'>Zone analysis — where they shoot "
+                            "(2s vs 3s)</div>", unsafe_allow_html=True)
+                zo = zones["off"]
+                zbt = bundle["zones_by_type"]["off"]   # {'all','2','3': {zone: agg}}
+                zc1, zc2 = st.columns(2)
+                with zc1:
+                    st.markdown("**Attempts by zone**")
+                    st.plotly_chart(_zone_pair_bars(
+                        zbt["2"], zbt["3"], "2-pt", "3-pt",
+                        lambda a: a["FGA"], "Attempts",
+                        text_fn=lambda a: a["FGA"] or ""),
+                        width="stretch", key="sh_zfa_t")
+                with zc2:
+                    st.markdown("**FG% by zone**")
+                    st.plotly_chart(_zone_pair_bars(
+                        zbt["2"], zbt["3"], "2P%", "3P%",
+                        lambda a: a["FG%"] * 100, "FG%",
+                        text_fn=lambda a: f"{a['FG%']*100:.0f}%" if a["FGA"] else "—"),
+                        width="stretch", key="sh_zfg_t")
 
-            # ── hot zone maps (court layout, colored by FG%) — 2s and 3s ─────
-            ZPOS = {"LC": (-21, 4), "LW": (-15, 21), "C": (0, 8),
-                    "RW": (15, 21), "RC": (21, 4)}
-            short = {"LC": "LCnr", "LW": "LWing", "C": "Paint",
-                     "RW": "RWing", "RC": "RCnr"}
-            # 3s have no paint shot — the centre look is a top-of-the-key 3, so
-            # for the 3-pt map relabel "C" as "Center" and lift it to the top of
-            # the free-throw arc (drawn at y≈25).
-            ZPOS3 = {**ZPOS, "C": (0, 27)}
-            short3 = {**short, "C": "Center"}
+                # ── hot zone maps (court layout, colored by FG%) — 2s and 3s ─────
+                ZPOS = {"LC": (-21, 4), "LW": (-15, 21), "C": (0, 8),
+                        "RW": (15, 21), "RC": (21, 4)}
+                short = {"LC": "LCnr", "LW": "LWing", "C": "Paint",
+                         "RW": "RWing", "RC": "RCnr"}
+                # 3s have no paint shot — the centre look is a top-of-the-key 3, so
+                # for the 3-pt map relabel "C" as "Center" and lift it to the top of
+                # the free-throw arc (drawn at y≈25).
+                ZPOS3 = {**ZPOS, "C": (0, 27)}
+                short3 = {**short, "C": "Center"}
 
-            def _hotcourt(zmap, key, zpos=ZPOS, lbl=short):
-                maxfga = max((zmap[z]["FGA"] for z in TA.ZONES), default=0) or 1
-                hz = go.Figure()
-                hz.add_shape(type="rect", x0=-25, y0=0, x1=25, y1=31,
-                             line=dict(color="#30363d", width=1))
-                hz.add_shape(type="rect", x0=-8, y0=0, x1=8, y1=19,
-                             line=dict(color="#30363d", width=1))
-                hz.add_shape(type="circle", x0=-6, y0=13, x1=6, y1=25,
-                             line=dict(color="#30363d", width=1))
-                hz.add_trace(go.Scatter(
-                    x=[zpos[z][0] for z in TA.ZONES],
-                    y=[zpos[z][1] for z in TA.ZONES], mode="markers+text",
-                    marker=dict(
-                        size=[20 + (zmap[z]["FGA"] / maxfga) * 60
+                def _hotcourt(zmap, key, zpos=ZPOS, lbl=short):
+                    maxfga = max((zmap[z]["FGA"] for z in TA.ZONES), default=0) or 1
+                    hz = go.Figure()
+                    hz.add_shape(type="rect", x0=-25, y0=0, x1=25, y1=31,
+                                 line=dict(color="#30363d", width=1))
+                    hz.add_shape(type="rect", x0=-8, y0=0, x1=8, y1=19,
+                                 line=dict(color="#30363d", width=1))
+                    hz.add_shape(type="circle", x0=-6, y0=13, x1=6, y1=25,
+                                 line=dict(color="#30363d", width=1))
+                    hz.add_trace(go.Scatter(
+                        x=[zpos[z][0] for z in TA.ZONES],
+                        y=[zpos[z][1] for z in TA.ZONES], mode="markers+text",
+                        marker=dict(
+                            size=[20 + (zmap[z]["FGA"] / maxfga) * 60
+                                  for z in TA.ZONES],
+                            color=[zmap[z]["FG%"] * 100 for z in TA.ZONES],
+                            colorscale=DIVERGE, cmin=20, cmax=65, showscale=True,
+                            colorbar=dict(title="FG%"),
+                            line=dict(color="#0d1117", width=2)),
+                        text=[f"{lbl[z]}<br>{zmap[z]['FG%']*100:.0f}%"
+                              if zmap[z]["FGA"] else f"{lbl[z]}<br>—"
                               for z in TA.ZONES],
-                        color=[zmap[z]["FG%"] * 100 for z in TA.ZONES],
-                        colorscale=DIVERGE, cmin=20, cmax=65, showscale=True,
-                        colorbar=dict(title="FG%"),
-                        line=dict(color="#0d1117", width=2)),
-                    text=[f"{lbl[z]}<br>{zmap[z]['FG%']*100:.0f}%"
-                          if zmap[z]["FGA"] else f"{lbl[z]}<br>—"
-                          for z in TA.ZONES],
-                    textfont=dict(size=10, color="#f0f6fc"),
-                    textposition="middle center",
-                    hovertext=[f"{TA.ZONE_LABELS[z]}<br>{zmap[z]['FGM']}/"
-                               f"{zmap[z]['FGA']}" for z in TA.ZONES],
-                    hovertemplate="%{hovertext}<br>FG%: %{marker.color:.0f}%"
-                                  "<extra></extra>"))
-                hz.update_xaxes(visible=False, range=[-27, 27])
-                hz.update_yaxes(visible=False, range=[-2, 33])
-                _style(hz, 380)
-                hz.update_layout(plot_bgcolor="rgba(0,0,0,0)",
-                                 margin=dict(l=10, r=10, t=10, b=10))
-                return hz
+                        textfont=dict(size=10, color="#f0f6fc"),
+                        textposition="middle center",
+                        hovertext=[f"{TA.ZONE_LABELS[z]}<br>{zmap[z]['FGM']}/"
+                                   f"{zmap[z]['FGA']}" for z in TA.ZONES],
+                        hovertemplate="%{hovertext}<br>FG%: %{marker.color:.0f}%"
+                                      "<extra></extra>"))
+                    hz.update_xaxes(visible=False, range=[-27, 27])
+                    hz.update_yaxes(visible=False, range=[-2, 33])
+                    _style(hz, 380)
+                    hz.update_layout(plot_bgcolor="rgba(0,0,0,0)",
+                                     margin=dict(l=10, r=10, t=10, b=10))
+                    return hz
 
-            # Real x/y shot charts when tap-captured locations exist; the
-            # hand-positioned zone bubbles stay as the legacy fallback for
-            # seasons logged before tap capture.
-            _td_shots = _located_team(team_id, tuple(bundle["tracked_ids"]))
-            if _td_shots:
-                st.markdown(f"**Shot chart** — {len(_td_shots)} tap-captured "
-                            "attempts")
-                hz1, hz2 = st.columns(2)
-                with hz1:
-                    _hxf, _hxn = _shot_hexbin(
-                        _td_shots, title="Volume & points per shot",
-                        league_pps=_league_pps_located(gender))
-                    st.plotly_chart(_hxf, width="stretch", key="sh_hexbin")
-                with hz2:
-                    _smf, _ = _shot_map(_td_shots, title="Makes & misses")
-                    st.plotly_chart(_smf, width="stretch", key="sh_dotmap")
-                st.caption("Hexagon size = attempts, color = points per shot "
-                           "vs league average. Dots are individual shots — "
-                           "green make, red ✕ miss.")
-                # points-over-expected heat — shot QUALITY, not just makes
-                _pxf, _pxn = _shot_hexbin(
-                    _td_shots, title="Points over expected — shot quality",
-                    model=_shot_model(gender), mode="poe")
-                st.plotly_chart(_pxf, width="stretch", key="sh_poe")
-                st.caption("Points over expected — **green** hexes beat the league "
-                           "make-rate for that spot (good shots being made), **red** "
-                           "are below. Separates shot *quality* from shot volume.")
-                _td_db = S.distance_buckets(_td_shots)
-                if _td_db:
-                    st.caption("By length — " + S.distance_buckets_caption(_td_db))
-            else:
-                st.markdown("**Hot zone maps** — size = volume, color = FG%")
-                hz1, hz2 = st.columns(2)
-                with hz1:
-                    st.caption("2-pointers")
-                    st.plotly_chart(_hotcourt(zbt["2"], "2"), width="stretch",
-                                    key="sh_hot2")
-                with hz2:
-                    st.caption("3-pointers")
-                    st.plotly_chart(_hotcourt(zbt["3"], "3", zpos=ZPOS3, lbl=short3),
-                                    width="stretch", key="sh_hot3")
+                # Real x/y shot charts when tap-captured locations exist; the
+                # hand-positioned zone bubbles stay as the legacy fallback for
+                # seasons logged before tap capture.
+                _td_shots = _located_team(team_id, tuple(bundle["tracked_ids"]))
+                if _td_shots:
+                    st.markdown(f"**Shot chart** — {len(_td_shots)} tap-captured "
+                                "attempts")
+                    hz1, hz2 = st.columns(2)
+                    with hz1:
+                        _hxf, _hxn = _shot_hexbin(
+                            _td_shots, title="Volume & points per shot",
+                            league_pps=_league_pps_located(gender))
+                        st.plotly_chart(_hxf, width="stretch", key="sh_hexbin")
+                    with hz2:
+                        _smf, _ = _shot_map(_td_shots, title="Makes & misses")
+                        st.plotly_chart(_smf, width="stretch", key="sh_dotmap")
+                    st.caption("Hexagon size = attempts, color = points per shot "
+                               "vs league average. Dots are individual shots — "
+                               "green make, red ✕ miss.")
+                    # points-over-expected heat — shot QUALITY, not just makes
+                    _pxf, _pxn = _shot_hexbin(
+                        _td_shots, title="Points over expected — shot quality",
+                        model=_shot_model(gender), mode="poe")
+                    st.plotly_chart(_pxf, width="stretch", key="sh_poe")
+                    st.caption("Points over expected — **green** hexes beat the league "
+                               "make-rate for that spot (good shots being made), **red** "
+                               "are below. Separates shot *quality* from shot volume.")
+                    _td_db = S.distance_buckets(_td_shots)
+                    if _td_db:
+                        st.caption("By length — " + S.distance_buckets_caption(_td_db))
+                else:
+                    st.markdown("**Hot zone maps** — size = volume, color = FG%")
+                    hz1, hz2 = st.columns(2)
+                    with hz1:
+                        st.caption("2-pointers")
+                        st.plotly_chart(_hotcourt(zbt["2"], "2"), width="stretch",
+                                        key="sh_hot2")
+                    with hz2:
+                        st.caption("3-pointers")
+                        st.plotly_chart(_hotcourt(zbt["3"], "3", zpos=ZPOS3, lbl=short3),
+                                        width="stretch", key="sh_hot3")
 
-            # ── actual vs expected FG% by zone — 2s and 3s ──────────────────
-            st.markdown("**Actual vs expected FG% by zone**")
-            zxbt = bundle["zone_xfg_by_type"]
+                # ── actual vs expected FG% by zone — 2s and 3s ──────────────────
+                st.markdown("**Actual vs expected FG% by zone**")
+                zxbt = bundle["zone_xfg_by_type"]
 
-            def _avefig(zt):
-                zl = [TA.ZONE_LABELS[z].split("/")[0].strip() for z in TA.ZONES]
-                fig = go.Figure()
-                fig.add_trace(go.Bar(name="Actual", x=zl,
-                                     y=[zt[z]["FG%"] * 100 for z in TA.ZONES],
-                                     marker_color=ACCENT, marker_line_width=0))
-                fig.add_trace(go.Bar(name="xFG%", x=zl,
-                                     y=[zt[z]["xFG%"] * 100 for z in TA.ZONES],
-                                     marker_color=BLUE, opacity=0.7,
-                                     marker_line_width=0))
-                fig.update_layout(barmode="group")
-                fig.update_yaxes(title="%")
-                fig.update_xaxes(tickangle=-25)
-                _style(fig, 320)
-                return fig
+                def _avefig(zt):
+                    zl = [TA.ZONE_LABELS[z].split("/")[0].strip() for z in TA.ZONES]
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(name="Actual", x=zl,
+                                         y=[zt[z]["FG%"] * 100 for z in TA.ZONES],
+                                         marker_color=ACCENT, marker_line_width=0))
+                    fig.add_trace(go.Bar(name="xFG%", x=zl,
+                                         y=[zt[z]["xFG%"] * 100 for z in TA.ZONES],
+                                         marker_color=BLUE, opacity=0.7,
+                                         marker_line_width=0))
+                    fig.update_layout(barmode="group")
+                    fig.update_yaxes(title="%")
+                    fig.update_xaxes(tickangle=-25)
+                    _style(fig, 320)
+                    return fig
 
-            av1, av2 = st.columns(2)
-            with av1:
-                st.caption("2-pointers — actual vs expected")
-                st.plotly_chart(_avefig(zxbt["2"]), width="stretch",
-                                key="sh_ave2")
-            with av2:
-                st.caption("3-pointers — actual vs expected")
-                st.plotly_chart(_avefig(zxbt["3"]), width="stretch",
-                                key="sh_ave3")
-            st.caption("xFG% = expected FG% from the league-wide make-rate of each "
-                       "shot's (zone · creation · contest) type. Actual above xFG% "
-                       "= the team finishes that zone better than the looks imply. "
-                       "Full per-zone detail (2PA/3PA split) is in the table below.")
+                av1, av2 = st.columns(2)
+                with av1:
+                    st.caption("2-pointers — actual vs expected")
+                    st.plotly_chart(_avefig(zxbt["2"]), width="stretch",
+                                    key="sh_ave2")
+                with av2:
+                    st.caption("3-pointers — actual vs expected")
+                    st.plotly_chart(_avefig(zxbt["3"]), width="stretch",
+                                    key="sh_ave3")
+                st.caption("xFG% = expected FG% from the league-wide make-rate of each "
+                           "shot's (zone · creation · contest) type. Actual above xFG% "
+                           "= the team finishes that zone better than the looks imply. "
+                           "Full per-zone detail (2PA/3PA split) is in the table below.")
 
-            zxfg = bundle["zone_xfg"]
-            ztbl = []
-            for z in TA.ZONES:
-                row = _shot_row(TA.ZONE_LABELS[z], zo[z], ppf, ftpf)
-                row["xFG%"] = _pctf(zxfg[z]["xFG%"]) if zo[z]["FGA"] else "—"
-                ztbl.append(row)
-            st.dataframe(pd.DataFrame(ztbl), hide_index=True,
-                         width="stretch")
+                zxfg = bundle["zone_xfg"]
+                ztbl = []
+                for z in TA.ZONES:
+                    row = _shot_row(TA.ZONE_LABELS[z], zo[z], ppf, ftpf)
+                    row["xFG%"] = _pctf(zxfg[z]["xFG%"]) if zo[z]["FGA"] else "—"
+                    ztbl.append(row)
+                st.dataframe(pd.DataFrame(ztbl), hide_index=True,
+                             width="stretch")
 
-            # guarded vs unguarded — overall, then split by 2/3, zone & creation
-            st.markdown("<div class='lab-hdr'>Guarded vs unguarded</div>",
-                        unsafe_allow_html=True)
-            gd = bundle["guarded_detail"]
-            g, u = guarded["guarded"], guarded["unguarded"]
-            st.dataframe(pd.DataFrame([
-                _shot_row("Guarded", g, ppf, ftpf),
-                _shot_row("Unguarded", u, ppf, ftpf),
-                _shot_row("All", guarded["all"], ppf, ftpf)]),
-                hide_index=True, width="stretch")
-            gc1, gc2 = st.columns([2, 1])
-            with gc1:
-                gf = go.Figure()
-                for lbl, key in [("FG%", "FG%"), ("2P%", "2P%"),
-                                 ("3P%", "3P%"), ("eFG%", "eFG")]:
-                    gf.add_trace(go.Bar(
-                        name=lbl, x=["Guarded", "Unguarded"],
-                        y=[g[key] * 100, u[key] * 100]))
-                gf.update_layout(barmode="group")
-                gf.update_yaxes(title="%")
-                _style(gf, 300)
-                st.plotly_chart(gf, width="stretch", key="sh_guard")
-            with gc2:
-                st.metric("Contested rate", _pctf(guarded["guard_share"]))
-                st.metric("Open eFG% edge",
-                          f"{(u['eFG'] - g['eFG']) * 100:+.1f}pp")
-                st.caption("How much better they shoot when nobody is tagged as "
-                           "contesting.")
-
-            # dominant- vs weak-hand-side shooting (each shooter's own handedness)
-            hs = bundle.get("hand_splits")
-            if hs:
-                st.markdown("<div class='lab-hdr'>Dominant vs weak hand side</div>",
+            with _shc:
+                # guarded vs unguarded — overall, then split by 2/3, zone & creation
+                st.markdown("<div class='lab-hdr'>Guarded vs unguarded</div>",
                             unsafe_allow_html=True)
+                gd = bundle["guarded_detail"]
+                g, u = guarded["guarded"], guarded["unguarded"]
                 st.dataframe(pd.DataFrame([
-                    _shot_row("Dominant side", hs["dominant"]["all"], ppf, ftpf),
-                    _shot_row("Weak side", hs["weak"]["all"], ppf, ftpf)]),
+                    _shot_row("Guarded", g, ppf, ftpf),
+                    _shot_row("Unguarded", u, ppf, ftpf),
+                    _shot_row("All", guarded["all"], ppf, ftpf)]),
                     hide_index=True, width="stretch")
-                hc1, hc2 = st.columns([2, 1])
-                with hc1:
-                    hf = go.Figure()
+                gc1, gc2 = st.columns([2, 1])
+                with gc1:
+                    gf = go.Figure()
                     for lbl, key in [("FG%", "FG%"), ("2P%", "2P%"),
                                      ("3P%", "3P%"), ("eFG%", "eFG")]:
-                        hf.add_trace(go.Bar(
-                            name=lbl, x=["Dominant", "Weak"],
-                            y=[hs["dominant"]["all"][key] * 100,
-                               hs["weak"]["all"][key] * 100]))
-                    hf.update_layout(barmode="group")
-                    hf.update_yaxes(title="%")
-                    _style(hf, 300)
-                    st.plotly_chart(hf, width="stretch", key="sh_hand")
-                with hc2:
-                    st.metric("Dominant-side share", _pctf(hs["dom_share"]))
-                    _de, _we = hs["dominant"]["all"]["eFG"], hs["weak"]["all"]["eFG"]
-                    st.metric("Dominant eFG% edge", f"{(_de - _we) * 100:+.1f}pp")
-                    st.caption("Right-handers' right-half shots are 'dominant', "
-                               "lefties mirrored. Dead-center shots ignored.")
+                        gf.add_trace(go.Bar(
+                            name=lbl, x=["Guarded", "Unguarded"],
+                            y=[g[key] * 100, u[key] * 100]))
+                    gf.update_layout(barmode="group")
+                    gf.update_yaxes(title="%")
+                    _style(gf, 300)
+                    st.plotly_chart(gf, width="stretch", key="sh_guard")
+                with gc2:
+                    st.metric("Contested rate", _pctf(guarded["guard_share"]))
+                    st.metric("Open eFG% edge",
+                              f"{(u['eFG'] - g['eFG']) * 100:+.1f}pp")
+                    st.caption("How much better they shoot when nobody is tagged as "
+                               "contesting.")
 
-            # contested eFG% broken down: by 2/3, by zone, by creation type
-            st.markdown("**Contested vs open eFG% — every which way**")
+                # dominant- vs weak-hand-side shooting (each shooter's own handedness)
+                hs = bundle.get("hand_splits")
+                if hs:
+                    st.markdown("<div class='lab-hdr'>Dominant vs weak hand side</div>",
+                                unsafe_allow_html=True)
+                    st.dataframe(pd.DataFrame([
+                        _shot_row("Dominant side", hs["dominant"]["all"], ppf, ftpf),
+                        _shot_row("Weak side", hs["weak"]["all"], ppf, ftpf)]),
+                        hide_index=True, width="stretch")
+                    hc1, hc2 = st.columns([2, 1])
+                    with hc1:
+                        hf = go.Figure()
+                        for lbl, key in [("FG%", "FG%"), ("2P%", "2P%"),
+                                         ("3P%", "3P%"), ("eFG%", "eFG")]:
+                            hf.add_trace(go.Bar(
+                                name=lbl, x=["Dominant", "Weak"],
+                                y=[hs["dominant"]["all"][key] * 100,
+                                   hs["weak"]["all"][key] * 100]))
+                        hf.update_layout(barmode="group")
+                        hf.update_yaxes(title="%")
+                        _style(hf, 300)
+                        st.plotly_chart(hf, width="stretch", key="sh_hand")
+                    with hc2:
+                        st.metric("Dominant-side share", _pctf(hs["dom_share"]))
+                        _de, _we = hs["dominant"]["all"]["eFG"], hs["weak"]["all"]["eFG"]
+                        st.metric("Dominant eFG% edge", f"{(_de - _we) * 100:+.1f}pp")
+                        st.caption("Right-handers' right-half shots are 'dominant', "
+                                   "lefties mirrored. Dead-center shots ignored.")
 
-            def _gu_efg_fig(items, label_fn, key):
-                """Grouped guarded/unguarded eFG% bar over a list of (lbl, split)."""
-                xs = [label_fn(it) for it in items]
-                fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    name="Guarded", x=xs,
-                    y=[it[1]["guarded"]["eFG"] * 100 for it in items],
-                    marker_color=AWAY, marker_line_width=0))
-                fig.add_trace(go.Bar(
-                    name="Unguarded", x=xs,
-                    y=[it[1]["unguarded"]["eFG"] * 100 for it in items],
-                    marker_color=ACCENT, marker_line_width=0))
-                fig.update_layout(barmode="group")
-                fig.update_yaxes(title="eFG%")
-                fig.update_xaxes(tickangle=-20)
-                _style(fig, 300)
-                return fig
+                # contested eFG% broken down: by 2/3, by zone, by creation type
+                st.markdown("**Contested vs open eFG% — every which way**")
 
-            gu1, gu2 = st.columns(2)
-            with gu1:
-                st.caption("By shot value")
+                def _gu_efg_fig(items, label_fn, key):
+                    """Grouped guarded/unguarded eFG% bar over a list of (lbl, split)."""
+                    xs = [label_fn(it) for it in items]
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        name="Guarded", x=xs,
+                        y=[it[1]["guarded"]["eFG"] * 100 for it in items],
+                        marker_color=AWAY, marker_line_width=0))
+                    fig.add_trace(go.Bar(
+                        name="Unguarded", x=xs,
+                        y=[it[1]["unguarded"]["eFG"] * 100 for it in items],
+                        marker_color=ACCENT, marker_line_width=0))
+                    fig.update_layout(barmode="group")
+                    fig.update_yaxes(title="eFG%")
+                    fig.update_xaxes(tickangle=-20)
+                    _style(fig, 300)
+                    return fig
+
+                gu1, gu2 = st.columns(2)
+                with gu1:
+                    st.caption("By shot value")
+                    st.plotly_chart(_gu_efg_fig(
+                        [("2-pt", gd["by_type"]["2"]), ("3-pt", gd["by_type"]["3"])],
+                        lambda it: it[0], "t"), width="stretch", key="sh_gu_type")
+                with gu2:
+                    st.caption("By zone")
+                    st.plotly_chart(_gu_efg_fig(
+                        [(TA.ZONE_LABELS[z].split("/")[0].strip(), gd["by_zone"][z])
+                         for z in TA.ZONES], lambda it: it[0], "z"),
+                        width="stretch", key="sh_gu_zone")
+                cmap_g = {"self": "Self", "pass": "Off pass",
+                          "created": "Off screen", "both": "Pass+screen"}
+                st.caption("By shot-creation type")
                 st.plotly_chart(_gu_efg_fig(
-                    [("2-pt", gd["by_type"]["2"]), ("3-pt", gd["by_type"]["3"])],
-                    lambda it: it[0], "t"), width="stretch", key="sh_gu_type")
-            with gu2:
-                st.caption("By zone")
-                st.plotly_chart(_gu_efg_fig(
-                    [(TA.ZONE_LABELS[z].split("/")[0].strip(), gd["by_zone"][z])
-                     for z in TA.ZONES], lambda it: it[0], "z"),
-                    width="stretch", key="sh_gu_zone")
-            cmap_g = {"self": "Self", "pass": "Off pass",
-                      "created": "Off screen", "both": "Pass+screen"}
-            st.caption("By shot-creation type")
-            st.plotly_chart(_gu_efg_fig(
-                [(cmap_g[k], gd["by_creation"][k])
-                 for k in ("self", "pass", "created", "both")],
-                lambda it: it[0], "c"), width="stretch", key="sh_gu_crt")
-            st.caption("Guarded (orange) vs open (accent) eFG%, split by shot "
-                       "value, floor zone and how the shot was created — where "
-                       "contesting hurts them most and where they punish open looks.")
+                    [(cmap_g[k], gd["by_creation"][k])
+                     for k in ("self", "pass", "created", "both")],
+                    lambda it: it[0], "c"), width="stretch", key="sh_gu_crt")
+                st.caption("Guarded (orange) vs open (accent) eFG%, split by shot "
+                           "value, floor zone and how the shot was created — where "
+                           "contesting hurts them most and where they punish open looks.")
 
-            # shot-creation breakdown
-            st.markdown("<div class='lab-hdr'>Shot-creation breakdown</div>",
-                        unsafe_allow_html=True)
-            cmap = {"both": "Pass + screen", "pass": "Off a pass",
-                    "created": "Off a screen", "self": "Self-created"}
-            order = ["both", "pass", "created", "self"]
-            st.dataframe(pd.DataFrame(
-                [_shot_row(cmap[k], crb[k], ppf, ftpf) for k in order]
-                + [_shot_row("TOTAL", crb["total"], ppf, ftpf)]),
-                hide_index=True, width="stretch")
-            # creation graphs, each separated into 2s vs 3s
-            cbt = bundle["creation_by_type"]
-
-            def _crt_fig(metric_fn, yaxis, text_fn=None):
-                fig = go.Figure()
-                for tlab, tk, clr in (("2-pt", "2", ACCENT), ("3-pt", "3", BLUE)):
-                    ys = [metric_fn(cbt[k][tk]) for k in order]
-                    kw = dict(name=tlab, x=[cmap[k] for k in order], y=ys,
-                              marker_color=clr, marker_line_width=0)
-                    if text_fn:
-                        kw["text"] = [text_fn(cbt[k][tk]) for k in order]
-                        kw["textposition"] = "auto"
-                    fig.add_trace(go.Bar(**kw))
-                fig.update_layout(barmode="group")
-                fig.update_yaxes(title=yaxis)
-                fig.update_xaxes(tickangle=-20)
-                _style(fig, 300)
-                return fig
-
-            cc1, cc2 = st.columns(2)
-            with cc1:
-                st.markdown("**Volume by creation type** (2s vs 3s)")
-                st.plotly_chart(_crt_fig(lambda a: a["FGA"], "Attempts",
-                                         text_fn=lambda a: a["FGA"] or ""),
-                                width="stretch", key="sh_crb_v")
-            with cc2:
-                st.markdown("**eFG% by creation type** (2s vs 3s)")
-                st.plotly_chart(_crt_fig(
-                    lambda a: a["eFG"] * 100, "eFG%",
-                    text_fn=lambda a: f"{a['eFG']*100:.0f}%" if a["FGA"] else "—"),
-                    width="stretch", key="sh_crb_e")
-
-            cc3, cc4 = st.columns(2)
-            with cc3:
-                st.markdown("**SCE by creation type** (2s vs 3s)")
-                st.plotly_chart(_crt_fig(
-                    lambda a: a["SCE"], "SCE",
-                    text_fn=lambda a: f"{a['SCE']:.2f}" if a["FGA"] else "—"),
-                    width="stretch", key="sh_crb_sce")
-            with cc4:
-                st.markdown("**Points / shot by creation type** (2s vs 3s)")
-                st.plotly_chart(_crt_fig(
-                    lambda a: a["PPS"], "Pts / shot",
-                    text_fn=lambda a: f"{a['PPS']:.2f}" if a["FGA"] else "—"),
-                    width="stretch", key="sh_crb_pps")
-            st.caption("Each creation graph split by shot value. SCE = (FG points) "
-                       "/ max FG points possible; PPS = points per attempt. Higher "
-                       "= more efficient looks from that creation type.")
-
-            # headline: self-created vs assisted FG% over MOV bars
-            st.markdown("<div class='lab-hdr'>Self-created vs assisted FG% — "
-                        "per game</div>", unsafe_allow_html=True)
-            glog_tracked = [g for g in log if g["tracked"] and g["game_id"] in cbg]
-            if glog_tracked:
-                gx = [f"{g['date'][5:]} {g['opp'][:8]}" for g in glog_tracked]
-                self_pct = [cbg[g["game_id"]]["self_pct"] * 100
-                            for g in glog_tracked]
-                asst_pct = [cbg[g["game_id"]]["asst_pct"] * 100
-                            for g in glog_tracked]
-                mov = [g["margin"] for g in glog_tracked]
-                fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=gx, y=mov, name="Margin", yaxis="y2",
-                    marker_color=[GOOD if m >= 0 else BAD for m in mov],
-                    opacity=0.28, marker_line_width=0,
-                    hovertemplate="Margin %{y:+d}<extra></extra>"))
-                fig.add_trace(go.Scatter(
-                    x=gx, y=self_pct, name="Self-created FG%",
-                    mode="lines+markers", line=dict(color=ACCENT, width=3)))
-                fig.add_trace(go.Scatter(
-                    x=gx, y=asst_pct, name="Assisted FG%", mode="lines+markers",
-                    line=dict(color=BLUE, width=3)))
-                fig.update_layout(
-                    yaxis=dict(title="FG%"),
-                    yaxis2=dict(title="Margin", overlaying="y", side="right",
-                                showgrid=False, zerolinecolor="#30363d"))
-                fig.update_xaxes(tickangle=-40)
-                _style(fig, 400)
-                st.plotly_chart(fig, width="stretch", key="sh_creation")
-                ov_self = bd["creation"]["self"]
-                ov_asst = bd["creation"]["asst"]
-                st.caption(
-                    f"Self-created = no pass into the shot; assisted = a teammate "
-                    f"fed it. Season: self {_pctf(ov_self['pct'])} on "
-                    f"{ov_self['FGA']} · assisted {_pctf(ov_asst['pct'])} on "
-                    f"{ov_asst['FGA']}. Bars = game margin (right axis).")
-
-            # share of shots self-created vs non-self-created, MOV bars
-            st.markdown("<div class='lab-hdr'>Self-created vs non-self-created "
-                        "shot share — per game</div>", unsafe_allow_html=True)
-            if glog_tracked:
-                self_sh, non_sh = [], []
-                for g in glog_tracked:
-                    c = cbg[g["game_id"]]
-                    tot = c["self_FGA"] + c["asst_FGA"]
-                    self_sh.append(100 * S._safe(c["self_FGA"], tot))
-                    non_sh.append(100 * S._safe(c["asst_FGA"], tot))
-                shf = go.Figure()
-                shf.add_trace(go.Bar(
-                    x=gx, y=mov, name="Margin", yaxis="y2",
-                    marker_color=[GOOD if m >= 0 else BAD for m in mov],
-                    opacity=0.28, marker_line_width=0,
-                    hovertemplate="Margin %{y:+d}<extra></extra>"))
-                shf.add_trace(go.Scatter(
-                    x=gx, y=self_sh, name="% self-created", mode="lines+markers",
-                    line=dict(color=ACCENT, width=3)))
-                shf.add_trace(go.Scatter(
-                    x=gx, y=non_sh, name="% non-self-created (off pass)",
-                    mode="lines+markers", line=dict(color=BLUE, width=3)))
-                shf.update_layout(
-                    yaxis=dict(title="Share of shots %", range=[0, 100]),
-                    yaxis2=dict(title="Margin", overlaying="y", side="right",
-                                showgrid=False, zerolinecolor="#30363d"))
-                shf.update_xaxes(tickangle=-40)
-                _style(shf, 400)
-                st.plotly_chart(shf, width="stretch", key="sh_share")
-                ov_self2 = bd["creation"]["self"]
-                ov_asst2 = bd["creation"]["asst"]
-                tot_all = ov_self2["FGA"] + ov_asst2["FGA"]
-                st.caption(
-                    f"Share of the team's FGA that are self-created (no pass) vs "
-                    f"set up by a pass, each game. Season: "
-                    f"{100*S._safe(ov_self2['FGA'], tot_all):.0f}% self-created · "
-                    f"{100*S._safe(ov_asst2['FGA'], tot_all):.0f}% off a pass. "
-                    f"Bars = game margin (right axis).")
-
-            # shooting by quarter — FG%/2P%/3P%/eFG%/TS% + FT%
-            qbx_sh = bundle["quarter_boxes"]
-            qsb = sorted(qbx_sh)
-            if qsb:
-                st.markdown("<div class='lab-hdr'>Shooting by quarter</div>",
+            with _shm:
+                # shot-creation breakdown
+                st.markdown("<div class='lab-hdr'>Shot-creation breakdown</div>",
                             unsafe_allow_html=True)
-                xq = [_q_label(q) for q in qsb]
+                cmap = {"both": "Pass + screen", "pass": "Off a pass",
+                        "created": "Off a screen", "self": "Self-created"}
+                order = ["both", "pass", "created", "self"]
+                st.dataframe(pd.DataFrame(
+                    [_shot_row(cmap[k], crb[k], ppf, ftpf) for k in order]
+                    + [_shot_row("TOTAL", crb["total"], ppf, ftpf)]),
+                    hide_index=True, width="stretch")
+                # creation graphs, each separated into 2s vs 3s
+                cbt = bundle["creation_by_type"]
 
-                def _qrate(fn):
-                    return [fn(qbx_sh[q]["team"]) * 100 for q in qsb]
+                def _crt_fig(metric_fn, yaxis, text_fn=None):
+                    fig = go.Figure()
+                    for tlab, tk, clr in (("2-pt", "2", ACCENT), ("3-pt", "3", BLUE)):
+                        ys = [metric_fn(cbt[k][tk]) for k in order]
+                        kw = dict(name=tlab, x=[cmap[k] for k in order], y=ys,
+                                  marker_color=clr, marker_line_width=0)
+                        if text_fn:
+                            kw["text"] = [text_fn(cbt[k][tk]) for k in order]
+                            kw["textposition"] = "auto"
+                        fig.add_trace(go.Bar(**kw))
+                    fig.update_layout(barmode="group")
+                    fig.update_yaxes(title=yaxis)
+                    fig.update_xaxes(tickangle=-20)
+                    _style(fig, 300)
+                    return fig
 
-                sq1, sq2 = st.columns([2, 1])
-                with sq1:
-                    qf = go.Figure()
-                    for nm, fn, clr in (("FG%", S.fg_pct, ACCENT),
-                                        ("2P%", S.fg2_pct, GOOD),
-                                        ("3P%", S.fg3_pct, BLUE),
-                                        ("eFG%", S.efg, PURPLE),
-                                        ("TS%", S.ts, "#d29922")):
-                        qf.add_trace(go.Scatter(
-                            x=xq, y=_qrate(fn), name=nm, mode="lines+markers",
-                            line=dict(color=clr, width=3), marker=dict(size=7)))
-                    qf.update_yaxes(title="%")
-                    _style(qf, 320)
-                    st.plotly_chart(qf, width="stretch", key="sh_qfg")
-                with sq2:
-                    ftq = go.Figure(go.Bar(
-                        x=xq, y=_qrate(S.ft_pct), marker_color="#d29922",
-                        marker_line_width=0,
-                        text=[f"{v:.0f}" for v in _qrate(S.ft_pct)],
-                        textposition="auto"))
-                    ftq.update_yaxes(title="FT%")
-                    _style(ftq, 320)
-                    ftq.update_layout(title=dict(text="FT% by quarter",
-                                                 font=dict(size=13)))
-                    st.plotly_chart(ftq, width="stretch", key="sh_qft")
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    st.markdown("**Volume by creation type** (2s vs 3s)")
+                    st.plotly_chart(_crt_fig(lambda a: a["FGA"], "Attempts",
+                                             text_fn=lambda a: a["FGA"] or ""),
+                                    width="stretch", key="sh_crb_v")
+                with cc2:
+                    st.markdown("**eFG% by creation type** (2s vs 3s)")
+                    st.plotly_chart(_crt_fig(
+                        lambda a: a["eFG"] * 100, "eFG%",
+                        text_fn=lambda a: f"{a['eFG']*100:.0f}%" if a["FGA"] else "—"),
+                        width="stretch", key="sh_crb_e")
 
-            # ── Shot Lab (moved here from Advanced): shot-making vs expectation ──
-            st.markdown("<div class='lab-hdr'>Shot Lab — shot-making vs "
-                        "expectation</div>", unsafe_allow_html=True)
-            st.caption("SMOE — Shot-Making Over Expected, split by shot value. "
-                       "Expected makes come from the make-rate of each shot's "
-                       "(zone · creation · contest) type. Positive = they finish "
-                       "better than the looks they generate.")
-            zsl_bt = bundle["zones_by_type"]["off"]   # {'all','2','3': {zone: agg}}
-            zxsl_bt = bundle["zone_xfg_by_type"]      # {'2','3': {zone: agg}}
+                cc3, cc4 = st.columns(2)
+                with cc3:
+                    st.markdown("**SCE by creation type** (2s vs 3s)")
+                    st.plotly_chart(_crt_fig(
+                        lambda a: a["SCE"], "SCE",
+                        text_fn=lambda a: f"{a['SCE']:.2f}" if a["FGA"] else "—"),
+                        width="stretch", key="sh_crb_sce")
+                with cc4:
+                    st.markdown("**Points / shot by creation type** (2s vs 3s)")
+                    st.plotly_chart(_crt_fig(
+                        lambda a: a["PPS"], "Pts / shot",
+                        text_fn=lambda a: f"{a['PPS']:.2f}" if a["FGA"] else "—"),
+                        width="stretch", key="sh_crb_pps")
+                st.caption("Each creation graph split by shot value. SCE = (FG points) "
+                           "/ max FG points possible; PPS = points per attempt. Higher "
+                           "= more efficient looks from that creation type.")
 
-            def _shotlab(zmap, zxmap, title, keypfx):
-                exp = sum(zmap[z]["FGA"] * zxmap[z]["xFG%"] for z in TA.ZONES)
-                act = sum(zmap[z]["FGM"] for z in TA.ZONES)
-                fga = sum(zmap[z]["FGA"] for z in TA.ZONES)
-                moe = (act - exp) / fga * 100 if fga else 0
-                st.markdown(f"**{title}**")
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    clr = GOOD if moe >= 0 else BAD
-                    st.markdown(
-                        f"<div class='spotlight'>"
-                        f"<div class='spotlight-num' style='color:{clr}'>"
-                        f"{moe:+.1f}%</div>"
-                        f"<div class='spotlight-lbl'>FG% over expected</div>"
-                        f"<div class='spotlight-sub'>made {act:.0f} vs "
-                        f"{exp:.0f} expected on {fga:.0f} shots</div></div>",
-                        unsafe_allow_html=True)
-                with c2:
-                    diffs = [(TA.ZONE_LABELS[z].split("/")[0].strip(),
-                              (zmap[z]["FG%"] - zxmap[z]["xFG%"]) * 100,
-                              zmap[z]["FGA"]) for z in TA.ZONES]
-                    smf = go.Figure(go.Bar(
-                        x=[d[0] for d in diffs], y=[d[1] for d in diffs],
-                        marker_color=[GOOD if d[1] >= 0 else BAD for d in diffs],
-                        marker_line_width=0,
-                        text=[f"{d[1]:+.0f}pp" for d in diffs], textposition="auto",
-                        hovertext=[f"{d[2]} FGA" for d in diffs],
-                        hovertemplate="%{x}<br>%{y:+.1f}pp vs expected<br>"
-                                      "%{hovertext}<extra></extra>"))
-                    smf.add_hline(y=0, line=dict(color="#30363d"))
-                    smf.update_yaxes(title="Actual − expected FG% (pp)")
-                    smf.update_xaxes(tickangle=-25)
-                    _style(smf, 300)
-                    st.plotly_chart(smf, width="stretch", key=f"sh_smoe_{keypfx}")
+                # headline: self-created vs assisted FG% over MOV bars
+                st.markdown("<div class='lab-hdr'>Self-created vs assisted FG% — "
+                            "per game</div>", unsafe_allow_html=True)
+                glog_tracked = [g for g in log if g["tracked"] and g["game_id"] in cbg]
+                if glog_tracked:
+                    gx = [f"{g['date'][5:]} {g['opp'][:8]}" for g in glog_tracked]
+                    self_pct = [cbg[g["game_id"]]["self_pct"] * 100
+                                for g in glog_tracked]
+                    asst_pct = [cbg[g["game_id"]]["asst_pct"] * 100
+                                for g in glog_tracked]
+                    mov = [g["margin"] for g in glog_tracked]
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        x=gx, y=mov, name="Margin", yaxis="y2",
+                        marker_color=[GOOD if m >= 0 else BAD for m in mov],
+                        opacity=0.28, marker_line_width=0,
+                        hovertemplate="Margin %{y:+d}<extra></extra>"))
+                    fig.add_trace(go.Scatter(
+                        x=gx, y=self_pct, name="Self-created FG%",
+                        mode="lines+markers", line=dict(color=ACCENT, width=3)))
+                    fig.add_trace(go.Scatter(
+                        x=gx, y=asst_pct, name="Assisted FG%", mode="lines+markers",
+                        line=dict(color=BLUE, width=3)))
+                    fig.update_layout(
+                        yaxis=dict(title="FG%"),
+                        yaxis2=dict(title="Margin", overlaying="y", side="right",
+                                    showgrid=False, zerolinecolor="#30363d"))
+                    fig.update_xaxes(tickangle=-40)
+                    _style(fig, 400)
+                    st.plotly_chart(fig, width="stretch", key="sh_creation")
+                    ov_self = bd["creation"]["self"]
+                    ov_asst = bd["creation"]["asst"]
+                    st.caption(
+                        f"Self-created = no pass into the shot; assisted = a teammate "
+                        f"fed it. Season: self {_pctf(ov_self['pct'])} on "
+                        f"{ov_self['FGA']} · assisted {_pctf(ov_asst['pct'])} on "
+                        f"{ov_asst['FGA']}. Bars = game margin (right axis).")
 
-            _shotlab(zsl_bt["2"], zxsl_bt["2"], "2-pointers", "2")
-            _shotlab(zsl_bt["3"], zxsl_bt["3"], "3-pointers", "3")
+                # share of shots self-created vs non-self-created, MOV bars
+                st.markdown("<div class='lab-hdr'>Self-created vs non-self-created "
+                            "shot share — per game</div>", unsafe_allow_html=True)
+                if glog_tracked:
+                    self_sh, non_sh = [], []
+                    for g in glog_tracked:
+                        c = cbg[g["game_id"]]
+                        tot = c["self_FGA"] + c["asst_FGA"]
+                        self_sh.append(100 * S._safe(c["self_FGA"], tot))
+                        non_sh.append(100 * S._safe(c["asst_FGA"], tot))
+                    shf = go.Figure()
+                    shf.add_trace(go.Bar(
+                        x=gx, y=mov, name="Margin", yaxis="y2",
+                        marker_color=[GOOD if m >= 0 else BAD for m in mov],
+                        opacity=0.28, marker_line_width=0,
+                        hovertemplate="Margin %{y:+d}<extra></extra>"))
+                    shf.add_trace(go.Scatter(
+                        x=gx, y=self_sh, name="% self-created", mode="lines+markers",
+                        line=dict(color=ACCENT, width=3)))
+                    shf.add_trace(go.Scatter(
+                        x=gx, y=non_sh, name="% non-self-created (off pass)",
+                        mode="lines+markers", line=dict(color=BLUE, width=3)))
+                    shf.update_layout(
+                        yaxis=dict(title="Share of shots %", range=[0, 100]),
+                        yaxis2=dict(title="Margin", overlaying="y", side="right",
+                                    showgrid=False, zerolinecolor="#30363d"))
+                    shf.update_xaxes(tickangle=-40)
+                    _style(shf, 400)
+                    st.plotly_chart(shf, width="stretch", key="sh_share")
+                    ov_self2 = bd["creation"]["self"]
+                    ov_asst2 = bd["creation"]["asst"]
+                    tot_all = ov_self2["FGA"] + ov_asst2["FGA"]
+                    st.caption(
+                        f"Share of the team's FGA that are self-created (no pass) vs "
+                        f"set up by a pass, each game. Season: "
+                        f"{100*S._safe(ov_self2['FGA'], tot_all):.0f}% self-created · "
+                        f"{100*S._safe(ov_asst2['FGA'], tot_all):.0f}% off a pass. "
+                        f"Bars = game margin (right axis).")
 
-            # overall look-quality + efficiency metrics (all shots, both values)
-            zo_sl = zones["off"]
-            zxfg_sl = bundle["zone_xfg"]
-            exp_fgm = sum(zo_sl[z]["FGA"] * zxfg_sl[z]["xFG%"] for z in TA.ZONES)
-            z_fga = sum(zo_sl[z]["FGA"] for z in TA.ZONES)
-            xfg_avg = exp_fgm / z_fga if z_fga else 0
-            slm = st.columns(4)
-            slm[0].metric("Avg look quality (xFG%)", _pctf(xfg_avg),
-                          help="Expected FG% of the shots they generate — higher "
-                               "means easier looks on average.")
-            slm[1].metric("Points / shot", f"{S.pps(tb):.2f}",
-                          help="Field-goal points per FGA (free throws excluded).")
-            slm[2].metric("Scoring efficiency (SCE)",
-                          f"{S.shot_efficiency(tb):.3f}")
-            slm[3].metric("Contested rate",
-                          _pctf(bundle["guarded"]["guard_share"]))
-            st.caption("Look quality measures the difficulty of shots created; "
-                       "shot-making over expected measures whether they convert "
-                       "them. A great offense does both.")
+                # shooting by quarter — FG%/2P%/3P%/eFG%/TS% + FT%
+                qbx_sh = bundle["quarter_boxes"]
+                qsb = sorted(qbx_sh)
+                if qsb:
+                    st.markdown("<div class='lab-hdr'>Shooting by quarter</div>",
+                                unsafe_allow_html=True)
+                    xq = [_q_label(q) for q in qsb]
+
+                    def _qrate(fn):
+                        return [fn(qbx_sh[q]["team"]) * 100 for q in qsb]
+
+                    sq1, sq2 = st.columns([2, 1])
+                    with sq1:
+                        qf = go.Figure()
+                        for nm, fn, clr in (("FG%", S.fg_pct, ACCENT),
+                                            ("2P%", S.fg2_pct, GOOD),
+                                            ("3P%", S.fg3_pct, BLUE),
+                                            ("eFG%", S.efg, PURPLE),
+                                            ("TS%", S.ts, "#d29922")):
+                            qf.add_trace(go.Scatter(
+                                x=xq, y=_qrate(fn), name=nm, mode="lines+markers",
+                                line=dict(color=clr, width=3), marker=dict(size=7)))
+                        qf.update_yaxes(title="%")
+                        _style(qf, 320)
+                        st.plotly_chart(qf, width="stretch", key="sh_qfg")
+                    with sq2:
+                        ftq = go.Figure(go.Bar(
+                            x=xq, y=_qrate(S.ft_pct), marker_color="#d29922",
+                            marker_line_width=0,
+                            text=[f"{v:.0f}" for v in _qrate(S.ft_pct)],
+                            textposition="auto"))
+                        ftq.update_yaxes(title="FT%")
+                        _style(ftq, 320)
+                        ftq.update_layout(title=dict(text="FT% by quarter",
+                                                     font=dict(size=13)))
+                        st.plotly_chart(ftq, width="stretch", key="sh_qft")
+
+                # ── Shot Lab (moved here from Advanced): shot-making vs expectation ──
+                st.markdown("<div class='lab-hdr'>Shot Lab — shot-making vs "
+                            "expectation</div>", unsafe_allow_html=True)
+                st.caption("SMOE — Shot-Making Over Expected, split by shot value. "
+                           "Expected makes come from the make-rate of each shot's "
+                           "(zone · creation · contest) type. Positive = they finish "
+                           "better than the looks they generate.")
+                zsl_bt = bundle["zones_by_type"]["off"]   # {'all','2','3': {zone: agg}}
+                zxsl_bt = bundle["zone_xfg_by_type"]      # {'2','3': {zone: agg}}
+
+                def _shotlab(zmap, zxmap, title, keypfx):
+                    exp = sum(zmap[z]["FGA"] * zxmap[z]["xFG%"] for z in TA.ZONES)
+                    act = sum(zmap[z]["FGM"] for z in TA.ZONES)
+                    fga = sum(zmap[z]["FGA"] for z in TA.ZONES)
+                    moe = (act - exp) / fga * 100 if fga else 0
+                    st.markdown(f"**{title}**")
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        clr = GOOD if moe >= 0 else BAD
+                        st.markdown(
+                            f"<div class='spotlight'>"
+                            f"<div class='spotlight-num' style='color:{clr}'>"
+                            f"{moe:+.1f}%</div>"
+                            f"<div class='spotlight-lbl'>FG% over expected</div>"
+                            f"<div class='spotlight-sub'>made {act:.0f} vs "
+                            f"{exp:.0f} expected on {fga:.0f} shots</div></div>",
+                            unsafe_allow_html=True)
+                    with c2:
+                        diffs = [(TA.ZONE_LABELS[z].split("/")[0].strip(),
+                                  (zmap[z]["FG%"] - zxmap[z]["xFG%"]) * 100,
+                                  zmap[z]["FGA"]) for z in TA.ZONES]
+                        smf = go.Figure(go.Bar(
+                            x=[d[0] for d in diffs], y=[d[1] for d in diffs],
+                            marker_color=[GOOD if d[1] >= 0 else BAD for d in diffs],
+                            marker_line_width=0,
+                            text=[f"{d[1]:+.0f}pp" for d in diffs], textposition="auto",
+                            hovertext=[f"{d[2]} FGA" for d in diffs],
+                            hovertemplate="%{x}<br>%{y:+.1f}pp vs expected<br>"
+                                          "%{hovertext}<extra></extra>"))
+                        smf.add_hline(y=0, line=dict(color="#30363d"))
+                        smf.update_yaxes(title="Actual − expected FG% (pp)")
+                        smf.update_xaxes(tickangle=-25)
+                        _style(smf, 300)
+                        st.plotly_chart(smf, width="stretch", key=f"sh_smoe_{keypfx}")
+
+                _shotlab(zsl_bt["2"], zxsl_bt["2"], "2-pointers", "2")
+                _shotlab(zsl_bt["3"], zxsl_bt["3"], "3-pointers", "3")
+
+                # overall look-quality + efficiency metrics (all shots, both values)
+                zo_sl = zones["off"]
+                zxfg_sl = bundle["zone_xfg"]
+                exp_fgm = sum(zo_sl[z]["FGA"] * zxfg_sl[z]["xFG%"] for z in TA.ZONES)
+                z_fga = sum(zo_sl[z]["FGA"] for z in TA.ZONES)
+                xfg_avg = exp_fgm / z_fga if z_fga else 0
+                slm = st.columns(4)
+                slm[0].metric("Avg look quality (xFG%)", _pctf(xfg_avg),
+                              help="Expected FG% of the shots they generate — higher "
+                                   "means easier looks on average.")
+                slm[1].metric("Points / shot", f"{S.pps(tb):.2f}",
+                              help="Field-goal points per FGA (free throws excluded).")
+                slm[2].metric("Scoring efficiency (SCE)",
+                              f"{S.shot_efficiency(tb):.3f}")
+                slm[3].metric("Contested rate",
+                              _pctf(bundle["guarded"]["guard_share"]))
+                st.caption("Look quality measures the difficulty of shots created; "
+                           "shot-making over expected measures whether they convert "
+                           "them. A great offense does both.")
 
         # ───────────────────────────────────────────── REBOUNDING ───────────
         with ch_rb:

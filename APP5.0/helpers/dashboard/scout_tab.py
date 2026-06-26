@@ -526,6 +526,107 @@ def render(ctx):
             for atip in sc["attack"]:
                 st.markdown(f"- {atip}")
 
+    # ── auto scouting report ──────────────────────────────────────────────────
+    if _show("auto_report"):
+        st.markdown("<div class='lab-hdr'>Scouting report</div>",
+                    unsafe_allow_html=True)
+        tips = _auto_report_tips(ctx)
+        if tips:
+            for t in tips:
+                st.markdown(f"- {t}")
+        else:
+            st.caption("A balanced profile — no single factor stands out as a "
+                       "scouting key.")
+
+    # ── personnel ────────────────────────────────────────────────────────────
+    if _show("personnel") and sc["personnel"]:
+        st.markdown("<div class='lab-hdr'>Personnel</div>", unsafe_allow_html=True)
+        sc_arch = ctx.archetypes(ctx.gender)
+        prow_by_name = {p["name"]: p for p in ctx.players}
+        for p in sc["personnel"]:
+            bdg = "  ".join(p["badges"])
+            row = prow_by_name.get(p["name"])
+            archlbl = sc_arch.get(row["_pid"]) if row else None
+            usg = row.get("USG%") if row else None
+            selfcr = row.get("SelfCr%") if row else None
+            q4 = row.get("Q4PPG") if row else None
+            extra = []
+            if usg is not None:
+                extra.append(f"USG {usg:.0f}%")
+            if selfcr is not None:
+                extra.append(f"self-cr {selfcr:.0f}%")
+            if q4 is not None:
+                extra.append(f"Q4 {q4:.1f} ppg")
+            extra_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
+                          f"{' · '.join(extra)}</span>" if extra else "")
+            # play-type tags per player (one-tap set calls): top 4 sets with
+            # share + efficiency, e.g. "Iso 38% (1.21 PPP) · PnR 24% (0.88)"
+            pm = p.get("playmix")
+            play_html = ""
+            if _show("player_plays") and pm:
+                _pl = " · ".join(f"{lbl} {pct:.0f}% ({ppp:.2f} PPP)"
+                                 for lbl, pct, ppp, _fg in pm[:4])
+                _goto = (f" · go-to: {p['goto']}" if p.get("goto") else "")
+                play_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
+                             f"▶ Plays: {html.escape(_pl)} "
+                             f"(n={p['playmix_n']}){html.escape(_goto)}</span>")
+            arch_html = (f" <span class='stat-chip' style='font-size:11px'>"
+                         f"{html.escape(archlbl)}</span>" if archlbl else "")
+            # who normally starts + the 0-100 category breakdown behind OVERALL
+            gs_txt = (f" · Starts {p['gs_pct']:.0f}%"
+                      if p.get("gs_pct") is not None else "")
+            _bd = " · ".join(
+                f"{lbl} {p.get(k)}" for k, lbl in
+                (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))
+                if p.get(k) is not None)
+            bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd} "
+                       f"(0–100, 50 = league avg)</span>" if _bd else "")
+            # measurables: height · weight · wingspan · hand
+            pos_html = (f" <span style='color:#8b949e;font-size:12px'>"
+                        f"{html.escape(p['pos'])}</span>" if p.get("pos") else "")
+            bio_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
+                        f"{html.escape(p['bio'])}</span>" if p.get("bio") else "")
+            # tactical cues: force-hand + space dependence (the data-rich reads)
+            _cues = []
+            if p.get("hand") and p["hand"].get("cue"):
+                _cues.append(p["hand"]["cue"])
+            if p.get("space") and p["space"].get("cue"):
+                _cues.append(p["space"]["cue"])
+            cues_html = ("<br><span class='badge accent' style='font-size:11px'>✋ "
+                         + " · ".join(html.escape(c) for c in _cues)
+                         + "</span>" if _cues else "")
+            _spi = (p.get("spacing") or {}).get("index")
+            spc_html = (f"<br><span style='font-size:12px;color:#8b949e'>Floor "
+                        f"spacing <b style='color:"
+                        f"{ctx.ACCENT if _spi >= 50 else '#e74c3c'}'>{_spi}</b> "
+                        f"<span style='font-size:11px'>(0–100 vs league)</span>"
+                        f"</span>" if _spi is not None else "")
+            st.markdown(
+                f"<div class='glass-tile' style='margin-bottom:8px'>"
+                f"<b>#{p['num']} {html.escape(p['name'])}</b>{pos_html} "
+                f"<span style='color:#8b949e'>OVR "
+                f"{p['ovr'] if p['ovr'] is not None else '—'}{gs_txt}</span>"
+                f"{arch_html}{bd_html}{bio_html}<br>"
+                f"<span style='font-size:13px'>{(p['ppg'] or 0):.1f} ppg · "
+                f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
+                f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "
+                f"TS {('%.0f%%'%p['ts']) if p['ts'] is not None else '—'}</span>"
+                f"{extra_html}{play_html}<br>"
+                f"<span style='color:{ctx.ACCENT};font-size:13px'>▶ "
+                f"{html.escape(p['note'])}</span>"
+                + cues_html + spc_html
+                + (f"<br><span style='font-size:12px;color:#8b949e'>"
+                   f"{html.escape(bdg)}</span>" if bdg else "")
+                + "</div>", unsafe_allow_html=True)
+
+    # ── manual key-player intel (hand-entered; complements auto-personnel) ────
+    if not _self and _show("manual_intel"):
+        st.markdown("<div class='lab-hdr'>Manual scouting — key players</div>",
+                    unsafe_allow_html=True)
+        st.caption("Hand-entered intel (force-hand, who to deny, threats). Prints "
+                   "on the sheet — works even where the tracked data is thin.")
+        SB.render_intel(ctx.team_id)
+
     # ── four factors & tendencies (the single four-factors block) ────────────
     if _show("four_factors") and sc["factors"]:
         st.markdown("<div class='lab-hdr'>Team profile — four factors & "
@@ -690,18 +791,6 @@ def render(ctx):
         else:
             st.caption("Not enough 3-point volume to profile shooters yet.")
 
-    # ── auto scouting report ──────────────────────────────────────────────────
-    if _show("auto_report"):
-        st.markdown("<div class='lab-hdr'>Scouting report</div>",
-                    unsafe_allow_html=True)
-        tips = _auto_report_tips(ctx)
-        if tips:
-            for t in tips:
-                st.markdown(f"- {t}")
-        else:
-            st.caption("A balanced profile — no single factor stands out as a "
-                       "scouting key.")
-
     # ── efficiency summary ────────────────────────────────────────────────────
     if _show("efficiency"):
         st.markdown("<div class='lab-hdr'>Efficiency summary</div>",
@@ -720,87 +809,6 @@ def render(ctx):
             + ("an up-tempo team." if ctx.summ.get("POSS_pg", 0) >= 70
                else "a controlled pace." if ctx.summ.get("POSS_pg", 0) >= 60
                else "a slow, grind-it-out pace."))
-
-    # ── personnel ────────────────────────────────────────────────────────────
-    if _show("personnel") and sc["personnel"]:
-        st.markdown("<div class='lab-hdr'>Personnel</div>", unsafe_allow_html=True)
-        sc_arch = ctx.archetypes(ctx.gender)
-        prow_by_name = {p["name"]: p for p in ctx.players}
-        for p in sc["personnel"]:
-            bdg = "  ".join(p["badges"])
-            row = prow_by_name.get(p["name"])
-            archlbl = sc_arch.get(row["_pid"]) if row else None
-            usg = row.get("USG%") if row else None
-            selfcr = row.get("SelfCr%") if row else None
-            q4 = row.get("Q4PPG") if row else None
-            extra = []
-            if usg is not None:
-                extra.append(f"USG {usg:.0f}%")
-            if selfcr is not None:
-                extra.append(f"self-cr {selfcr:.0f}%")
-            if q4 is not None:
-                extra.append(f"Q4 {q4:.1f} ppg")
-            extra_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
-                          f"{' · '.join(extra)}</span>" if extra else "")
-            # play-type tags per player (one-tap set calls): top 4 sets with
-            # share + efficiency, e.g. "Iso 38% (1.21 PPP) · PnR 24% (0.88)"
-            pm = p.get("playmix")
-            play_html = ""
-            if _show("player_plays") and pm:
-                _pl = " · ".join(f"{lbl} {pct:.0f}% ({ppp:.2f} PPP)"
-                                 for lbl, pct, ppp, _fg in pm[:4])
-                _goto = (f" · go-to: {p['goto']}" if p.get("goto") else "")
-                play_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
-                             f"▶ Plays: {html.escape(_pl)} "
-                             f"(n={p['playmix_n']}){html.escape(_goto)}</span>")
-            arch_html = (f" <span class='stat-chip' style='font-size:11px'>"
-                         f"{html.escape(archlbl)}</span>" if archlbl else "")
-            # who normally starts + the 0-100 category breakdown behind OVERALL
-            gs_txt = (f" · Starts {p['gs_pct']:.0f}%"
-                      if p.get("gs_pct") is not None else "")
-            _bd = " · ".join(
-                f"{lbl} {p.get(k)}" for k, lbl in
-                (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))
-                if p.get(k) is not None)
-            bd_html = (f"<br><span style='font-size:12px;color:#8b949e'>{_bd} "
-                       f"(0–100, 50 = league avg)</span>" if _bd else "")
-            # measurables: height · weight · wingspan · hand
-            pos_html = (f" <span style='color:#8b949e;font-size:12px'>"
-                        f"{html.escape(p['pos'])}</span>" if p.get("pos") else "")
-            bio_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
-                        f"{html.escape(p['bio'])}</span>" if p.get("bio") else "")
-            # tactical cues: force-hand + space dependence (the data-rich reads)
-            _cues = []
-            if p.get("hand") and p["hand"].get("cue"):
-                _cues.append(p["hand"]["cue"])
-            if p.get("space") and p["space"].get("cue"):
-                _cues.append(p["space"]["cue"])
-            cues_html = ("<br><span class='badge accent' style='font-size:11px'>✋ "
-                         + " · ".join(html.escape(c) for c in _cues)
-                         + "</span>" if _cues else "")
-            _spi = (p.get("spacing") or {}).get("index")
-            spc_html = (f"<br><span style='font-size:12px;color:#8b949e'>Floor "
-                        f"spacing <b style='color:"
-                        f"{ctx.ACCENT if _spi >= 50 else '#e74c3c'}'>{_spi}</b> "
-                        f"<span style='font-size:11px'>(0–100 vs league)</span>"
-                        f"</span>" if _spi is not None else "")
-            st.markdown(
-                f"<div class='glass-tile' style='margin-bottom:8px'>"
-                f"<b>#{p['num']} {html.escape(p['name'])}</b>{pos_html} "
-                f"<span style='color:#8b949e'>OVR "
-                f"{p['ovr'] if p['ovr'] is not None else '—'}{gs_txt}</span>"
-                f"{arch_html}{bd_html}{bio_html}<br>"
-                f"<span style='font-size:13px'>{(p['ppg'] or 0):.1f} ppg · "
-                f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
-                f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "
-                f"TS {('%.0f%%'%p['ts']) if p['ts'] is not None else '—'}</span>"
-                f"{extra_html}{play_html}<br>"
-                f"<span style='color:{ctx.ACCENT};font-size:13px'>▶ "
-                f"{html.escape(p['note'])}</span>"
-                + cues_html + spc_html
-                + (f"<br><span style='font-size:12px;color:#8b949e'>"
-                   f"{html.escape(bdg)}</span>" if bdg else "")
-                + "</div>", unsafe_allow_html=True)
 
     # ── how they get their shots: tagged play calls (one-tap from tracker) ───
     # how they get their shots — each table is its own toggle (pc_offense /
@@ -1168,14 +1176,6 @@ def render(ctx):
             st.caption("How they score by tempo — transition (≤6s) vs early vs "
                        "half-court. If they spike in transition, get back on "
                        "defense; if half-court is weak, make them play in a crowd.")
-
-    # ── manual key-player intel (hand-entered; complements auto-personnel) ────
-    if not _self and _show("manual_intel"):
-        st.markdown("<div class='lab-hdr'>Manual scouting — key players</div>",
-                    unsafe_allow_html=True)
-        st.caption("Hand-entered intel (force-hand, who to deny, threats). Prints "
-                   "on the sheet — works even where the tracked data is thin.")
-        SB.render_intel(ctx.team_id)
 
     # ── game-plan notes (opponent scout) ─────────────────────────────────────
     if not _self and _show("notes"):

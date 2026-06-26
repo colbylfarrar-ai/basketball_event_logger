@@ -584,10 +584,20 @@ def usage_map_html(situations, kind, title, row_hdr="Set"):
     rows = [r for r in base.get(kind, []) if r.get("poss", 0) > 0][:8]
     if not rows or not sits:
         return ""
-    _c = "padding:3px 4px;text-align:center;font-size:9px"
-    th = "".join(
-        f"<td style='background:#d8d8d8;color:#111;font-weight:600;{_c}'>"
-        f"{e(s['label'])}</td>" for s in sits)
+    # OPAQUE pale-gold -> deep-orange heat so a cell reads on the dark app screen
+    # AND the white printed page (alpha-on-transparent washed out on both).
+    _lo, _hi = (255, 244, 191), (208, 58, 24)
+
+    def _cell(share):
+        n = min(1.0, max(0.0, share / 0.45))       # full heat by ~45% share
+        rgb = tuple(round(_lo[i] + (_hi[i] - _lo[i]) * n) for i in range(3))
+        txt = "#fff" if n > 0.55 else "#1a1a1a"     # white on the hot end
+        return f"rgb{rgb}", txt
+
+    _c = "padding:3px 5px;text-align:center;font-size:9px"
+    _ax = "background:#243140;color:#fff;font-weight:700;padding:3px 5px;font-size:9px"
+    th = "".join(f"<td style='{_ax};text-align:center'>{e(s['label'])}</td>"
+                 for s in sits)
     body = ""
     for r in rows:
         cells = ""
@@ -595,18 +605,14 @@ def usage_map_html(situations, kind, title, row_hdr="Set"):
             share = next((x["share"] for x in s.get(kind, [])
                           if x["key"] == r["key"]), 0.0)
             pct = round(share * 100)
-            if pct:
-                a = min(1.0, share / 0.5)          # full gold by ~50% share
-                cells += (f"<td style='background:rgba(240,165,0,{a:.2f});"
-                          f"color:#111;{_c}'>{pct}%</td>")
-            else:
-                cells += f"<td style='background:#f3f3f3;color:#bbb;{_c}'>·</td>"
-        body += (f"<tr><td style='background:#e8e8e8;color:#111;font-weight:600;"
-                 f"padding:3px 4px;font-size:9px'>{e(r['label'])}</td>{cells}</tr>")
+            bg, txt = _cell(share)
+            inner = f"{pct}%" if pct else "·"
+            cells += (f"<td style='background:{bg};color:{txt if pct else '#c8b86a'};"
+                      f"{_c}'>{inner}</td>")
+        body += f"<tr><td style='{_ax}'>{e(r['label'])}</td>{cells}</tr>"
     return (f"<h2>{e(title)}</h2>"
-            "<table style='border-collapse:collapse;width:100%;margin-bottom:6px'>"
-            f"<tr><td style='background:#d8d8d8;color:#111;font-weight:600;"
-            f"padding:3px 4px;font-size:9px'>{e(row_hdr)}</td>{th}</tr>{body}</table>")
+            "<table style='border-collapse:collapse;width:100%;margin-bottom:7px'>"
+            f"<tr><td style='{_ax}'>{e(row_hdr)}</td>{th}</tr>{body}</table>")
 
 
 def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
@@ -1370,30 +1376,30 @@ table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
   Power #{sc['rank']}/{sc['of']}</div>
 <div class='rng'>{e(rng)}</div>
 {keys_html}
+{report_html}
+{pers_html}
+{intel_html}
 {mu_html}
 {two_html}
-{_flow_open}{breakeven_html}
-{eff_html}
-{report_html}
+{_flow_open}{eff_html}
+{breakeven_html}
+{pred_html}
 {pc_html}
-{def_html}
-{sit_html}
 {three_html}
+{cr_html}
 {plen_html}
 {qs_html}
+{def_html}
+{con_html}
+{sit_html}
 {gs_html}
 {zx_html}
-{cr_html}
-{con_html}
-{pred_html}
-{intel_html}
 {notes_html}{_flow_close}
 {shot_html}
 {sbp_html}
 {sbd_html}
 {sbpd_html}
 {sbdd_html}
-{pers_html}
 {diag_html}
 <div class='foot'>Made with <b style='color:#f0a500'>HoopTracks</b> ·
   app.hooptracks.com{(' · ' + today) if today else ''}</div>

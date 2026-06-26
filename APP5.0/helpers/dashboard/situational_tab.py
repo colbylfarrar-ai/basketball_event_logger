@@ -158,6 +158,18 @@ def render(ctx):
     defs = s.get("defenses", [])
     if defs:
         st.markdown("**Defense — what they run here (schemes)**")
+        dfig = go.Figure(go.Bar(
+            x=[d["label"] for d in defs],
+            y=[round(d["share"] * 100) for d in defs],
+            marker_color=[_PALETTE[i % len(_PALETTE)] for i in range(len(defs))],
+            marker_line_width=0,
+            text=[f"{d['share'] * 100:.0f}%" for d in defs],
+            textposition="outside",
+            hovertext=[f"{d['label']}: {d['poss']} poss · {d['PPP']:.2f} PPP allowed"
+                       for d in defs], hoverinfo="text"))
+        dfig.update_yaxes(title="Share of tagged defensive poss (%)")
+        style_fig(dfig, 300)
+        st.plotly_chart(dfig, width="stretch", key="sit_def_bar")
         st.dataframe(pd.DataFrame([{
             "Scheme": d["label"], "Poss": d["poss"],
             "Share": round(d["share"] * 100), "PPP allowed": round(d["PPP"], 2),
@@ -208,3 +220,33 @@ def render(ctx):
         st.plotly_chart(hfig, width="stretch", key="sit_heat")
         st.caption("Darker/gold = a bigger share of that situation's tagged plays. "
                    "Read across a row to see where a set lives.")
+
+    # ── §E — defense-usage map (scheme × situation share heatmap) ─────────────
+    base_defs = [d for d in baseline.get("defenses", []) if d["poss"] > 0][:8]
+    if base_defs and cols_s:
+        st.markdown("<div class='pl-hdr'>Defense-usage map — share by situation"
+                    "</div>", unsafe_allow_html=True)
+        def_keys = [d["key"] for d in base_defs]
+        def_lbls = [d["label"] for d in base_defs]
+        dz, dtxt = [], []
+        for dk in def_keys:
+            zr, tr = [], []
+            for s2 in cols_s:
+                share = next((dd["share"] for dd in s2["defenses"]
+                              if dd["key"] == dk), 0.0)
+                zr.append(round(share * 100))
+                tr.append(f"{share * 100:.0f}%" if share else "")
+            dz.append(zr)
+            dtxt.append(tr)
+        dhfig = go.Figure(go.Heatmap(
+            z=dz, x=[s2["label"] for s2 in cols_s], y=def_lbls,
+            colorscale=_HEAT, text=dtxt, texttemplate="%{text}",
+            textfont=dict(size=10), showscale=False,
+            hovertemplate="%{y} in %{x}: %{z}% of tagged def poss<extra></extra>"))
+        dhfig.update_xaxes(tickangle=-30)
+        style_fig(dhfig, 60 + 34 * len(def_lbls),
+                  margin=dict(l=8, r=8, t=10, b=70))
+        st.plotly_chart(dhfig, width="stretch", key="sit_def_heat")
+        st.caption("Darker/gold = a bigger share of that situation's tagged "
+                   "defensive possessions. Read across a row to see when they run "
+                   "each scheme.")

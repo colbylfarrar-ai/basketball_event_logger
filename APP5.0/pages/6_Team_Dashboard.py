@@ -41,7 +41,8 @@ from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, page_header, rgb as _rgb,
                         style_fig as _style, q_label as _q_label, empty_state,
                         gender_radio, gender_label, grid as _grid, seg as _seg,
-                        AWAY, CARD_BG, GRID, HEAT, DIVERGE)
+                        AWAY, CARD_BG, GRID, HEAT, DIVERGE,
+                        glossary_key as _glossary_key)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
@@ -390,6 +391,9 @@ def _poss_sankey(po, accent, height=360):
 # ══════════════════════════════════════════════════════════════════════════════
 
 page_header("Team Dashboard")
+_glossary_key("eFG%", "TS%", "USG%", "ORtg", "DRtg", "NetRtg", "PPP", "TOV%",
+              "OREB%", "DSHOT%", "PPS", "SCE", "FTr", "3PAr",
+              label="📖 Stat key — what the advanced columns mean")
 
 # Default team comes from Settings. Look up its league so the gender radio
 # opens on the right side — otherwise a Boys default is filtered out of the

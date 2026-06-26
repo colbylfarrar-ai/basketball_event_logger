@@ -32,7 +32,7 @@ from database.db import query
 from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
                         empty_state, rgb as _rgb, shot_panel as _shot_panel,
                         style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
-                        gender_radio, grid as _grid)
+                        gender_radio, grid as _grid, glossary_key as _glossary_key)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
@@ -287,6 +287,9 @@ def _spotlight(num, label, sub=""):
 _lab_hero("Player Analytics Lab", phase="ANALYZE",
           sub="Every tracked stat · shot charts · 0-100 ratings · "
               "invented metrics — all built from play-by-play events.")
+_glossary_key("eFG%", "TS%", "USG%", "ORtg", "DRtg", "NetRtg", "AST/TO", "TOV%",
+              "DSHOT%", "PPS", "SCE", "3PAr", "FTr", "per-32", "xFG%", "SMOE",
+              label="📖 Stat key — what the advanced columns mean")
 
 c1, c2 = st.columns([1, 2])
 gender = gender_radio(c1)

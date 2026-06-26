@@ -592,6 +592,32 @@ def stat_help(abbr, *, icon="ⓘ", label=None):
         pass
 
 
+def glossary_key(*abbrs, label="Stat key", icon="📖"):
+    """One click-to-reveal popover defining several stat abbreviations at once
+    (pulled from glossary.STAT_DEFS). Drop above any dense table so coaches can
+    decode the columns without hunting — the multi-stat companion to ``stat_help``.
+    Silently skips any abbr not in the glossary; renders nothing if none match."""
+    try:
+        from helpers.glossary import STAT_DEFS
+        defs = {d[0]: d for d in STAT_DEFS if d}
+        lines = []
+        for a in abbrs:
+            row = defs.get(a)
+            if not row:
+                continue
+            full = row[1] if len(row) > 1 else a
+            formula = row[3] if len(row) > 3 else ""
+            defn = row[4] if len(row) > 4 else ""
+            line = f"**{a}** — {full}" + (f": {defn}" if defn else "")
+            if formula:
+                line += f"  \n`{formula}`"
+            lines.append(line)
+        if lines:
+            info_popover(label, "\n\n".join(lines), icon=icon)
+    except Exception:
+        pass
+
+
 def chart_select(fig, *, key, selection_mode="points", on_select="rerun",
                  data=None):
     """Like ``chart()`` but returns Plotly selection events so a chart can be a

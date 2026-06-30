@@ -231,6 +231,7 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     agg = {k: {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0}
            for k, _ in NAMED_PLAY_TYPES}
     tagged = untagged = 0
@@ -238,6 +239,8 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         pt = e.get("play_type")
         if not pt:
@@ -397,11 +400,14 @@ def team_role_splits(team_id, game_ids=None, events=None, keys=ROLE_SPLIT_KEYS,
     if events is None:
         gids = game_ids if game_ids is not None else None
         events = S.fetch_events(gids)
+    own = None if offense else TA.event_team_games(team_id, events)
     agg = {}
     for e in events:
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         pt = e.get("play_type")
         if pt not in keys:
@@ -643,12 +649,15 @@ def team_playtype_shot_profiles(team_id, gender=None, game_ids=None, events=None
     if events is None:
         gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     label = dict(NAMED_PLAY_TYPES)
     profs = {}
     for e in events:
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         pt = e.get("play_type")
         if not pt:
@@ -699,6 +708,7 @@ def team_playtype_feeders(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     keyset = set(keys)
     label = dict(NAMED_PLAY_TYPES)
     agg = {}
@@ -706,6 +716,8 @@ def team_playtype_feeders(team_id, gender=None, game_ids=None, events=None,
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         pt = e.get("play_type")
         if pt not in keyset:

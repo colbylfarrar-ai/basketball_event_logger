@@ -773,8 +773,25 @@ ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
                "RW": "Right Wing", "RC": "Right Corner"}
 
 
+def event_team_games(team_id, events):
+    """Set of game ids the team played in, DERIVED FROM ``events`` (any event with
+    one of its players as the primary — shots, turnovers, fouls drawn). The
+    'allowed'/opponent side (offense=False) MUST scope to these: when ``events``
+    spans more than the team's games (e.g. a gender-wide pool) the bare
+    ``shooter_team_id != team_id`` filter would otherwise credit the team with every
+    opponent event in the WHOLE pool — the cross-game possession leak. Derived from
+    the passed events (not a DB query) so it stays consistent with whatever pool the
+    caller supplied — explicit game_ids, a shared pass, or a synthetic test list.
+    (Distinct from stats.team_game_ids / stats._team_game_ids, which hit the DB.)"""
+    return {e["game_id"] for e in events if e.get("shooter_team_id") == team_id}
+
+
 def _team_shots(team_id, events, offense=True):
-    """Shot events taken by this team (offense=True) or by its opponents (False)."""
+    """Shot events taken by this team (offense=True) or by its opponents in the
+    team's OWN games (offense=False). Scoping the opponent side to the team's games
+    matters when ``events`` spans more than the team's games (a gender-wide pool):
+    without it the team is credited with every opponent shot in the pool."""
+    own_games = None if offense else event_team_games(team_id, events)
     out = []
     for e in events:
         if e["event_type"] != "shot":
@@ -782,8 +799,11 @@ def _team_shots(team_id, events, offense=True):
         st_team = e["shooter_team_id"]
         if st_team is None:
             continue
-        if (st_team == team_id) == offense:
-            out.append(e)
+        if (st_team == team_id) != offense:
+            continue
+        if own_games is not None and e["game_id"] not in own_games:
+            continue
+        out.append(e)
     return out
 
 

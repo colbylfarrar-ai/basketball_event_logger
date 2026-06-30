@@ -113,6 +113,7 @@ def team_defenses(team_id, gender=None, game_ids=None, events=None, offense=True
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     agg = {k: {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0}
            for k, *_ in DEFENSES}
     tagged = untagged = 0
@@ -120,6 +121,8 @@ def team_defenses(team_id, gender=None, game_ids=None, events=None, offense=True
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         d = _norm(e.get("defense"))
         if not d:
@@ -166,12 +169,15 @@ def team_defense_families(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     fam_shots = {f: [] for f, _ in DEFENSE_FAMILIES}
     tagged = 0
     for e in events:
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         d = _norm(e.get("defense"))
         if not d:
@@ -244,11 +250,14 @@ def team_defense_shot_profiles(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     profs = {}
     for e in events:
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         d = _norm(e.get("defense"))
         if not d:
@@ -278,12 +287,15 @@ def cross_play_defense(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     cells = {}                       # (play_key, def_key) -> shot list
     tagged = 0
     for e in events:
         if e["event_type"] != "shot" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         pk = e.get("play_type")
         dk = _norm(e.get("defense"))
@@ -323,6 +335,7 @@ def team_defense_turnovers(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     counts = {}
     total = 0
     for e in events:
@@ -331,6 +344,8 @@ def team_defense_turnovers(team_id, gender=None, game_ids=None, events=None,
         # fetch_events joins shooter_team_id off primary_player_id, which for a
         # turnover is the player who committed it -> the committing team.
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         d = _norm(e.get("defense"))
         if not d:
@@ -361,12 +376,15 @@ def team_defense_fouls(team_id, gender=None, game_ids=None, events=None,
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
     counts = {}
     total = 0
     for e in events:
         if e["event_type"] != "foul" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
             continue
         d = _norm(e.get("defense"))
         if not d:

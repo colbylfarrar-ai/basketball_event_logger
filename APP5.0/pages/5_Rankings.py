@@ -1155,13 +1155,20 @@ def _fx_track():
         if not tracked_games:
             st.info("This team has no tracked games yet.")
         else:
-            for g in reversed(tracked_games):
-                opp = g["opp"]
-                res = f"{'W' if g['won'] else 'L'} {g['pf']}-{g['pa']}"
-                label = (f"{g['date']}  ·  {g['site']} {name_of.get(opp, '?')}"
-                         f"  ·  {res}")
-                with st.expander(label):
-                    render_box_score(g["game_id"])
+            # A game PICKER, not a list of expanders. st.expander always renders its
+            # body (even collapsed), so the old loop rendered EVERY game's full box
+            # score — 7 tabs + plotly each — on every rerun: the bottom of this tab
+            # crawled for a team with several tracked games. Render one at a time.
+            games_desc = list(reversed(tracked_games))
+            _glabel = {
+                g["game_id"]: (f"{g['date']}  ·  {g['site']} "
+                               f"{name_of.get(g['opp'], '?')}  ·  "
+                               f"{'W' if g['won'] else 'L'} {g['pf']}-{g['pa']}")
+                for g in games_desc}
+            gpick = st.selectbox(
+                "Game", [g["game_id"] for g in games_desc],
+                format_func=lambda gid: _glabel.get(gid, gid), key="trk_game")
+            render_box_score(gpick)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

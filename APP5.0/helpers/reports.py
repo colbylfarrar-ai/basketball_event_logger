@@ -126,7 +126,8 @@ def player_card_html(player_id, gender=None, table=None):
 
     kpis = "".join([
         _kpi("PPG", g("PPG")), _kpi("RPG", g("RPG")), _kpi("APG", g("APG")),
-        _kpi("SPG", g("SPG")), _kpi("BPG", g("BPG")), _kpi("FG%", g("FG%", "{:.0f}")),
+        _kpi("SPG", g("SPG")), _kpi("BPG", g("BPG")), _kpi("TPG", g("TPG")),
+        _kpi("FPG", g("PF/G")), _kpi("FG%", g("FG%", "{:.0f}")),
         _kpi("3P%", g("3P%", "{:.0f}")), _kpi("TS%", g("TS%", "{:.0f}")),
         _kpi("USG%", g("USG%", "{:.0f}")),
     ])
@@ -154,7 +155,8 @@ def player_card_html(player_id, gender=None, table=None):
         lrows += (f"<tr><td class='num'>{e(game['date'])}</td><td>{e(game['opp'])}</td>"
                   f"<td class='num'>{b.get('PTS',0)}</td><td class='num'>{b.get('TRB',0)}</td>"
                   f"<td class='num'>{b.get('AST',0)}</td><td class='num'>{b.get('STL',0)}</td>"
-                  f"<td class='num'>{b.get('BLK',0)}</td>"
+                  f"<td class='num'>{b.get('BLK',0)}</td><td class='num'>{b.get('TOV',0)}</td>"
+                  f"<td class='num'>{b.get('PF',0)}</td>"
                   f"<td class='num'>{b.get('FGM',0)}/{b.get('FGA',0)}</td>"
                   f"<td class='num'>{b.get('FTM',0)}/{b.get('FTA',0)}</td></tr>")
 
@@ -185,7 +187,8 @@ def player_card_html(player_id, gender=None, table=None):
            f"<th>vs</th><th class='num'>Date</th></tr>{hrows}</table>" if hrows else "")
         + (f"<h2>Recent games</h2><table><tr><th>Date</th><th>Opp</th>"
            f"<th class='num'>PTS</th><th class='num'>REB</th><th class='num'>AST</th>"
-           f"<th class='num'>STL</th><th class='num'>BLK</th><th class='num'>FG</th>"
+           f"<th class='num'>STL</th><th class='num'>BLK</th><th class='num'>TOV</th>"
+           f"<th class='num'>PF</th><th class='num'>FG</th>"
            f"<th class='num'>FT</th></tr>{lrows}</table>" if lrows else "")
         + "</div>")
     return _doc(f"Player card · {r['name']}", body)

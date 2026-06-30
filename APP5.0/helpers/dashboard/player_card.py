@@ -39,7 +39,8 @@ from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            hot_zones as _hot_zones)
 
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
-_DEV_STATS = ("PPG", "RPG", "APG", "SPG", "BPG", "TPG")   # cross-season trend stats
+_DEV_STATS = ("PPG", "RPG", "APG", "SPG", "BPG", "TPG", "FPG")   # cross-season trend stats
+_DEV_INVERTED = ("TPG", "FPG")   # lower is better → inverse delta colouring
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -140,7 +141,8 @@ def render_card(ctx):
     _pg_chips = "".join(
         f"<span class='stat-chip'>{lbl} <b>{P[k]:.1f}</b></span>"
         for k, lbl in [("PPG", "PPG"), ("RPG", "RPG"), ("APG", "APG"),
-                       ("SPG", "SPG"), ("BPG", "BPG")]
+                       ("SPG", "SPG"), ("BPG", "BPG"), ("TPG", "TPG"),
+                       ("PF/G", "FPG")]
         if P.get(k) is not None)
     _arch_chip = (f"<span class='stat-chip' style='border-color:{accent}'>"
                   f"Cluster <b>{_arch}</b></span>" if _arch else "")
@@ -393,9 +395,10 @@ def render_card(ctx):
             _row("Assist/turnover", "AST/TOV", "f2"),
             _row("Steals / Blocks", "STL", "int") | {"Value":
                 f"{P['STL']} / {P['BLK']}"},
-            _row("Turnovers (TOV%)", "TOV", "int") | {"Value":
-                f"{P['TOV']}  ({_fmt(P['TOV%'],'pct')})"},
-            _row("Fouls", "PF", "int"),
+            _row("Turnovers (TPG)", "TOV", "int") | {"Value":
+                f"{P['TOV']} ({P['TPG']:.1f}/g · {_fmt(P['TOV%'],'pct')})"},
+            _row("Fouls (FPG)", "PF", "int") | {"Value":
+                f"{P['PF']} ({P['PF/G']:.1f}/g)"},
             _row("Game Score / game", "GS/G", "f1"),
             _row("Value Point System (VPS)", "VPS", "f2"),
         ]
@@ -582,25 +585,27 @@ def render_card(ctx):
                 "Season": L["label"], "Class": L.get("klass") or "—",
                 "Team": L["team"], "GP": L["gp"], "PPG": L["PPG"], "RPG": L["RPG"],
                 "APG": L["APG"], "SPG": L["SPG"], "BPG": L["BPG"],
+                "TPG": L.get("TPG"), "FPG": L.get("FPG"),
                 "FG%": L["FG%"], "3P%": L["3P%"], "TS%": L["TS%"],
             } for L in _lines]), hide_index=True, width="stretch")
         # progression / regression (two+ rated seasons)
         if _prog["deltas"]:
             if _prog["headline"]:
                 st.markdown(f"**Trajectory:** {_prog['headline']}")
-            _dcols = st.columns(6)
+            _dcols = st.columns(len(_DEV_STATS))
             for _col, _lab in zip(_dcols, _DEV_STATS):
                 _d = _prog["deltas"].get(_lab)
                 _cur = (_prog["cur"] or {}).get(_lab)
                 if _d is not None and _cur is not None:
                     _col.metric(_lab, f"{_cur:g}",
                                 f"{_d['delta']:+.1f} {_d['trend']}",
-                                delta_color="normal" if _lab != "TPG" else "inverse")
+                                delta_color="inverse" if _lab in _DEV_INVERTED
+                                else "normal")
         # projection (two+ rated seasons) or the unlock note
         if _proj.get("ok"):
             st.markdown("<div class='pl-hdr'>Projected next season</div>",
                         unsafe_allow_html=True)
-            _pcols = st.columns(6)
+            _pcols = st.columns(len(_DEV_STATS))
             for _col, _lab in zip(_pcols, _DEV_STATS):
                 _v = _proj["proj"].get(_lab)
                 if _v is not None:
@@ -655,7 +660,7 @@ def render_card(ctx):
         log.append({
             "Date": g["date"], "Opp": name_of.get(opp, "?"),
             "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
-            "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"],
+            "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
             "FG": f"{b['FGM']}/{b['FGA']}", "3P": f"{b['3PM']}/{b['3PA']}",
             "FT": f"{b['FTM']}/{b['FTA']}",
             "GS": round(S.game_score(b), 1),

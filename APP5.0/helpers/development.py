@@ -22,13 +22,16 @@ import helpers.stats as S
 import helpers.identity as IDN
 import helpers.seasons as SZ
 
-# per-game counting stats tracked across seasons (label, box key)
+# per-game counting stats tracked across seasons (label, box key). TPG/FPG are
+# "lower is better" — _trend inverts them.
 _PERGAME = [("PPG", "PTS"), ("RPG", "TRB"), ("APG", "AST"),
-            ("SPG", "STL"), ("BPG", "BLK"), ("TPG", "TOV")]
+            ("SPG", "STL"), ("BPG", "BLK"), ("TPG", "TOV"), ("FPG", "PF")]
+_INVERTED = {"TPG", "FPG"}        # more = worse, so a positive YoY delta is a ▼
 _SHOOT = ("FG%", "3P%", "FT%", "eFG", "TS%")
 MIN_GP = 3                # min games in a season before its line drives a delta
 TREND_EPS = {"PPG": 1.5, "RPG": 1.0, "APG": 0.8, "SPG": 0.4, "BPG": 0.4,
-             "TPG": 0.6, "FG%": 3.0, "3P%": 4.0, "FT%": 4.0, "eFG": 3.0, "TS%": 3.0}
+             "TPG": 0.6, "FPG": 0.6, "FG%": 3.0, "3P%": 4.0, "FT%": 4.0,
+             "eFG": 3.0, "TS%": 3.0}
 _CLASS = {0: "Sr", 1: "Jr", 2: "So", 3: "Fr"}
 
 
@@ -61,7 +64,7 @@ def _season_gids(season, team_id):
 
 def season_lines(identity_key):
     """Per-season stat line for one person, OLDEST season first. Each line:
-    {season, label, team, player_id, grad_year, klass, gp, PPG..TPG, FG%,3P%,FT%,
+    {season, label, team, player_id, grad_year, klass, gp, PPG..FPG, FG%,3P%,FT%,
     eFG,TS%, PTS}. Rates are None for a season with no tracked games."""
     rows = IDN.identity_history(identity_key)
     teams = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
@@ -101,13 +104,13 @@ def season_lines(identity_key):
 
 
 def _trend(lab, delta):
-    """▲ / ▼ / — for a YoY delta, gated by a per-stat meaningfulness epsilon. TOV is
-    inverted (fewer turnovers = improvement)."""
+    """▲ / ▼ / — for a YoY delta, gated by a per-stat meaningfulness epsilon. TOV
+    and fouls are inverted (fewer = improvement)."""
     eps = TREND_EPS.get(lab, 0.0)
     if delta is None or abs(delta) < eps:
         return "—"
     up = delta > 0
-    if lab == "TPG":
+    if lab in _INVERTED:
         up = not up
     return "▲" if up else "▼"
 

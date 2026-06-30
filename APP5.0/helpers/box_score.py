@@ -180,6 +180,28 @@ def _recap(game_id):
     return RP.game_recap_html(game_id)
 
 
+@st.cache_resource(show_spinner=False)
+def _score_ratings_fp(gender, _fp):
+    """Results-only league power rating for the header, cached on the results
+    fingerprint. cache_resource SURVIVES st.cache_data.clear() (the app clears
+    cache_data on every write), so opening a box score no longer re-runs the whole
+    ~0.5s rankings engine from scratch — it recomputes only when a game SCORE
+    actually moves. Mirrors the Team Dashboard / Rankings wrapper; output is
+    read-only across callers, so sharing the cache is safe."""
+    return TR.score_ratings(gender=gender)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _tracked_ratings_cached(gender, vis_key):
+    """Possession (NetRtg) league rating behind the header's tracked rank, cached
+    per (gender, viewer-visible game set). Cheaper than score_ratings but still
+    league-wide, so cache it rather than recompute on every box-score open. The
+    visible set is part of the key, so two viewers with different entitlements never
+    share a result."""
+    return TR.tracked_ratings(
+        gender=gender, game_ids=list(vis_key) if vis_key is not None else None)
+
+
 def render_box_score(game_id: int):
     """Render the full tabbed box-score report for one game."""
     g = query("""
@@ -235,15 +257,15 @@ def render_box_score(game_id: int):
     _gident = AUTH.current_user()
     _show_trk = ENT.can_see_game_tracked(_gident, t1id, t2id, in_pool=g["in_pool"])
     try:
-        scored = TR.score_ratings(gender=g["gender"])
+        scored = _score_ratings_fp(g["gender"], TR.results_fingerprint())
     except Exception:
         scored = {}
         st.caption("Season records / power rankings unavailable for this game.")
     if _show_trk:
         try:
-            trk = TR.tracked_ratings(
-                gender=g["gender"],
-                game_ids=ENT.visible_tracked_game_ids(_gident))
+            _vis = ENT.visible_tracked_game_ids(_gident)
+            trk = _tracked_ratings_cached(
+                g["gender"], tuple(_vis) if _vis is not None else None)
             trk_rank = {tid: i + 1 for i, (tid, _) in enumerate(
                 sorted(trk.items(), key=lambda kv: -kv[1]["NetRtg"]))}
         except Exception:

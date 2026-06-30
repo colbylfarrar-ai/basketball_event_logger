@@ -852,6 +852,69 @@ with tab_lineup:
                 "APG": round(r["APG"], 1) if r["APG"] is not None else None,
             } for r in _sel]), hide_index=True, width="stretch", key="wl_tbl")
 
+            # ── Projected unit — vs an average team (mirrors the One-team tab) ────
+            # League-wide ratings are already visible to this (League-wide) viewer,
+            # so the cross-team five earns the SAME possession-calibrated projection
+            # the One-team tab gives: ORtg/DRtg/Net, an estimated score vs an average
+            # team (league pace, team_id=None), and a per-player estimate of who
+            # scores / creates / rebounds / defends. The five is normalised to its
+            # own SC/A operating point (it's its own "team"). Needs one gender — the
+            # calibration ctx is per-gender and you never field a cross-gender five.
+            def _rnd(v, n=1):
+                return None if v is None else (round(v) if n == 0 else round(v, n))
+
+            _genders = {r["gender"] for r in _sel}
+            if len(_genders) == 1:
+                _g1 = next(iter(_genders))
+                _ft = _wl_table(_g1)
+                _prows = [dict(_ft[p], _pid=p) for p in _pick if p in _ft]
+                if _prows:
+                    _pred = TA.lineup_prediction(_prows, _pick, _wl_ctx(_g1),
+                                                 team_id=None)
+                    st.markdown("**Projected unit — vs an average team**")
+                    _pm = st.columns(5)
+                    _pm[0].metric("Proj ORtg", f"{_pred['ORtg']:.1f}"
+                                  if _pred["ORtg"] is not None else "—")
+                    _pm[1].metric("Proj DRtg", f"{_pred['DRtg']:.1f}"
+                                  if _pred["DRtg"] is not None else "—")
+                    _pm[2].metric("Proj Net", f"{_pred['NetRtg']:+.1f}"
+                                  if _pred["NetRtg"] is not None else "—")
+                    _pm[3].metric("Proj score", _pred["score_line"])
+                    _pm[4].metric("League rank",
+                                  f"#{_pred['league']['rank']} / "
+                                  f"{_pred['league']['of']}")
+                    _contrib = _pred.get("contrib") or []
+                    if _contrib:
+                        _pace = _pred.get("pace") or 0
+                        _est = []
+                        for _c in _contrib:        # already sorted: who scores first
+                            _fr = _ft.get(_c["pid"], {})
+                            _pr = _idx.get(_c["pid"], {})
+                            _est.append({
+                                "Player": _c["name"], "Team": _pr.get("team", ""),
+                                "Proj pts": (round(_c["off_pts100"] / 100.0 * _pace, 1)
+                                             if _pace else None),
+                                "PPG": _rnd(_fr.get("PPG")), "APG": _rnd(_fr.get("APG")),
+                                "RPG": _rnd(_fr.get("RPG")),
+                                "SC/G": _rnd(_fr.get("SC/G")),
+                                "SelfCr%": _rnd(_fr.get("SelfCr%"), 0),
+                                "REB%": _rnd(_fr.get("REB%"), 0),
+                                "DEF z": _c["def_z"],
+                            })
+                        st.dataframe(pd.DataFrame(_est), hide_index=True,
+                                     width="stretch", key="wl_proj_tbl")
+                        st.caption(
+                            "Proj pts = each player's slice of the unit's offense at "
+                            "league pace (sorted by scoring). PPG/APG/RPG are actual "
+                            "per game; SC/G = shots created, SelfCr% = self-creation, "
+                            "REB% = rebound rate, DEF z = defensive value (0 = league "
+                            "average). The score line is vs an average team.")
+                    for _f in _pred.get("flags", []):
+                        st.caption(_f)
+            else:
+                st.caption("Cross-gender five — the projection needs one gender; the "
+                           "ratings averages above still apply.")
+
             _teams = {r["team_id"] for r in _sel}
             # Observed-together = real on-court lineup chemistry for one team →
             # own team (any Paid) or another team only via the league pool.

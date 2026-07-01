@@ -50,6 +50,7 @@ import helpers.league_analytics as LA
 import helpers.player_ratings as PR
 import helpers.insights as INS
 import helpers.playtypes as PT
+import helpers.defenses as DEF
 import helpers.wpa as WPA
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
@@ -1593,6 +1594,21 @@ def _pt_player_meta(g):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _def_team_leaders(g, offense):
+    """League team leaderboards by DEFENSIVE SCHEME (one-tap defense tag): fewest
+    points allowed first on defense (offense=False), most scored first on offense.
+    The defensive companion to _pt_team_leaders."""
+    return DEF.league_defense_leaders(gender=g, offense=offense)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _def_player_faced(g):
+    """Per-player PPP by the defense FACED, league-percentiled — how each scorer
+    handles each scheme thrown at them (keyed by player_id)."""
+    return DEF.player_defenses_faced(gender=g)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def _league_player_edge(g):
     """League-wide PLAYER leaderboards in the tracked-edge metrics: shot-makers
     (points over expected), force-to-off-hand gaps, and defensive win-impact."""
@@ -1630,9 +1646,9 @@ def _fx_evr():
     pteams = pack["teams"]
     sv = list(scored.values())
 
-    lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl, lab_pt = st.tabs(
+    lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl, lab_pt, lab_def = st.tabs(
         ["Landscape", "Power tiers", "Pythagoras & luck",
-         "Momentum", "Win network", "Player edge", "Play types"])
+         "Momentum", "Win network", "Player edge", "Play types", "Defense"])
 
     # ──────────────────────────────────────────────────────────────────────
     #  PLAY TYPES — league leaders by one-tap set call (team + player)
@@ -1720,6 +1736,96 @@ def _fx_evr():
                                 "Lg %ile", help="League percentile on this set")})
                 else:
                     st.caption("No player has 8+ tagged possessions on this set "
+                               "yet.")
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  DEFENSE — league leaders by defensive SCHEME (the defensive companion
+    #  to Play types: man / 2-3 / press / trap / junk, team board + scorers)
+    # ──────────────────────────────────────────────────────────────────────
+    with lab_def:
+        _def_lock = _paid_pool_lock()  # league-wide pooled possession surface
+        if _def_lock:
+            st.info(_def_lock)
+        else:
+            st.caption(
+                "League leaders by **defensive scheme** — the one-tap defense tag. "
+                "**Defense** = who runs the scheme best (fewest points allowed); "
+                "**Offense** = who attacks it best (most points scored). Each row is "
+                "tiered vs the league on that scheme.")
+            _df_side = st.radio("Side", ["Defense", "Offense"], horizontal=True,
+                                key="def_lead_side")
+            _df_off = _df_side == "Offense"
+            _df_teams = _def_team_leaders(gender, _df_off)
+            if not _df_teams:
+                st.caption("No tagged defenses yet — set the **Defense** in the Game "
+                           "Tracker (man, 2-3, 1-3-1, presses…); it's sticky, so one "
+                           "tap covers a stretch. These boards fill in as you tag.")
+            else:
+                _df_lbl = {k: l for k, l, _f in DEF.DEFENSES}
+                _df_keys = [k for k, _l, _f in DEF.DEFENSES if k in _df_teams]
+                _df_pick = st.selectbox(
+                    "Scheme", _df_keys, key="def_lead_scheme",
+                    format_func=lambda k: _df_lbl.get(k, k))
+                _df_blk = _df_teams[_df_pick]
+                _df_lg = _df_blk.get("lg_ppp")
+                _lab_hdr(f"{_df_blk['label']} — "
+                         f"{'best offense' if _df_off else 'best defense'}")
+                if _df_lg is not None:
+                    st.caption(f"League average on this scheme: **{_df_lg:.2f}** PPP")
+                _df_trows = [{
+                    "Team": name_of.get(L["team_id"], str(L["team_id"])),
+                    "PPP": round(L["PPP"], 2),
+                    "FG%": (round(L["FG%"]) if L["FG%"] is not None else None),
+                    "Poss": L["poss"],
+                    "Share": (round(L["share"] * 100)
+                              if L["share"] is not None else None),
+                    "Pct": (round(L["pct"]) if L["pct"] is not None else None),
+                    "Tier": L["tier"], "_c": L["color"]}
+                    for L in _df_blk["leaders"]]
+                st.dataframe(
+                    pd.DataFrame(_df_trows).style.apply(
+                        lambda r: [f"color:{r['_c']}"] * len(r), axis=1),
+                    hide_index=True, width="stretch",
+                    column_order=["Team", "PPP", "FG%", "Poss", "Share",
+                                  "Pct", "Tier"],
+                    column_config={
+                        "FG%": st.column_config.NumberColumn(format="%d%%"),
+                        "Share": st.column_config.NumberColumn(format="%d%%"),
+                        "Pct": st.column_config.NumberColumn(
+                            "Lg %ile", help="League percentile on this scheme")})
+
+                # ── PLAYER board: who SCORES best facing this scheme (defense is a
+                #    team concept, so the player read is offense-only), 8+ poss ──
+                st.markdown("<div class='lab-hdr'>Top scorers vs this scheme</div>",
+                            unsafe_allow_html=True)
+                _df_pl = _def_player_faced(gender)
+                _df_meta = _pt_player_meta(gender)
+                _df_prows = sorted(
+                    ((c["PPP"], pid, c) for pid, d in _df_pl.items()
+                     if (c := d.get(_df_pick)) and c["poss"] >= DEF.MIN_PLAYER_POSS),
+                    key=lambda t: -t[0])[:12]
+                st.caption("Players scoring best against this scheme — most points "
+                           "per possession (8+ poss faced).")
+                if _df_prows:
+                    st.dataframe(pd.DataFrame([{
+                        "Player": _df_meta.get(pid, ("?", ""))[0],
+                        "Team": _df_meta.get(pid, ("?", ""))[1],
+                        "PPP": round(c["PPP"], 2),
+                        "FG%": (round(c["FG%"]) if c["FG%"] is not None else None),
+                        "Poss": c["poss"],
+                        "Pct": (round(c["pct"]) if c["pct"] is not None else None),
+                        "Tier": c["tier"], "_c": c["color"]}
+                        for _v, pid, c in _df_prows]).style.apply(
+                            lambda r: [f"color:{r['_c']}"] * len(r), axis=1),
+                        hide_index=True, width="stretch",
+                        column_order=["Player", "Team", "PPP", "FG%", "Poss",
+                                      "Pct", "Tier"],
+                        column_config={
+                            "FG%": st.column_config.NumberColumn(format="%d%%"),
+                            "Pct": st.column_config.NumberColumn(
+                                "Lg %ile", help="League percentile vs this scheme")})
+                else:
+                    st.caption("No player has 8+ tagged possessions vs this scheme "
                                "yet.")
 
     # ──────────────────────────────────────────────────────────────────────

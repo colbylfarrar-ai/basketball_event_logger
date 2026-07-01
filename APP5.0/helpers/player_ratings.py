@@ -8,7 +8,7 @@ Rates every eligible player on FIVE numbers, each on a 0-100 scale where
     OVERALL      four category ratings + Game Score · EFF · FIC (production)
     OFFENSE      Shooting · Finishing · scoring VOLUME (PPG · PRF/G)
     DEFENSE      Steals · Blocks · Guarded% · DSHOT%(inv) · Fouls(inv)
-    PLAYMAKING   Assists · Shots Created · SC-Pass · AST/TOV · TOV%(inv)
+    PLAYMAKING   Assists · Shots Created · SC-Pass · AST/TOV · TOV%(inv) · pass look-quality
     REBOUNDING   OREB · DREB · REB · REB% · OREB% · DREB%
 
 Each rating is built bottom-up in THREE passes so the spread is real, not
@@ -189,6 +189,7 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
     dfg = S.defended_fg_pct(game_ids, events=events)   # DSHOT% — defense quality
     ddr = S.individual_defensive_rating_all(game_ids, events=events)  # DRtg (lower=better)
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
+    plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
     meta = _player_meta(gender=gender)
 
     profiles = {}
@@ -247,6 +248,9 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             "TOV/G": per_g(b["TOV"]),
             "TOV%":  S.tov_pct(b) if (FGA or b["TOV"]) else None,
             "AST/TOV": ast_tov,
+            # xPPS of the looks this player's passes create (make-independent shot-
+            # quality); None for non-passers / < min feeds so it drops from the mean.
+            "SCPassQ": plq.get(pid),
             # ── REBOUNDING ──────────────────────────────────────────
             "OREB/G": per_g(b["ORB"]),
             "DREB/G": per_g(b["DRB"]),
@@ -278,7 +282,10 @@ _FINISHING = [("Paint%", 1.0, False), ("PaintSh/G", 0.75, False)]
 _DEFENSE   = [("DSHOT%", 1.25, True), ("DRtg", 1.0, True), ("STL/G", 1.0, False),
               ("BLK/G", 1.0, False), ("Guarded%", 0.75, False), ("PF/G", 0.5, True)]
 _PLAYMAKING = [("AST/G", 1.0, False), ("AST/TOV", 1.0, False), ("SC/G", 0.75, False),
-               ("SCPass/G", 0.75, False), ("TOV%", 0.75, True)]
+               ("SCPass/G", 0.75, False), ("TOV%", 0.75, True),
+               # look QUALITY a passer's feeds create (xPPS), not just volume —
+               # rewards creating good shots even when poor shooters miss them.
+               ("SCPassQ", 0.75, False)]
 _REBOUNDING = [("OREB%", 1.0, False), ("DREB%", 1.0, False), ("REB%", 0.75, False),
                ("OREB/G", 0.75, False), ("DREB/G", 0.75, False), ("REB/G", 0.5, False)]
 

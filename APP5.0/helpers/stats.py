@@ -691,6 +691,38 @@ def expected_points_per_shot(player_id, game_ids=None, events=None, rates=None):
     return _safe(total_xpts, attempts)
 
 
+def passer_look_quality(game_ids=None, events=None, rates=None, min_feeds=8):
+    """{passer_id: xPPS_created} — the expected value of the LOOKS a passer sets up.
+
+    Each shot the passer fed (pass_from_id) is scored by the league make-rate for
+    its (zone, creation-bucket, contested?) — so it measures the QUALITY of the look
+    created, independent of whether the shooter made it. A playmaking-quality signal
+    the PLAYMAKING rating folds in (a passer who creates good looks rates as a good
+    playmaker even when poor shooters miss them). Passers below ``min_feeds``
+    assisted attempts are omitted (too noisy to score).
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    if rates is None:
+        rates = shot_quality_rates(events=events)
+    agg = defaultdict(lambda: {"feeds": 0, "xpts": 0.0})
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        passer = e.get("pass_from_id")
+        if passer is None:
+            continue
+        key = (e["zone"],
+               _creation_bucket(True, e["shot_created_by_id"] is not None),
+               e["guarded_by_id"] is not None)
+        val = 3 if e["shot_type"] == 3 else 2
+        c = agg[passer]
+        c["feeds"] += 1
+        c["xpts"] += rates.get(key, {}).get("pct", 0.0) * val
+    return {pid: c["xpts"] / c["feeds"]
+            for pid, c in agg.items() if c["feeds"] >= min_feeds}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SHOT RATING  (difficulty: 50 = sample-average shot, 100 = contested self-3)
 # ══════════════════════════════════════════════════════════════════════════════

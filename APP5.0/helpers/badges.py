@@ -270,7 +270,93 @@ def award_badges(table, gold=GOLD, silver=SILVER, bronze=BRONZE):
     return awarded
 
 
+_TIER_PTS = {"Gold": 5, "Silver": 3, "Bronze": 1}
+
+
 def badge_points(badge_list):
     """Olympic-style score for a player's badge haul (Gold 5 / Silver 3 / Bronze 1)."""
-    pts = {"Gold": 5, "Silver": 3, "Bronze": 1}
-    return sum(pts.get(b["tier"], 0) for b in badge_list)
+    return sum(_TIER_PTS.get(b["tier"], 0) for b in badge_list)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BADGE-DRIVEN ARCHETYPES  (a transparent role read, straight from the badges)
+# ══════════════════════════════════════════════════════════════════════════════
+# The k-means archetypes (helpers/archetypes.py) learn STYLE clusters from z-scored
+# stats — powerful but opaque. Badges are the opposite: every one is rule-based,
+# categorised (Shooting / Scoring / Playmaking / Defense / Rebounding / Two-Way) and
+# tier-weighted, so a player's badge haul already IS a legible role fingerprint.
+# This rolls the badge points up per category and names an archetype from the tilt —
+# and it traces straight back to the badges earned, so a coach can see exactly why.
+_OFF_CATS = ("Shooting", "Scoring", "Playmaking")
+_DEF_CATS = ("Defense", "Rebounding")
+
+
+def badge_profile(badge_list):
+    """Tier-weighted badge points per category (Gold 5 / Silver 3 / Bronze 1).
+    Returns {cat: points} — the raw material for badge_archetype."""
+    prof = {}
+    for b in badge_list:
+        prof[b["cat"]] = prof.get(b["cat"], 0) + _TIER_PTS.get(b["tier"], 0)
+    return prof
+
+
+def badge_archetype(badge_list):
+    """A player's ARCHETYPE derived purely from their badges.
+
+    Rolls badge points into offense (Shooting+Scoring+Playmaking), defense
+    (Defense+Rebounding) and two-way buckets, then names the role from which side
+    the badges tilt and the strongest category. Returns:
+        {archetype, blurb, profile:{cat:pts}, off, def, two, points, drivers}
+    where `drivers` = the player's top badges (the "why"). Fully explainable:
+    change a badge, change the archetype — no black box."""
+    prof = badge_profile(badge_list)
+    total = sum(prof.values())
+    g = prof.get
+    off = sum(prof.get(c, 0) for c in _OFF_CATS)
+    dff = sum(prof.get(c, 0) for c in _DEF_CATS)
+    two = prof.get("Two-Way", 0)
+
+    def _pack(name, blurb):
+        drivers = [b["name"] for b in sorted(
+            badge_list, key=lambda b: -_TIER_PTS.get(b["tier"], 0))[:3]]
+        return {"archetype": name, "blurb": blurb, "profile": prof,
+                "off": off, "def": dff, "two": two, "points": total,
+                "drivers": drivers}
+
+    if total == 0:
+        return _pack("Role Player", "No badges yet — does the little things; earns "
+                                    "a sharper role as the sample grows.")
+    # Two-Way Star is exclusive: the WEAKER side must still carry a gold-equivalent
+    # (badges award generously, so a couple bronze each way isn't a star). min() on
+    # the two buckets keeps it honest — real, balanced impact on both ends.
+    if min(off, dff) >= 5 or (two >= 5 and min(off, dff) >= 3):
+        return _pack("Two-Way Star",
+                     "Badge impact on both ends — scores/creates AND defends.")
+    # offense-tilted
+    if off >= max(3, 2 * dff):
+        top = max(_OFF_CATS, key=lambda c: g(c, 0))
+        if top == "Shooting" and g("Shooting", 0) >= 3:
+            return _pack("Flamethrower", "Shooting badges lead the profile — an "
+                                         "elite floor-spacing scorer.")
+        if top == "Playmaking":
+            return _pack("Floor General", "Playmaking badges lead — runs the "
+                                          "offense and sets the table.")
+        return _pack("Offensive Engine", "Carries the offense on scoring badges; "
+                                         "a light defensive footprint so far.")
+    # defense-tilted
+    if dff >= max(3, 2 * off):
+        if g("Rebounding", 0) >= g("Defense", 0):
+            return _pack("Interior Anchor", "Rebounding + rim-protection badges — "
+                                            "owns the paint and the glass.")
+        return _pack("Defensive Anchor", "Defensive badges lead — locks up; the "
+                                         "offense is a passenger.")
+    # mixed but modest → the dominant single category
+    top_cat = max(prof, key=lambda c: prof[c])
+    _spec = {"Shooting": ("Sharpshooter", "A specialist from deep."),
+             "Scoring": ("Scorer", "Gets buckets."),
+             "Playmaking": ("Playmaker", "Creates for others."),
+             "Defense": ("Defensive Specialist", "Defense is the calling card."),
+             "Rebounding": ("Rebounder", "Lives on the glass."),
+             "Two-Way": ("Glue Guy", "A bit of everything — connects the group.")}
+    name, blurb = _spec.get(top_cat, ("Role Player", "A balanced contributor."))
+    return _pack(name, blurb)

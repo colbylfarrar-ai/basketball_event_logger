@@ -1423,11 +1423,45 @@ def _fx_plab():
 
         # ── Archetypes ───────────────────────────────────────────────────────
         with sub_arch:
-            st.markdown("<div class='pl-hdr'>Data-driven archetypes</div>",
+            # ── Badge archetypes — a transparent role straight from the badges ──
+            st.markdown("<div class='pl-hdr'>Badge archetypes</div>",
                         unsafe_allow_html=True)
-            st.caption(f"Players grouped into {lclusters['k']} style clusters by "
-                       "k-means on z-scored stats; each cluster is named from its "
-                       "statistical signature.")
+            st.caption("A role read straight from each player's **badges** — badge "
+                       "points per category (Gold 5 · Silver 3 · Bronze 1) decide "
+                       "the offense/defense tilt and the calling card. Every label "
+                       "traces back to the badges earned, so it's fully explainable.")
+            barch = {p: BG.badge_archetype(lbadges.get(p, [])) for p in ltab}
+            from collections import Counter as _Counter
+            bcnt = _Counter(v["archetype"] for v in barch.values())
+            bord = [a for a, _ in bcnt.most_common()]
+            bafig = go.Figure(go.Bar(
+                x=[bcnt[a] for a in bord][::-1], y=bord[::-1], orientation="h",
+                marker_color=ACCENT, marker_line_width=0,
+                text=[bcnt[a] for a in bord][::-1], textposition="auto"))
+            bafig.update_xaxes(title="Players")
+            _style(bafig, max(240, 30 * len(bord)))
+            st.plotly_chart(bafig, width="stretch", key="plab_badge_arch_dist")
+
+            bap = st.selectbox("Player", lab_order,
+                               format_func=lambda p: lab_pid_label[p],
+                               key="plab_badge_arch_player")
+            bav = barch[bap]
+            drv = " · ".join(bav["drivers"]) if bav["drivers"] else "no badges yet"
+            st.markdown(
+                f"<div class='glass-tile'><b style='font-size:17px'>"
+                f"{ltab[bap]['name']}</b> → <b style='color:{ACCENT};"
+                f"font-size:17px'>{bav['archetype']}</b><br>"
+                f"<span style='color:#8b949e;font-size:13px'>{bav['blurb']}</span>"
+                f"<br><span style='font-size:12px'>Offense <b>{bav['off']}</b> · "
+                f"Defense <b>{bav['def']}</b> · Two-way <b>{bav['two']}</b> badge "
+                f"pts · drivers: {drv}</span></div>", unsafe_allow_html=True)
+            st.divider()
+
+            st.markdown("<div class='pl-hdr'>Data-driven archetypes (style clusters)"
+                        "</div>", unsafe_allow_html=True)
+            st.caption(f"The other lens — players grouped into {lclusters['k']} "
+                       "style clusters by k-means on z-scored stats, each named from "
+                       "its statistical signature. Style, not just badges.")
             afig = go.Figure()
             for ci, c in enumerate(lclusters["clusters"]):
                 mem = c["members"]

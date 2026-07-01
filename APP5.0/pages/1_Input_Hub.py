@@ -147,6 +147,25 @@ def apply_delta(editor_key, orig_df, insert_fn, update_fn, delete_fn):
     return errors
 
 
+def _sortable(df, editor_key, cols, default=0):
+    """Sort control for an editable table. Returns the df sorted + index-reset so
+    apply_delta's positional iloc still lines up. Uses a static editor key; when
+    the sort changes it RESETS that editor (drops any pending edits) — mirroring
+    the team-change reset — so stale row indices can never misapply on Save."""
+    if df.empty:
+        return df
+    sc1, sc2 = st.columns([3, 1])
+    col = sc1.selectbox("Sort by", cols, index=default, key=f"{editor_key}_scol")
+    asc = sc2.radio("Order", ["A→Z", "Z→A"], index=0,
+                    key=f"{editor_key}_sdir", horizontal=True) == "A→Z"
+    cur = (col, asc)
+    if st.session_state.get(f"{editor_key}_sprev") != cur:
+        st.session_state.pop(editor_key, None)
+        st.session_state[f"{editor_key}_sprev"] = cur
+    return df.sort_values(col, ascending=asc, kind="stable",
+                          na_position="last").reset_index(drop=True)
+
+
 def _norm_score(v):
     """Editor score cell → int or None (NumberColumn can yield float / NaN)."""
     if v is None:
@@ -350,6 +369,7 @@ tab_teams, tab_players, tab_games, tab_schedule, tab_officials, tab_archive = st
 with tab_teams:
     st.caption(EDITOR_HELP)
     orig = get_orig("_teams_orig", load_teams)
+    orig = _sortable(orig, "teams_editor", ["name", "class", "gender", "state"])
     display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(columns=["name","class","gender","state"])
 
     st.data_editor(
@@ -501,6 +521,38 @@ with tab_players:
                     st.cache_data.clear()
                     st.rerun()
 
+        # Transfer a player to another team — reassign their roster (team_id).
+        # Past games stay attributed to the old team (events carry shooter_team_id),
+        # and cross-season development history follows via identity. Same-gender
+        # targets only (a Boys player can't move to a Girls roster).
+        with st.expander("🔄 Transfer a player to another team"):
+            if orig.empty:
+                st.caption("No players on this team to transfer.")
+            else:
+                _gmap = {r["name"]: r["gender"]
+                         for r in query("SELECT name, gender FROM teams")}
+                _dests = [t for t in tnames
+                          if t != selected_team
+                          and _gmap.get(t) == _gmap.get(selected_team)]
+                _xopts = {f"#{int(r['number'])} {r['name']}": int(r["id"])
+                          for _, r in orig.iterrows()}
+                _xpick = st.selectbox("Player to transfer", list(_xopts),
+                                      key="xfer_player_pick")
+                if not _dests:
+                    st.caption("No other same-gender team to transfer to yet.")
+                else:
+                    _xdest = st.selectbox("Move to team", _dests, key="xfer_dest_team")
+                    st.caption("Moves the player to the new roster. Past games stay "
+                               "with the old team; new games count for the new one. "
+                               "Their development history follows them.")
+                    if st.button("Transfer player", key="xfer_btn"):
+                        execute("UPDATE players SET team_id=? WHERE id=?",
+                                (tm[_xdest], _xopts[_xpick]))
+                        invalidate("_players_orig", "players_editor")
+                        st.cache_data.clear()
+                        flash("success", f"Transferred {_xpick} to {_xdest}.")
+                        st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  GAMES
@@ -512,6 +564,9 @@ with tab_games:
     else:
         st.caption(EDITOR_HELP)
         orig = get_orig("_games_orig", load_games)
+        orig = _sortable(orig, "games_editor",
+                         ["date", "team1", "team2", "location",
+                          "home_score", "away_score"])
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
             columns=["team1","team2","date","location","home_score","away_score","tracked"])
         # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
@@ -721,6 +776,7 @@ with tab_schedule:
 with tab_officials:
     st.caption(EDITOR_HELP)
     orig = get_orig("_officials_orig", load_officials)
+    orig = _sortable(orig, "officials_editor", ["name", "official_id", "state"])
     display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
         columns=["name", "official_id", "state"])
 

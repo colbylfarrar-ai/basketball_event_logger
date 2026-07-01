@@ -1616,7 +1616,43 @@ def _edge_boards(g):
     return PE.edge_boards(gender=g)
 
 
-@st.fragment
+_GAME_TYPES = ["Regular", "District", "Rivalry", "Tournament", "Showcase", "Playoff"]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _type_game_ids(g, game_type):
+    """Current-season game ids of `game_type` for gender `g` (played games only).
+    'Regular' also picks up untyped games (NULL/'') — the default type."""
+    if game_type == "Regular":
+        rows = query(
+            """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
+               WHERE g.season='Current' AND t.gender=? AND g.home_score IS NOT NULL
+                 AND (g.game_type='Regular' OR g.game_type IS NULL OR g.game_type='')""",
+            (g,))
+    else:
+        rows = query(
+            """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
+               WHERE g.season='Current' AND t.gender=? AND g.home_score IS NOT NULL
+                 AND g.game_type=?""", (g, game_type))
+    return tuple(r["id"] for r in rows)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _type_power(g, game_type):
+    """Opponent-adjusted power/record over just this game type's games (every team
+    with a game of that type). {} when the type has no games."""
+    gids = _type_game_ids(g, game_type)
+    return TR.score_ratings(gender=g, game_ids=list(gids)) if gids else {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _type_stat_table(g, game_type):
+    """Team tracked-stat table scoped to this game type's tracked games (efficiency
+    in-type; record cols may be season-wide). [] when no tracked game of the type."""
+    gids = _type_game_ids(g, game_type)
+    return LA.team_stat_table(gender=g, game_ids=list(gids)) if gids else []
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _gei_board(g):
     """Game Excitement Index for every tracked current-season game of gender `g`,
@@ -1678,10 +1714,58 @@ def _fx_evr():
     sv = list(scored.values())
 
     (lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl, lab_pt, lab_def,
-     lab_exc) = st.tabs(
+     lab_exc, lab_gt) = st.tabs(
         ["Landscape", "Power tiers", "Pythagoras & luck",
          "Momentum", "Win network", "Player edge", "Play types", "Defense",
-         "Excitement"])
+         "Excitement", "By game type"])
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  BY GAME TYPE — power / record / efficiency scoped to one game_type
+    # ──────────────────────────────────────────────────────────────────────
+    with lab_gt:
+        st.warning("🧪 **Experimental** — sparse types (playoffs, ~1-3 games/team) "
+                   "make the opponent-adjusted power noisy. Read record + margin as "
+                   "the firmer signal; the power/efficiency is directional.")
+        st.caption("How teams rank WITHIN one game type — their playoff / district / "
+                   "rivalry self, not the whole season. Set a game's type on the "
+                   "Roster & District page.")
+        _gt = st.selectbox("Game type", _GAME_TYPES, key="lab_gt_type")
+        _gt_view = st.radio(
+            "View", ["All games — power & record", "Tracked — efficiency"],
+            horizontal=True, key="lab_gt_view")
+        if _gt_view.startswith("All"):
+            _sc = _type_power(gender, _gt)
+            if not _sc:
+                st.info(f"No **{_gt}** games yet. Set game types on the Roster & "
+                        "District page (bulk-set makes playoffs quick).")
+            else:
+                _rows = sorted(_sc.values(), key=lambda r: (r.get("Rank") or 1e9))
+                _gtmax = max((r.get("Power") or 0) for r in _rows) or 100
+                _df = pd.DataFrame([{
+                    "Rank": r.get("Rank"), "Team": r.get("name"), "GP": r.get("GP"),
+                    "W-L": f"{r.get('W', 0)}-{r.get('L', 0)}",
+                    "MOV": (round(r["MOV"], 1) if r.get("MOV") is not None else None),
+                    "Power": (round(r["Power"], 1) if r.get("Power") is not None else None),
+                    "Rating": (round(r["Rating"], 2) if r.get("Rating") is not None else None),
+                    "AdjNet": (round(r["AdjNet"], 1) if r.get("AdjNet") is not None else None),
+                    "SOS": (round(r["SOS"], 1) if r.get("SOS") is not None else None),
+                } for r in _rows])
+                st.dataframe(
+                    _df, hide_index=True, width="stretch", key="lab_gt_power",
+                    column_config={"Power": st.column_config.ProgressColumn(
+                        "Power", format="%.1f", min_value=0, max_value=100)})
+                st.caption(f"{len(_rows)} team(s) with a {_gt} game · opponent-adjusted "
+                           "over just those games (results-only, covers every team).")
+        else:
+            _tt = _type_stat_table(gender, _gt)
+            if not _tt:
+                st.info(f"No **tracked** {_gt} games yet — efficiency needs a tracked "
+                        "game of this type.")
+            else:
+                st.dataframe(pd.DataFrame(_tt), hide_index=True, width="stretch",
+                             key="lab_gt_eff")
+                st.caption(f"Efficiency scoped to tracked {_gt} games. Record / results "
+                           "columns may reflect the full season.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  EXCITEMENT — Game Excitement Index leaderboard (tracked games)

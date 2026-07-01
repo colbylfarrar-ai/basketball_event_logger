@@ -90,6 +90,8 @@ _NAV = {
     "Plan & scout": [
         st.Page("pages/9_War_Room.py", title="War Room",
                 icon=":material/strategy:"),
+        st.Page("pages/10_Whiteboard.py", title="Whiteboard",
+                icon=":material/draw:"),
         st.Page("pages/8_Officials.py", title="Officials",
                 icon=":material/sports:"),
         st.Page("pages/12_Settings.py", title="Settings",

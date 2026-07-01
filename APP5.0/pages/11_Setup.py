@@ -95,8 +95,18 @@ with t_teams:
     if not trows:
         empty_state("No teams yet", "Add teams in the Input Hub first.")
     else:
+        _tdf = pd.DataFrame(trows)
+        _tq = st.text_input("Search teams", key="su_teams_q",
+                            placeholder="team name, class, or district…").strip().lower()
+        if _tq:
+            _tm = pd.Series(False, index=_tdf.index)
+            for _c in ("name", "class", "district"):
+                _tm = _tm | _tdf[_c].astype(str).str.lower().str.contains(_tq, na=False)
+            _tdf = _tdf[_tm]
+        st.caption(f"{len(_tdf)} of {len(trows)} teams"
+                   + (" — edit the District cell, then Save." if not _tdf.empty else ""))
         ed = st.data_editor(
-            pd.DataFrame(trows), hide_index=True, width="stretch", key="su_teams",
+            _tdf, hide_index=True, width="stretch", key="su_teams",
             column_config={
                 "id": None,
                 "name": st.column_config.TextColumn("Team", disabled=True),
@@ -115,14 +125,50 @@ with t_teams:
 
 # ── games: type ───────────────────────────────────────────────────────────────
 with t_games:
+    st.caption("The full games table is too big to load at once, so filter to a "
+               "group first, then set the type individually or in bulk. Playoffs "
+               "often start the same day league-wide — filter by date (and class), "
+               "then **Apply to all shown → Playoff**.")
+    _gc1, _gc2, _gc3 = st.columns(3)
+    _gteams = [r["name"] for r in query("SELECT name FROM teams ORDER BY name")]
+    _gteam = _gc1.selectbox("Team", ["All teams"] + _gteams, key="su_g_team")
+    _gclasses = [r["class"] for r in query(
+        "SELECT DISTINCT class FROM teams WHERE class IS NOT NULL AND class!='' "
+        "ORDER BY class")]
+    _gclass = _gc2.selectbox("Class", ["All classes"] + _gclasses, key="su_g_class")
+    _gdate = _gc3.text_input("On/after date", key="su_g_date",
+                             placeholder="YYYY-MM-DD").strip()
+
+    _w, _p = [], []
+    if _gteam != "All teams":
+        _w.append("(t1.name=? OR t2.name=?)"); _p += [_gteam, _gteam]
+    if _gclass != "All classes":
+        _w.append("(t1.class=? OR t2.class=?)"); _p += [_gclass, _gclass]
+    if _gdate:
+        _w.append("g.date>=?"); _p.append(_gdate)
+    _wsql = ("WHERE " + " AND ".join(_w)) if _w else ""
     grows = query(
-        """SELECT g.id, g.date, t1.name AS home, t2.name AS away, g.game_type
-           FROM games g JOIN teams t1 ON t1.id=g.team1_id
-                        JOIN teams t2 ON t2.id=g.team2_id
-           ORDER BY g.date DESC LIMIT 400""")
+        f"""SELECT g.id, g.date, t1.name AS home, t2.name AS away, g.game_type
+            FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                         JOIN teams t2 ON t2.id=g.team2_id
+            {_wsql} ORDER BY g.date DESC LIMIT 500""", tuple(_p))
     if not grows:
-        empty_state("No games yet", "Add games in the Input Hub first.")
+        st.info("No games match — widen the filters." if _w
+                else "No games yet. Add games in the Input Hub first.")
     else:
+        _capped = len(grows) == 500
+        st.caption(f"{len(grows)} game(s)"
+                   + (" — first 500; narrow the filter to reach more" if _capped
+                      else "") + ("" if _w else " · most recent"))
+        _bc1, _bc2 = st.columns([2, 1])
+        _bulk = _bc1.selectbox("Bulk-set all shown to", GAME_TYPES, key="su_g_bulk")
+        if _bc2.button("Apply to all shown", key="su_g_bulk_btn"):
+            for r in grows:
+                execute("UPDATE games SET game_type=? WHERE id=?",
+                        (_bulk, int(r["id"])))
+            st.cache_data.clear()
+            st.success(f"Set {len(grows)} game(s) to {_bulk}.")
+            st.rerun()
         ed = st.data_editor(
             pd.DataFrame(grows), hide_index=True, width="stretch", key="su_games",
             column_config={

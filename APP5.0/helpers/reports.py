@@ -19,6 +19,7 @@ import helpers.gameflow as GF
 import helpers.trends as TRD
 import helpers.fouls as FL
 import helpers.badges as BG
+import helpers.archetypes as ARC
 import helpers.court_png as CPNG
 from helpers.scout import _BRAND_MARK   # baked HoopTracks mark (xhtml2pdf-safe)
 
@@ -104,10 +105,21 @@ def player_card_html(player_id, gender=None, table=None):
     log = TRD.player_game_log(player_id)
     highs = TRD.season_highs(log)
     ff = FL.player_foul_ft().get(player_id, {})
+    # archetypes — the k-means style cluster (the chip the on-screen card shows) and
+    # the transparent badge-driven role, so the printout carries the same identity.
+    try:
+        _arch = ARC.cluster_players(table)["players"].get(player_id, {}).get("archetype")
+    except Exception:
+        _arch = None
+    _barch = BG.badge_archetype(badges)["archetype"]
 
     def g(k, f="{:.1f}"):
         v = r.get(k)
         return f.format(v) if v is not None else "—"
+
+    def pg(k):
+        v = r.get(k)
+        return f"{v:.0f}%" if v is not None else "—"
 
     _bio = query("SELECT height, wingspan, weight, handedness FROM players WHERE id=?",
                  (player_id,))
@@ -122,7 +134,10 @@ def player_card_html(player_id, gender=None, table=None):
         f"<span class='chip'><b>{g('OFFENSE','{:.0f}')}</b> OFF</span>"
         f"<span class='chip'><b>{g('DEFENSE','{:.0f}')}</b> DEF</span>"
         f"<span class='chip'><b>{g('PLAYMAKING','{:.0f}')}</b> PLAY</span>"
-        f"<span class='chip'><b>{g('REBOUNDING','{:.0f}')}</b> REB</span></div></div>")
+        f"<span class='chip'><b>{g('REBOUNDING','{:.0f}')}</b> REB</span>"
+        + (f"<span class='chip'>{e(_arch)}</span>" if _arch else "")
+        + f"<span class='chip'>Role · {e(_barch)}</span>"
+        + "</div></div>")
 
     kpis = "".join([
         _kpi("PPG", g("PPG")), _kpi("RPG", g("RPG")), _kpi("APG", g("APG")),
@@ -130,6 +145,36 @@ def player_card_html(player_id, gender=None, table=None):
         _kpi("FPG", g("PF/G")), _kpi("FG%", g("FG%", "{:.0f}")),
         _kpi("3P%", g("3P%", "{:.0f}")), _kpi("TS%", g("TS%", "{:.0f}")),
         _kpi("USG%", g("USG%", "{:.0f}")),
+    ])
+
+    # Impact & signature strip — the invented/impact tiles the on-screen card leads
+    # with, so the printout carries the same headline advanced read.
+    sig = "".join([
+        _kpi("MIN/G", g("MPG")), _kpi("+/-", g("+/-", "{:+.0f}")),
+        _kpi("EFF", g("EFF", "{:.0f}")), _kpi("2-WAY", g("2WAY", "{:.0f}")),
+        _kpi("VERS", g("VERSATILITY")), _kpi("Q4 PPG", g("Q4PPG")),
+        _kpi("SMOE", g("SMOE", "{:+.2f}")), _kpi("SELF-CR%", g("SelfCr%", "{:.0f}")),
+    ])
+
+    # Full stat line — mirrors the on-screen "Scoring & shooting" +
+    # "Rebounding · Playmaking · Defense" detail tables (the tab's "full stat line").
+    def _sr(label, val):
+        return f"<tr><td>{label}</td><td class='num'>{val}</td></tr>"
+    statline = "".join([
+        _sr("Points (PPG)", f"{r.get('PTS', 0)} ({g('PPG')}/g)"),
+        _sr("FG", f"{r.get('FGM', 0)}/{r.get('FGA', 0)} ({pg('FG%')})"),
+        _sr("Three", f"{r.get('3PM', 0)}/{r.get('3PA', 0)} ({pg('3P%')})"),
+        _sr("Free throw", f"{r.get('FTM', 0)}/{r.get('FTA', 0)} ({pg('FT%')})"),
+        _sr("eFG% / TS%", f"{pg('eFG%')} / {pg('TS%')}"),
+        _sr("Pts / shot (PPS)", g("PPS", "{:.2f}")),
+        _sr("Rebounds (RPG)", f"{r.get('REB', 0)} ({g('RPG')}/g)"),
+        _sr("OREB / DREB", f"{r.get('OREB', 0)} / {r.get('DREB', 0)}"),
+        _sr("Assists (APG)", f"{r.get('AST', 0)} ({g('APG')}/g)"),
+        _sr("Assist / turnover", g("AST/TOV", "{:.2f}")),
+        _sr("Steals / Blocks", f"{r.get('STL', 0)} / {r.get('BLK', 0)}"),
+        _sr("Turnovers (TPG)", f"{r.get('TOV', 0)} ({g('TPG')}/g)"),
+        _sr("Fouls (FPG)", f"{r.get('PF', 0)} ({g('PF/G')}/g)"),
+        _sr("Game Score / game", g("GS/G")),
     ])
 
     bdg = "".join(f"<span class='bdg'>{e(b['emoji'])} {e(b['name'])}</span>"
@@ -180,6 +225,8 @@ def player_card_html(player_id, gender=None, table=None):
     body = (
         f"{band}<div class='wrap'>"
         f"<h2>Season averages</h2><table class='kpis'><tr>{kpis}</tr></table>"
+        f"<h2>Impact &amp; signature</h2><table class='kpis'><tr>{sig}</tr></table>"
+        f"<h2>Full stat line</h2><table>{statline}</table>"
         + pct_html + chart_html
         + f"<h2>Badges</h2><div>{bdg}</div>"
         + (f"<h2>Fouls &amp; free throws</h2>{ftline}" if ff else "")

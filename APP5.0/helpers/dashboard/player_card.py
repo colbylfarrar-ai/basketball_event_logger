@@ -329,7 +329,7 @@ def render_card(ctx):
                 "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px'>"
                 + tiles + "</div>", unsafe_allow_html=True)
 
-        # ── col 3: team-within (rank among teammates) ────────────────────────
+        # ── col 3: team-within (rank among teammates) + play-type breakdown ──
         with g3:
             trows = "".join(_teamrow(k.title(), _twrel.get(k)) for k in RATING_COLS)
             st.markdown(
@@ -337,6 +337,23 @@ def render_card(ctx):
                 + "<div style='font-size:11px;color:#8b949e;margin-top:4px'>Dot = "
                 "position on the team's min&rarr;max span. League rating stays the "
                 "number up top.</div>", unsafe_allow_html=True)
+            # Play-type PPP/FG% fills the space under the (short) teammate panel —
+            # the one-tap set-call read, mirroring the scout sheet's play types.
+            _pt_named = getattr(ctx, "named_sets", None)
+            if _pt_named:
+                _ptlbl = dict(PT.NAMED_PLAY_TYPES)
+                _pt_ranked = sorted(
+                    ((k, c) for k, c in _pt_named.items() if (c.get("poss") or 0) >= 5),
+                    key=lambda kv: kv[1]["PPP"], reverse=True)[:6]
+                if _pt_ranked:
+                    _pt_html = "".join(
+                        f"<div style='display:flex;justify-content:space-between;"
+                        f"font-size:12px;padding:2px 0'><span style='color:#8b949e'>"
+                        f"{_ptlbl.get(k, k.title())}</span><span style='color:#f0f6fc;"
+                        f"font-weight:600'>{c['PPP']:.2f} &middot; {c['FG%']*100:.0f}%"
+                        f"</span></div>" for k, c in _pt_ranked)
+                    st.markdown("<div class='pl-hdr'>Play types &middot; PPP &middot; "
+                                "FG%</div>" + _pt_html, unsafe_allow_html=True)
 
         # ── full league-percentile rail (all 21, three columns) ──────────────
         st.markdown("<div class='pl-hdr'>League percentiles</div>",

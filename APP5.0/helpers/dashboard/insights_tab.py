@@ -56,8 +56,26 @@ def _strength(gender, team_id, tids):
                                game_ids=list(tids) if tids else None)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _winloss(gender, team_id, tids):
+    """Wins-vs-losses offense split for this team, cached per (gender, team, games)."""
+    return INT.winloss_splits(team_id, gender=gender,
+                              game_ids=list(tids) if tids else None)
+
+
 def _pct(v):
     return f"{v * 100:.0f}%" if v is not None else "—"
+
+
+def _split_rows(pa, pb, la, lb):
+    """The shared 7-metric split table (used by every A-vs-B deep-dive section)."""
+    _f2 = lambda v: f"{v:.2f}" if v is not None else "—"
+    specs = [("PPP (pts/shot)", "PPP", _f2), ("eFG%", "eFG", _pct),
+             ("Scoring eff (SCE)", "SCE", _pct), ("3PA rate", "3PA_rate", _pct),
+             ("Rim rate", "rim_rate", _pct), ("Assisted rate", "ast_rate", _pct),
+             ("Open rate", "open_rate", _pct)]
+    return [{"Metric": lbl, la: fmt(pa.get(k)), lb: fmt(pb.get(k))}
+            for lbl, k, fmt in specs]
 
 
 @st.fragment
@@ -121,23 +139,10 @@ def render(ctx):
                    "schedule builds.")
     else:
         _tp, _bt = _ss["top"], _ss["bottom"]
-
-        def _drow(label, key, fmt):
-            tv, bv = _tp.get(key), _bt.get(key)
-            return {"Metric": label,
-                    f"vs Top-half ({_ss['top_games']}g)": fmt(tv),
-                    f"vs Bottom-half ({_ss['bottom_games']}g)": fmt(bv)}
-        _f2 = lambda v: f"{v:.2f}" if v is not None else "—"
-        rows = [
-            _drow("PPP (pts/shot)", "PPP", _f2),
-            _drow("eFG%", "eFG", _pct),
-            _drow("Scoring eff (SCE)", "SCE", _pct),
-            _drow("3PA rate", "3PA_rate", _pct),
-            _drow("Rim rate", "rim_rate", _pct),
-            _drow("Assisted rate", "ast_rate", _pct),
-            _drow("Open rate", "open_rate", _pct),
-        ]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.dataframe(pd.DataFrame(_split_rows(
+            _tp, _bt, f"vs Top-half ({_ss['top_games']}g)",
+            f"vs Bottom-half ({_ss['bottom_games']}g)")),
+            hide_index=True, width="stretch")
         _dp = (_tp["PPP"] or 0) - (_bt["PPP"] or 0)
         if _dp <= -0.12:
             st.caption(f"⚠ Offense drops **{abs(_dp):.2f} PPP** against top-half "
@@ -149,6 +154,34 @@ def render(ctx):
         else:
             st.caption("Offense holds up about the same against strong and weak "
                        "opponents — a steady, opponent-proof profile.")
+
+    # ── deep dive: offense IN WINS vs IN LOSSES ───────────────────────────────
+    _wl = _winloss(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id", None) \
+        else {"available": False}
+    st.markdown("<div class='lab-hdr'>Deep dive — in wins vs in losses</div>",
+                unsafe_allow_html=True)
+    if not _wl.get("available"):
+        st.caption("Needs ≥15 shots in both wins and losses — this split fills in "
+                   "as the record builds.")
+    else:
+        _w, _l = _wl["win"], _wl["loss"]
+        st.dataframe(pd.DataFrame(_split_rows(
+            _w, _l, f"In wins ({_wl['win_games']})",
+            f"In losses ({_wl['loss_games']})")),
+            hide_index=True, width="stretch")
+        # what changes when they lose — the biggest metric swing tells the story
+        _cands = [("3-point volume", "3PA_rate"), ("rim pressure", "rim_rate"),
+                  ("ball movement", "ast_rate"), ("open looks", "open_rate")]
+        _sw = max(_cands, key=lambda c: abs((_w.get(c[1]) or 0)
+                                            - (_l.get(c[1]) or 0)))
+        _d = (_w.get(_sw[1]) or 0) - (_l.get(_sw[1]) or 0)
+        _dir = "up" if _d > 0 else "down"
+        st.caption(
+            f"Biggest style swing: **{_sw[0]}** is {_dir} "
+            f"{abs(_d) * 100:.0f} pts in wins ({_pct(_w.get(_sw[1]))} vs "
+            f"{_pct(_l.get(_sw[1]))}). eFG% "
+            f"{_pct(_w.get('eFG'))} in wins vs {_pct(_l.get('eFG'))} in losses — "
+            "what shows up when this team is at its best.")
 
     # ── boards: force-hand + space dependence ─────────────────────────────────
     bc1, bc2 = st.columns(2)

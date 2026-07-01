@@ -36,6 +36,55 @@ def _team_game_opponents(team_id, game_ids=None):
     return out
 
 
+def _bucket_profiles(team_id, events, bucket_of, labels):
+    """Build a finished play-type-style profile of the team's OWN shots per bucket.
+    ``bucket_of(game_id)`` returns a bucket key (or None to skip); ``labels`` maps
+    bucket key -> display label. No cross-game leak (own shots only)."""
+    profs = {k: PT._blank_profile() for k in labels}
+    for e in events:
+        if e["event_type"] != "shot" or e["shooter_team_id"] != team_id:
+            continue
+        b = bucket_of(e["game_id"])
+        if b in profs:
+            PT._profile_add(profs[b], e)
+    return {k: PT._profile_fin(p, k, labels[k]) for k, p in profs.items()}
+
+
+def winloss_splits(team_id, gender=None, game_ids=None, events=None):
+    """The team's own-offense profile split by RESULT — how it plays in WINS vs
+    LOSSES (what makes it go, what shows up when it loses). Same profile fields as
+    strength_splits. `available` False until both sides clear MIN_SPLIT_SHOTS."""
+    rows = query(
+        "SELECT id, team1_id, home_score, away_score FROM games "
+        "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current' "
+        "AND home_score IS NOT NULL AND away_score IS NOT NULL",
+        (team_id, team_id))
+    allow = set(game_ids) if game_ids is not None else None
+    result = {}                       # game_id -> 'win' | 'loss'
+    for r in rows:
+        if allow is not None and r["id"] not in allow:
+            continue
+        is_home = r["team1_id"] == team_id            # team1 = home in this app
+        my = r["home_score"] if is_home else r["away_score"]
+        opp = r["away_score"] if is_home else r["home_score"]
+        if my == opp:
+            continue
+        result[r["id"]] = "win" if my > opp else "loss"
+    if not result:
+        return {"available": False}
+    if events is None:
+        events = S.fetch_events(list(result))
+    profs = _bucket_profiles(team_id, events, lambda g: result.get(g),
+                             {"win": "In wins", "loss": "In losses"})
+    wins = sum(1 for v in result.values() if v == "win")
+    return {
+        "win": profs["win"], "loss": profs["loss"],
+        "win_games": wins, "loss_games": len(result) - wins,
+        "available": (profs["win"]["poss"] >= MIN_SPLIT_SHOTS
+                      and profs["loss"]["poss"] >= MIN_SPLIT_SHOTS),
+    }
+
+
 def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=None):
     """The team's own-offense profile split by OPPONENT STRENGTH (top vs bottom
     half of the league by Power rank).

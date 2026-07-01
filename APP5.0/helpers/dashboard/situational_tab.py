@@ -56,6 +56,39 @@ def render(ctx):
                     "the situational breakdown.", icon="🎬")
         return
 
+    # ── By game type — how they play in Regular / District / Playoff / … ──────
+    _bgt = ctx.by_game_type(g, tid) if getattr(ctx, "by_game_type", None) else None
+    if _bgt and len(_bgt) > 1:
+        import pandas as pd
+        st.markdown("<div class='pl-hdr'>By game type — how they play in each</div>",
+                    unsafe_allow_html=True)
+        st.caption("Record + margin from every game; efficiency (points per "
+                   "possession, eFG%, pace) and shot mix from the tracked ones — so "
+                   "you can compare their playoff / rivalry self to the regular-season "
+                   "baseline.")
+        _bdf = pd.DataFrame([{
+            "Type": r["type"], "GP": r["GP"], "W-L": f"{r['W']}-{r['L']}",
+            "MOV": r["MOV"], "Off PPP": r.get("oPPP"), "Def PPP": r.get("dPPP"),
+            "eFG%": r.get("eFG"), "Opp eFG%": r.get("oeFG"), "Pace": r.get("pace"),
+            "Rim%": r.get("rim%"), "3PA%": r.get("3PA%"), "Trk GP": r.get("trk_gp"),
+        } for r in _bgt])
+        st.dataframe(
+            _bdf, hide_index=True, width="stretch", key="sit_bygametype",
+            column_config={
+                "MOV": st.column_config.NumberColumn("MOV", format="%+.1f"),
+                "Off PPP": st.column_config.NumberColumn("Off PPP", format="%.2f"),
+                "Def PPP": st.column_config.NumberColumn("Def PPP", format="%.2f"),
+                "eFG%": st.column_config.NumberColumn("eFG%", format="%d%%"),
+                "Opp eFG%": st.column_config.NumberColumn("Opp eFG%", format="%d%%"),
+                "Pace": st.column_config.NumberColumn("Pace", format="%.1f"),
+                "Rim%": st.column_config.NumberColumn("Rim%", format="%d%%"),
+                "3PA%": st.column_config.NumberColumn("3PA%", format="%d%%"),
+            })
+        st.caption("Efficiency / eFG% / pace / shot-mix come from tracked games only "
+                   "(Trk GP); '—' = no tracked game of that type yet. Set a game's "
+                   "type on the Roster & District page.")
+        st.divider()
+
     data = ctx.situational(g, tid) if getattr(ctx, "situational", None) else None
     if not data or len(data.get("situations", [])) <= 1:
         st.info("Not enough tracked possessions yet — the situational breakdown fills "

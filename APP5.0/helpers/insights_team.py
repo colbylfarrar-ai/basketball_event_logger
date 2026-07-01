@@ -43,6 +43,77 @@ _GLANCE_SPEC = [
 ]
 
 
+_GAME_TYPE_ORDER = {"Regular": 0, "District": 1, "Rivalry": 2, "Tournament": 3,
+                    "Showcase": 4, "Playoff": 5}
+
+
+def team_by_game_type(team_id, gender=None):
+    """How the team plays by GAME TYPE (Regular / District / Playoff / …). Per
+    type: record (W-L) + avg margin from every played game, plus — for the TRACKED
+    games of that type — efficiency (off/def points-per-possession, eFG%/opp eFG%,
+    pace) and shot mix (rim / 3-point attempt rate). Returns a list ordered
+    Regular→Playoff; [] when the team has no played games. Tracked-only fields are
+    None when a type has no tracked game."""
+    import helpers.team_analytics as TA          # lazy — avoids an import cycle
+    from collections import defaultdict
+    gs = query(
+        """SELECT id, game_type, team1_id, home_score, away_score, tracked
+           FROM games
+           WHERE (team1_id=? OR team2_id=?) AND season='Current'
+             AND home_score IS NOT NULL AND away_score IS NOT NULL""",
+        (team_id, team_id))
+    if not gs:
+        return []
+    buckets = defaultdict(lambda: {"trk": [], "W": 0, "L": 0, "mov": 0, "n": 0})
+    for r in gs:
+        gt = r["game_type"] or "Regular"
+        us = r["home_score"] if r["team1_id"] == team_id else r["away_score"]
+        them = r["away_score"] if r["team1_id"] == team_id else r["home_score"]
+        b = buckets[gt]
+        b["n"] += 1
+        b["mov"] += (us - them)
+        if r["tracked"]:
+            b["trk"].append(r["id"])
+        if us > them:
+            b["W"] += 1
+        elif us < them:
+            b["L"] += 1
+
+    out = []
+    for gt, b in buckets.items():
+        row = {"type": gt, "GP": b["n"], "W": b["W"], "L": b["L"],
+               "MOV": round(b["mov"] / b["n"], 1) if b["n"] else None,
+               "trk_gp": len(b["trk"])}
+        if b["trk"]:
+            ev = S.fetch_events(b["trk"])
+            tb, ob = TA.team_and_opp_box(team_id, b["trk"], events=ev)
+            _poss = lambda x: (x.get("FGA", 0) + x.get("TOV", 0)) or 0
+            op, dp = _poss(tb), _poss(ob)
+            rim = mid = three = tot = 0
+            for e in ev:
+                if e.get("event_type") != "shot" or e.get("shooter_team_id") != team_id:
+                    continue
+                tot += 1
+                if e.get("shot_type") == 3:
+                    three += 1
+                elif e.get("zone") == "C":
+                    rim += 1
+                else:
+                    mid += 1
+            row.update({
+                "oPPP": round(tb["PTS"] / op, 2) if op else None,
+                "dPPP": round(ob["PTS"] / dp, 2) if dp else None,
+                "eFG": round(S.efg(tb) * 100) if tb.get("FGA") else None,
+                "oeFG": round(S.efg(ob) * 100) if ob.get("FGA") else None,
+                "pace": round(op / len(b["trk"]), 1) if op else None,
+                "rim%": round(rim / tot * 100) if tot else None,
+                "3PA%": round(three / tot * 100) if tot else None,
+            })
+        out.append(row)
+    out.sort(key=lambda r: _GAME_TYPE_ORDER.get(r["type"], 9))
+    return out
+
+
 def team_glance(gender, team_id, n=6):
     """The 4-8 stats this team is MOST distinctive on vs the league — a quick
     identity fingerprint. Percentile-ranks the team on each curated stat, keeps

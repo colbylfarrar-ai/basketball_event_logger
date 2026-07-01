@@ -1033,6 +1033,14 @@ def _situational_view(g, tid):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _by_game_type(g, tid):
+    """How the team plays by GAME TYPE (Regular/District/Playoff/…) — record +
+    margin from every game, efficiency + shot mix from the tracked ones."""
+    import helpers.insights_team as INT
+    return INT.team_by_game_type(tid, gender=g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _scoring_buckets(_ids):
     """Scoring buckets (paint/2nd-chance/off-TO/fast-break/bench) over the games."""
     return GF.scoring_buckets(list(_ids))
@@ -1223,7 +1231,8 @@ if _tdview == "Charts":
             players=players, tracked_ids=tuple(bundle["tracked_ids"]),
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
             PURPLE=PURPLE, PINK=PINK,
-            situational=_situational_view, is_current=_is_cur_season)
+            situational=_situational_view, by_game_type=_by_game_type,
+            is_current=_is_cur_season)
         DSITUATIONAL.render(_sit_ctx)
 
     if not has_tracked:

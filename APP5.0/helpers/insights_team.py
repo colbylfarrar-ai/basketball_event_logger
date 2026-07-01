@@ -36,6 +36,55 @@ def _team_game_opponents(team_id, game_ids=None):
     return out
 
 
+def passer_quality(gender=None, game_ids=None, events=None, rates=None, min_feeds=8):
+    """Per-PASSER shot-creation quality — the "pass-from FG%" read, split into the
+    two things it conflates:
+      • xPPS_created — the expected value of the LOOKS a passer creates (from the
+        shot's zone/creation/contest, independent of whether it went in). High = the
+        passer sets up good shots. This is the passer's own playmaking signal.
+      • PPS / FG% — what those looks ACTUALLY produced.
+      • finish_delta = PPS − xPPS_created — did the shooters convert the looks? A
+        big POSITIVE gap = great finishers (or lucky); a big NEGATIVE gap = a GOOD
+        pass to a POOR shooter (the look was there, the shot missed).
+    So a low pass-from FG% with a HIGH xPPS_created is a good playmaker feeding poor
+    shooters — not a bad passer. Returns {passer_id: {feeds, FG%, PPS, xPPS_created,
+    finish_delta, team_id}} for passers with ≥ min_feeds assisted attempts."""
+    if events is None:
+        gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    if rates is None:
+        rates = S.shot_quality_rates(events=events)
+    agg = {}
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        passer = e.get("pass_from_id")
+        if passer is None:
+            continue
+        key = (e["zone"],
+               S._creation_bucket(True, e["shot_created_by_id"] is not None),
+               e["guarded_by_id"] is not None)
+        xpct = rates.get(key, {}).get("pct", 0.0)
+        val = 3 if e["shot_type"] == 3 else 2
+        c = agg.setdefault(passer, {"feeds": 0, "FGM": 0, "pts": 0, "xpts": 0.0,
+                                    "team_id": e["shooter_team_id"]})
+        c["feeds"] += 1
+        c["xpts"] += xpct * val
+        if e["shot_result"] == "make":
+            c["FGM"] += 1
+            c["pts"] += val
+    out = {}
+    for pid, c in agg.items():
+        if c["feeds"] < min_feeds:
+            continue
+        f = c["feeds"]
+        pps, xpps = c["pts"] / f, c["xpts"] / f
+        out[pid] = {"feeds": f, "FG%": c["FGM"] / f, "PPS": pps,
+                    "xPPS_created": xpps, "finish_delta": pps - xpps,
+                    "team_id": c["team_id"]}
+    return out
+
+
 _ZONE_SIDE = {"LC": "Left", "LW": "Left", "C": "Middle", "RW": "Right", "RC": "Right"}
 _ZONE_LABEL = {"LC": "Left corner", "LW": "Left wing", "C": "Paint / middle",
                "RW": "Right wing", "RC": "Right corner"}

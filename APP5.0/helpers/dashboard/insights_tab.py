@@ -70,6 +70,12 @@ def _tendencies(gender, team_id, tids):
                                game_ids=list(tids) if tids else None)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _passers(gender):
+    """Per-passer shot-creation quality (pass-from look quality vs finish)."""
+    return INT.passer_quality(gender=gender)
+
+
 def _pct(v):
     return f"{v * 100:.0f}%" if v is not None else "—"
 
@@ -221,6 +227,34 @@ def render(ctx):
                    f"{_pct(_te['mid_rate'])} · three {_pct(_te['three_rate'])}. "
                    "Take away their best zone, live with the worst. (Play-call "
                    "predictability + over-used sets live on the Scout tab.)")
+
+    # ── passer quality — look created vs finish (the pass-from FG% nuance) ────
+    _pq = _passers(ctx.gender)
+    _prows = sorted(((pid, _pq[pid]) for pid in pids if pid in _pq),
+                    key=lambda t: -t[1]["xPPS_created"])
+    if _prows:
+        st.markdown("<div class='lab-hdr'>Passer quality — looks created vs "
+                    "finished</div>", unsafe_allow_html=True)
+        st.caption("**Look quality** = expected value of the shots a passer sets up "
+                   "(the zone/contest of the look, whether or not it dropped). "
+                   "**Finish Δ** = actual − expected: a big minus means the looks "
+                   "were there but the shooters missed — a *good pass to a poor "
+                   "shooter*, not a bad passer.")
+        st.dataframe(pd.DataFrame([{
+            "Passer": table[pid]["name"], "Feeds": v["feeds"],
+            "Look quality (xPPS)": round(v["xPPS_created"], 2),
+            "Result (PPS)": round(v["PPS"], 2),
+            "Finish Δ": round(v["finish_delta"], 2),
+            "Assist FG%": round(v["FG%"] * 100),
+        } for pid, v in _prows]), hide_index=True, width="stretch",
+            column_config={
+                "Finish Δ": st.column_config.NumberColumn(format="%+.2f"),
+                "Assist FG%": st.column_config.NumberColumn(format="%d%%")})
+        _best = _prows[0]
+        st.caption(f"Top look-creator: **{table[_best[0]]['name']}** "
+                   f"({_best[1]['xPPS_created']:.2f} xPPS created on "
+                   f"{_best[1]['feeds']} feeds). Feeds this metric into the "
+                   "playmaking read.")
 
     # ── boards: force-hand + space dependence ─────────────────────────────────
     bc1, bc2 = st.columns(2)

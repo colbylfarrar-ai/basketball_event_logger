@@ -603,8 +603,7 @@ _links([("pages/1_Input_Hub.py", "Input Hub", ""),
 st.caption("Analyze")
 _links([("pages/5_Rankings.py", "Rankings", ""),
         ("pages/6_Team_Dashboard.py", "Team Dashboard", ""),
-        ("pages/7_Players.py", "Players", ""),
-        ("pages/10_Data_Explorer.py", "Data Explorer", "")])
+        ("pages/7_Players.py", "Players", "")])
 st.caption("Plan & scout")
 _links([("pages/9_War_Room.py", "War Room", ""),
         ("pages/8_Officials.py", "Officials", ""),

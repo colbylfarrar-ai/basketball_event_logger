@@ -277,8 +277,10 @@ _wr_ident = AUTH.current_user()
 _wr_league_wide = ENT.viewer_is_league_wide(_wr_ident)
 _WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
 
-tab_match, tab_season, tab_bracket, tab_lineup, tab_planner, tab_gloss = st.tabs(
-    ["Matchup", "Season sim", "Bracket", "Lineup", "Matchup planner", "Glossary"])
+(tab_match, tab_season, tab_bracket, tab_lineup, tab_planner, tab_analyze,
+ tab_gloss) = st.tabs(
+    ["Matchup", "Season sim", "Bracket", "Lineup", "Matchup planner", "Analyze",
+     "Glossary"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1098,7 +1100,17 @@ with tab_planner:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 6 — GLOSSARY
+#  TAB — ANALYZE  (the self-serve analytics playground, folded in from the old
+#  Data Explorer page: filter the full table, scatter anything, correlate, map shots)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_analyze:
+    from helpers.dashboard.analyze import render as _render_analyze
+    st.subheader("Analyze — the stat playground")
+    _render_analyze()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_gloss:
     glossary_tab("wr")

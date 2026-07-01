@@ -20,6 +20,7 @@ import streamlit as st
 import helpers.player_ratings as PR
 import helpers.stats as S
 import helpers.insights as IN
+import helpers.insights_team as INT
 import helpers.playtypes as PT
 import helpers.wpa as WPA
 
@@ -45,6 +46,18 @@ def _league(gender):
     except Exception:
         impact = {}
     return table, feed, roles, impact, cliffs
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _strength(gender, team_id, tids):
+    """Opponent-strength offense split for this team (top vs bottom half of the
+    league), cached per (gender, team, visible games)."""
+    return INT.strength_splits(team_id, gender=gender,
+                               game_ids=list(tids) if tids else None)
+
+
+def _pct(v):
+    return f"{v * 100:.0f}%" if v is not None else "—"
 
 
 @st.fragment
@@ -95,6 +108,47 @@ def render(ctx):
     if not any_line:
         st.caption("No standout signals yet — this roster reads close to league "
                    "average on the tracked splits, or needs more games.")
+
+    # ── deep dive: offense vs TOP-half vs BOTTOM-half opponents ────────────────
+    _tids = getattr(ctx, "tracked_ids", None)
+    _ss = _strength(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id", None) \
+        else {"available": False}
+    st.markdown("<div class='lab-hdr'>Deep dive — vs top teams vs bottom teams</div>",
+                unsafe_allow_html=True)
+    if not _ss.get("available"):
+        st.caption("Needs more tracked games against both stronger and weaker "
+                   "opponents (≥15 shots each side) — this split fills in as the "
+                   "schedule builds.")
+    else:
+        _tp, _bt = _ss["top"], _ss["bottom"]
+
+        def _drow(label, key, fmt):
+            tv, bv = _tp.get(key), _bt.get(key)
+            return {"Metric": label,
+                    f"vs Top-half ({_ss['top_games']}g)": fmt(tv),
+                    f"vs Bottom-half ({_ss['bottom_games']}g)": fmt(bv)}
+        _f2 = lambda v: f"{v:.2f}" if v is not None else "—"
+        rows = [
+            _drow("PPP (pts/shot)", "PPP", _f2),
+            _drow("eFG%", "eFG", _pct),
+            _drow("Scoring eff (SCE)", "SCE", _pct),
+            _drow("3PA rate", "3PA_rate", _pct),
+            _drow("Rim rate", "rim_rate", _pct),
+            _drow("Assisted rate", "ast_rate", _pct),
+            _drow("Open rate", "open_rate", _pct),
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        _dp = (_tp["PPP"] or 0) - (_bt["PPP"] or 0)
+        if _dp <= -0.12:
+            st.caption(f"⚠ Offense drops **{abs(_dp):.2f} PPP** against top-half "
+                       "teams — the scoring is feasting on weaker opponents. Watch "
+                       "the 3PA / rim mix above to see what stops working.")
+        elif _dp >= 0.12:
+            st.caption(f"This team *rises* **+{_dp:.2f} PPP** vs top-half teams — "
+                       "it brings its best against the better opponents.")
+        else:
+            st.caption("Offense holds up about the same against strong and weak "
+                       "opponents — a steady, opponent-proof profile.")
 
     # ── boards: force-hand + space dependence ─────────────────────────────────
     bc1, bc2 = st.columns(2)

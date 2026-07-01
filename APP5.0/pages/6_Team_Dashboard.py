@@ -3924,7 +3924,8 @@ if _tdview == "Scout":
 #  TAB — INSIGHTS (the scout that reads itself, scoped to this team)
 # ══════════════════════════════════════════════════════════════════════════════
 _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
-                                has_tracked=has_tracked)
+                                has_tracked=has_tracked,
+                                tracked_ids=tuple(bundle["tracked_ids"]))
 if _tdview == "Insights":
     DINS.render(_insights_ctx)
 

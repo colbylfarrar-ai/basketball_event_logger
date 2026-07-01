@@ -342,18 +342,26 @@ def render_card(ctx):
             _pt_named = getattr(ctx, "named_sets", None)
             if _pt_named:
                 _ptlbl = dict(PT.NAMED_PLAY_TYPES)
+                # share % is out of the player's TOTAL tagged possessions (all sets,
+                # not just the shown top 6) so the shares read as a true diet.
+                _pt_tot = sum((c.get("poss") or 0) for c in _pt_named.values())
                 _pt_ranked = sorted(
                     ((k, c) for k, c in _pt_named.items() if (c.get("poss") or 0) >= 5),
-                    key=lambda kv: kv[1]["PPP"], reverse=True)[:6]
+                    key=lambda kv: kv[1]["poss"], reverse=True)[:6]
                 if _pt_ranked:
-                    _pt_html = "".join(
-                        f"<div style='display:flex;justify-content:space-between;"
-                        f"font-size:12px;padding:2px 0'><span style='color:#8b949e'>"
-                        f"{_ptlbl.get(k, k.title())}</span><span style='color:#f0f6fc;"
-                        f"font-weight:600'>{c['PPP']:.2f} &middot; {c['FG%']*100:.0f}%"
-                        f"</span></div>" for k, c in _pt_ranked)
-                    st.markdown("<div class='pl-hdr'>Play types &middot; PPP &middot; "
-                                "FG%</div>" + _pt_html, unsafe_allow_html=True)
+                    def _pt_row(k, c):
+                        _sh = (c["poss"] / _pt_tot * 100) if _pt_tot else 0
+                        return (
+                            f"<div style='display:flex;justify-content:space-between;"
+                            f"font-size:11px;padding:2px 0'><span style='color:#8b949e'>"
+                            f"{_ptlbl.get(k, k.title())}</span><span style='color:#f0f6fc;"
+                            f"font-weight:600'>{c['poss']} &middot; {_sh:.0f}% &middot; "
+                            f"{c['PPP']:.2f} &middot; {c['FG%']*100:.0f}%</span></div>")
+                    st.markdown(
+                        "<div class='pl-hdr'>Play types &middot; poss &middot; share "
+                        "&middot; PPP &middot; FG%</div>"
+                        + "".join(_pt_row(k, c) for k, c in _pt_ranked),
+                        unsafe_allow_html=True)
 
         # ── full league-percentile rail (all 21, three columns) ──────────────
         st.markdown("<div class='pl-hdr'>League percentiles</div>",

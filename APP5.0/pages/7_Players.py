@@ -1553,6 +1553,22 @@ def _fx_plab():
                             "Tag defenders on shots in the Game Tracker to "
                             "unlock matchup intelligence for this league.")
             else:
+                # Sample filter — most defenders have contested only a shot or two,
+                # which buries the real matchup signal (and reads as "1 shot faced
+                # every time"). Gate every board below on a minimum, defaulting past
+                # the one-shot noise. Reassigning gen_def flows the filter to the
+                # difficulty chart, the on-ball table AND the who-guarded picker.
+                _mx_max = int(max(v["FGA"] for v in gen_def.values()))
+                _mx_min = (st.slider(
+                    "Min contested shots", 1, _mx_max, min(3, _mx_max),
+                    key="plab_match_min",
+                    help="Hide defenders who contested fewer shots than this — "
+                         "one- or two-shot samples are noise, not defense.")
+                    if _mx_max >= 2 else 1)
+                gen_def = {d: v for d, v in gen_def.items() if v["FGA"] >= _mx_min}
+                if not gen_def:
+                    st.caption(f"No defender has contested {_mx_min}+ shots yet — "
+                               "lower the filter or tag more shots.")
                 st.markdown("<div class='pl-hdr'>Matchup difficulty</div>",
                             unsafe_allow_html=True)
                 st.caption("How good were the scorers each defender was assigned to "
@@ -1594,23 +1610,26 @@ def _fx_plab():
                              column_config={"FG% allowed": st.column_config.NumberColumn(
                                  "FG% allowed", format="%.1f")})
 
-                st.markdown("<div class='pl-hdr'>Who did they guard?</div>",
-                            unsafe_allow_html=True)
-                dsel = st.selectbox(
-                    "Defender", [d for d, _ in defrows],
-                    format_func=lambda d: f"{lnames[d]['name']} · {lnames[d]['team']}",
-                    key="plab_match_defender")
-                rec = gen_def[dsel]
-                sh_rows = []
-                for sht, sv in sorted(rec["by_shooter"].items(),
-                                      key=lambda x: -x[1]["FGA"]):
-                    sh_rows.append({"Shooter": lnames.get(sht, {}).get("name", str(sht)),
-                                    "Team": lnames.get(sht, {}).get("team", ""),
-                                    "Shots": sv["FGA"], "Made": sv["FGM"],
-                                    "FG%": sv["FG%"], "Pts": sv["pts"]})
-                if sh_rows:
-                    st.dataframe(pd.DataFrame(sh_rows), hide_index=True,
-                                 width="stretch", key="plab_match_assignments")
+                if defrows:
+                    st.markdown("<div class='pl-hdr'>Who did they guard?</div>",
+                                unsafe_allow_html=True)
+                    dsel = st.selectbox(
+                        "Defender", [d for d, _ in defrows],
+                        format_func=lambda d: f"{lnames[d]['name']} · "
+                                              f"{lnames[d]['team']}",
+                        key="plab_match_defender")
+                    rec = gen_def[dsel]
+                    sh_rows = []
+                    for sht, sv in sorted(rec["by_shooter"].items(),
+                                          key=lambda x: -x[1]["FGA"]):
+                        sh_rows.append(
+                            {"Shooter": lnames.get(sht, {}).get("name", str(sht)),
+                             "Team": lnames.get(sht, {}).get("team", ""),
+                             "Shots": sv["FGA"], "Made": sv["FGM"],
+                             "FG%": sv["FG%"], "Pts": sv["pts"]})
+                    if sh_rows:
+                        st.dataframe(pd.DataFrame(sh_rows), hide_index=True,
+                                     width="stretch", key="plab_match_assignments")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

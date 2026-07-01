@@ -63,6 +63,13 @@ def _winloss(gender, team_id, tids):
                               game_ids=list(tids) if tids else None)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _tendencies(gender, team_id, tids):
+    """Zone-based shot tendencies (force left/right, where shots live)."""
+    return INT.shot_tendencies(team_id, gender=gender,
+                               game_ids=list(tids) if tids else None)
+
+
 def _pct(v):
     return f"{v * 100:.0f}%" if v is not None else "—"
 
@@ -182,6 +189,38 @@ def render(ctx):
             f"{_pct(_l.get(_sw[1]))}). eFG% "
             f"{_pct(_w.get('eFG'))} in wins vs {_pct(_l.get('eFG'))} in losses — "
             "what shows up when this team is at its best.")
+
+    # ── self-scout: shot tendencies (force left/right, where shots live) ──────
+    _te = _tendencies(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id",
+                                                                 None) \
+        else {"available": False}
+    st.markdown("<div class='lab-hdr'>Self-scout — shot tendencies (how to defend "
+                "us)</div>", unsafe_allow_html=True)
+    if not _te.get("available"):
+        st.caption("Needs ~30 tracked shots to map the tendencies — fills in fast.")
+    else:
+        _sd = _te["side"]
+        _lft, _rgt = _sd["Left"], _sd["Right"]
+        if abs(_lft - _rgt) >= 0.10:
+            _heavy = "left" if _lft > _rgt else "right"
+            _force = "right" if _heavy == "left" else "left"
+            st.caption(f"**{max(_lft, _rgt) * 100:.0f}%** of shots come from their "
+                       f"**{_heavy} side** — a defense can **force them {_force}**. "
+                       f"(Left {_pct(_lft)} · Middle {_pct(_sd['Middle'])} · Right "
+                       f"{_pct(_rgt)}.)")
+        else:
+            st.caption(f"Balanced left/right (Left {_pct(_lft)} · Right {_pct(_rgt)})"
+                       " — no strong side to force.")
+        _zz = sorted(_te["zones"], key=lambda z: -z["poss"])
+        st.dataframe(pd.DataFrame([{
+            "Zone": z["label"], "Shots": z["poss"], "Share": _pct(z["share"]),
+            "FG%": _pct(z["FG%"]),
+            "PPP": (f"{z['PPP']:.2f}" if z["PPP"] is not None else "—")}
+            for z in _zz]), hide_index=True, width="stretch")
+        st.caption(f"Shot diet: rim {_pct(_te['rim_rate'])} · mid "
+                   f"{_pct(_te['mid_rate'])} · three {_pct(_te['three_rate'])}. "
+                   "Take away their best zone, live with the worst. (Play-call "
+                   "predictability + over-used sets live on the Scout tab.)")
 
     # ── boards: force-hand + space dependence ─────────────────────────────────
     bc1, bc2 = st.columns(2)

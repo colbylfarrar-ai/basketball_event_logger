@@ -36,6 +36,60 @@ def _team_game_opponents(team_id, game_ids=None):
     return out
 
 
+_ZONE_SIDE = {"LC": "Left", "LW": "Left", "C": "Middle", "RW": "Right", "RC": "Right"}
+_ZONE_LABEL = {"LC": "Left corner", "LW": "Left wing", "C": "Paint / middle",
+               "RW": "Right wing", "RC": "Right corner"}
+MIN_TENDENCY_SHOTS = 30
+
+
+def shot_tendencies(team_id, gender=None, game_ids=None, events=None):
+    """Self-scout shot map from ZONE (present on every shot, so it's dense): where
+    this team's own shots come from and how they score there — the "force them left/
+    right, here's where they live" read a scout builds. Returns {available, total,
+    side (Left/Middle/Right shares), zones [{zone,label,poss,share,PPP,FG%}], plus
+    rim/mid/three rate}. Robust without the sparse play-type/defense tags."""
+    if events is None:
+        gids = list(_team_game_opponents(team_id, game_ids))
+        events = S.fetch_events(gids) if gids else []
+    zc = {z: {"FGA": 0, "FGM": 0, "PTS": 0} for z in _ZONE_LABEL}
+    side = {"Left": 0, "Middle": 0, "Right": 0}
+    rim = mid = three = total = 0
+    for e in events:
+        if e["event_type"] != "shot" or e["shooter_team_id"] != team_id:
+            continue
+        total += 1
+        is3 = e["shot_type"] == 3
+        made = e["shot_result"] == "make"
+        z = e.get("zone")
+        if is3:
+            three += 1
+        elif z == "C":
+            rim += 1
+        else:
+            mid += 1
+        if z in zc:
+            c = zc[z]
+            c["FGA"] += 1
+            if made:
+                c["FGM"] += 1
+                c["PTS"] += 3 if is3 else 2
+            side[_ZONE_SIDE[z]] += 1
+    if total < MIN_TENDENCY_SHOTS:
+        return {"available": False, "total": total}
+    zoned = sum(side.values()) or 1
+    zones = [{"zone": z, "label": _ZONE_LABEL[z], "poss": c["FGA"],
+              "share": c["FGA"] / zoned,
+              "PPP": (c["PTS"] / c["FGA"]) if c["FGA"] else None,
+              "FG%": (c["FGM"] / c["FGA"]) if c["FGA"] else None}
+             for z, c in zc.items()]
+    return {
+        "available": True, "total": total,
+        "side": {k: v / zoned for k, v in side.items()},
+        "zones": zones,
+        "rim_rate": rim / total, "mid_rate": mid / total, "three_rate": three / total,
+    }
+
+
 def _bucket_profiles(team_id, events, bucket_of, labels):
     """Build a finished play-type-style profile of the team's OWN shots per bucket.
     ``bucket_of(game_id)`` returns a bucket key (or None to skip); ``labels`` maps

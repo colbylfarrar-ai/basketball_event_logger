@@ -84,7 +84,9 @@ def _sim_season(g, n):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _sim_bracket(g, field, n):
-    return SIM.simulate_tournament(_scored(g), list(field), n=n)
+    # bracket_tree returns BOTH the per-team odds (same shape simulate_tournament
+    # gave) AND the render-ready probabilistic tree — one sim pass for both.
+    return SIM.bracket_tree(_scored(g), list(field), n=n)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -162,6 +164,46 @@ def _round_labels(n_rounds):
         from_end = n_rounds - k          # 0 = champion
         out.append(tail[from_end] if from_end < len(tail) else f"Round {k}")
     return out
+
+
+def _bracket_tree_html(res, short):
+    """Probabilistic bracket tree — each slot shows its most-likely occupant and
+    how often it reaches that slot, left→right to the champion (gold)."""
+    cols, size, names = res["cols"], res["size"], res["names"]
+    H = max(240, size * 34)     # column height so the rounds line up
+
+    def _label(remaining):
+        return {1: "Champion", 2: "Final", 4: "Semifinals",
+                8: "Quarterfinals"}.get(remaining, f"Round of {remaining}")
+
+    def _box(slot, champ=False):
+        t = slot["team"]
+        if t is None:
+            return ("<div style='background:#0d1117;border:1px dashed #21262d;"
+                    "border-radius:6px;padding:4px 7px;font-size:11px;"
+                    "color:#484f58'>bye</div>")
+        p, sd = slot["p"], slot.get("seed")
+        pcol = "#3fb950" if p >= .6 else "#f0a500" if p >= .3 else "#8b949e"
+        bd = "#f0a500" if champ else "#30363d"
+        seedtag = f"<span style='color:#6e7681'>{sd}</span> " if sd else ""
+        return (f"<div style='background:#0d1117;border:1px solid {bd};"
+                f"border-radius:6px;padding:4px 7px;font-size:11px;display:flex;"
+                f"justify-content:space-between;gap:6px'>"
+                f"<span>{seedtag}<b style='color:#f0f6fc'>{short(names[t])}</b></span>"
+                f"<span style='color:{pcol};font-weight:700'>{p*100:.0f}%</span></div>")
+
+    colhtml = ""
+    for col in cols:
+        boxes = "".join(_box(s, champ=(len(col) == 1)) for s in col)
+        colhtml += (
+            f"<div style='display:flex;flex-direction:column;min-width:132px'>"
+            f"<div style='font-size:10px;color:#8b949e;text-transform:uppercase;"
+            f"letter-spacing:.05em;text-align:center;margin-bottom:6px'>"
+            f"{_label(len(col))}</div>"
+            f"<div style='display:flex;flex-direction:column;flex:1;"
+            f"justify-content:space-around;height:{H}px;gap:5px'>{boxes}</div></div>")
+    return (f"<div style='display:flex;gap:12px;overflow-x:auto;padding:4px 0'>"
+            f"{colhtml}</div>")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -618,7 +660,16 @@ def _render_bracket():
             empty_state("Not enough rated teams in the field",
                         "Add more rated teams to simulate the bracket.")
         else:
-            top = res[:12]
+            odds = res["odds"]
+            # ── the probabilistic bracket TREE (headline visual) ──────────────
+            st.markdown("**Bracket — most-likely path to the title**")
+            st.caption(f"Each slot shows its most-likely team and how often "
+                       f"({n:,} sims) they reach it — a chalk bracket; byes to the "
+                       "next power of two are handled automatically. Colour = how "
+                       "locked that slot is (green ≥60%, amber ≥30%).")
+            st.markdown(_bracket_tree_html(res, team_short), unsafe_allow_html=True)
+
+            top = odds[:12]
             names = [team_short(d["name"]) for d in top][::-1]
             vals = [d["champ_pct"] for d in top][::-1]
             texts = [f"{d['champ_pct']:.1f}%" for d in top][::-1]
@@ -627,18 +678,18 @@ def _render_bracket():
                             width="stretch", key="wr_title")
 
             # round-by-round survival heatmap
-            n_rounds = len(res[0]["rounds"]) - 1
+            n_rounds = len(odds[0]["rounds"]) - 1
             if n_rounds >= 1:
                 labels = _round_labels(n_rounds)
                 z = [[d["rounds"][k] * 100 for k in range(1, n_rounds + 1)]
-                     for d in res]
-                yt = [f"{d['seed']}. {team_short(d['name'])}" for d in res]
+                     for d in odds]
+                yt = [f"{d['seed']}. {team_short(d['name'])}" for d in odds]
                 hm = go.Figure(go.Heatmap(
                     z=z, x=labels, y=yt, colorscale=HEAT, zmin=0, zmax=100,
                     colorbar=dict(title="%", thickness=12),
                     hovertemplate="%{y}<br>%{x}: %{z:.1f}%<extra></extra>"))
                 hm.update_yaxes(autorange="reversed")
-                _style(hm, max(300, 26 * len(res) + 80))
+                _style(hm, max(300, 26 * len(odds) + 80))
                 st.markdown("**Survival curve — odds of reaching each round**")
                 st.plotly_chart(hm, width="stretch", key="wr_surv")
 
@@ -646,7 +697,7 @@ def _render_bracket():
                 "Seed": d["seed"], "Team": d["name"], "Champ %": d["champ_pct"],
                 "Finals %": (round(d["finals_odds"] * 100, 1)
                              if d["finals_odds"] is not None else None),
-            } for d in res])
+            } for d in odds])
             st.dataframe(
                 df, hide_index=True, width="stretch", key="wr_brk_tbl",
                 column_config={

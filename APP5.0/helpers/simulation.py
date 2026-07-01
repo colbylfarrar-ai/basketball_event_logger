@@ -173,6 +173,100 @@ def simulate_tournament(scored, teams, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED,
     return out
 
 
+def bracket_tree(scored, teams, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED, reseed=True):
+    """Roll the bracket `n` times and return a RENDER-READY probabilistic tree.
+
+    A single-elim bracket is fixed-seeded, so every slot at a given round is only
+    ever contested by the teams in that sub-bracket — which means "how often team
+    t reaches round k" IS the occupancy probability of t's slot in round k. This
+    fills each bracket position with its MOST-LIKELY occupant + that probability
+    (plus the top alternates), the chalk-bracket a coach wants to see.
+
+    Returns {"odds": <same list as simulate_tournament>, "cols": [...],
+    "seed_of", "names", "size", "n_rounds", "n"} or None (<2 teams). `cols` is a
+    list of columns left→right: cols[0] = the seeded first-round slots (size
+    entries, prob 1), cols[k] = the size/2**k slots after round k, cols[-1] = the
+    single champion slot. Each slot = {"team","seed","p","alts":[(tid,p),...]} or
+    {"team": None} for a bye.
+    """
+    teams = [t for t in teams if t in scored]
+    if len(teams) < 2:
+        return None
+    if reseed:
+        teams = sorted(teams, key=lambda t: -_rating(scored, t))
+    size = 1
+    while size < len(teams):
+        size *= 2
+    seed_order = _bracket_order(size)
+    slots = [teams[s] if s < len(teams) else None for s in seed_order]
+    seed_of = {t: i + 1 for i, t in enumerate(teams)}
+    names = {t: scored[t]["name"] for t in teams}
+
+    P = _win_prob_matrix(scored, teams, sd)
+    pidx = {t: i for i, t in enumerate(teams)}
+    rng = np.random.default_rng(seed)
+    n_rounds = size.bit_length() - 1
+    cur = np.tile(np.array([[(t if t is not None else -1) for t in slots]],
+                           dtype=int), (n, 1))
+
+    reached = {t: np.zeros(n_rounds + 1, dtype=float) for t in teams}
+    for t in teams:
+        reached[t][0] = n
+
+    def _slot(tid, p):
+        return {"team": (tid if tid is not None and tid >= 0 else None),
+                "seed": seed_of.get(tid), "p": round(float(p), 4), "alts": []}
+
+    # column 0 — the deterministic seeded first-round slots
+    cols = [[_slot(t, 1.0) for t in slots]]
+
+    width = size
+    for rnd in range(n_rounds):
+        nxt = np.full((n, width // 2), -1, dtype=int)
+        col = []
+        for m in range(width // 2):
+            left, right = cur[:, 2 * m], cur[:, 2 * m + 1]
+            winners = np.empty(n, dtype=int)
+            both = (left >= 0) & (right >= 0)
+            winners[left < 0] = right[left < 0]
+            winners[right < 0] = left[right < 0]
+            if both.any():
+                li = np.array([pidx.get(int(x), 0) for x in left[both]])
+                ri = np.array([pidx.get(int(x), 0) for x in right[both]])
+                draws = rng.random(both.sum())
+                winners[both] = np.where(draws < P[li, ri], left[both], right[both])
+            nxt[:, m] = winners
+            # occupancy distribution for this slot
+            vals, counts = np.unique(winners[winners >= 0], return_counts=True)
+            order = np.argsort(-counts)
+            ranked = [(int(vals[i]), counts[i] / n) for i in order]
+            if ranked:
+                s = _slot(ranked[0][0], ranked[0][1])
+                s["alts"] = [(int(t), round(float(p), 4)) for t, p in ranked[1:3]]
+                col.append(s)
+            else:
+                col.append(_slot(None, 0.0))
+        cols.append(col)
+        for t in teams:
+            reached[t][rnd + 1] = int((nxt == t).sum())
+        cur = nxt
+        width //= 2
+
+    odds = []
+    for s, t in enumerate(teams):
+        r = reached[t] / n
+        odds.append({
+            "team_id": t, "name": names[t], "seed": s + 1,
+            "title_odds": round(float(r[n_rounds]), 4),
+            "champ_pct": round(100 * float(r[n_rounds]), 1),
+            "finals_odds": round(float(r[n_rounds - 1]), 4) if n_rounds >= 1 else None,
+            "rounds": [round(float(x), 4) for x in r],
+        })
+    odds.sort(key=lambda d: -d["title_odds"])
+    return {"odds": odds, "cols": cols, "seed_of": seed_of, "names": names,
+            "size": size, "n_rounds": n_rounds, "n": n}
+
+
 def _bracket_order(size):
     """Seed positions for a standard single-elim bracket of `size` (power of 2)."""
     order = [0, 1]

@@ -111,16 +111,51 @@ _lab_hero("Schedule", phase="BUILD",
 # ══════════════════════════════════════════════════════════════════════════════
 #  DATA
 # ══════════════════════════════════════════════════════════════════════════════
+def _filter_sql(gender, klass):
+    """Shared WHERE fragments + params for the gender/class filter. Gender is a
+    team property (both teams in a game share it); a class filter matches when
+    EITHER team is that class (cross-class games count for both)."""
+    clauses, params = [], []
+    if gender:
+        clauses.append("t1.gender = ?")
+        params.append(gender)
+    if klass:
+        clauses.append("(t1.class = ? OR t2.class = ?)")
+        params += [klass, klass]
+    return clauses, params
+
+
 @st.cache_data(ttl=600, show_spinner=False)
-def _day_counts():
-    """{ISO date: game count}. Dates are already ISO-normalised in the DB."""
-    rows = query("SELECT date, COUNT(*) AS cnt FROM games "
-                 "WHERE date IS NOT NULL AND date <> '' GROUP BY date")
+def _filter_opts():
+    """(genders, classes) present in the league — the filter dropdown options."""
+    gs = [r["gender"] for r in query(
+        "SELECT DISTINCT gender FROM teams WHERE gender IS NOT NULL ORDER BY gender")]
+    cs = [r["class"] for r in query(
+        "SELECT DISTINCT class FROM teams WHERE class IS NOT NULL AND class <> '' "
+        "ORDER BY class")]
+    return gs, cs
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _day_counts(gender=None, klass=None):
+    """{ISO date: game count}, scoped to the gender/class filter."""
+    where = ["g.date IS NOT NULL", "g.date <> ''"]
+    extra, params = _filter_sql(gender, klass)
+    where += extra
+    rows = query(
+        "SELECT g.date, COUNT(*) AS cnt FROM games g "
+        "JOIN teams t1 ON t1.id = g.team1_id JOIN teams t2 ON t2.id = g.team2_id "
+        "WHERE " + " AND ".join(where) + " GROUP BY g.date", tuple(params))
     return {r["date"]: r["cnt"] for r in rows}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _games_on(date_str):
+def _games_on(date_str, gender=None, klass=None):
+    where = ["g.date = ?"]
+    params = [date_str]
+    extra, ep = _filter_sql(gender, klass)
+    where += extra
+    params += ep
     return query("""
         SELECT g.id, g.date, g.location, g.tracked, g.video_url,
                g.home_score, g.away_score, g.team1_id, g.team2_id,
@@ -130,9 +165,9 @@ def _games_on(date_str):
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
-        WHERE g.date = ?
+        WHERE """ + " AND ".join(where) + """
         ORDER BY g.tracked DESC, g.id
-    """, (date_str,)) or []
+    """, tuple(params)) or []
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -164,12 +199,29 @@ def _player_meta():
         "FROM players p JOIN teams t ON t.id = p.team_id")}
 
 
-counts = _day_counts()
+# ── Filters (class · gender) — scope the whole calendar + day sections ──────────
+_gopts, _copts = _filter_opts()
+_GENDER_LBL = {"M": "Boys", "F": "Girls"}
+_fc1, _fc2 = st.columns(2)
+_gsel = _fc1.selectbox("Gender", ["All"] + _gopts,
+                       format_func=lambda x: _GENDER_LBL.get(x, x),
+                       key="sched_gender")
+_csel = _fc2.selectbox("Class", ["All"] + _copts, key="sched_class")
+_gender = None if _gsel == "All" else _gsel
+_klass = None if _csel == "All" else _csel
+_filtered = bool(_gender or _klass)
+
+counts = _day_counts(_gender, _klass)
 if not counts:
-    empty_state("No games on the calendar yet",
-                "Add games with a date in the Input Hub and they'll appear "
-                "here, grouped by day.",
-                icon="📅", cta="Input Hub → Games")
+    if _filtered:
+        empty_state("No games match this filter",
+                    "No games for this class/gender. Clear the filters above to see "
+                    "the full calendar.", icon="📅")
+    else:
+        empty_state("No games on the calendar yet",
+                    "Add games with a date in the Input Hub and they'll appear "
+                    "here, grouped by day.",
+                    icon="📅", cta="Input Hub → Games")
     st.stop()
 
 all_dates = sorted(counts)
@@ -177,6 +229,11 @@ first_ym, last_ym = all_dates[0][:7], all_dates[-1][:7]
 
 st.session_state.setdefault("sched_ym", all_dates[-1][:7])
 st.session_state.setdefault("sched_sel", all_dates[-1])
+# If a filter change left the selected day with no matching games, jump to the
+# latest day that DOES match so the page never opens on an empty selection.
+if st.session_state["sched_sel"] not in counts:
+    st.session_state["sched_sel"] = all_dates[-1]
+    st.session_state["sched_ym"] = all_dates[-1][:7]
 
 
 def _shift_month(ym, delta):
@@ -284,7 +341,7 @@ def _day_section():
     interactions inside it (load-box-score checkboxes, film expanders) rerun
     only this section — not the month grid above."""
     sel = st.session_state["sched_sel"]
-    day_games = _games_on(sel)
+    day_games = _games_on(sel, _gender, _klass)
 
     st.markdown("---")
     st.markdown(f"### {_fmt_long(sel)}")

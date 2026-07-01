@@ -49,6 +49,8 @@ import helpers.badges as BG
 import helpers.archetypes as ARC
 import helpers.shrinkage as SH
 import helpers.matchups as MX
+import helpers.player_edge as PE
+from helpers.dashboard.player_edge import render as _render_edge
 import helpers.trends as TRD
 import helpers.fouls as FL
 import helpers.reports as RP
@@ -466,6 +468,12 @@ def _lab_badges(g, vis=None):
 @st.cache_data(ttl=600, show_spinner=False)
 def _lab_clusters(g, vis=None):
     return ARC.cluster_players(_table_full(g, vis))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _lab_edge(g):
+    """League-wide player-edge leaderboards (shared with the Rankings League Lab)."""
+    return PE.edge_boards(gender=g)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1347,8 +1355,8 @@ def _fx_plab():
                          for pid, r in ltab.items()}
         lab_order = sorted(ltab, key=lambda p: -(ltab[p].get("OVERALL") or 0))
 
-        sub_badge, sub_arch, sub_stab, sub_match = st.tabs(
-            ["Badges", "Archetypes", "Stabilized", "Matchups"])
+        sub_badge, sub_arch, sub_stab, sub_match, sub_edge = st.tabs(
+            ["Badges", "Archetypes", "Stabilized", "Matchups", "Player edge"])
 
         # ── Badges ───────────────────────────────────────────────────────────
         with sub_badge:
@@ -1664,6 +1672,17 @@ def _fx_plab():
                     if sh_rows:
                         st.dataframe(pd.DataFrame(sh_rows), hide_index=True,
                                      width="stretch", key="plab_match_assignments")
+
+        # ── Player edge — league-wide leaders in the tracked-edge reads ────────
+        with sub_edge:
+            st.markdown("<div class='pl-hdr'>Player edge — league leaders</div>",
+                        unsafe_allow_html=True)
+            st.caption("League-wide player leaders in the tracked-edge reads: shot-"
+                       "making over expected, who to force off their hand, defensive "
+                       "win value, clutch, self-creation, efficiency, disruption and "
+                       "rim finishing. Same boards as Rankings → League Lab; each "
+                       "gated by sample.")
+            _render_edge(_lab_edge(gender), key_prefix="plab_edge")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

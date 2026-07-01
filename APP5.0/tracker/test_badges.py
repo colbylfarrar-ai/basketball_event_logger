@@ -31,11 +31,16 @@ def test_no_badges_is_role_player():
     assert _arch([]) == "Role Player"
 
 
-def test_two_way_star_needs_both_ends_strong():
-    # gold each side -> min(off,def)=5 -> star
-    assert _arch([_b("Scoring", "Gold"), _b("Defense", "Gold")]) == "Two-Way Star"
-    # gold offense + a single bronze defense -> NOT a star (weak side too light)
+def test_two_way_star_is_the_best_of_the_best():
+    # gold ATTACKING + gold DEFENDING + a top-tier all-around gold -> star
+    assert _arch([_b("Scoring", "Gold"), _b("Defense", "Gold"),
+                  _b("Two-Way", "Gold")]) == "Two-Way Star"
+    # gold both ends but NO all-around gold -> not a star (would be too common)
+    assert _arch([_b("Scoring", "Gold"), _b("Defense", "Gold")]) != "Two-Way Star"
+    # elite offense, weak defense -> not a star
     assert _arch([_b("Scoring", "Gold"), _b("Defense", "Bronze")]) != "Two-Way Star"
+    # all-around gold but only offensive golds -> not a star (no defensive gold)
+    assert _arch([_b("Scoring", "Gold"), _b("Two-Way", "Gold")]) != "Two-Way Star"
 
 
 def test_offensive_engine_vs_flamethrower_vs_floor_general():

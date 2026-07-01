@@ -326,12 +326,18 @@ def badge_archetype(badge_list):
     if total == 0:
         return _pack("Role Player", "No badges yet — does the little things; earns "
                                     "a sharper role as the sample grows.")
-    # Two-Way Star is exclusive: the WEAKER side must still carry a gold-equivalent
-    # (badges award generously, so a couple bronze each way isn't a star). min() on
-    # the two buckets keeps it honest — real, balanced impact on both ends.
-    if min(off, dff) >= 5 or (two >= 5 and min(off, dff) >= 3):
+    # Two-Way Star is the BEST OF THE BEST — reserved, not common. Requires a GOLD
+    # badge ATTACKING (Shooting/Scoring/Playmaking) AND a GOLD badge DEFENDING
+    # (Defense/Rebounding) AND a top-tier all-around gold (Two-Way / OVERALL /
+    # Versatility / Iron). Points-only gates flooded it (badges award generously, so
+    # bronzes on both sides summed past a threshold) — demanding GOLDS on both ends
+    # plus an all-around gold keeps it to the genuine elites (~7% of the pool).
+    _gold = lambda cats: any(b["tier"] == "Gold" and b["cat"] in cats
+                             for b in badge_list)
+    if _gold(_OFF_CATS) and _gold(_DEF_CATS) and _gold(("Two-Way",)):
         return _pack("Two-Way Star",
-                     "Badge impact on both ends — scores/creates AND defends.")
+                     "Elite on BOTH ends — a gold badge attacking, a gold badge "
+                     "defending, and a top-tier all-around rating. Best of the best.")
     # offense-tilted
     if off >= max(3, 2 * dff):
         top = max(_OFF_CATS, key=lambda c: g(c, 0))

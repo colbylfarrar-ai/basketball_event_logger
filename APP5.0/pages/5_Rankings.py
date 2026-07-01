@@ -1617,6 +1617,55 @@ def _edge_boards(g):
 
 
 @st.fragment
+@st.cache_data(ttl=600, show_spinner=False)
+def _gei_board(g):
+    """Game Excitement Index for every tracked current-season game of gender `g`,
+    ranked most-dramatic first. Rebuilds each game's scoring timeline → win-prob
+    curve → GEI (same pipeline the box score uses). Tracked games only (a curve
+    needs the scoring events); box-only games have no timeline."""
+    import helpers.win_probability as WP
+    import helpers.gameflow as GF
+    rows = query(
+        """SELECT g.id, g.date, g.team1_id, g.team2_id, g.home_score, g.away_score,
+                  t1.name AS n1, t2.name AS n2
+           FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                        JOIN teams t2 ON t2.id=g.team2_id
+           WHERE g.tracked=1 AND g.season='Current' AND t1.gender=?""", (g,))
+    if not rows:
+        return []
+    ev_by = defaultdict(list)
+    for e in S.fetch_events([r["id"] for r in rows]):
+        ev_by[e["game_id"]].append(e)
+    out = []
+    for r in rows:
+        scoring = [e for e in ev_by.get(r["id"], [])
+                   if e["event_type"] in ("shot", "free_throw")
+                   and e.get("shot_result") == "make"]
+        if len(scoring) < 4:
+            continue
+        scoring.sort(key=GF.elapsed)
+        times, hc, ac, h, a = [0.0], [0], [0], 0, 0
+        for e in scoring:
+            pts = e["shot_type"] if e["event_type"] == "shot" else 1
+            if e["shooter_team_id"] == r["team1_id"]:
+                h += pts
+            elif e["shooter_team_id"] == r["team2_id"]:
+                a += pts
+            times.append(GF.elapsed(e)); hc.append(h); ac.append(a)
+        end_t = times[-1] or WP.GAME_SECONDS
+        times.append(end_t); hc.append(h); ac.append(a)
+        curve = WP.wp_curve(list(zip(times, [x - y for x, y in zip(hc, ac)])),
+                            total_secs=end_t)
+        if len(curve) < 2:
+            continue
+        summ = WP.summarize(curve)
+        out.append({"date": r["date"], "matchup": f'{r["n1"]} vs {r["n2"]}',
+                    "score": f'{r["home_score"]}-{r["away_score"]}',
+                    "gei": summ["gei"], "label": summ["label"]})
+    out.sort(key=lambda d: -d["gei"])
+    return out
+
+
 def _fx_evr():
     st.caption(
         "The whole field at a glance — the league-wide companion to the Tracked "
@@ -1628,9 +1677,38 @@ def _fx_evr():
     pteams = pack["teams"]
     sv = list(scored.values())
 
-    lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl, lab_pt, lab_def = st.tabs(
+    (lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl, lab_pt, lab_def,
+     lab_exc) = st.tabs(
         ["Landscape", "Power tiers", "Pythagoras & luck",
-         "Momentum", "Win network", "Player edge", "Play types", "Defense"])
+         "Momentum", "Win network", "Player edge", "Play types", "Defense",
+         "Excitement"])
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  EXCITEMENT — Game Excitement Index leaderboard (tracked games)
+    # ──────────────────────────────────────────────────────────────────────
+    with lab_exc:
+        _exc_lock = _paid_pool_lock()   # tracked-depth, league-wide pooled
+        if _exc_lock:
+            st.info(_exc_lock)
+        else:
+            st.caption(
+                "The most dramatic tracked games by **Game Excitement Index** "
+                "(GEI = total win-probability movement, length-normalized). A "
+                "back-and-forth thriller scores high; a wire-to-wire blowout ≈ 0.")
+            _board = _gei_board(gender)
+            if not _board:
+                st.caption("No tracked games with a scoring timeline yet — track a "
+                           "game in the Game Tracker and its GEI shows here.")
+            else:
+                _bdf = pd.DataFrame([{
+                    "Game": d["matchup"], "Score": d["score"], "Date": d["date"],
+                    "GEI": round(d["gei"], 2), "Drama": d["label"],
+                } for d in _board[:25]])
+                st.dataframe(
+                    _bdf, hide_index=True, width="stretch",
+                    column_config={"GEI": st.column_config.ProgressColumn(
+                        "GEI", format="%.2f", min_value=0,
+                        max_value=max(4.0, _board[0]["gei"]))})
 
     # ──────────────────────────────────────────────────────────────────────
     #  PLAY TYPES — league leaders by one-tap set call (team + player)

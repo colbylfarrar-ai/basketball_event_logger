@@ -361,7 +361,7 @@ def _gauge(value, vmin, vmax, label, suffix="", good_high=True, ref=None,
                        ref=ref, height=height, accent=ACCENT)
 
 
-def _poss_sankey(po, accent, height=360):
+def _poss_sankey(po, accent, height=460):
     """Possession-outcome Sankey from a TA.possession_outcomes() dict."""
     twos = po["twos"]["make"] + po["twos"]["miss"]
     threes = po["threes"]["make"] + po["threes"]["miss"]
@@ -380,7 +380,7 @@ def _poss_sankey(po, accent, height=360):
     link(2, 5, po["threes"]["miss"], "rgba(71,85,105,.4)")
     fig = go.Figure(go.Sankey(
         arrangement="snap",
-        node=dict(label=labels, color=node_color, pad=18, thickness=18,
+        node=dict(label=labels, color=node_color, pad=28, thickness=18,
                   line=dict(color="#0d1117", width=1)),
         link=dict(source=src, target=tgt, value=val, color=lc)))
     fig.update_layout(template="plotly_dark", height=height,
@@ -3812,6 +3812,20 @@ if _tdview == "Lab":
                                 hovertext=f"{e['names'][0]} + {e['names'][1]}: "
                                           f"net {e['net']:+.1f} ({e['poss']} poss)",
                                 opacity=0.55, showlegend=False))
+                        # pair-net NUMBER on each edge (not just hover) so the
+                        # graph reads at a glance
+                        _lx, _ly, _lt = [], [], []
+                        for e in edges:
+                            a, b = e["a"], e["b"]
+                            if a not in pos or b not in pos:
+                                continue
+                            _lx.append((pos[a][0] + pos[b][0]) / 2)
+                            _ly.append((pos[a][1] + pos[b][1]) / 2)
+                            _lt.append(f"{e['net']:+.0f}")
+                        net.add_trace(go.Scatter(
+                            x=_lx, y=_ly, mode="text", text=_lt,
+                            textfont=dict(size=10, color="#e6edf3"),
+                            hoverinfo="skip", showlegend=False))
                         net.add_trace(go.Scatter(
                             x=[pos[i][0] for i in node_ids],
                             y=[pos[i][1] for i in node_ids], mode="markers+text",
@@ -3846,7 +3860,7 @@ if _tdview == "Lab":
                                        reverse=True)
                     st.dataframe(pd.DataFrame([{
                         "Pair": f"{e['names'][0]} + {e['names'][1]}",
-                        "Net": e["net"], "Poss": e["poss"],
+                        "Pair Net": round(e["net"], 1), "Poss": e["poss"],
                     } for e in top_pairs]), hide_index=True, width="stretch",
                         height=min(420, 60 + 32 * len(top_pairs)))
             else:

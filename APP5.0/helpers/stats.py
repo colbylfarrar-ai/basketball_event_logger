@@ -350,6 +350,16 @@ def ts(b):
     return _safe(b["PTS"], 2 * (b["FGA"] + 0.44 * b["FTA"]))
 
 
+def scoring_efficiency(b):
+    """ScEff — FG points captured vs the shot-value ceiling if every attempt fell:
+    (2·2PM + 3·3PM) / (2·2PA + 3·3PA), which reduces to (2·FGM + 3PM)/(2·FGA + 3PA).
+    A point-weighted make rate — it rewards converting the harder, higher-value
+    shots, and reads as "of the max points these attempts could yield, the share
+    actually scored." Field goals only (no free throws). 0-1 (0 with no FGA via
+    _safe — callers gate on shot volume)."""
+    return _safe(2 * b["FGM"] + b["3PM"], 2 * b["FGA"] + b["3PA"])
+
+
 def paint_fga(b):
     """Paint FGA = 2-point attempts taken from the Center zone."""
     return b["paint_FGA"]

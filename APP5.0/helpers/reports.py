@@ -180,6 +180,7 @@ def player_card_html(player_id, gender=None, table=None):
         _sr("Three", f"{r.get('3PM', 0)}/{r.get('3PA', 0)} ({pg('3P%')})"),
         _sr("Free throw", f"{r.get('FTM', 0)}/{r.get('FTA', 0)} ({pg('FT%')})"),
         _sr("eFG% / TS%", f"{pg('eFG%')} / {pg('TS%')}"),
+        _sr("Scoring Eff. (ScEff)", pg("ScEff")),
         _sr("Pts / shot (PPS)", g("PPS", "{:.2f}")),
         _sr("Rebounds (RPG)", f"{r.get('REB', 0)} ({g('RPG')}/g)"),
         _sr("OREB / DREB", f"{r.get('OREB', 0)} / {r.get('DREB', 0)}"),

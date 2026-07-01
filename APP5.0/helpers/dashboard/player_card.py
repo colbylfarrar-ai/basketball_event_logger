@@ -607,6 +607,7 @@ def render_card(ctx):
                 f"{P['FTM']}/{P['FTA']} ({_fmt(P['FT%'],'pct')}){_ci('FT%lo','FT%hi')}"},
             _row("eFG% / TS%", "TS%", "pct") | {"Value":
                 f"{_fmt(P['eFG%'],'pct')} / {_fmt(P['TS%'],'pct')}"},
+            _row("Scoring Eff. (ScEff)", "ScEff", "pct"),
             _row("Pts/shot (PPS)", "PPS", "f2"),
             _row("Free throw rate", "FTR", "f2"),
         ]

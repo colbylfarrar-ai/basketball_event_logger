@@ -67,6 +67,13 @@ STAT_DEFS = [
     ("TS%",  "True Shooting %",   "Shooting", "PTS / (2·(FGA + 0.44·FTA))",
      "Scoring efficiency across 2s, 3s AND free throws in one number.",
      "The single best shooting-efficiency stat. ~50%+ is strong at HS.", False),
+    ("ScEff", "Scoring Efficiency", "Shooting", "(2·2PM + 3·3PM) / (2·2PA + 3·3PA)",
+     "Field-goal points scored vs the MAX if every attempt had fallen at its shot "
+     "value — a point-weighted make rate that rewards converting the harder, "
+     "higher-value shots. Free throws excluded. NOT the same as SCE / "
+     "Self-Creation %.",
+     "Higher = you're capturing more of the points your shots could yield; "
+     "100% would mean making everything.", True),
     ("3PAr", "Three-Point Rate",  "Shooting", "3PA / FGA",
      "Share of a player's shots that are threes.",
      "Shot-profile, not quality — how often they shoot from deep.", False),

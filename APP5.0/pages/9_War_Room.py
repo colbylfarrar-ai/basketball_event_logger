@@ -83,10 +83,11 @@ def _sim_season(g, n):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_bracket(g, field, n):
+def _sim_bracket(g, field, n, reseed=True, size=None):
     # bracket_tree returns BOTH the per-team odds (same shape simulate_tournament
     # gave) AND the render-ready probabilistic tree — one sim pass for both.
-    return SIM.bracket_tree(_scored(g), list(field), n=n)
+    # reseed=False → `field` is an explicit seed order (None = a bye slot).
+    return SIM.bracket_tree(_scored(g), list(field), n=n, reseed=reseed, size=size)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -634,28 +635,65 @@ with tab_season:
 def _render_bracket():
     st.subheader("Bracket / tournament odds")
     st.caption(
-        f"Seed a single-elimination field by rating and roll the bracket {n:,} "
-        "times — byes to the next power of two are handled automatically.")
+        f"Build a single-elimination bracket and roll it {n:,} times. Auto-seed by "
+        "rating, or set the size and place teams into seeds yourself. Byes to the "
+        "next power of two are handled automatically.")
 
-    default_field = order[:min(8, len(order))]
-    field = st.multiselect(
-        "Tournament field", order, default=default_field,
-        format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}", key="wr_field")
+    _csz, _cmode = st.columns([1, 2])
+    size = _csz.selectbox("Bracket size", [4, 8, 16, 32], index=1, key="wr_brk_size")
+    mode = _cmode.radio("Seeding", ["Auto (by rating)", "Manual"],
+                        horizontal=True, key="wr_brk_mode")
 
-    if len(field) < 2:
+    _BYE = -1
+    if mode.startswith("Auto"):
+        default_field = order[:min(size, len(order))]
+        field = st.multiselect(
+            "Tournament field", order, default=default_field,
+            format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}", key="wr_field")
+        seed_list, reseed = list(field), True
+        n_teams = len(field)
+    else:
+        st.caption("Place a team in each seed (1 = top seed). Leave a slot on "
+                   "“— bye —” to give that region a first-round bye.")
+        _opts = [_BYE] + list(order)
+
+        def _seedfmt(t):
+            return "— bye —" if t == _BYE else f"#{scored[t]['Rank']} {name_of[t]}"
+        seed_list, _seen, _dupes = [], set(), False
+        _grid = st.columns(4)
+        for i in range(size):
+            _dflt = order[i] if i < len(order) else _BYE
+            pick = _grid[i % 4].selectbox(
+                f"Seed {i + 1}", _opts,
+                index=(_opts.index(_dflt) if _dflt in _opts else 0),
+                format_func=_seedfmt, key=f"wr_seed_{i}")
+            if pick == _BYE or pick in _seen:      # a team can hold only one seed
+                _dupes = _dupes or (pick != _BYE)
+                seed_list.append(None)
+            else:
+                seed_list.append(pick)
+                _seen.add(pick)
+        if _dupes:
+            st.warning("A team was placed in more than one seed — the later "
+                       "duplicate(s) were dropped to byes.")
+        reseed = False
+        n_teams = len(_seen)
+
+    if n_teams < 2:
         empty_state("Pick at least two teams",
-                    "Choose a tournament field above to simulate championship odds.")
+                    "Add teams to the bracket to simulate championship odds.")
     elif (not st.session_state.get("wr_brk_ran")
-          and not st.button(f"Run bracket — roll the field {n:,} times",
+          and not st.button(f"Run bracket — roll it {n:,} times",
                             key="wr_brk_go", type="primary")):
         st.caption("The bracket is the heaviest simulation on the page, so it "
-                   "waits for the button. Results stay loaded once run.")
+                   "waits for the button. Results stay loaded once run; edit the "
+                   "size or seeds and it re-rolls.")
     else:
         st.session_state["wr_brk_ran"] = True
         with _eng("Simulating bracket…",
                   [f"{n:,} tournament runs", "Advancing winners round by round",
                    "Computing each team's title odds"]):
-            res = _sim_bracket(gender, tuple(field), n)
+            res = _sim_bracket(gender, tuple(seed_list), n, reseed, size)
         if not res:
             empty_state("Not enough rated teams in the field",
                         "Add more rated teams to simulate the bracket.")

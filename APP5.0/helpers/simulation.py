@@ -173,7 +173,8 @@ def simulate_tournament(scored, teams, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED,
     return out
 
 
-def bracket_tree(scored, teams, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED, reseed=True):
+def bracket_tree(scored, teams, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED, reseed=True,
+                 size=None):
     """Roll the bracket `n` times and return a RENDER-READY probabilistic tree.
 
     A single-elim bracket is fixed-seeded, so every slot at a given round is only
@@ -182,35 +183,51 @@ def bracket_tree(scored, teams, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED, reseed=Tr
     fills each bracket position with its MOST-LIKELY occupant + that probability
     (plus the top alternates), the chalk-bracket a coach wants to see.
 
-    Returns {"odds": <same list as simulate_tournament>, "cols": [...],
-    "seed_of", "names", "size", "n_rounds", "n"} or None (<2 teams). `cols` is a
-    list of columns left→right: cols[0] = the seeded first-round slots (size
-    entries, prob 1), cols[k] = the size/2**k slots after round k, cols[-1] = the
-    single champion slot. Each slot = {"team","seed","p","alts":[(tid,p),...]} or
-    {"team": None} for a bye.
-    """
-    teams = [t for t in teams if t in scored]
-    if len(teams) < 2:
-        return None
-    if reseed:
-        teams = sorted(teams, key=lambda t: -_rating(scored, t))
-    size = 1
-    while size < len(teams):
-        size *= 2
-    seed_order = _bracket_order(size)
-    slots = [teams[s] if s < len(teams) else None for s in seed_order]
-    seed_of = {t: i + 1 for i, t in enumerate(teams)}
-    names = {t: scored[t]["name"] for t in teams}
+    `reseed=True` (default) auto-seeds the field by rating. `reseed=False` treats
+    `teams` as an explicit SEED ORDER (index 0 = the 1-seed) and may contain None
+    for an empty seed slot — so a coach can set the size and place teams into seeds
+    by hand. `size` forces the bracket size (a power of two, e.g. 4/8/16/32);
+    default None → the next power of two above the field. Extra entries past `size`
+    are dropped; missing seeds become byes (given to the top seeds, standard).
 
-    P = _win_prob_matrix(scored, teams, sd)
-    pidx = {t: i for i, t in enumerate(teams)}
+    Returns {"odds": <same list as simulate_tournament>, "cols": [...],
+    "seed_of", "names", "size", "n_rounds", "n"} or None (<2 real teams). `cols` is
+    a list of columns left→right: cols[0] = the seeded first-round slots, cols[k] =
+    the size/2**k slots after round k, cols[-1] = the single champion slot. Each
+    slot = {"team","seed","p","alts":[(tid,p),...]} or {"team": None} for a bye.
+    """
+    if reseed:
+        teams = [t for t in teams if t in scored]
+        if len(teams) < 2:
+            return None
+        teams = sorted(teams, key=lambda t: -_rating(scored, t))
+    else:
+        # explicit seed order; keep None (and drop unknown ids) as byes
+        teams = [(t if t in scored else None) for t in teams]
+    if size is None:
+        size = 1
+        while size < len(teams):
+            size *= 2
+    teams = list(teams[:size])                 # drop any overflow past the size
+    filled = [t for t in teams if t is not None]
+    if len(filled) < 2:
+        return None
+
+    seed_order = _bracket_order(size)
+    slots = [teams[s] if (s < len(teams) and teams[s] is not None) else None
+             for s in seed_order]
+    seed_of = {t: i + 1 for i, t in enumerate(teams) if t is not None}
+    names = {t: scored[t]["name"] for t in filled}
+
+    P = _win_prob_matrix(scored, filled, sd)
+    pidx = {t: i for i, t in enumerate(filled)}
     rng = np.random.default_rng(seed)
     n_rounds = size.bit_length() - 1
     cur = np.tile(np.array([[(t if t is not None else -1) for t in slots]],
                            dtype=int), (n, 1))
 
-    reached = {t: np.zeros(n_rounds + 1, dtype=float) for t in teams}
-    for t in teams:
+    reached = {t: np.zeros(n_rounds + 1, dtype=float) for t in filled}
+    for t in filled:
         reached[t][0] = n
 
     def _slot(tid, p):
@@ -247,16 +264,16 @@ def bracket_tree(scored, teams, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED, reseed=Tr
             else:
                 col.append(_slot(None, 0.0))
         cols.append(col)
-        for t in teams:
+        for t in filled:
             reached[t][rnd + 1] = int((nxt == t).sum())
         cur = nxt
         width //= 2
 
     odds = []
-    for s, t in enumerate(teams):
+    for t in filled:
         r = reached[t] / n
         odds.append({
-            "team_id": t, "name": names[t], "seed": s + 1,
+            "team_id": t, "name": names[t], "seed": seed_of[t],
             "title_odds": round(float(r[n_rounds]), 4),
             "champ_pct": round(100 * float(r[n_rounds]), 1),
             "finals_odds": round(float(r[n_rounds - 1]), 4) if n_rounds >= 1 else None,

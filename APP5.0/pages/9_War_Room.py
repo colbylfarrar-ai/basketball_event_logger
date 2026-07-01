@@ -210,6 +210,65 @@ def _lineup_net(g, team_id, lineup):
     return TA.lineup_prediction(rows, list(lineup), _wl_ctx(g), team_id)["NetRtg"]
 
 
+def _lineup_statline(pred, ctx, table):
+    """Per-player PROJECTED box line for a five, sorted by projected points.
+
+    PTS is lineup-aware — the unit's projected points-for (exp_pf, which drives the
+    score line) split across the five by each player's offensive share, so the
+    per-player points sum to the headline score and stacking scorers splits the
+    ball (a genuine prediction, not the per-game average). REB/AST/STL/BLK/TOV are
+    the player's per-game production pace-adjusted to the unit's pace (we don't
+    model rebound/assist interaction, so these ride each player's baseline scaled
+    for tempo). `table` = the full PR.player_stat_table for the five's gender. Also
+    carries SC/G (shots created) and the defensive z as context columns."""
+    pace = pred.get("pace") or 0
+    exp_pf = pred.get("exp_pf")
+    tracked = ctx.get("tracked", {}) or {}
+    contrib = pred.get("contrib") or []
+    tot_off = sum(c["off_pts100"] for c in contrib) or 0
+    rows = []
+    for c in contrib:
+        fr = table.get(c["pid"], {})
+        ppace = (tracked.get(fr.get("team_id"), {}) or {}).get("Pace") or pace
+        f = (pace / ppace) if ppace else 1.0
+
+        def _s(k, _f=f, _fr=fr):
+            v = _fr.get(k)
+            return round(v * _f, 1) if v is not None else None
+        rows.append({
+            "Player": c["name"], "Team": fr.get("team", ""),
+            # calibrated points-for shared by offensive slice -> sums to exp_pf
+            "PTS": (round(exp_pf * c["off_pts100"] / tot_off, 1)
+                    if exp_pf is not None and tot_off else None),
+            "REB": _s("RPG"), "AST": _s("APG"), "STL": _s("SPG"),
+            "BLK": _s("BPG"), "TOV": _s("TPG"),
+            "SC/G": _s("SC/G"), "DEF z": c["def_z"],
+        })
+    return rows
+
+
+def _render_proj_statline(pred, ctx, table, key):
+    """Render the predicted stat line table + a unit-total row (shared by the One-
+    team and Any-team lineup views)."""
+    rows = _lineup_statline(pred, ctx, table)
+    if not rows:
+        return
+    st.markdown("**Predicted stat line — this five**")
+    _sum = lambda k: round(sum(r[k] or 0 for r in rows), 1)
+    total = {"Player": "Unit total", "Team": "", "PTS": _sum("PTS"),
+             "REB": _sum("REB"), "AST": _sum("AST"), "STL": _sum("STL"),
+             "BLK": _sum("BLK"), "TOV": _sum("TOV"), "SC/G": _sum("SC/G"),
+             "DEF z": None}
+    st.dataframe(pd.DataFrame(rows + [total]), hide_index=True,
+                 width="stretch", key=key)
+    st.caption(
+        "Projected per-game line for this unit. **PTS** is lineup-aware — each "
+        "player's share of the five's offense at the projected pace, so stacking "
+        "scorers splits the ball. REB/AST/STL/BLK/TOV are per-game production pace-"
+        "adjusted to the unit (rebound/assist interaction isn't modelled). "
+        "SC/G = shots created · DEF z = defensive value (0 = league average).")
+
+
 # Paid + Solo (not in the Coaches' Co-op) get ONLY the Lineup creator — building
 # your own team's lineup uses your own tracked data. Scouting other teams — the
 # matchup projection and the season/bracket sims (league-wide) — is Co-op only.
@@ -748,6 +807,7 @@ with tab_lineup:
                     _sca.update_yaxes(title="Defensive z (higher = better)")
                     _style(_sca, 340)
                     st.plotly_chart(_sca, width="stretch", key="wl1_contrib")
+                _render_proj_statline(_pred, _ctxd, _tbl, "wl1_proj_tbl")
                 _bench = [r for r in _rows if r["_pid"] not in _chosen]
                 if _bench and len(_chosen) == 5 and _pred["NetRtg"] is not None:
                     _base = _pred["NetRtg"]
@@ -856,13 +916,10 @@ with tab_lineup:
             # League-wide ratings are already visible to this (League-wide) viewer,
             # so the cross-team five earns the SAME possession-calibrated projection
             # the One-team tab gives: ORtg/DRtg/Net, an estimated score vs an average
-            # team (league pace, team_id=None), and a per-player estimate of who
-            # scores / creates / rebounds / defends. The five is normalised to its
-            # own SC/A operating point (it's its own "team"). Needs one gender — the
-            # calibration ctx is per-gender and you never field a cross-gender five.
-            def _rnd(v, n=1):
-                return None if v is None else (round(v) if n == 0 else round(v, n))
-
+            # team (league pace, team_id=None), and a predicted per-player stat line.
+            # The five is normalised to its own SC/A operating point (it's its own
+            # "team"). Needs one gender — calibration ctx is per-gender and you never
+            # field a cross-gender five.
             _genders = {r["gender"] for r in _sel}
             if len(_genders) == 1:
                 _g1 = next(iter(_genders))
@@ -883,32 +940,7 @@ with tab_lineup:
                     _pm[4].metric("League rank",
                                   f"#{_pred['league']['rank']} / "
                                   f"{_pred['league']['of']}")
-                    _contrib = _pred.get("contrib") or []
-                    if _contrib:
-                        _pace = _pred.get("pace") or 0
-                        _est = []
-                        for _c in _contrib:        # already sorted: who scores first
-                            _fr = _ft.get(_c["pid"], {})
-                            _pr = _idx.get(_c["pid"], {})
-                            _est.append({
-                                "Player": _c["name"], "Team": _pr.get("team", ""),
-                                "Proj pts": (round(_c["off_pts100"] / 100.0 * _pace, 1)
-                                             if _pace else None),
-                                "PPG": _rnd(_fr.get("PPG")), "APG": _rnd(_fr.get("APG")),
-                                "RPG": _rnd(_fr.get("RPG")),
-                                "SC/G": _rnd(_fr.get("SC/G")),
-                                "SelfCr%": _rnd(_fr.get("SelfCr%"), 0),
-                                "REB%": _rnd(_fr.get("REB%"), 0),
-                                "DEF z": _c["def_z"],
-                            })
-                        st.dataframe(pd.DataFrame(_est), hide_index=True,
-                                     width="stretch", key="wl_proj_tbl")
-                        st.caption(
-                            "Proj pts = each player's slice of the unit's offense at "
-                            "league pace (sorted by scoring). PPG/APG/RPG are actual "
-                            "per game; SC/G = shots created, SelfCr% = self-creation, "
-                            "REB% = rebound rate, DEF z = defensive value (0 = league "
-                            "average). The score line is vs an average team.")
+                    _render_proj_statline(_pred, _wl_ctx(_g1), _ft, "wl_proj_tbl")
                     for _f in _pred.get("flags", []):
                         st.caption(_f)
             else:

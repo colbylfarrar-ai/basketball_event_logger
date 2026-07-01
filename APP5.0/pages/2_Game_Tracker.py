@@ -37,6 +37,34 @@ ZONES = ["LC", "LW", "C", "RW", "RC"]
 COURT_W = 265   # tap-court image px (rim at top, half-court at bottom — matches PWA)
 REFRESH_SECS = 3
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _scout_cues(team_id):
+    """A team's PREGAME scouting read from its PRIOR tracked games (not this game's
+    live events — coaches fast-track live, so live depth is thin). Shot diet +
+    side-lean (force them the other way) + hot zone + top scorers. Cached per team;
+    returns empty/graceful when the team has no tracked history."""
+    import helpers.insights_team as IT
+    ten = IT.shot_tendencies(team_id)
+    scorers = []
+    grow = query("SELECT gender FROM teams WHERE id=?", (team_id,))
+    gender = grow[0]["gender"] if grow else None
+    if gender:
+        try:
+            import helpers.player_ratings as PR
+            tbl = PR.player_stat_table(gender=gender, min_games=1)
+            mine = [r for r in tbl.values()
+                    if r.get("team_id") == team_id and r.get("PPG")]
+            mine.sort(key=lambda r: -(r.get("PPG") or 0))
+            scorers = [(r["name"], r["PPG"]) for r in mine[:3]]
+        except Exception:
+            scorers = []
+    return {"ten": ten, "scorers": scorers}
+
+
+def _has_cues(c):
+    return bool(c["ten"].get("available") or c["scorers"])
+
 _cfg, ACCENT = page_chrome("Game Tracker")
 
 page_header("Game Tracker",
@@ -255,6 +283,49 @@ if not ENT.can_see_tracked_game_view(_ident, game_id):
 # demo game — a Free coach gets the SCORE, live box score and shot chart as the
 # hook, never possession/efficiency analytics. Guarded by _paid_view below.
 _paid_view = ENT.has_paid_plan(_ident)
+
+# ── Pregame scouting cues — each team's tendencies from its PRIOR tracked games
+#    (a scout read to glance at pregame / during fast-mode logging), NOT computed
+#    from this game's live events. Paid depth; hidden when neither team has a
+#    tracked history (untracked opponent → no panel). ──────────────────────────
+if _paid_view:
+    _cue1, _cue2 = _scout_cues(t1id), _scout_cues(t2id)
+    if _has_cues(_cue1) or _has_cues(_cue2):
+        with st.expander("📋 Pregame scouting cues — team tendencies from tracked "
+                         "history", expanded=False):
+            st.caption("Built from each team's PRIOR tracked games — a pregame "
+                       "read, not this game's live stats. Scout the opponent's "
+                       "column; force them off their strong side.")
+            _sccols = st.columns(2)
+            for _col, _tnm, _cue in ((_sccols[0], t1name, _cue1),
+                                     (_sccols[1], t2name, _cue2)):
+                with _col:
+                    st.markdown(f"**{_tnm}**")
+                    if not _has_cues(_cue):
+                        st.caption("No tracked history yet.")
+                        continue
+                    _t = _cue["ten"]
+                    if _t.get("available"):
+                        _sd = _t["side"]
+                        _lean = max(_sd, key=_sd.get)
+                        _force = min(_sd, key=_sd.get)
+                        st.markdown(
+                            f"- Shot diet: **{_t['rim_rate']*100:.0f}%** rim · "
+                            f"{_t['mid_rate']*100:.0f}% mid · "
+                            f"**{_t['three_rate']*100:.0f}%** three")
+                        st.markdown(
+                            f"- Leans **{_lean}** ({_sd[_lean]*100:.0f}% of shots) "
+                            f"— force them **{_force}**")
+                        _zz = [z for z in _t["zones"]
+                               if z["poss"] >= 3 and z["PPP"] is not None]
+                        _zz.sort(key=lambda z: -z["PPP"])
+                        if _zz:
+                            st.markdown(
+                                f"- Hot zone: **{_zz[0]['label']}** "
+                                f"({_zz[0]['PPP']:.2f} PPP on {_zz[0]['poss']} shots)")
+                    if _cue["scorers"]:
+                        _who = " · ".join(f"{n} {p:.1f}p" for n, p in _cue["scorers"])
+                        st.markdown(f"- Key scorers: {_who}")
 if not _paid_view:
     # On the free-demo game: make it obvious this is the one free game.
     st.success("🎁 This is your **free** game — log it below and watch the live "

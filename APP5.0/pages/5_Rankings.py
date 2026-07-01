@@ -2231,8 +2231,13 @@ def _fx_evr():
         else:
             st.info("Not enough teams in this filter to draw a network.")
 
-        # biggest upsets — winner Power far below loser Power
-        st.markdown("**Biggest upsets** — winners who beat much higher-Power teams")
+        # biggest upsets — winner Power far below loser Power. The class filter
+        # above extends down here: with classes picked, show only upsets that
+        # involve one of those classes ("biggest upsets in 3A").
+        _cls_note = (f" · {', '.join(pick_cls)}" if pick_cls else "")
+        st.markdown(f"**Biggest upsets** — winners who beat much higher-Power teams"
+                    f"{_cls_note}")
+        node_cls = {n["id"]: n["class"] for n in net["nodes"]}
         rows = LA._finished_rows(gender)
         ups = []
         for g in rows:
@@ -2241,6 +2246,11 @@ def _fx_evr():
                 continue
             win, lose = (g["team1_id"], g["team2_id"]) if hp > ap \
                 else (g["team2_id"], g["team1_id"])
+            # class filter (extended from the network): keep the game if either
+            # team is in a selected class.
+            if pick_cls and node_cls.get(win) not in pick_cls \
+                    and node_cls.get(lose) not in pick_cls:
+                continue
             pw_w = scored.get(win, {}).get("Power")
             pw_l = scored.get(lose, {}).get("Power")
             if pw_w is None or pw_l is None:
@@ -2254,9 +2264,13 @@ def _fx_evr():
                             "Power gap": round(gap, 1)})
         ups.sort(key=lambda r: r["Power gap"], reverse=True)
         if ups:
-            st.dataframe(pd.DataFrame(ups[:12]), hide_index=True, width="stretch")
+            _show = fc2.slider("Upsets to show", 5, min(40, len(ups)),
+                               min(12, len(ups)), key="lab_net_ups") \
+                if len(ups) > 5 else len(ups)
+            st.dataframe(pd.DataFrame(ups[:_show]), hide_index=True, width="stretch")
         else:
-            st.info("No upsets recorded.")
+            st.info("No upsets match this filter." if pick_cls
+                    else "No upsets recorded.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

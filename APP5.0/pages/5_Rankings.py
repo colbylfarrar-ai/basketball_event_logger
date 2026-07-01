@@ -1739,33 +1739,44 @@ def _fx_evr():
                 st.info(f"No **{_gt}** games yet. Set game types on the Roster & "
                         "District page (bulk-set makes playoffs quick).")
             else:
-                _rows = sorted(_sc.values(), key=lambda r: (r.get("Rank") or 1e9))
-                _gtmax = max((r.get("Power") or 0) for r in _rows) or 100
-                _df = pd.DataFrame([{
-                    "Rank": r.get("Rank"), "Team": r.get("name"), "GP": r.get("GP"),
-                    "W-L": f"{r.get('W', 0)}-{r.get('L', 0)}",
-                    "MOV": (round(r["MOV"], 1) if r.get("MOV") is not None else None),
-                    "Power": (round(r["Power"], 1) if r.get("Power") is not None else None),
-                    "Rating": (round(r["Rating"], 2) if r.get("Rating") is not None else None),
-                    "AdjNet": (round(r["AdjNet"], 1) if r.get("AdjNet") is not None else None),
-                    "SOS": (round(r["SOS"], 1) if r.get("SOS") is not None else None),
-                } for r in _rows])
-                st.dataframe(
-                    _df, hide_index=True, width="stretch", key="lab_gt_power",
-                    column_config={"Power": st.column_config.ProgressColumn(
-                        "Power", format="%.1f", min_value=0, max_value=100)})
-                st.caption(f"{len(_rows)} team(s) with a {_gt} game · opponent-adjusted "
-                           "over just those games (results-only, covers every team).")
+                # honour the page-level Class / min-games filter (min games here =
+                # games IN this type, since the rows are already type-scoped).
+                _rows = _filter_rows(
+                    sorted(_sc.values(), key=lambda r: (r.get("Rank") or 1e9)))
+                if not _rows:
+                    st.info("No teams match the current Class / min-games filter "
+                            "(above). Widen it or lower the games threshold.")
+                else:
+                    _df = pd.DataFrame([{
+                        "Rank": r.get("Rank"), "Team": r.get("name"), "GP": r.get("GP"),
+                        "W-L": f"{r.get('W', 0)}-{r.get('L', 0)}",
+                        "MOV": (round(r["MOV"], 1) if r.get("MOV") is not None else None),
+                        "Power": (round(r["Power"], 1) if r.get("Power") is not None else None),
+                        "Rating": (round(r["Rating"], 2) if r.get("Rating") is not None else None),
+                        "AdjNet": (round(r["AdjNet"], 1) if r.get("AdjNet") is not None else None),
+                        "SOS": (round(r["SOS"], 1) if r.get("SOS") is not None else None),
+                    } for r in _rows])
+                    st.dataframe(
+                        _df, hide_index=True, width="stretch", key="lab_gt_power",
+                        column_config={"Power": st.column_config.ProgressColumn(
+                            "Power", format="%.1f", min_value=0, max_value=100)})
+                    st.caption(f"{len(_rows)} team(s) · opponent-adjusted over just "
+                               f"the {_gt} games · scoped by the Class / min-games "
+                               "filter above.")
         else:
-            _tt = _type_stat_table(gender, _gt)
+            _tt = [r for r in _type_stat_table(gender, _gt)
+                   if r.get("Class") in _PICKED_CLASSES
+                   and (r.get("Trk GP") or 0) >= _MIN_GP]
             if not _tt:
-                st.info(f"No **tracked** {_gt} games yet — efficiency needs a tracked "
-                        "game of this type.")
+                st.info(f"No **tracked** {_gt} games match — efficiency needs a "
+                        "tracked game of this type within the Class / min-games "
+                        "filter above.")
             else:
                 st.dataframe(pd.DataFrame(_tt), hide_index=True, width="stretch",
                              key="lab_gt_eff")
-                st.caption(f"Efficiency scoped to tracked {_gt} games. Record / results "
-                           "columns may reflect the full season.")
+                st.caption(f"Efficiency scoped to tracked {_gt} games (Class / "
+                           "min-games filter applied). Record / results columns may "
+                           "reflect the full season.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  EXCITEMENT — Game Excitement Index leaderboard (tracked games)

@@ -1174,10 +1174,6 @@ if _tdview == "Charts":
          "Quarters", "Play Style", "Playmaking", "Defense Scheme",
          "Situational"])
 
-    # Playmaking (passing network + flow) — moved here from Lab->Advanced.
-    with ch_play:
-        _fx_playmaking()
-
     # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
     # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
     # the page passes plain values + its own cached wrappers. Self-gates on
@@ -3233,6 +3229,14 @@ def _fx_playmaking():
 # ───────────────────────────────────────── GAME FLOW ────────────────────
 
 
+if _tdview == "Charts":
+    # Playmaking render — deferred to here so _fx_playmaking() is already defined
+    # (the ch_* Charts sub-tab objects are module globals, set in the CHARTS view).
+    with ch_play:
+        _fx_playmaking()
+
+
+@st.fragment
 def _fx_chadv():
     st.caption("The analytics lab — league-relative efficiency, team DNA, "
                "schedule résumé, the passing network and possession flow. (Shot "

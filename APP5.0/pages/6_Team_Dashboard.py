@@ -236,7 +236,7 @@ def _shot_row(name, a, ppf=1.0, ftpf=0.0):
         "3PA": a["3PA"], "3P%": _pctf(a["3P%"]) if a["3PA"] else "—",
         "eFG%": _pctf(a["eFG"]) if a["FGA"] else "—",
         "PPP": f"{ppp:.2f}" if ppp is not None else "—",
-        "SCE": f"{a['SCE']:.3f}" if a["FGA"] else "—",
+        "ScEff": f"{a['SCE']:.3f}" if a["FGA"] else "—",
         "PTS": a["PTS"],
     }
 
@@ -396,7 +396,7 @@ def _poss_sankey(po, accent, height=460):
 
 page_header("Team Dashboard")
 _glossary_key("eFG%", "TS%", "USG%", "ORtg", "DRtg", "NetRtg", "PPP", "TOV%",
-              "OREB%", "DSHOT%", "PPS", "SCE", "FTr", "3PAr",
+              "OREB%", "DSHOT%", "PPS", "ScEff", "FTr", "3PAr",
               label="📖 Stat key — what the advanced columns mean")
 
 # Default team comes from Settings. Look up its league so the gender radio
@@ -1336,7 +1336,7 @@ if _tdview == "Charts":
                     "3P%": _pctf(r["3P%"]) if r["3PA"] else "—",
                     "PPP": (f"{_ppp(r, ppf, ftpf):.2f}"
                             if _ppp(r, ppf, ftpf) is not None else "—"),
-                    "SCE": f"{r['SCE']:.3f}",
+                    "ScEff": f"{r['SCE']:.3f}",
                     "AST%": _pctf(r["AST%"]),
                 } for r in plen])
                 lc, rc = st.columns([1, 1])
@@ -1423,7 +1423,7 @@ if _tdview == "Charts":
                 sm[2].metric("FG%", _pctf(S.fg_pct(tb)))
                 sm[3].metric("3P%", _pctf(S.fg3_pct(tb)))
                 sm[4].metric("Paint FG%", _pctf(S.paint_fg_pct(tb)))
-                sm[5].metric("SCE", f"{S.shot_efficiency(tb):.3f}",
+                sm[5].metric("ScEff", f"{S.shot_efficiency(tb):.3f}",
                              help="Scoring efficiency = (PTS − FT) / (2PA·2 + 3PA·3) "
                                   "— FG points as a share of the max possible.")
 
@@ -1755,9 +1755,9 @@ if _tdview == "Charts":
 
                 cc3, cc4 = st.columns(2)
                 with cc3:
-                    st.markdown("**SCE by creation type** (2s vs 3s)")
+                    st.markdown("**ScEff by creation type** (2s vs 3s)")
                     st.plotly_chart(_crt_fig(
-                        lambda a: a["SCE"], "SCE",
+                        lambda a: a["SCE"], "ScEff",
                         text_fn=lambda a: f"{a['SCE']:.2f}" if a["FGA"] else "—"),
                         width="stretch", key="sh_crb_sce")
                 with cc4:
@@ -1766,7 +1766,7 @@ if _tdview == "Charts":
                         lambda a: a["PPS"], "Pts / shot",
                         text_fn=lambda a: f"{a['PPS']:.2f}" if a["FGA"] else "—"),
                         width="stretch", key="sh_crb_pps")
-                st.caption("Each creation graph split by shot value. SCE = (FG points) "
+                st.caption("Each creation graph split by shot value. ScEff = (FG points) "
                            "/ max FG points possible; PPS = points per attempt. Higher "
                            "= more efficient looks from that creation type.")
 
@@ -1944,7 +1944,7 @@ if _tdview == "Charts":
                                    "means easier looks on average.")
                 slm[1].metric("Points / shot", f"{S.pps(tb):.2f}",
                               help="Field-goal points per FGA (free throws excluded).")
-                slm[2].metric("Scoring efficiency (SCE)",
+                slm[2].metric("Scoring efficiency (ScEff)",
                               f"{S.shot_efficiency(tb):.3f}")
                 slm[3].metric("Contested rate",
                               _pctf(bundle["guarded"]["guard_share"]))
@@ -2603,10 +2603,10 @@ def _fx_chqt():
 
         c5, c6 = st.columns(2)
         with c5:
-            st.markdown("**Scoring efficiency** — PPS & SCE")
+            st.markdown("**Scoring efficiency** — PPS & ScEff")
             st.plotly_chart(_q_lines(
                 qsq, [("Pts / shot", _qv(lambda d: S.ppsa(d["team"])), ACCENT),
-                      ("SCE", _qv(lambda d: S.shot_efficiency(d["team"])), GOOD)],
+                      ("ScEff", _qv(lambda d: S.shot_efficiency(d["team"])), GOOD)],
                 "Value"), width="stretch", key="q_pps")
         with c6:
             st.markdown("**Shot volume / game** — FGA · 3PA · FTA")
@@ -2802,7 +2802,7 @@ def _fx_chqt():
                 "eFG%": _pctf(S.efg(b)), "TS%": _pctf(S.ts(b)),
                 "Paint%": (_pctf(S.paint_fg_pct(b)) if b["paint_FGA"] else "—"),
                 "PPS": f"{S.pps(b):.2f}", "PPP": f"{S._safe(b['PTS'], poss_q):.2f}",
-                "SCE": f"{S.shot_efficiency(b):.3f}", "PTS": b["PTS"],
+                "ScEff": f"{S.shot_efficiency(b):.3f}", "PTS": b["PTS"],
             }
 
         reg = [q for q in qsq if q <= 4]

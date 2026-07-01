@@ -663,13 +663,13 @@ def render_box_score(game_id: int):
         # scoring by possession length
         st.markdown("**Scoring by possession length**")
         st.caption("Each team's own shots bucketed by how long the possession ran. "
-                   "PPP = points per shot here · SCE = scoring efficiency · "
+                   "PPP = points per shot here · ScEff = scoring efficiency · "
                    "Self/Pass/Screen/Both = how the shot was created.")
         plcfg = {
             "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
             "2P%": st.column_config.NumberColumn("2P%", format="%.0f%%"),
             "3P%": st.column_config.NumberColumn("3P%", format="%.0f%%"),
-            "SCE": st.column_config.NumberColumn("SCE", format="%.0f%%"),
+            "SCE": st.column_config.NumberColumn("ScEff", format="%.0f%%"),
             "AST%": st.column_config.NumberColumn("AST%", format="%.0f%%"),
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
         }
@@ -733,7 +733,7 @@ def render_box_score(game_id: int):
         cbcfg = {c: st.column_config.NumberColumn(c, format="%.0f%%")
                  for c in ("FG%", "2P%", "3P%", "eFG%")}
         cbcfg["PPP"] = st.column_config.NumberColumn("PPP", format="%.2f")
-        cbcfg["SCE"] = st.column_config.NumberColumn("SCE", format="%.0f%%")
+        cbcfg["SCE"] = st.column_config.NumberColumn("ScEff", format="%.0f%%")
         for tid, nm in [(t1id, t1name), (t2id, t2name)]:
             cb = TA.creation_breakdown(tid, [game_id], events=events)
             df = pd.DataFrame([{

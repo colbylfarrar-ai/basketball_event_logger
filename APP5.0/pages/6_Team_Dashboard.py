@@ -1168,10 +1168,15 @@ if _tdview == "Lab":
         ["Advanced", "Build", "Impact Lab"])
 
 if _tdview == "Charts":
-    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps, ch_dscheme,
-     ch_sit) = st.tabs(
+    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps, ch_play,
+     ch_dscheme, ch_sit) = st.tabs(
         ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
-         "Quarters", "Play Style", "Defense Scheme", "Situational"])
+         "Quarters", "Play Style", "Playmaking", "Defense Scheme",
+         "Situational"])
+
+    # Playmaking (passing network + flow) — moved here from Lab->Advanced.
+    with ch_play:
+        _fx_playmaking()
 
     # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
     # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
@@ -3069,15 +3074,173 @@ if _tdview == "Charts":
 
 
 @st.fragment
+def _fx_playmaking():
+    """Passing network + possession flow — the Playmaking view (moved from
+    Lab -> Advanced to Charts)."""
+    if not has_tracked:
+        st.info("Tracked games needed for the passing network and possession "
+                "flow.")
+    else:
+        an = bundle["assist_network"]
+        name_by = {p["_pid"]: f"#{p['number']}" for p in players}
+        full_by = {p["_pid"]: p["name"] for p in players}
+
+        # ── assist network ──────────────────────────────────────────────
+        st.markdown("<div class='lab-hdr'>Passing Network</div>",
+                    unsafe_allow_html=True)
+        am = st.columns(3)
+        am[0].metric("Assisted FG%", _pctf(an["totals"]["ast_rate"]),
+                     help="Share of made field goals that came off a pass.")
+        am[1].metric("Total assists", an["totals"]["assisted"])
+        am[2].metric("Made FGs", an["totals"]["made"])
+
+        node_ids = [i for i in sorted(
+            set(an["made_fg"]) | set(an["assists"]),
+            key=lambda i: an["made_fg"].get(i, 0), reverse=True)
+            if i in name_by]
+        if len(node_ids) >= 2:
+            n = len(node_ids)
+            pos = {pid: (math.cos(2 * math.pi * k / n - math.pi / 2),
+                         math.sin(2 * math.pi * k / n - math.pi / 2))
+                   for k, pid in enumerate(node_ids)}
+            net = go.Figure()
+            max_ct = max((e["count"] for e in an["edges"]), default=1)
+            for e in an["edges"]:
+                a, b = e["from"], e["to"]
+                if a not in pos or b not in pos:
+                    continue
+                x0, y0 = pos[a]
+                x1, y1 = pos[b]
+                net.add_trace(go.Scatter(
+                    x=[x0, x1], y=[y0, y1], mode="lines",
+                    line=dict(width=1 + 5 * e["count"] / max_ct,
+                              color=f"rgba(0,229,255,"
+                                    f"{0.25 + 0.5 * e['count'] / max_ct:.2f})"),
+                    hoverinfo="text",
+                    hovertext=f"{full_by.get(a,'?')} → {full_by.get(b,'?')}: "
+                              f"{e['count']} assists",
+                    showlegend=False))
+            made_sizes = [an["made_fg"].get(i, 0) for i in node_ids]
+            mx = max(made_sizes) or 1
+            net.add_trace(go.Scatter(
+                x=[pos[i][0] for i in node_ids],
+                y=[pos[i][1] for i in node_ids],
+                mode="markers+text",
+                marker=dict(
+                    size=[20 + 34 * (an["made_fg"].get(i, 0) / mx)
+                          for i in node_ids],
+                    color=[an["assists"].get(i, 0) for i in node_ids],
+                    colorscale=HEAT, showscale=True,
+                    colorbar=dict(title="Assists"),
+                    line=dict(width=2, color="#0d1117")),
+                text=[name_by[i] for i in node_ids],
+                textposition="middle center",
+                textfont=dict(size=10, color="#f0f6fc"),
+                hovertext=[f"{full_by.get(i,'?')}<br>"
+                           f"{an['made_fg'].get(i,0)} made FG · "
+                           f"{an['assists'].get(i,0)} ast given · "
+                           f"{an['assisted_fgm'].get(i,0)} scored off a pass"
+                           for i in node_ids],
+                hovertemplate="%{hovertext}<extra></extra>",
+                showlegend=False))
+            net.update_xaxes(visible=False, range=[-1.45, 1.45])
+            net.update_yaxes(visible=False, range=[-1.45, 1.45],
+                             scaleanchor="x", scaleratio=1)
+            _style(net, 480)
+            net.update_layout(plot_bgcolor="rgba(0,0,0,0)",
+                              margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(net, width="stretch", key="adv_network")
+            st.caption("Node size = made field goals · node color = assists "
+                       "handed out · arrow thickness = how often that passer "
+                       "found that finisher. Hover for the full line.")
+
+            top_edges = an["edges"][:8]
+            if top_edges:
+                st.markdown("**Top passing connections**")
+                st.dataframe(pd.DataFrame([{
+                    "Passer": full_by.get(e["from"], "?"),
+                    "Finisher": full_by.get(e["to"], "?"),
+                    "Assists": e["count"], "Points created": e["pts"],
+                } for e in top_edges]), hide_index=True, width="stretch")
+        else:
+            st.caption("Not enough assisted baskets to draw a network yet.")
+
+        # ── possession-outcome Sankey ───────────────────────────────────
+        st.markdown("<div class='lab-hdr'>How Every Possession Ends</div>",
+                    unsafe_allow_html=True)
+        po = bundle["poss_outcomes"]
+        st.plotly_chart(_poss_sankey(po, ACCENT), width="stretch",
+                        key="adv_sankey")
+        pm = st.columns(4)
+        shots = po["twos"]["make"] + po["twos"]["miss"] + \
+            po["threes"]["make"] + po["threes"]["miss"]
+        pm[0].metric("Possessions", po["total"])
+        pm[1].metric("End in a shot", _pctf(S._safe(shots, po["total"])))
+        pm[2].metric("End in a turnover",
+                     _pctf(S._safe(po["tov"], po["total"])))
+        scored_poss = po["twos"]["make"] + po["threes"]["make"]
+        pm[3].metric("Possessions that score",
+                     _pctf(S._safe(scored_poss, po["total"])),
+                     help="Field goals only (free-throw trips excluded).")
+        st.caption("A possession is one shot or one turnover (the locked "
+                   "rule). Free-throw trips aren't possessions, so they don't "
+                   "appear here.")
+
+        # ── scoring balance ─────────────────────────────────────────────
+        st.markdown("<div class='lab-hdr'>Scoring Balance</div>",
+                    unsafe_allow_html=True)
+        scorers = sorted([p for p in players if (p["PTS"] or 0) > 0],
+                         key=lambda p: p["PTS"], reverse=True)
+        tot_pts = sum(p["PTS"] for p in scorers)
+        if scorers and tot_pts:
+            shares = [p["PTS"] / tot_pts for p in scorers]
+            hhi = sum(s * s for s in shares)
+            eff_scorers = 1 / hhi
+            nbal = len(shares)
+            balance_idx = (round(100 * (eff_scorers - 1) / (nbal - 1))
+                           if nbal > 1 else 100)
+            top_share = shares[0] * 100
+            bc1, bc2 = st.columns([1, 2])
+            with bc1:
+                st.markdown(
+                    f"<div class='spotlight'>"
+                    f"<div class='spotlight-num' style='color:{CYBER}'>"
+                    f"{eff_scorers:.1f}</div>"
+                    f"<div class='spotlight-lbl'>Effective scorers</div>"
+                    f"<div class='spotlight-sub'>Balance index "
+                    f"{balance_idx}/100 · top scorer carries "
+                    f"{top_share:.0f}%</div></div>",
+                    unsafe_allow_html=True)
+                st.caption("Effective scorers = inverse-Herfindahl of the "
+                           "point distribution: how many players the offense "
+                           "*effectively* leans on. Higher = more balanced.")
+            with bc2:
+                top8 = scorers[:8]
+                bal = go.Figure(go.Bar(
+                    x=[p["PTS"] / tot_pts * 100 for p in reversed(top8)],
+                    y=[f"#{p['number']} {p['name']}" for p in reversed(top8)],
+                    orientation="h",
+                    marker=dict(color=[p["PTS"] / tot_pts * 100
+                                       for p in reversed(top8)],
+                                colorscale=HEAT, showscale=False),
+                    text=[f"{p['PTS'] / tot_pts * 100:.0f}%"
+                          for p in reversed(top8)], textposition="auto"))
+                bal.update_xaxes(title="Share of team points %")
+                _style(bal, 300)
+                bal.update_layout(margin=dict(l=4, r=14, t=8, b=30))
+                st.plotly_chart(bal, width="stretch", key="adv_balance")
+
+# ───────────────────────────────────────── GAME FLOW ────────────────────
+
+
 def _fx_chadv():
     st.caption("The analytics lab — league-relative efficiency, team DNA, "
                "schedule résumé, the passing network and possession flow. (Shot "
                "Lab now lives under Charts → Shooting.) Most panels need tracked "
                "games; the résumé works from results alone.")
 
-    adv_eff, adv_res, adv_play, adv_flow = st.tabs(
-        ["Efficiency & DNA", "Résumé & Form", "Playmaking",
-         "Game Flow"])
+    adv_eff, adv_res, adv_flow = st.tabs(
+        ["Efficiency & DNA", "Résumé & Form", "Game Flow"])
 
     # ───────────────────────────────────────── EFFICIENCY & DNA ─────────────
     with adv_eff:
@@ -3291,163 +3454,6 @@ def _fx_chadv():
             st.caption("Green = win, red = loss. Points to the right are tougher "
                        "opponents; high-up wins over strong teams are the marquee "
                        "results, low losses to weak teams are the red flags.")
-
-    # ───────────────────────────────────────── PLAYMAKING ───────────────────
-    with adv_play:
-        if not has_tracked:
-            st.info("Tracked games needed for the passing network and possession "
-                    "flow.")
-        else:
-            an = bundle["assist_network"]
-            name_by = {p["_pid"]: f"#{p['number']}" for p in players}
-            full_by = {p["_pid"]: p["name"] for p in players}
-
-            # ── assist network ──────────────────────────────────────────────
-            st.markdown("<div class='lab-hdr'>Passing Network</div>",
-                        unsafe_allow_html=True)
-            am = st.columns(3)
-            am[0].metric("Assisted FG%", _pctf(an["totals"]["ast_rate"]),
-                         help="Share of made field goals that came off a pass.")
-            am[1].metric("Total assists", an["totals"]["assisted"])
-            am[2].metric("Made FGs", an["totals"]["made"])
-
-            node_ids = [i for i in sorted(
-                set(an["made_fg"]) | set(an["assists"]),
-                key=lambda i: an["made_fg"].get(i, 0), reverse=True)
-                if i in name_by]
-            if len(node_ids) >= 2:
-                n = len(node_ids)
-                pos = {pid: (math.cos(2 * math.pi * k / n - math.pi / 2),
-                             math.sin(2 * math.pi * k / n - math.pi / 2))
-                       for k, pid in enumerate(node_ids)}
-                net = go.Figure()
-                max_ct = max((e["count"] for e in an["edges"]), default=1)
-                for e in an["edges"]:
-                    a, b = e["from"], e["to"]
-                    if a not in pos or b not in pos:
-                        continue
-                    x0, y0 = pos[a]
-                    x1, y1 = pos[b]
-                    net.add_trace(go.Scatter(
-                        x=[x0, x1], y=[y0, y1], mode="lines",
-                        line=dict(width=1 + 5 * e["count"] / max_ct,
-                                  color=f"rgba(0,229,255,"
-                                        f"{0.25 + 0.5 * e['count'] / max_ct:.2f})"),
-                        hoverinfo="text",
-                        hovertext=f"{full_by.get(a,'?')} → {full_by.get(b,'?')}: "
-                                  f"{e['count']} assists",
-                        showlegend=False))
-                made_sizes = [an["made_fg"].get(i, 0) for i in node_ids]
-                mx = max(made_sizes) or 1
-                net.add_trace(go.Scatter(
-                    x=[pos[i][0] for i in node_ids],
-                    y=[pos[i][1] for i in node_ids],
-                    mode="markers+text",
-                    marker=dict(
-                        size=[20 + 34 * (an["made_fg"].get(i, 0) / mx)
-                              for i in node_ids],
-                        color=[an["assists"].get(i, 0) for i in node_ids],
-                        colorscale=HEAT, showscale=True,
-                        colorbar=dict(title="Assists"),
-                        line=dict(width=2, color="#0d1117")),
-                    text=[name_by[i] for i in node_ids],
-                    textposition="middle center",
-                    textfont=dict(size=10, color="#f0f6fc"),
-                    hovertext=[f"{full_by.get(i,'?')}<br>"
-                               f"{an['made_fg'].get(i,0)} made FG · "
-                               f"{an['assists'].get(i,0)} ast given · "
-                               f"{an['assisted_fgm'].get(i,0)} scored off a pass"
-                               for i in node_ids],
-                    hovertemplate="%{hovertext}<extra></extra>",
-                    showlegend=False))
-                net.update_xaxes(visible=False, range=[-1.45, 1.45])
-                net.update_yaxes(visible=False, range=[-1.45, 1.45],
-                                 scaleanchor="x", scaleratio=1)
-                _style(net, 480)
-                net.update_layout(plot_bgcolor="rgba(0,0,0,0)",
-                                  margin=dict(l=10, r=10, t=10, b=10))
-                st.plotly_chart(net, width="stretch", key="adv_network")
-                st.caption("Node size = made field goals · node color = assists "
-                           "handed out · arrow thickness = how often that passer "
-                           "found that finisher. Hover for the full line.")
-
-                top_edges = an["edges"][:8]
-                if top_edges:
-                    st.markdown("**Top passing connections**")
-                    st.dataframe(pd.DataFrame([{
-                        "Passer": full_by.get(e["from"], "?"),
-                        "Finisher": full_by.get(e["to"], "?"),
-                        "Assists": e["count"], "Points created": e["pts"],
-                    } for e in top_edges]), hide_index=True, width="stretch")
-            else:
-                st.caption("Not enough assisted baskets to draw a network yet.")
-
-            # ── possession-outcome Sankey ───────────────────────────────────
-            st.markdown("<div class='lab-hdr'>How Every Possession Ends</div>",
-                        unsafe_allow_html=True)
-            po = bundle["poss_outcomes"]
-            st.plotly_chart(_poss_sankey(po, ACCENT), width="stretch",
-                            key="adv_sankey")
-            pm = st.columns(4)
-            shots = po["twos"]["make"] + po["twos"]["miss"] + \
-                po["threes"]["make"] + po["threes"]["miss"]
-            pm[0].metric("Possessions", po["total"])
-            pm[1].metric("End in a shot", _pctf(S._safe(shots, po["total"])))
-            pm[2].metric("End in a turnover",
-                         _pctf(S._safe(po["tov"], po["total"])))
-            scored_poss = po["twos"]["make"] + po["threes"]["make"]
-            pm[3].metric("Possessions that score",
-                         _pctf(S._safe(scored_poss, po["total"])),
-                         help="Field goals only (free-throw trips excluded).")
-            st.caption("A possession is one shot or one turnover (the locked "
-                       "rule). Free-throw trips aren't possessions, so they don't "
-                       "appear here.")
-
-            # ── scoring balance ─────────────────────────────────────────────
-            st.markdown("<div class='lab-hdr'>Scoring Balance</div>",
-                        unsafe_allow_html=True)
-            scorers = sorted([p for p in players if (p["PTS"] or 0) > 0],
-                             key=lambda p: p["PTS"], reverse=True)
-            tot_pts = sum(p["PTS"] for p in scorers)
-            if scorers and tot_pts:
-                shares = [p["PTS"] / tot_pts for p in scorers]
-                hhi = sum(s * s for s in shares)
-                eff_scorers = 1 / hhi
-                nbal = len(shares)
-                balance_idx = (round(100 * (eff_scorers - 1) / (nbal - 1))
-                               if nbal > 1 else 100)
-                top_share = shares[0] * 100
-                bc1, bc2 = st.columns([1, 2])
-                with bc1:
-                    st.markdown(
-                        f"<div class='spotlight'>"
-                        f"<div class='spotlight-num' style='color:{CYBER}'>"
-                        f"{eff_scorers:.1f}</div>"
-                        f"<div class='spotlight-lbl'>Effective scorers</div>"
-                        f"<div class='spotlight-sub'>Balance index "
-                        f"{balance_idx}/100 · top scorer carries "
-                        f"{top_share:.0f}%</div></div>",
-                        unsafe_allow_html=True)
-                    st.caption("Effective scorers = inverse-Herfindahl of the "
-                               "point distribution: how many players the offense "
-                               "*effectively* leans on. Higher = more balanced.")
-                with bc2:
-                    top8 = scorers[:8]
-                    bal = go.Figure(go.Bar(
-                        x=[p["PTS"] / tot_pts * 100 for p in reversed(top8)],
-                        y=[f"#{p['number']} {p['name']}" for p in reversed(top8)],
-                        orientation="h",
-                        marker=dict(color=[p["PTS"] / tot_pts * 100
-                                           for p in reversed(top8)],
-                                    colorscale=HEAT, showscale=False),
-                        text=[f"{p['PTS'] / tot_pts * 100:.0f}%"
-                              for p in reversed(top8)], textposition="auto"))
-                    bal.update_xaxes(title="Share of team points %")
-                    _style(bal, 300)
-                    bal.update_layout(margin=dict(l=4, r=14, t=8, b=30))
-                    st.plotly_chart(bal, width="stretch", key="adv_balance")
-
-    # ───────────────────────────────────────── GAME FLOW ────────────────────
     with adv_flow:
         if not has_tracked:
             st.info("Tracked games needed to reconstruct the score flow.")

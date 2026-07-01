@@ -306,7 +306,21 @@ def player_card_html(player_id, gender=None, table=None):
 
 
 # ── single-game recap ────────────────────────────────────────────────────────────
-def game_recap_html(game_id):
+#: Recap sections a coach can include/exclude (key, label) — mirrors the scout
+#: sheet's per-section toggles. Order = print order.
+RECAP_SECTIONS = [
+    ("totals", "Team totals"), ("factors", "Four factors"),
+    ("quarters", "Scoring by quarter"), ("scoring", "Scoring breakdown"),
+    ("shots1", "Home shot chart"), ("shots2", "Away shot chart"),
+    ("box1", "Home box score"), ("box2", "Away box score"),
+]
+
+
+def game_recap_html(game_id, hidden=None):
+    _hid = set(hidden or [])
+
+    def _show(k):
+        return k not in _hid
     g = query("""SELECT g.id, g.date, g.team1_id, g.team2_id, g.home_score,
                         g.away_score, t1.name n1, t2.name n2
                  FROM games g JOIN teams t1 ON t1.id=g.team1_id
@@ -374,19 +388,84 @@ def game_recap_html(game_id):
                 "<th class='num'>AST</th><th class='num'>STL</th><th class='num'>BLK</th>"
                 "<th class='num'>FG</th><th class='num'>FT</th></tr>")
 
-    body = (
-        f"{band}<div class='wrap'>"
-        f"<h2>Team totals</h2>"
-        f"<table style='width:100%;border-collapse:separate;border-spacing:12px 0'><tr>"
-        f"<td style='width:50%;vertical-align:top;border:none;padding:0'>"
-        f"<table><tr><th>{e(g['n1'])}</th><th></th></tr>{_tcol(tb,'')}</table></td>"
-        f"<td style='width:50%;vertical-align:top;border:none;padding:0'>"
-        f"<table><tr><th>{e(g['n2'])}</th><th></th></tr>{_tcol(ob,'')}</table></td>"
-        f"</tr></table>"
-        f"<h2>Scoring breakdown</h2><table>"
-        f"<tr><th class='num'>{e(g['n1'])}</th><th></th><th class='num'>{e(g['n2'])}</th></tr>"
-        f"{bkrows}</table>"
-        f"<h2>{e(g['n1'])} — box score</h2><table>{_phdr()}{_pbox(t1id)}</table>"
-        f"<h2 class='break'>{e(g['n2'])} — box score</h2><table>{_phdr()}{_pbox(t2id)}</table>"
-        f"</div>")
+    # ── four factors (eFG% · TOV% · ORB% · FTr, both teams) ───────────────────
+    def _ff(off, dff):
+        return (S.efg(off),
+                S._safe(off.get("TOV", 0), off.get("FGA", 0) + off.get("TOV", 0)),
+                S._safe(off.get("OREB", 0), off.get("OREB", 0) + dff.get("DREB", 0)),
+                S._safe(off.get("FTA", 0), off.get("FGA", 0)))
+    _f1, _f2 = _ff(tb, ob), _ff(ob, tb)
+
+    def _ffc(v, pct=True):
+        return "—" if v is None else (f"{v*100:.0f}%" if pct else f"{v:.2f}")
+    ff_html = "".join(
+        f"<tr><td class='num'>{_ffc(_f1[i], pct)}</td><td>{lbl}</td>"
+        f"<td class='num'>{_ffc(_f2[i], pct)}</td></tr>"
+        for lbl, i, pct in (("eFG%", 0, True), ("TOV%", 1, True),
+                            ("ORB%", 2, True), ("FTr", 3, False)))
+
+    # ── scoring by quarter ────────────────────────────────────────────────────
+    from collections import defaultdict as _dd
+    _q1, _q2 = _dd(int), _dd(int)
+    for _ev in events:
+        if (_ev.get("event_type") in ("shot", "free_throw")
+                and _ev.get("shot_result") == "make"):
+            _p = _ev["shot_type"] if _ev["event_type"] == "shot" else 1
+            if _ev.get("shooter_team_id") == t1id:
+                _q1[_ev.get("quarter")] += _p
+            elif _ev.get("shooter_team_id") == t2id:
+                _q2[_ev.get("quarter")] += _p
+    _qs = sorted(q for q in (set(_q1) | set(_q2)) if q)
+    _qhdr = "".join(f"<th class='num'>{'Q'+str(q) if q <= 4 else 'OT'+str(q-4)}</th>"
+                    for q in _qs)
+
+    # ── tap-located shot charts (base64 PNG, xhtml2pdf-safe) ───────────────────
+    def _chart(tid):
+        sh = S.located_shots(game_ids=[game_id], team_id=tid, events=events)
+        return CPNG.shot_chart_png(sh, width=300) if sh else ""
+    _sc1 = _chart(t1id) if _show("shots1") else ""
+    _sc2 = _chart(t2id) if _show("shots2") else ""
+
+    body = f"{band}<div class='wrap'>"
+    if _show("totals"):
+        body += (
+            f"<h2>Team totals</h2>"
+            f"<table style='width:100%;border-collapse:separate;border-spacing:12px 0'><tr>"
+            f"<td style='width:50%;vertical-align:top;border:none;padding:0'>"
+            f"<table><tr><th>{e(g['n1'])}</th><th></th></tr>{_tcol(tb,'')}</table></td>"
+            f"<td style='width:50%;vertical-align:top;border:none;padding:0'>"
+            f"<table><tr><th>{e(g['n2'])}</th><th></th></tr>{_tcol(ob,'')}</table></td>"
+            f"</tr></table>")
+    if _show("factors") and (tb.get("FGA") or ob.get("FGA")):
+        body += (
+            f"<h2>Four factors</h2><table>"
+            f"<tr><th class='num'>{e(g['n1'])}</th><th></th>"
+            f"<th class='num'>{e(g['n2'])}</th></tr>{ff_html}</table>")
+    if _show("quarters") and _qs:
+        body += (
+            f"<h2>Scoring by quarter</h2><table>"
+            f"<tr><th>Team</th>{_qhdr}<th class='num'>Total</th></tr>"
+            f"<tr><td>{e(g['n1'])}</td>"
+            + "".join(f"<td class='num'>{_q1.get(q,0)}</td>" for q in _qs)
+            + f"<td class='num'>{h1}</td></tr>"
+            f"<tr><td>{e(g['n2'])}</td>"
+            + "".join(f"<td class='num'>{_q2.get(q,0)}</td>" for q in _qs)
+            + f"<td class='num'>{h2}</td></tr></table>")
+    if _show("scoring"):
+        body += (
+            f"<h2>Scoring breakdown</h2><table>"
+            f"<tr><th class='num'>{e(g['n1'])}</th><th></th>"
+            f"<th class='num'>{e(g['n2'])}</th></tr>{bkrows}</table>")
+    if _sc1 or _sc2:
+        body += "<h2>Shot charts</h2>"
+        if _sc1:
+            body += f"<div style='font-size:12px;color:#5b6675'>{e(g['n1'])}</div>{_sc1}"
+        if _sc2:
+            body += f"<div style='font-size:12px;color:#5b6675'>{e(g['n2'])}</div>{_sc2}"
+    if _show("box1"):
+        body += f"<h2>{e(g['n1'])} — box score</h2><table>{_phdr()}{_pbox(t1id)}</table>"
+    if _show("box2"):
+        body += (f"<h2 class='break'>{e(g['n2'])} — box score</h2>"
+                 f"<table>{_phdr()}{_pbox(t2id)}</table>")
+    body += "</div>"
     return _doc(f"Recap · {g['n1']} vs {g['n2']}", body)

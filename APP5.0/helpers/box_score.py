@@ -176,8 +176,8 @@ def _bar(text):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _recap(game_id):
-    return RP.game_recap_html(game_id)
+def _recap(game_id, hidden=None):
+    return RP.game_recap_html(game_id, hidden=hidden)
 
 
 @st.cache_resource(show_spinner=False)
@@ -366,8 +366,16 @@ def render_box_score(game_id: int):
     tsq_a = TA.team_shot_quality(t2id, [game_id], events=events, rates=rates)
 
     from helpers.ui import pdf_or_html_download
+    with st.expander("🖨️ Game recap — choose sections to include"):
+        _rsec = st.multiselect(
+            "Sections", [k for k, _ in RP.RECAP_SECTIONS],
+            default=[k for k, _ in RP.RECAP_SECTIONS],
+            format_func=lambda k: dict(RP.RECAP_SECTIONS)[k],
+            key=f"bs{game_id}_recap_secs",
+            help="Pick what prints on the recap — like the scout sheet's toggles.")
+        _rhidden = [k for k, _ in RP.RECAP_SECTIONS if k not in _rsec]
     pdf_or_html_download(
-        "Game recap", _recap(game_id),
+        "Game recap", _recap(game_id, _rhidden),
         f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
         key=f"bs{game_id}_recap")
 

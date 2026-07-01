@@ -272,7 +272,8 @@ def results_fingerprint():
 
 
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                  reg=DEFAULT_REG, season="Current", sos_weight=DEFAULT_SOS_WEIGHT):
+                  reg=DEFAULT_REG, season="Current", sos_weight=DEFAULT_SOS_WEIGHT,
+                  game_ids=None):
     """
     Results-only power ratings for every team in `gender` (None = all).
     Returns {team_id: {...}} with, per team:
@@ -288,7 +289,7 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
     `sos_weight` is the points-per-SD schedule-strength nudge folded into Rating
     (standardized; see DEFAULT_SOS_WEIGHT); 0 reproduces pure AdjNet+Class.
     """
-    games = _finished_games(gender=gender, season=season)
+    games = _finished_games(gender=gender, season=season, game_ids=game_ids)
     meta = _team_meta(gender=gender)
     tg = _per_team_games(games)
     if not tg:

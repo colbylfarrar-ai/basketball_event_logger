@@ -31,6 +31,7 @@ import helpers.stats as S
 import helpers.trends as TRD
 import helpers.player_ratings as PR
 import helpers.playtypes as PT
+import helpers.shrinkage as SH
 from helpers.ui import empty_state, rgb as _rgb, style_fig as _style, CARD_BG, GRID
 from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
@@ -41,6 +42,57 @@ from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 _DEV_STATS = ("PPG", "RPG", "APG", "SPG", "BPG", "TPG", "FPG")   # cross-season trend stats
 _DEV_INVERTED = ("TPG", "FPG")   # lower is better → inverse delta colouring
+
+# Rating-bar palette for the dense Overview grid (mirrors the gauge-dial colours).
+GRID_CLR = {"OVERALL": "#58a6ff", "OFFENSE": "#f0a500", "DEFENSE": "#e74c3c",
+            "PLAYMAKING": "#bc8cff", "REBOUNDING": "#3fb950", "Floor spacing": "#56d4dd"}
+
+
+def _rating_bar(label, value, color, ci=None):
+    """One dense rating row: label · track (+ faded confidence-interval band) · value.
+
+    `ci` (0-100 half-width from shrinkage.rating_confidence) draws a lighter band
+    from value−ci to value+ci behind the solid fill — the OOTP 'scouted' read of
+    how firm the number is. None → no band (a fully-backed rating)."""
+    if value is None:
+        return (f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0'>"
+                f"<div style='width:86px;font-size:11px;color:#8b949e'>{label}</div>"
+                f"<div style='flex:1;height:8px;border-radius:4px;background:#161b22'></div>"
+                f"<div style='width:28px;text-align:right;font-size:12px;color:#484f58'>—</div>"
+                f"</div>")
+    v = max(0.0, min(100.0, float(value)))
+    band = ""
+    if ci:
+        lo, hi = max(0.0, v - ci), min(100.0, v + ci)
+        band = (f"<div style='position:absolute;top:0;height:8px;border-radius:4px;"
+                f"left:{lo}%;width:{hi-lo}%;background:{color};opacity:.28'></div>")
+    return (
+        f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0'>"
+        f"<div style='width:86px;font-size:11px;color:#8b949e'>{label}</div>"
+        f"<div style='flex:1;position:relative;height:8px;border-radius:4px;background:#161b22'>"
+        f"{band}"
+        f"<div style='position:absolute;top:0;height:8px;border-radius:4px;width:{v}%;"
+        f"background:{color}'></div></div>"
+        f"<div style='width:28px;text-align:right;font-size:12px;font-weight:700;"
+        f"color:#f0f6fc'>{value:.0f}</div></div>")
+
+
+def _teamrow(label, tr):
+    """One team-within row: a dot on the team's min→max spread + rank #k/n."""
+    if not tr:
+        return (f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0;"
+                f"font-size:11px'><div style='width:82px;color:#8b949e'>{label}</div>"
+                f"<div style='flex:1;height:16px;border-radius:4px;background:#161b22'></div>"
+                f"<div style='width:44px;text-align:right;color:#484f58'>—</div></div>")
+    pos = tr["pos"] * 100
+    return (
+        f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0;font-size:11px'>"
+        f"<div style='width:82px;color:#8b949e'>{label}</div>"
+        f"<div style='flex:1;position:relative;height:16px;border-radius:4px;background:#161b22'>"
+        f"<div style='position:absolute;top:1px;height:14px;width:14px;border-radius:50%;"
+        f"background:#bc8cff;border:2px solid #0d1117;left:calc({pos}% - 7px)'></div></div>"
+        f"<div style='width:44px;text-align:right;font-weight:700;color:#f0f6fc'>"
+        f"#{tr['rank']}/{tr['n']}</div></div>")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -56,6 +108,42 @@ def _dev(pid, gender):
     """Cross-season development bundle for one player (cached per pid/gender)."""
     import helpers.development as DV
     return DV.player_development(pid, gender=gender, curve=_class_curve(gender))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _spacing(gender):
+    """League floor-spacing index per player {pid: {index, components, n}} —
+    cached per gender (one league scan). {} when the pool is too thin."""
+    import helpers.spacing as SP
+    return SP.league_player_spacing(gender)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _rapm(gender):
+    """Two-way RAPM per player {pid: {ORAPM,DRAPM,RAPM,...}} — cached per gender.
+    Uses the box-impact prior so stars on a ~15-game book don't collapse to 0.
+    {} when there isn't enough possession data to solve."""
+    import helpers.rapm as RP
+    gids = PT._tracked_game_ids(gender)
+    if not gids:
+        return {}
+    try:
+        prior = RP.box_prior_from_ratings(gender=gender)
+        return RP.compute_rapm(game_ids=gids, prior=prior)
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _wpa(gender):
+    """Season WPA per player in both modes {scoring:{pid:...}, possession:{...}}.
+    scoring → wpa + clutch_wpa; possession → off_wpa (OWA) + def_wpa (DWA)."""
+    import helpers.wpa as WP
+    try:
+        return {"scoring": WP.season_wpa(gender, mode="scoring"),
+                "possession": WP.season_wpa(gender, mode="possession")}
+    except Exception:
+        return {"scoring": {}, "possession": {}}
 
 
 def render_card(ctx):
@@ -167,12 +255,117 @@ def render_card(ctx):
             st.caption("No badges earned yet — needs more volume or higher "
                        "percentile ranks.")
 
-    # ── rating metrics + impact tiles (event-derived → Paid) ──────────────────
+    # ══ Dense OVERVIEW grid — OOTP-style one-stop summary (event-derived → Paid) ══
+    #    The above-the-fold read: ratings (with a scouted confidence band), the
+    #    signature tiles, where the player ranks AMONG TEAMMATES, and the full
+    #    league-percentile rail. Detail blocks below drill each of these.
     if paid:
-        m = st.columns(5)
-        for col, key in zip(m, RATING_COLS):
-            col.metric(key, P[key] if P[key] is not None else "—")
+        _conf = SH.rating_confidence(P.get("GP") or 0)
+        _twrel = PR.team_relative(P, rows)
+        _space = _spacing(getattr(ctx, "gender", None)).get(pid, {}).get("index")
+        _cclr = {"high": "#3fb950", "medium": "#f0a500",
+                 "low": "#e74c3c", "very_low": "#e74c3c"}[_conf["tier"]]
+        st.markdown(
+            "<div class='pl-hdr' style='margin-top:0'>Overview · scouted "
+            f"<span style='color:{_cclr};font-weight:800'>{_conf['label']}</span> "
+            f"<span style='font-size:11px;color:#8b949e;font-weight:400'>"
+            f"({_conf['games']} game{'s' if _conf['games'] != 1 else ''} · "
+            f"OVERALL &plusmn;{_conf['ci']:.0f})</span></div>",
+            unsafe_allow_html=True)
 
+        def _kv(k, v):
+            return (f"<div style='display:flex;justify-content:space-between;"
+                    f"font-size:12px;padding:2px 0'><span style='color:#8b949e'>{k}"
+                    f"</span><span style='color:#f0f6fc;font-weight:600'>{v}</span></div>")
+
+        def _g(key, d=0.0):
+            return P.get(key) if P.get(key) is not None else d
+
+        g1, g2, g3 = st.columns([0.95, 1.2, 1.0])
+
+        # ── col 1: per-game line + career highs ──────────────────────────────
+        with g1:
+            pg = (
+                _kv("PTS", f"{_g('PPG'):.1f}")
+                + _kv("REB · AST", f"{_g('RPG'):.1f} · {_g('APG'):.1f}")
+                + _kv("STL · BLK", f"{_g('SPG'):.1f} · {_g('BPG'):.1f}")
+                + _kv("TOV", f"{_g('TPG'):.1f}")
+                + _kv("3P% · TS%", f"{_fmt(P.get('3P%'),'pct')} · {_fmt(P.get('TS%'),'pct')}"))
+            st.markdown("<div class='pl-hdr' style='margin-top:0'>Per game</div>"
+                        + pg, unsafe_allow_html=True)
+            ch = (
+                _kv("PTS", P.get("bestPTS", "—")) + _kv("REB", P.get("bestREB", "—"))
+                + _kv("AST", P.get("bestAST", "—")) + _kv("Double-dbl", P.get("DD", 0))
+                + _kv("Triple-dbl", P.get("TD", 0))
+                + _kv("Scoring σ", _fmt(P.get("PTSsd"), "f1")))
+            st.markdown("<div class='pl-hdr'>Career highs</div>" + ch,
+                        unsafe_allow_html=True)
+
+        # ── col 2: rating bars (+CI band, +floor spacing) + signature tiles ──
+        with g2:
+            bars = "".join(
+                _rating_bar(k.title(), P.get(k), GRID_CLR.get(k, accent),
+                            ci=_conf["ci"] if k == "OVERALL" else None)
+                for k in RATING_COLS)
+            bars += _rating_bar("Floor spacing", _space, GRID_CLR["Floor spacing"])
+            st.markdown("<div class='pl-hdr' style='margin-top:0'>Ratings</div>"
+                        + bars, unsafe_allow_html=True)
+            _selfcr = P.get("SelfCr%")
+            _passpct = (100 - _selfcr) if _selfcr is not None else None
+            _sig = [("Paint FG%", _fmt(P.get("Paint%"), "pct")),
+                    ("Self-cr %", _fmt(_selfcr, "pct")),
+                    ("Pass %", _fmt(_passpct, "pct")),
+                    ("AST:TO", _fmt(P.get("AST/TOV"), "f2")),
+                    ("Usage", _fmt(P.get("USG%"), "pct")),
+                    ("VPS", _fmt(P.get("VPS"), "f2"))]
+            tiles = "".join(
+                f"<div style='background:#0d1117;border:1px solid #21262d;"
+                f"border-radius:8px;padding:6px 9px'>"
+                f"<div style='font-size:10px;color:#8b949e'>{l}</div>"
+                f"<div style='font-size:16px;font-weight:700;color:#f0f6fc'>{v}</div>"
+                f"</div>" for l, v in _sig)
+            st.markdown(
+                "<div class='pl-hdr'>Signature metrics</div>"
+                "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px'>"
+                + tiles + "</div>", unsafe_allow_html=True)
+
+        # ── col 3: team-within (rank among teammates) ────────────────────────
+        with g3:
+            trows = "".join(_teamrow(k.title(), _twrel.get(k)) for k in RATING_COLS)
+            st.markdown(
+                "<div class='pl-hdr' style='margin-top:0'>Vs teammates</div>" + trows
+                + "<div style='font-size:11px;color:#8b949e;margin-top:4px'>Dot = "
+                "position on the team's min&rarr;max span. League rating stays the "
+                "number up top.</div>", unsafe_allow_html=True)
+
+        # ── full league-percentile rail (all 21, three columns) ──────────────
+        st.markdown("<div class='pl-hdr'>League percentiles</div>",
+                    unsafe_allow_html=True)
+        _PPG = [
+            ("PPG", "Points", "f1", False), ("RPG", "Rebounds", "f1", False),
+            ("APG", "Assists", "f1", False), ("SPG", "Steals", "f1", False),
+            ("BPG", "Blocks", "f1", False), ("STOCKS/G", "Stocks", "f1", False),
+            ("TS%", "True shooting", "pct", False), ("eFG%", "Effective FG", "pct", False),
+            ("3P%", "Three-point %", "pct", False), ("PPS", "Points / shot", "f2", False),
+            ("USG%", "Usage", "pct", False), ("TOV%", "Ball security", "pct", True),
+            ("AST/TOV", "Assist / TO", "f2", False), ("REB%", "Rebound %", "pct", False),
+            ("Guarded%", "Contest rate", "pct", False), ("DSHOT%", "Defended FG%", "pct", True),
+            ("EFF", "Efficiency", "f1", False), ("FIC", "Floor impact", "f1", False),
+            ("+/-", "Plus/minus", "int", False), ("GS/G", "Game Score", "f1", False),
+            ("VPS", "Value Point System", "f2", False),
+        ]
+        _third = (len(_PPG) + 2) // 3
+        _gpc = st.columns(3)
+        for _ci, _chunk in enumerate((_PPG[:_third], _PPG[_third:2*_third],
+                                      _PPG[2*_third:])):
+            _html = ""
+            for _key, _lbl, _fm, _lb in _chunk:
+                _p = _pctile(P.get(_key), _key, rows, lower_better=_lb)
+                _html += _pctile_bar(_lbl, _fmt(P.get(_key), _fm), _p)
+            _gpc[_ci].markdown(_html, unsafe_allow_html=True)
+
+    # ── impact tiles + "why this OVERALL" (ratings live as bars in the grid) ──
+    if paid:
         im = st.columns(7)
         im[0].metric("MIN/G", f"{P['MPG']:.1f}" if P["MPG"] else "—")
         im[1].metric("USG%", f"{P['USG%']:.1f}%" if P["USG%"] is not None else "—")
@@ -182,25 +375,50 @@ def render_card(ctx):
         im[5].metric("PRF", P["PRF"])
         im[6].metric("VPS", f"{P['VPS']:.2f}" if P.get("VPS") is not None else "—",
                      help="Hudl Value Point System — value ÷ mistakes.")
-
-    # ── rating dials (futuristic gauges) — event-derived → Paid ───────────────
-    if paid:
-        st.markdown("<div class='pl-hdr'>Rating dials</div>", unsafe_allow_html=True)
-        GAUGE_CLR = {"OVERALL": accent, "OFFENSE": "#f0a500", "DEFENSE": "#e74c3c",
-                     "PLAYMAKING": "#bc8cff", "REBOUNDING": "#3fb950"}
-        gcols = st.columns(5)
-        for col, key in zip(gcols, RATING_COLS):
-            with col:
-                st.plotly_chart(gauge_dial(P[key], key, GAUGE_CLR.get(key, accent)),
-                                width="stretch", key=f"pcard_gauge_{key}")
-        st.caption("Each dial is a 0-100 rating; the needle mark + delta are vs the "
-                   "pool average (50).")
         _why = PR.overall_blurb(P.get("OFFENSE"), P.get("DEFENSE"),
                                 P.get("PLAYMAKING"), P.get("REBOUNDING"))
         if _why:
             st.markdown(f"<div style='color:{accent};font-weight:600;margin:2px 0 4px'>"
                         f"Why this OVERALL: {html_escape(_why)}</div>",
                         unsafe_allow_html=True)
+
+    # ── Impact — RAPM · WPA (directional on a short book) → Paid ──────────────
+    if paid:
+        _g = getattr(ctx, "gender", None)
+        _rp = _rapm(_g).get(pid, {})
+        _wpm = _wpa(_g)
+        _ws = (_wpm.get("scoring") or {}).get(pid, {})
+        _wq = (_wpm.get("possession") or {}).get(pid, {})
+
+        def _sv(d, k, fmt="{:+.1f}"):
+            v = d.get(k)
+            return fmt.format(v) if v is not None else "—"
+
+        _imp = [
+            ("ORAPM", _sv(_rp, "ORAPM"), "off pts/100"),
+            ("DRAPM", _sv(_rp, "DRAPM"), "def pts/100"),
+            ("RAPM", _sv(_rp, "RAPM"), "net pts/100"),
+            ("WPA", _sv(_ws, "wpa", "{:+.2f}"), "wins added"),
+            ("Clutch WPA", _sv(_ws, "clutch_wpa", "{:+.2f}"), "high-leverage"),
+            ("Off WPA", _sv(_wq, "off_wpa", "{:+.2f}"), "offense value"),
+            ("Def WPA", _sv(_wq, "def_wpa", "{:+.2f}"), "defense value"),
+        ]
+        if any(v != "—" for _, v, _ in _imp):
+            st.markdown("<div class='pl-hdr'>Impact — RAPM &middot; WPA</div>",
+                        unsafe_allow_html=True)
+            _itiles = "".join(
+                f"<div style='background:#0d1117;border:1px solid #21262d;"
+                f"border-radius:8px;padding:6px 9px'>"
+                f"<div style='font-size:10px;color:#8b949e'>{l}</div>"
+                f"<div style='font-size:16px;font-weight:700;color:#f0f6fc'>{v}</div>"
+                f"<div style='font-size:9px;color:#6e7681'>{s}</div></div>"
+                for l, v, s in _imp)
+            st.markdown(
+                "<div style='display:grid;grid-template-columns:repeat(7,1fr);"
+                "gap:6px'>" + _itiles + "</div>", unsafe_allow_html=True)
+            st.caption("RAPM shrinks toward a box-score prior; WPA credits the shots "
+                       "(and stops) that swung win probability. Directional on a short "
+                       "book — read the sign and rough size, not the decimals.")
 
     # ── signature / invented metrics (glass tiles) ────────────────────────────
     #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.
@@ -616,25 +834,26 @@ def render_card(ctx):
         else:
             st.caption(_proj.get("reason", ""))
 
-    # ── Career highs & milestones ─────────────────────────────────────────────
-    st.markdown("<div class='pl-hdr'>Career highs & milestones</div>",
-                unsafe_allow_html=True)
-    cap_steady = ("steady" if (P["PTSsd"] or 0) < 5 else
-                  "streaky" if (P["PTSsd"] or 0) > 9 else "moderate")
-    ch = st.columns(6)
-    ch[0].markdown(_glass("HIGH PTS", P["bestPTS"], "single game", accent),
-                   unsafe_allow_html=True)
-    ch[1].markdown(_glass("HIGH REB", P["bestREB"], "single game", "#3fb950"),
-                   unsafe_allow_html=True)
-    ch[2].markdown(_glass("HIGH AST", P["bestAST"], "single game", "#bc8cff"),
-                   unsafe_allow_html=True)
-    ch[3].markdown(_glass("DOUBLE-DBL", P["DD"], "games", "#58a6ff"),
-                   unsafe_allow_html=True)
-    ch[4].markdown(_glass("TRIPLE-DBL", P["TD"], "games", "#f0a500"),
-                   unsafe_allow_html=True)
-    ch[5].markdown(_glass("SCORING σ", _fmt(P["PTSsd"], "f1"),
-                          f"game-to-game · {cap_steady}", "#ff7b72"),
-                   unsafe_allow_html=True)
+    # ── Career highs & milestones — Free tier (Paid gets them in the grid) ─────
+    if not paid:
+        st.markdown("<div class='pl-hdr'>Career highs &amp; milestones</div>",
+                    unsafe_allow_html=True)
+        cap_steady = ("steady" if (P["PTSsd"] or 0) < 5 else
+                      "streaky" if (P["PTSsd"] or 0) > 9 else "moderate")
+        ch = st.columns(6)
+        ch[0].markdown(_glass("HIGH PTS", P["bestPTS"], "single game", accent),
+                       unsafe_allow_html=True)
+        ch[1].markdown(_glass("HIGH REB", P["bestREB"], "single game", "#3fb950"),
+                       unsafe_allow_html=True)
+        ch[2].markdown(_glass("HIGH AST", P["bestAST"], "single game", "#bc8cff"),
+                       unsafe_allow_html=True)
+        ch[3].markdown(_glass("DOUBLE-DBL", P["DD"], "games", "#58a6ff"),
+                       unsafe_allow_html=True)
+        ch[4].markdown(_glass("TRIPLE-DBL", P["TD"], "games", "#f0a500"),
+                       unsafe_allow_html=True)
+        ch[5].markdown(_glass("SCORING σ", _fmt(P["PTSsd"], "f1"),
+                              f"game-to-game · {cap_steady}", "#ff7b72"),
+                       unsafe_allow_html=True)
 
     # ── Game log ──────────────────────────────────────────────────────────────
     st.markdown("<div class='pl-hdr'>Game log</div>",
@@ -749,33 +968,32 @@ def render_card(ctx):
                     "Track a game with this player in the Game Tracker and "
                     "their game log will show up here.")
 
-    # ── League percentiles ────────────────────────────────────────────────────
-    st.markdown("<div class='pl-hdr'>League percentiles</div>",
-                unsafe_allow_html=True)
-    PROF_PCT = [
-        ("PPG", "Points", "f1", False), ("RPG", "Rebounds", "f1", False),
-        ("APG", "Assists", "f1", False), ("SPG", "Steals", "f1", False),
-        ("BPG", "Blocks", "f1", False), ("STOCKS/G", "Stocks", "f1", False),
-        ("TS%", "True shooting", "pct", False), ("eFG%", "Effective FG", "pct", False),
-        ("3P%", "Three-point %", "pct", False), ("PPS", "Points / shot", "f2", False),
-        ("USG%", "Usage", "pct", False), ("TOV%", "Ball security", "pct", True),
-        ("AST/TOV", "Assist / TO", "f2", False), ("REB%", "Rebound %", "pct", False),
-        ("Guarded%", "Contest rate", "pct", False), ("DSHOT%", "Defended FG%", "pct", True),
-        ("EFF", "Efficiency", "f1", False), ("FIC", "Floor impact", "f1", False),
-        ("+/-", "Plus/minus", "int", False), ("GS/G", "Game Score", "f1", False),
-        ("VPS", "Value Point System", "f2", False),
-    ]
-    # Free tier: keep box percentiles only (drop event-derived rows).
+    # ── League percentiles — Free tier only (Paid gets the Overview grid rail) ──
     if not paid:
-        PROF_PCT = [s for s in PROF_PCT if s[0] not in PR.EVENT_DERIVED_STATS]
-    pcol = st.columns(2)
-    half = (len(PROF_PCT) + 1) // 2
-    for ci, chunk in enumerate((PROF_PCT[:half], PROF_PCT[half:])):
-        html = ""
-        for key, lbl, fmt, lb in chunk:
-            p = _pctile(P.get(key), key, rows, lower_better=lb)
-            html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p)
-        pcol[ci].markdown(html, unsafe_allow_html=True)
+        st.markdown("<div class='pl-hdr'>League percentiles</div>",
+                    unsafe_allow_html=True)
+        # Free tier: keep box percentiles only (drop event-derived rows).
+        PROF_PCT = [s for s in [
+            ("PPG", "Points", "f1", False), ("RPG", "Rebounds", "f1", False),
+            ("APG", "Assists", "f1", False), ("SPG", "Steals", "f1", False),
+            ("BPG", "Blocks", "f1", False), ("STOCKS/G", "Stocks", "f1", False),
+            ("TS%", "True shooting", "pct", False), ("eFG%", "Effective FG", "pct", False),
+            ("3P%", "Three-point %", "pct", False), ("PPS", "Points / shot", "f2", False),
+            ("USG%", "Usage", "pct", False), ("TOV%", "Ball security", "pct", True),
+            ("AST/TOV", "Assist / TO", "f2", False), ("REB%", "Rebound %", "pct", False),
+            ("Guarded%", "Contest rate", "pct", False), ("DSHOT%", "Defended FG%", "pct", True),
+            ("EFF", "Efficiency", "f1", False), ("FIC", "Floor impact", "f1", False),
+            ("+/-", "Plus/minus", "int", False), ("GS/G", "Game Score", "f1", False),
+            ("VPS", "Value Point System", "f2", False),
+        ] if s[0] not in PR.EVENT_DERIVED_STATS]
+        pcol = st.columns(2)
+        half = (len(PROF_PCT) + 1) // 2
+        for ci, chunk in enumerate((PROF_PCT[:half], PROF_PCT[half:])):
+            html = ""
+            for key, lbl, fmt, lb in chunk:
+                p = _pctile(P.get(key), key, rows, lower_better=lb)
+                html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p)
+            pcol[ci].markdown(html, unsafe_allow_html=True)
 
     # ── League ranking (rides on OVERALL → Paid) ──────────────────────────────
     if paid:

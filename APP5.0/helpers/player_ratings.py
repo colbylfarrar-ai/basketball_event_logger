@@ -108,6 +108,39 @@ def sample_confidence(gp):
     return "Very Low"
 
 
+TEAM_REL_COLS = ("OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING")
+
+
+def team_relative(P, rows, cols=TEAM_REL_COLS):
+    """Where a player sits AMONG THEIR OWN TEAMMATES on each rating.
+
+    Display-only: this does NOT re-standardize a team-only pool (that would let a
+    weak player on a weak team read as elite). It just ranks the player's
+    league-computed ratings against their own roster and reports the position on
+    the team's spread — the "true separation between our guys" view that rides
+    alongside the master league rating, never replacing it.
+
+    `P` is one player row, `rows` the full league pool (each carrying `team_id`
+    and the rating cols). Returns {col: {"rank","n","pos","val"}} where `pos` is
+    the 0-1 position on the team's min→max span for that rating (0.5 when the
+    team is flat), or {col: None} when there aren't ≥2 rated teammates.
+    """
+    tid = P.get("team_id")
+    mates = [r for r in rows if r.get("team_id") == tid]
+    out = {}
+    for c in cols:
+        vals = [r[c] for r in mates if r.get(c) is not None]
+        v = P.get(c)
+        if v is None or len(vals) < 2:
+            out[c] = None
+            continue
+        lo, hi = min(vals), max(vals)
+        rank = sum(1 for x in vals if x > v) + 1        # 1 = best on the team
+        pos = (v - lo) / (hi - lo) if hi > lo else 0.5
+        out[c] = {"rank": rank, "n": len(vals), "pos": round(pos, 3), "val": v}
+    return out
+
+
 _safe = S._safe   # shared definition lives in helpers.stats
 
 

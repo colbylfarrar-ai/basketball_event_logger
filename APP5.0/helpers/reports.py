@@ -21,6 +21,8 @@ import helpers.fouls as FL
 import helpers.badges as BG
 import helpers.archetypes as ARC
 import helpers.court_png as CPNG
+import helpers.shrinkage as SH
+import helpers.playtypes as PT
 from helpers.scout import _BRAND_MARK   # baked HoopTracks mark (xhtml2pdf-safe)
 
 e = _html.escape
@@ -112,6 +114,8 @@ def player_card_html(player_id, gender=None, table=None):
     except Exception:
         _arch = None
     _barch = BG.badge_archetype(badges)["archetype"]
+    conf = SH.rating_confidence(r.get("GP") or 0)          # scouted-confidence read
+    twr = PR.team_relative(r, list(table.values()))        # rank among teammates
 
     def g(k, f="{:.1f}"):
         v = r.get(k)
@@ -128,7 +132,8 @@ def player_card_html(player_id, gender=None, table=None):
         f"<div class='band'><div class='mark'>{_BRAND_MARK} HoopTracks · Player Card</div>"
         f"<h1>#{r.get('number','')} {e(r['name'])}</h1>"
         f"<div class='meta'>{e(r['team'])} · {e(r.get('class','N/A'))} · "
-        f"{r.get('GP',0)} games" + (f" · {e(meas)}" if meas else "") + "</div>"
+        f"{r.get('GP',0)} games" + (f" · {e(meas)}" if meas else "")
+        + f" · Scouted {conf['label']} (±{conf['ci']:.0f} OVR)" + "</div>"
         f"<div class='chips'>"
         f"<span class='chip'><b>{g('OVERALL','{:.0f}')}</b> OVR</span>"
         f"<span class='chip'><b>{g('OFFENSE','{:.0f}')}</b> OFF</span>"
@@ -149,11 +154,20 @@ def player_card_html(player_id, gender=None, table=None):
 
     # Impact & signature strip — the invented/impact tiles the on-screen card leads
     # with, so the printout carries the same headline advanced read.
+    _selfcr = r.get("SelfCr%")
+    _passpct = (100 - _selfcr) if _selfcr is not None else None
+    try:
+        import helpers.spacing as SP
+        _space = SP.league_player_spacing(gender).get(player_id, {}).get("index")
+    except Exception:
+        _space = None
     sig = "".join([
         _kpi("MIN/G", g("MPG")), _kpi("+/-", g("+/-", "{:+.0f}")),
-        _kpi("EFF", g("EFF", "{:.0f}")), _kpi("2-WAY", g("2WAY", "{:.0f}")),
-        _kpi("VERS", g("VERSATILITY")), _kpi("Q4 PPG", g("Q4PPG")),
-        _kpi("SMOE", g("SMOE", "{:+.2f}")), _kpi("SELF-CR%", g("SelfCr%", "{:.0f}")),
+        _kpi("EFF", g("EFF", "{:.0f}")), _kpi("VPS", g("VPS", "{:.2f}")),
+        _kpi("2-WAY", g("2WAY", "{:.0f}")), _kpi("SMOE", g("SMOE", "{:+.2f}")),
+        _kpi("SELF-CR%", g("SelfCr%", "{:.0f}")),
+        _kpi("PASS%", f"{_passpct:.0f}" if _passpct is not None else "—"),
+        _kpi("SPACING", f"{_space:.0f}" if _space is not None else "—"),
     ])
 
     # Full stat line — mirrors the on-screen "Scoring & shooting" +
@@ -207,8 +221,14 @@ def player_card_html(player_id, gender=None, table=None):
 
     pool = list(table.values())
     prows = ""
-    for key, lbl in (("PPG", "PPG"), ("RPG", "RPG"), ("APG", "APG"),
-                     ("TS%", "TS%"), ("USG%", "USG%"), ("OVERALL", "Overall")):
+    for key, lbl in (("PPG", "Points"), ("RPG", "Rebounds"), ("APG", "Assists"),
+                     ("SPG", "Steals"), ("BPG", "Blocks"), ("TS%", "True shooting"),
+                     ("eFG%", "Effective FG"), ("3P%", "Three-point %"),
+                     ("PPS", "Points / shot"), ("USG%", "Usage"),
+                     ("AST/TOV", "Assist / TO"), ("REB%", "Rebound %"),
+                     ("EFF", "Efficiency"), ("FIC", "Floor impact"),
+                     ("GS/G", "Game Score"), ("VPS", "Value Point System"),
+                     ("OVERALL", "Overall")):
         p = _pctile(r.get(key), key, pool)
         if p is None:
             continue
@@ -222,12 +242,55 @@ def player_card_html(player_id, gender=None, table=None):
     chart_html = (f"<h2>Shot chart</h2>{CPNG.shot_chart_png(shots, width=320)}"
                   if shots else "")
 
+    # Vs teammates — league rating ranked among this player's own roster.
+    twr_rows = ""
+    for k, lbl in (("OVERALL", "Overall"), ("OFFENSE", "Offense"),
+                   ("DEFENSE", "Defense"), ("PLAYMAKING", "Playmaking"),
+                   ("REBOUNDING", "Rebounding")):
+        tr = twr.get(k)
+        if tr:
+            twr_rows += (f"<tr><td>{e(lbl)}</td><td class='num'>{g(k,'{:.0f}')}</td>"
+                         f"<td class='num'>#{tr['rank']} of {tr['n']}</td></tr>")
+    tw_html = (f"<h2>Vs teammates</h2><table><tr><th>Rating</th>"
+               f"<th class='num'>Value</th><th class='num'>Team rank</th></tr>"
+               f"{twr_rows}</table>") if twr_rows else ""
+
+    # Impact — RAPM · WPA (directional; heavy league scans, guarded so an export
+    # never fails on thin data or a missing engine).
+    imp_html = ""
+    try:
+        import helpers.rapm as RP
+        import helpers.wpa as WP
+        _gids = PT._tracked_game_ids(gender)
+        _rp = (RP.compute_rapm(game_ids=_gids,
+                               prior=RP.box_prior_from_ratings(gender=gender))
+               .get(player_id, {})) if _gids else {}
+        _ws = WP.season_wpa(gender, mode="scoring").get(player_id, {})
+        _wq = WP.season_wpa(gender, mode="possession").get(player_id, {})
+
+        def _sv(d, k, f="{:+.1f}"):
+            v = d.get(k)
+            return f.format(v) if v is not None else "—"
+        if _rp or _ws or _wq:
+            _cells = "".join([
+                _kpi("ORAPM", _sv(_rp, "ORAPM")), _kpi("DRAPM", _sv(_rp, "DRAPM")),
+                _kpi("RAPM", _sv(_rp, "RAPM")), _kpi("WPA", _sv(_ws, "wpa", "{:+.2f}")),
+                _kpi("CLUTCH WPA", _sv(_ws, "clutch_wpa", "{:+.2f}")),
+                _kpi("OWA", _sv(_wq, "off_wpa", "{:+.2f}")),
+                _kpi("DWA", _sv(_wq, "def_wpa", "{:+.2f}")),
+            ])
+            imp_html = (f"<h2>Impact — RAPM &middot; WPA</h2>"
+                        f"<table class='kpis'><tr>{_cells}</tr></table>")
+    except Exception:
+        imp_html = ""
+
     body = (
         f"{band}<div class='wrap'>"
         f"<h2>Season averages</h2><table class='kpis'><tr>{kpis}</tr></table>"
         f"<h2>Impact &amp; signature</h2><table class='kpis'><tr>{sig}</tr></table>"
-        f"<h2>Full stat line</h2><table>{statline}</table>"
-        + pct_html + chart_html
+        + imp_html
+        + f"<h2>Full stat line</h2><table>{statline}</table>"
+        + tw_html + pct_html + chart_html
         + f"<h2>Badges</h2><div>{bdg}</div>"
         + (f"<h2>Fouls &amp; free throws</h2>{ftline}" if ff else "")
         + (f"<h2>Season highs</h2><table><tr><th>Stat</th><th class='num'>High</th>"

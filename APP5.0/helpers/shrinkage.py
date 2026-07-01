@@ -81,6 +81,54 @@ def wilson_interval(made, att, conf=0.95):
     return (max(0.0, center - half), min(1.0, center + half))
 
 
+def rating_confidence(games, poss=None, rating_sd=10.0, k_games=DEFAULT_INDEX_K,
+                      conf=0.95):
+    """How much to trust a player's 0-100 rating given the sample behind it.
+
+    The OOTP "scouted" read: a lot of tracked evidence → tight band, "High"
+    confidence; a one-game cameo → wide band, "Low". Ratings live on a scale
+    where one SD across the pool ≈ `rating_sd` points (the SD=10 contract), so a
+    player's own rating has sampling error ≈ rating_sd / √games. The CI half-width
+    is that error times the two-sided z for `conf`.
+
+    `poss` (tracked possessions / shot-equivalents behind the event-derived
+    inputs) refines the evidence when given: the confidence fraction blends the
+    games signal with a possession signal so a player with many games but almost
+    no tracked possessions still reads as thin.
+
+    Returns {"tier", "label", "frac", "ci", "games", "poss"} where `frac` is a
+    0-1 trust fraction (drives the header meter) and `ci` is the ± half-width to
+    draw as the band behind a rating bar.
+    """
+    g = max(0, int(games or 0))
+    # games evidence → 0-1 (same shrink weight the ratings use toward 50)
+    frac = g / (g + k_games) if (g + k_games) > 0 else 0.0
+    if poss is not None:
+        # possession evidence with a heavier phantom weight (a rating needs a
+        # few dozen tracked possessions before it firms up)
+        p = max(0, int(poss or 0))
+        k_poss = 40.0
+        frac_poss = p / (p + k_poss) if (p + k_poss) > 0 else 0.0
+        frac = min(frac, frac_poss)   # the weaker signal governs
+    z = _z_for(conf)
+    ci = (z * rating_sd / (g ** 0.5)) if g > 0 else rating_sd * 2.5
+    ci = max(2.0, min(25.0, ci))
+    # Tier ladder matches player_ratings.sample_confidence (games-based) so the
+    # card never shows two different confidence labels; frac/ci are the visual
+    # extras that the string flag doesn't carry.
+    if g >= 10:
+        tier, label = "high", "High"
+    elif g >= 6:
+        tier, label = "medium", "Medium"
+    elif g >= 3:
+        tier, label = "low", "Low"
+    else:
+        tier, label = "very_low", "Very Low"
+    return {"tier": tier, "label": label, "frac": round(frac, 3),
+            "ci": round(ci, 1), "games": g,
+            "poss": (int(poss) if poss is not None else None)}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  CORE STABILIZERS
 # ══════════════════════════════════════════════════════════════════════════════

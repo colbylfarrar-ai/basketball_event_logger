@@ -40,6 +40,11 @@ DEFAULT_FEATURES = [
     # into the shot) vs screen-assist (freed a teammate). Splits the old single
     # SelfCr% so centroids resolve Self-Creator vs Spot-Up vs Screen Setter.
     "SelfCr%", "SCPass%", "SCCreated%",
+    # two-way QUALITY composites (0-100). SPG/BPG alone barely represent defense,
+    # so a group never separated on "good D / bad O" vs "good O / bad D". Adding the
+    # OFFENSE/DEFENSE ratings lets k-means find those two-way profiles, and lets the
+    # namer emit Two-Way Star / Offensive Engine / Defensive Anchor / Flamethrower.
+    "OFFENSE", "DEFENSE",
 ]
 
 # Feature → archetype "axis" weights, used to read a centroid's personality.
@@ -56,7 +61,15 @@ _AXES = {
     "creation":    ["SelfCr%"],     # self-made (off the dribble, no pass/screen)
     "spot_up":     ["SCPass%"],     # assisted — catch-and-shoot / drive-and-kick
     "screen_assist": ["SCCreated%"],  # frees shooters by screening (connector big)
+    # two-way QUALITY axes — the OFFENSE/DEFENSE composites. Read separately from
+    # the style axes above (the namer checks these first for the two-way profile,
+    # then falls back to style), so they don't compete for "top style axis".
+    "offense_q":   ["OFFENSE"],
+    "defense_q":   ["DEFENSE"],
 }
+# The quality axes are a separate read from playing STYLE — excluded from the
+# top-style-axis ranking in _name_for.
+_QUALITY_AXES = ("offense_q", "defense_q")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -151,13 +164,15 @@ def _fit_kmeans(X, k, seed=7):
     return _kmeans(X, k, seed=seed)
 
 
-def _choose_k(X, kmin=3, kmax=7, seed=7):
+def _choose_k(X, kmin=4, kmax=8, seed=7):
     """Pick k by the highest mean silhouette score (sklearn). Falls back to the
     _suggest_k heuristic without sklearn or on a sample too thin to score.
 
-    kmin starts at 3: silhouette on diffuse HS data almost always maxes at k=2
-    (one big split scores highest), but "2 archetypes" is useless for a role
-    taxonomy — so we explore 3-7 and take the best within a usable range."""
+    kmin starts at 4: silhouette on diffuse HS data almost always maxes at the
+    smallest k (one big split scores highest), but a 2-3 group split is too coarse
+    for a role taxonomy — the two-way profiles (Offensive Engine / Defensive Anchor
+    / Flamethrower) only resolve once the field is cut a bit finer — so we explore
+    4-8 and take the best within that usable range. kmax is capped at n-1 below."""
     n = X.shape[0]
     if not _HAVE_SKLEARN or n < 5:
         return _suggest_k(n)
@@ -191,11 +206,34 @@ def _axis_scores(centroid, features):
 
 
 def _name_for(axes):
-    """Map an axis-score profile to a human archetype name."""
-    ranked = sorted(axes.items(), key=lambda kv: kv[1], reverse=True)
+    """Map an axis-score profile to a human archetype name.
+
+    Two reads, in order: first the TWO-WAY QUALITY split (from the OFFENSE/DEFENSE
+    composite z-scores) — a clear good-O/bad-D, good-D/bad-O, elite-both, or
+    elite-shooting-that-defends profile earns a role name; otherwise fall back to
+    the playing-STYLE signature (top style axis)."""
+    o = axes.get("offense_q", 0.0)
+    d = axes.get("defense_q", 0.0)
+    # top STYLE axis (quality axes excluded so they never masquerade as a style).
+    style = {a: v for a, v in axes.items() if a not in _QUALITY_AXES}
+    ranked = sorted(style.items(), key=lambda kv: kv[1], reverse=True)
     top, tval = ranked[0]
     second = ranked[1][0]
 
+    # thresholds are on the standardized (z) scale, matching the style cuts below.
+    STRONG, TILT, WEAK = 0.5, 0.4, -0.3
+    # ── two-way QUALITY read first ────────────────────────────────────────────
+    if o >= STRONG and d >= STRONG:
+        return "Two-Way Star"
+    if o >= TILT and d <= WEAK:
+        return "Offensive Engine"          # carries the offense, a liability on D
+    if d >= TILT and o <= WEAK:
+        return "Defensive Anchor"          # locks it up, offense is a passenger
+    # elite shooting that IS the calling card AND holds up on D → the 3&D scorer.
+    if top == "shooting" and tval >= 0.5 and d >= -0.1:
+        return "Flamethrower"
+
+    # ── otherwise NAME BY STYLE ───────────────────────────────────────────────
     # nobody stands out → a connector / role player
     if tval < 0.35:
         return "Glue / Role Player"

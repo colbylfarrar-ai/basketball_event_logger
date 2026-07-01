@@ -312,11 +312,13 @@ STAT_DEFS = [
      "Trust the stabilized value on low volume; it converges to the raw rate as "
      "attempts grow.", True),
     ("Archetype", "Play-Style Cluster", "Ratings", "k-means on z-scored stats",
-     "A data-driven playing-style group (Movement Shooter, Floor General, Rim "
-     "Protector, …) learned by clustering players on standardized stats and named "
-     "from the cluster's statistical signature. Shown as the 'Cluster' chip on a "
-     "player's header and on the Lab → Archetypes tab.",
-     "Describes style, not quality — two clusters can be equally good. Distinct "
+     "A data-driven player group learned by clustering on standardized stats "
+     "(including the OFFENSE/DEFENSE composites) and named from the cluster's "
+     "signature. Style names (Movement Shooter, Floor General, Rim Protector, …) "
+     "plus two-way profiles (Two-Way Star, Offensive Engine, Defensive Anchor, "
+     "Flamethrower) when a cluster splits on offense-vs-defense quality. Shown as "
+     "the 'Cluster' chip on a player's header and on the Lab → Archetypes tab.",
+     "Mostly a style read; the two-way names also reflect O/D quality. Distinct "
      "from the rule-based Scouting Role below.", True),
     ("Role", "Scouting Role", "Ratings", "rule-based thresholds on ratings + percentiles",
      "The plain-language role on a player's profile hero card (Two-Way Force, "

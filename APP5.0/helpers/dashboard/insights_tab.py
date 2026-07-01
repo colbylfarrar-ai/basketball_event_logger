@@ -76,6 +76,12 @@ def _passers(gender):
     return INT.passer_quality(gender=gender)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _glance(gender, team_id):
+    """The team's most-distinctive stats vs the league (the 'at a glance' read)."""
+    return INT.team_glance(gender, team_id)
+
+
 def _pct(v):
     return f"{v * 100:.0f}%" if v is not None else "—"
 
@@ -98,6 +104,33 @@ def render(ctx):
                 "splits, win-impact). Track this team's games — or unlock the "
                 "Paid tier — to light them up.")
         return
+
+    # ── Team at a glance — the handful of stats this team is most defined by ──
+    _gl = _glance(ctx.gender, ctx.team_id) if getattr(ctx, "team_id", None) else []
+    if _gl:
+        st.markdown("<div class='lab-hdr'>Team at a glance</div>",
+                    unsafe_allow_html=True)
+        st.caption("The stats this team stands out on most vs the league — the "
+                   "fastest read on who they are and how they play.")
+        _tiles = ""
+        for _g in _gl:
+            _clr = ("#3fb950" if _g["good"] else "#e74c3c") \
+                if _g["good"] is not None else "#58a6ff"
+            _tiles += (
+                f"<div style='background:#0d1117;border:1px solid #21262d;"
+                f"border-left:3px solid {_clr};border-radius:8px;padding:8px 11px'>"
+                f"<div style='font-size:11px;color:#8b949e'>{_g['label']}</div>"
+                f"<div style='font-size:18px;font-weight:700;color:#f0f6fc'>"
+                f"{_g['value']}</div>"
+                f"<div style='font-size:11px;color:{_clr};font-weight:600'>"
+                f"{_g['pct']}th pct</div>"
+                f"<div style='font-size:11px;color:#8b949e;margin-top:2px'>"
+                f"{_g['tag']}</div></div>")
+        st.markdown(
+            "<div style='display:grid;grid-template-columns:"
+            "repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:6px'>"
+            + _tiles + "</div>", unsafe_allow_html=True)
+        st.divider()
 
     table, feed, roles, impact, cliffs = _league(ctx.gender)
     if not table:

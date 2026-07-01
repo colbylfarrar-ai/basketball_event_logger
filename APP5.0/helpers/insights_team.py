@@ -19,6 +19,64 @@ import helpers.team_ratings as TR
 
 MIN_SPLIT_SHOTS = 15        # a side needs this many shots before its split is shown
 
+# ── "Team at a glance" — the stats a team is most DEFINED by ───────────────────
+# (team_stat_table label, higher_better [None=neutral identity], category,
+#  high-percentile tag, low-percentile tag). One stat per category surfaces, so
+# the glance stays diverse (not five shooting stats). higher_better feeds the
+# percentile direction so "high pct" always means the good/notable end of the tag.
+_GLANCE_SPEC = [
+    ("Pace",      None,  "tempo",       "plays fast",                "grind-it-out pace"),
+    ("3PAr",      None,  "shot profile", "bombs away from three",    "rarely shoots threes"),
+    ("Paint pt%", None,  "shot profile", "scores inside",            "perimeter-oriented"),
+    ("eFG%",      True,  "shooting",    "shoots it well",            "poor shooting team"),
+    ("3P%",       True,  "shooting",    "hot from deep",             "cold from deep"),
+    ("FTr",       True,  "aggression",  "attacks the rim / line",    "settles for jumpers"),
+    ("ORtg",      True,  "offense",     "high-powered offense",      "offense struggles"),
+    ("DRtg",      False, "defense",     "elite defense",             "leaky defense"),
+    ("Opp eFG%",  False, "defense",     "contests everything",       "gives up clean looks"),
+    ("ORB%",      True,  "rebounding",  "crashes the offensive glass", "one-and-done offense"),
+    ("DRB%",      True,  "rebounding",  "owns the defensive glass",  "gives up second chances"),
+    ("TOV%",      False, "ball control", "protects the ball",        "turnover-prone"),
+    ("AST%",      True,  "ball movement", "moves the ball",          "iso-heavy"),
+    ("STL/G",     True,  "pressure",    "ball-hawking defense",      "low-pressure defense"),
+    ("MOV",       True,  "results",     "wins by a lot",             "plays close / loses"),
+]
+
+
+def team_glance(gender, team_id, n=6):
+    """The 4-8 stats this team is MOST distinctive on vs the league — a quick
+    identity fingerprint. Percentile-ranks the team on each curated stat, keeps
+    the single most-extreme stat per category (so the read stays diverse), and
+    returns them most-distinctive first: [{label, value, pct, tag, good, dist}].
+    Empty when the team isn't in the tracked table."""
+    import helpers.league_analytics as LA        # lazy — avoids an import cycle
+    row = query("SELECT name FROM teams WHERE id=?", (team_id,))
+    if not row:
+        return []
+    name = row[0]["name"]
+    rows = LA.team_stat_table(gender=gender)
+    me = next((r for r in rows if r.get("Team") == name), None)
+    if not me or len(rows) < 5:
+        return []
+    by_cat = {}
+    for label, hb, cat, hi_tag, lo_tag in _GLANCE_SPEC:
+        myv = me.get(label)
+        if not isinstance(myv, (int, float)):
+            continue
+        pool = [r[label] for r in rows if isinstance(r.get(label), (int, float))]
+        if len(pool) < 5:
+            continue
+        pct = S.percentile(myv, pool, higher_better=(True if hb is None else hb))
+        if pct is None:
+            continue
+        item = {"label": label, "value": myv, "pct": round(pct),
+                "dist": abs(pct - 50),
+                "tag": (hi_tag if pct >= 50 else lo_tag),
+                "good": (None if hb is None else pct >= 50)}
+        if cat not in by_cat or item["dist"] > by_cat[cat]["dist"]:
+            by_cat[cat] = item
+    return sorted(by_cat.values(), key=lambda d: -d["dist"])[:n]
+
 
 def _team_game_opponents(team_id, game_ids=None):
     """{game_id: opponent_team_id} for the team's tracked, current-season games

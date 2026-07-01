@@ -1358,9 +1358,13 @@ def _fx_plab():
             lead = sorted([p for p in ltab if bpts[p] > 0],
                           key=lambda p: -bpts[p])[:15]
             if lead:
+                # y label carries the team — adds the team name AND makes each row
+                # unique, so players who share a name (common here) no longer land on
+                # the same y category and stack into one bar.
                 lfig = go.Figure(go.Bar(
                     x=[bpts[p] for p in lead][::-1],
-                    y=[ltab[p]["name"] for p in lead][::-1], orientation="h",
+                    y=[f"{ltab[p]['name']} · {_team_short(ltab[p]['team'])}"
+                       for p in lead][::-1], orientation="h",
                     marker_color=ACCENT, marker_line_width=0,
                     text=[bpts[p] for p in lead][::-1], textposition="auto"))
                 lfig.update_xaxes(title="Badge points (Gold 5 · Silver 3 · Bronze 1)")
@@ -1557,9 +1561,12 @@ def _fx_plab():
                 drows = sorted([(d, diff[d]) for d in gen_def if d in diff],
                                key=lambda x: -x[1]["Difficulty100"])[:15]
                 if drows:
+                    # y label carries the team — adds the team name AND de-dupes
+                    # shared player names so they don't stack onto one y row.
                     dfig = go.Figure(go.Bar(
                         x=[v["Difficulty100"] for _, v in drows][::-1],
-                        y=[lnames[d]["name"] for d, _ in drows][::-1],
+                        y=[f"{lnames[d]['name']} · {_team_short(lnames[d]['team'])}"
+                           for d, _ in drows][::-1],
                         orientation="h", marker_color=ACCENT, marker_line_width=0,
                         text=[f"{v['Difficulty100']:.0f}" for _, v in drows][::-1],
                         textposition="auto",

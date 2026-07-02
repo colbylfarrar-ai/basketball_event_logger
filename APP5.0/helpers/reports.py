@@ -140,8 +140,13 @@ def player_card_html(player_id, gender=None, table=None):
         f"<span class='chip'><b>{g('DEFENSE','{:.0f}')}</b> DEF</span>"
         f"<span class='chip'><b>{g('PLAYMAKING','{:.0f}')}</b> PLAY</span>"
         f"<span class='chip'><b>{g('REBOUNDING','{:.0f}')}</b> REB</span>"
+        + (f"<span class='chip'><b>{g('PHYSICAL','{:.0f}')}</b> PHY</span>"
+           if r.get("PHYSICAL") is not None else "")
         + (f"<span class='chip'>{e(_arch)}</span>" if _arch else "")
         + f"<span class='chip'>Role · {e(_barch)}</span>"
+        # the profile's verdict read: do the two archetype lenses agree?
+        + (f"<span class='chip'>{'lenses agree' if _arch == _barch else 'lenses differ'}</span>"
+           if _arch else "")
         + "</div></div>")
 
     kpis = "".join([
@@ -168,7 +173,32 @@ def player_card_html(player_id, gender=None, table=None):
         _kpi("SELF-CR%", g("SelfCr%", "{:.0f}")),
         _kpi("PASS%", f"{_passpct:.0f}" if _passpct is not None else "—"),
         _kpi("SPACING", f"{_space:.0f}" if _space is not None else "—"),
+        # the profile's Signature defense splits (FG% allowed at the rim / arc)
+        _kpi("RIM D FG%", g("RimDFG%", "{:.0f}")),
+        _kpi("PERIM D FG%", g("PerimDFG%", "{:.0f}")),
     ])
+
+    # Form — the profile's trajectory chips (last 5 games vs season, measured
+    # play — never a projection). ASCII words, xhtml2pdf's fonts have no arrows.
+    form_html = ""
+    if len(log) >= 6:
+        _tspec = [("OVERALL (GS)", lambda b: S.game_score(b), 1.5),
+                  ("OFF (PTS)", lambda b: b.get("PTS", 0), 2.0),
+                  ("DEF (STK)", lambda b: b.get("STL", 0) + b.get("BLK", 0), 0.8),
+                  ("PLAY (AST)", lambda b: b.get("AST", 0), 0.8),
+                  ("REB", lambda b: b.get("TRB", 0), 1.2)]
+        _fcells = []
+        for _lbl, _fn, _eps in _tspec:
+            try:
+                _series = [_fn(gm["box"]) for gm in log]
+            except Exception:
+                continue
+            _d = sum(_series[-5:]) / 5 - sum(_series) / len(_series)
+            _word = "UP" if _d >= _eps else ("DOWN" if _d <= -_eps else "FLAT")
+            _fcells.append(_kpi(_lbl, f"{_word} {_d:+.1f}"))
+        if _fcells:
+            form_html = ("<h2>Form — last 5 games vs season</h2>"
+                         f"<table class='kpis'><tr>{''.join(_fcells)}</tr></table>")
 
     # Full stat line — mirrors the on-screen "Scoring & shooting" +
     # "Rebounding · Playmaking · Defense" detail tables (the tab's "full stat line").
@@ -186,7 +216,18 @@ def player_card_html(player_id, gender=None, table=None):
         _sr("OREB / DREB", f"{r.get('OREB', 0)} / {r.get('DREB', 0)}"),
         _sr("Assists (APG)", f"{r.get('AST', 0)} ({g('APG')}/g)"),
         _sr("Assist / turnover", g("AST/TOV", "{:.2f}")),
+        _sr("Potential assists",
+            f"{r.get('PotAST', 0)}"
+            + (f" ({r['FeedConv%']:.0f}% finished)"
+               if r.get("FeedConv%") is not None else "")),
+        _sr("Screen assists", f"{r.get('ScrAST', 0)}"),
         _sr("Steals / Blocks", f"{r.get('STL', 0)} / {r.get('BLK', 0)}"),
+        _sr("Rim defense (FG% allowed)",
+            f"{pg('RimDFG%')} on {r.get('RimDShots', 0)}"
+            if r.get("RimDShots") else "—"),
+        _sr("Perimeter defense (3P% allowed)",
+            f"{pg('PerimDFG%')} on {r.get('PerimDShots', 0)}"
+            if r.get("PerimDShots") else "—"),
         _sr("Turnovers (TPG)", f"{r.get('TOV', 0)} ({g('TPG')}/g)"),
         _sr("Fouls (FPG)", f"{r.get('PF', 0)} ({g('PF/G')}/g)"),
         _sr("Game Score / game", g("GS/G")),
@@ -204,10 +245,16 @@ def player_card_html(player_id, gender=None, table=None):
 
     ftline = ""
     if ff:
+        _cft = (f"{ff.get('cFTM', 0)}/{ff.get('cFTA', 0)} "
+                f"({ff['ClutchFT%']:.0f}%)" if ff.get("cFTA") else "—")
+        _a1 = (f"{ff.get('and1_made', 0)}/{ff.get('and1', 0)}"
+               if ff.get("and1") else "—")
         ftline = (f"<table class='kpis'><tr>{_kpi('Fouls drawn', ff.get('drawn',0))}"
                   f"{_kpi('Fouls', ff.get('PF',0))}"
                   f"{_kpi('FT', str(ff.get('FTM',0))+'/'+str(ff.get('FTA',0)))}"
-                  f"{_kpi('FT%', ('%.0f%%'%ff['FT%']) if ff.get('FTA') else '—')}</tr></table>")
+                  f"{_kpi('FT%', ('%.0f%%'%ff['FT%']) if ff.get('FTA') else '—')}"
+                  f"{_kpi('CLUTCH FT', _cft)}"
+                  f"{_kpi('AND-1', _a1)}</tr></table>")
 
     lrows = ""
     for game in log[-15:][::-1]:
@@ -240,8 +287,13 @@ def player_card_html(player_id, gender=None, table=None):
                 f"{prows}</table>") if prows else ""
 
     shots = S.located_shots(player_id=player_id)
-    chart_html = (f"<h2>Shot chart</h2>{CPNG.shot_chart_png(shots, width=320)}"
-                  if shots else "")
+    chart_html = ""
+    if shots:
+        # the accuracy line the profile prints under its fold shot map
+        chart_html = (
+            f"<h2>Shot chart</h2>{CPNG.shot_chart_png(shots, width=320)}"
+            f"<div style='font-size:9px;color:#5b6470'>Paint FG% {pg('Paint%')}"
+            f" &middot; FG% {pg('FG%')} &middot; 3P% {pg('3P%')}</div>")
 
     # Vs teammates — league rating ranked among this player's own roster.
     twr_rows = ""
@@ -293,6 +345,7 @@ def player_card_html(player_id, gender=None, table=None):
         f"{band}<div class='wrap'>"
         f"<h2>Season averages</h2><table class='kpis'><tr>{kpis}</tr></table>"
         f"<h2>Impact &amp; signature</h2><table class='kpis'><tr>{sig}</tr></table>"
+        + form_html
         + imp_html
         + f"<h2>Full stat line</h2><table>{statline}</table>"
         + tw_html + pct_html + chart_html

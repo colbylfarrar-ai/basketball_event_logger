@@ -32,10 +32,12 @@ _FIELDS_BY_TYPE = {
              "pass_from_id", "shot_created_by_id", "rebound_by_id",
              "blocked_by_id", "guarded_by_id", "play_type", "defense"),
     "free_throw": ("primary_player_id", "shot_result", "rebound_by_id"),
-    # defense (the scheme in effect) is captured on fouls + turnovers too, not
-    # just shots — a press forces both — so it survives a retype between them.
-    "foul": ("primary_player_id", "secondary_player_id", "official_id", "defense"),
-    "turnover": ("primary_player_id", "stolen_by_id", "defense"),
+    # defense (the scheme in effect) AND play_type (the offense's set call) are
+    # captured on fouls + turnovers too, not just shots — a press forces both,
+    # and a PnR can end in a strip or a drawn foul — so both survive a retype.
+    "foul": ("primary_player_id", "secondary_player_id", "official_id",
+             "play_type", "defense"),
+    "turnover": ("primary_player_id", "stolen_by_id", "play_type", "defense"),
 }
 
 # Every nullable column the editor manages (written on each update).

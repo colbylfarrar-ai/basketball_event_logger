@@ -53,6 +53,7 @@ const S = {
   clockSec: 0,
   clockRunning: false,                          // running game clock (never persisted across reload)
   defense: null,                                // sticky "current defense" tag (see DEFENSES)
+  playType: null,                               // sticky "current set call" (see PLAY_TYPES) — stamps shots, TOs AND fouls
   lastLive: Object.assign({}, EMPTY_LIVE),      // last synced server state (never includes queue)
   queue: [],                                    // unsynced events for current game, oldest first
   flushing: false,
@@ -433,6 +434,9 @@ async function selectGame(gid) {
   // Sticky D: keep this game's saved scheme if it has one; a fresh game defaults
   // to the most-recently-used scheme (carried across games via LS.lastDefense).
   S.defense = ('defense' in prefs) ? prefs.defense : lsGet(LS.lastDefense, null);
+  // Sticky set call survives a mid-game reload but never carries between games
+  // (set calls change possession to possession, unlike a defense).
+  S.playType = ('playType' in prefs) ? prefs.playType : null;
   S.lastLive = lsGet(LS.live(gid), Object.assign({}, EMPTY_LIVE));
   try { S.queue = await qLoad(gid); } catch (e) { S.queue = []; }
   resetFlow('shot');
@@ -663,7 +667,7 @@ function savePrefs() {
   if (!S.gameId) return;
   lsSet(LS.game(S.gameId), {
     lineup: S.lineup, quarter: S.quarter, clockMin: S.clockMin, clockSec: S.clockSec,
-    defense: S.defense
+    defense: S.defense, playType: S.playType
   });
 }
 
@@ -1127,6 +1131,37 @@ function renderDefenseBar() {
   bar.appendChild(box);
 }
 
+// Sticky "current set call" — the play_type twin of the defense bar, in the
+// same always-visible area so it works in quick AND detailed mode. Tapping sets
+// S.playType for every subsequent event (shots, TURNOVERS and FOULS inherit it
+// via baseEvent); the detailed shot flow's own Play-type chips override it for
+// that one shot. Re-tapping the selected call clears it.
+function renderPlayTypeBar() {
+  const bar = $('playtype-bar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  if (!S.game) return;
+  const lab = document.createElement('span');
+  lab.className = 'chip-label';
+  lab.textContent = 'Set call';
+  bar.appendChild(lab);
+  const box = document.createElement('div');
+  box.className = 'chips scroll';
+  function pickPlayType(k) {
+    S.playType = k;
+    savePrefs();
+    renderPlayTypeBar();
+    renderFlow();               // shot-flow chips preview the sticky pick
+  }
+  box.appendChild(flowBtn('—', 'chip' + (S.playType == null ? ' sel' : ''),
+    function () { pickPlayType(null); }));
+  PLAY_TYPE_KEYS.forEach(function (k) {
+    box.appendChild(flowBtn(ptLabel(k), 'chip' + (S.playType === k ? ' sel' : ''),
+      function () { pickPlayType(S.playType === k ? null : k); }));
+  });
+  bar.appendChild(box);
+}
+
 /* ----- in-place subs (tracker screen) -----
    Swap the on-court five without leaving the tracker. Minutes and +/- key off the
    lineup snapshot stamped on every event (baseEvent.on_court), so keeping subs here
@@ -1200,6 +1235,7 @@ function renderFlow() {
   const wrap = $('flow');
   if (!wrap) return;
   renderDefenseBar();          // sticky D bar lives outside #flow — refresh every pass
+  renderPlayTypeBar();         // sticky set-call bar, same area (quick + detailed)
   wrap.innerHTML = '';
   if (!S.game || !S.flow) return;
   const f = S.flow;
@@ -1230,7 +1266,9 @@ function renderFlow() {
           wrap.appendChild(chipRow(d[1], players, f.details[d[0]],
             function (id) { f.details[d[0]] = id; renderFlow(); }, { allowNone: true, scroll: true }));
         });
-        wrap.appendChild(chipRow('Play type', PLAY_TYPE_KEYS, f.details.play_type,
+        // previews the sticky bar's pick until the coach overrides per-shot
+        wrap.appendChild(chipRow('Play type',
+          PLAY_TYPE_KEYS, f.details.play_type != null ? f.details.play_type : S.playType,
           function (k) { f.details.play_type = k; renderFlow(); },
           { allowNone: true, scroll: true, labelFn: ptLabel }));
       } else {
@@ -1291,7 +1329,8 @@ function baseEvent(type) {
     shot_result: null,
     shot_x: null, shot_y: null, shot_type: null, zone: null,
     pass_from_id: null, shot_created_by_id: null, rebound_by_id: null,
-    blocked_by_id: null, guarded_by_id: null, play_type: null,
+    blocked_by_id: null, guarded_by_id: null,
+    play_type: S.playType,                       // sticky current set call (see PLAY_TYPES)
     secondary_player_id: null, official_id: null, stolen_by_id: null,
     defense: S.defense,                          // sticky current defense (see DEFENSES)
     on_court: onCourtIds(),
@@ -1327,6 +1366,9 @@ async function logShot(result) {
     ev.zone = f.manualZone;
   }
   Object.assign(ev, f.details);
+  // the per-shot chip overrides the sticky set call; untouched (null) falls
+  // back to the bar's current pick
+  if (ev.play_type == null) ev.play_type = S.playType;
   await queueEvent(ev);
   toast((ev.shot_type === 3 ? '3PT ' : '2PT ') + result + ' — ' + pLabel(ev.primary_player_id));
   resetFlow('shot');
@@ -1686,11 +1728,15 @@ function buildEditForm(ev) {
     box.appendChild(pickRow('Fouler', 'secondary_player_id', roster));
     const offIds = ((S.game && S.game.officials) || []).map(function (o) { return o.id; });
     box.appendChild(pickRow('Official', 'official_id', offIds, { labelFn: oLabel }));
+    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
+      f.play_type, function (v) { f.play_type = v; rerender(); }));
     box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
       f.defense, function (v) { f.defense = v; rerender(); }));
   } else if (f.event_type === 'turnover') {
     box.appendChild(pickRow('Player', 'primary_player_id', roster));
     box.appendChild(pickRow('Stolen by', 'stolen_by_id', roster));
+    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
+      f.play_type, function (v) { f.play_type = v; rerender(); }));
     box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
       f.defense, function (v) { f.defense = v; rerender(); }));
   }

@@ -219,24 +219,35 @@ def is_inherent(key, attr):
 def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
                          offense=True):
     """
-    PPP by the EXPLICIT one-tap `play_type` tag, for the team's own shots
-    (offense) or the shots it allowed (defense). Self-contained: with no events
-    it does one tracked-game pass for the gender (same scoping as
-    team_playtype_percentiles). A shot ends a possession, so PPP == PPS.
+    Per-possession numbers by the EXPLICIT one-tap `play_type` tag, for the
+    team's own offense or what it allowed (defense). Self-contained: with no
+    events it does one tracked-game pass for the gender (same scoping as
+    team_playtype_percentiles).
 
-    Returns {'rows': [{key,label,poss,FGM,PPP,FG%,share}], 'total_tagged': n,
-    'untagged': n}. Rows with no attempts are dropped; rows are sorted by PPP.
+    Since the trackers stamp the sticky set call on TURNOVERS and FOULS too, a
+    possession here = tagged shot OR tagged turnover (the locked rule, per set),
+    so PPP is a true per-possession rate and TO% is the set's give-it-away rate.
+    Fouls are NOT possessions: FD counts fouls DRAWN running the set (offense)
+    / committed defending it (offense=False). On legacy data with shot-only
+    tags everything reduces to the old numbers exactly.
+
+    Returns {'rows': [{key,label,poss,FGM,PPP,FG%,TOV,TO%,FD,share}],
+    'total_tagged': n, 'untagged': n (untagged SHOTS — the coverage read)}.
+    Rows with nothing logged are dropped; rows are sorted by PPP.
     Unknown/legacy labels fold into 'other'.
     """
     if events is None:
         gids = game_ids if game_ids is not None else _tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
     own = None if offense else TA.event_team_games(team_id, events)
-    agg = {k: {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0}
+    agg = {k: {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0,
+               "TOV": 0, "FD": 0}
            for k, _ in NAMED_PLAY_TYPES}
     tagged = untagged = 0
     for e in events:
-        if e["event_type"] != "shot" or e["shooter_team_id"] is None:
+        et = e["event_type"]
+        if et not in ("shot", "turnover", "foul") \
+                or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
             continue
@@ -244,12 +255,20 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
             continue
         pt = e.get("play_type")
         if not pt:
-            untagged += 1
+            if et == "shot":
+                untagged += 1
             continue
         if pt not in _NAMED_KEYS:
             pt = "other"
-        tagged += 1
         cell = agg[pt]
+        if et == "turnover":
+            cell["TOV"] += 1
+            tagged += 1
+            continue
+        if et == "foul":
+            cell["FD"] += 1          # drawn (offense) / committed (defense)
+            continue
+        tagged += 1
         cell["FGA"] += 1
         is3 = e["shot_type"] == 3
         if is3:
@@ -259,22 +278,24 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
             cell["PTS"] += 3 if is3 else 2
             if is3:
                 cell["FG3M"] += 1
-    total_fga = sum(c["FGA"] for c in agg.values())
+    total_poss = sum(c["FGA"] + c["TOV"] for c in agg.values())
     rows = []
     for key, label in NAMED_PLAY_TYPES:
         c = agg[key]
-        if c["FGA"] == 0:
+        poss = c["FGA"] + c["TOV"]
+        if poss == 0 and c["FD"] == 0:
             continue
         _2pa, _2pm = c["FGA"] - c["FG3A"], c["FGM"] - c["FG3M"]
         rows.append({
-            "key": key, "label": label, "poss": c["FGA"], "FGM": c["FGM"],
-            "PPP": _safe(c["PTS"], c["FGA"]), "FG%": _safe(c["FGM"], c["FGA"]),
+            "key": key, "label": label, "poss": poss, "FGM": c["FGM"],
+            "PPP": _safe(c["PTS"], poss), "FG%": _safe(c["FGM"], c["FGA"]),
+            "TOV": c["TOV"], "TO%": _safe(c["TOV"], poss), "FD": c["FD"],
             # eFG weights 3s; SCE = FG points / max possible (rewards shot
             # selection AND making); 2P%/3P% split the mix.
             "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
             "SCE": _safe(c["PTS"], _2pa * 2 + c["FG3A"] * 3),
             "3P%": _safe(c["FG3M"], c["FG3A"]), "2P%": _safe(_2pm, _2pa),
-            "3PA": c["FG3A"], "share": _safe(c["FGA"], total_fga),
+            "3PA": c["FG3A"], "share": _safe(poss, total_poss),
         })
     rows.sort(key=lambda r: r["PPP"], reverse=True)
     return {"rows": rows, "total_tagged": tagged, "untagged": untagged}
@@ -282,28 +303,42 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
 
 def player_named_playtypes(game_ids=None, events=None):
     """
-    Per-PLAYER PPP by the explicit one-tap `play_type` tag — the player-level
-    companion to team_named_playtypes (which is team-only). Each shot is counted
-    for its shooter (primary_player_id); a shot ends a possession so PPP == PPS.
-    Unknown/legacy labels fold into 'other'; untagged shots are skipped.
+    Per-PLAYER per-possession numbers by the explicit one-tap `play_type` tag —
+    the player-level companion to team_named_playtypes. Shots count for the
+    shooter, tagged TURNOVERS for the committer (both primary_player_id), so a
+    player's possession = tagged shot OR tagged TO and PPP/TO% read true.
+    Tagged fouls DRAWN (fouled player) count as FD, not possessions.
+    Unknown/legacy labels fold into 'other'; untagged events are skipped.
 
-    Returns {player_id: {key: {'poss','FGM','PPP','FG%'}}} — only the play_type
-    keys a player actually has tagged attempts for. Feeds the per-set player
-    badges (PnR Maestro / Post Hub) and the scout cards.
+    Returns {player_id: {key: {'poss','FGM','PPP','FG%','TOV','TO%','FD',…}}} —
+    only the play_type keys a player actually has tagged events for. Feeds the
+    per-set player badges (PnR Maestro / Post Hub) and the scout cards.
     """
     if events is None:
         events = S.fetch_events(game_ids)
     agg = {}
+
+    def _cell(pid, pt):
+        return agg.setdefault(pid, {}).setdefault(
+            pt, {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0,
+                 "TOV": 0, "FD": 0})
+
     for e in events:
-        if e["event_type"] != "shot" or e["primary_player_id"] is None:
+        if e["event_type"] not in ("shot", "turnover", "foul") \
+                or e["primary_player_id"] is None:
             continue
         pt = e.get("play_type")
         if not pt:
             continue
         if pt not in _NAMED_KEYS:
             pt = "other"
-        cell = agg.setdefault(e["primary_player_id"], {}).setdefault(
-            pt, {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0})
+        cell = _cell(e["primary_player_id"], pt)
+        if e["event_type"] == "turnover":
+            cell["TOV"] += 1
+            continue
+        if e["event_type"] == "foul":
+            cell["FD"] += 1          # primary = the FOULED player (drawn)
+            continue
         cell["FGA"] += 1
         is3 = e["shot_type"] == 3
         if is3:
@@ -313,14 +348,18 @@ def player_named_playtypes(game_ids=None, events=None):
             cell["PTS"] += 3 if is3 else 2
             if is3:
                 cell["FG3M"] += 1
-    return {pid: {k: {"poss": c["FGA"], "FGM": c["FGM"],
-                      "PPP": _safe(c["PTS"], c["FGA"]),
+    return {pid: {k: {"poss": c["FGA"] + c["TOV"], "FGM": c["FGM"],
+                      "PPP": _safe(c["PTS"], c["FGA"] + c["TOV"]),
                       "FG%": _safe(c["FGM"], c["FGA"]),
+                      "TOV": c["TOV"],
+                      "TO%": _safe(c["TOV"], c["FGA"] + c["TOV"]),
+                      "FD": c["FD"],
                       "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
                       "SCE": _safe(c["PTS"],
                                    (c["FGA"] - c["FG3A"]) * 2 + c["FG3A"] * 3),
                       "3P%": _safe(c["FG3M"], c["FG3A"])}
-                  for k, c in d.items()}
+                  for k, c in d.items()
+                  if c["FGA"] + c["TOV"] + c["FD"] > 0}
             for pid, d in agg.items()}
 
 

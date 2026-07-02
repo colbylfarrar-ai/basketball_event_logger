@@ -210,9 +210,9 @@ orig_by_id = {e["id"]: e for e in events}
 
 st.caption("**Primary** = shooter (shot/FT) · player fouled (foul) · player who "
            "lost it (turnover). **Fouler** = who committed the foul. **Play** = the "
-           "one-tap set call on a shot (PnR, ISO, SLOB, BLOB …) — back-fill it on "
-           "old shots here. **Defense** = the scheme in effect (man, 2-3, press …) "
-           "on a shot or turnover. Tick **Delete?** to remove a row. Player picks are "
+           "one-tap set call (PnR, ISO, SLOB, BLOB …) on a shot, turnover or foul — "
+           "back-fill old events here. **Defense** = the scheme in effect (man, 2-3, "
+           "press …) on a shot, turnover or foul. Tick **Delete?** to remove a row. Player picks are "
            "limited to both rosters. For tap-captured shots, Zone and 2/3 follow the "
            "stored location — move the shot in **Fix a shot location** below instead.")
 
@@ -235,7 +235,8 @@ edited = st.data_editor(
                                                  width="small"),
         "Play": st.column_config.SelectboxColumn("Play", options=play_opts,
                                                  width="small",
-                                                 help="One-tap set call (shots only)"),
+                                                 help="One-tap set call (shots, "
+                                                      "turnovers & fouls)"),
         "Defense": st.column_config.SelectboxColumn("Defense", options=def_opts,
                                                     width="small",
                                                     help="Defense in effect (shots & "

@@ -23,6 +23,7 @@ import helpers.court as COURT
 import helpers.entitlement as ENT
 import helpers.court_geom as CG
 import helpers.defenses as DEF
+import helpers.playtypes as PT
 import helpers.fouls as FOULS
 import helpers.game_events as GE
 from PIL import Image
@@ -834,12 +835,25 @@ else:
             # PWA tracker's defense bar and powers the Defense tab / scout sheet.
             _def_lbls = ["—"] + [lbl for _k, lbl, _f in DEF.DEFENSES]
             _def_lbl2key = {lbl: k for k, lbl, _f in DEF.DEFENSES}
-            _cur_def_lbl = st.selectbox(
+            _stick1, _stick2 = st.columns(2)
+            _cur_def_lbl = _stick1.selectbox(
                 "Current defense", _def_lbls, key=f"cur_def_{game_id}",
                 help="The defense in effect right now — stamped on every shot and "
                      "turnover you log until you change it. Powers the Defense "
                      "breakdown on the Team Dashboard and the scout sheet.")
             cur_def_key = _def_lbl2key.get(_cur_def_lbl)
+
+            # Sticky "current set call" — the play_type twin of the defense tag,
+            # stamped on shots, TURNOVERS and FOULS so per-set outcomes cover
+            # score / give-it-away / foul-drawn (mirrors the PWA set-call bar).
+            _pt_lbls = ["—"] + [lbl for _k, lbl in PT.NAMED_PLAY_TYPES]
+            _pt_lbl2key = {lbl: k for k, lbl in PT.NAMED_PLAY_TYPES}
+            _cur_pt_lbl = _stick2.selectbox(
+                "Current set call", _pt_lbls, key=f"cur_pt_{game_id}",
+                help="The set the OFFENSE is running — stamped on every shot, "
+                     "turnover and foul you log until you change it. Powers the "
+                     "play-type breakdowns (PPP, TO%, fouls drawn per set).")
+            cur_pt_key = _pt_lbl2key.get(_cur_pt_lbl)
 
             cap_key = f"shot_xy_{game_id}"
             if event_type != "Shot" and cap_key in st.session_state:
@@ -984,9 +998,10 @@ else:
                 # Build the event payload; helpers.game_events owns possession secs,
                 # the lineup snapshot, +/- and x/y -> zone/2-3 (shared with the mobile
                 # tracker API, so both writers stay in lockstep).
-                # Stamp the sticky current defense onto the event; log_event only
-                # persists it for shot/turnover inserts (FT/foul ignore it).
-                ev = {"quarter": q, "time": t, "defense": cur_def_key}
+                # Stamp the sticky current defense + set call onto the event;
+                # log_event persists them per type (FT ignores both).
+                ev = {"quarter": q, "time": t, "defense": cur_def_key,
+                      "play_type": cur_pt_key}
                 if event_type == "Shot":
                     _xy = st.session_state.get(cap_key)
                     _sx, _sy = _xy if _xy else (None, None)

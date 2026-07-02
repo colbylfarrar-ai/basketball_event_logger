@@ -317,6 +317,22 @@ STAT_DEFS = [
     ("SOS",   "Strength of Sched.","Team & League", "avg opponent power rating",
      "Average power rating of the opponents a team has faced.",
      "Higher = tougher schedule.", False),
+    ("ClutchFT%", "Clutch Free-Throw %", "Shooting",
+     "FT% when the moment's leverage ≥ 1.5× the game's average",
+     "Free-throw accuracy in the moments that decide games — the same leverage "
+     "bar Clutch WPA uses (how far a basket would swing win probability, vs the "
+     "game's average moment), so 'clutch' means one thing app-wide. Late-and-"
+     "close line trips qualify; garbage-time ones don't.",
+     "Compare to season FT%: a big drop = the line gets heavy when it matters; "
+     "small samples swing hard.", True),
+    ("And-1", "And-One (3-Point Play)", "Shooting",
+     "made FG followed by a LONE free throw by the same shooter",
+     "Finishing through contact: a made basket plus the bonus free throw, "
+     "linked automatically from the event stream (a single-FT trip right after "
+     "a make; two-shot trips are fouled-on-the-miss, not and-1s). Counted as "
+     "trips earned and conversions (the FT made).",
+     "Earned and-1s = strength finishing; the conversion rate is the free "
+     "point.", True),
     ("Rest", "Rest & Fatigue Splits", "Team & League",
      "record + MOV by days since the previous game; league margin by rest differential",
      "The schedule's dates as a signal: a team's record and margin-vs-usual on "

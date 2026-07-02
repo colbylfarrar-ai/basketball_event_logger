@@ -1040,7 +1040,7 @@ def render_card(ctx):
                         unsafe_allow_html=True)
             _h1 = (_ff["FTM_1h"] / _ff["FTA_1h"] * 100) if _ff["FTA_1h"] else None
             _h2 = (_ff["FTM_2h"] / _ff["FTA_2h"] * 100) if _ff["FTA_2h"] else None
-            _ffc = st.columns(5)
+            _ffc = st.columns(7)
             _ffc[0].metric("Fouls drawn", _ff["drawn"])
             _ffc[1].metric("Fouls committed", _ff["PF"])
             _ffc[2].metric("Free throws", f"{_ff['FTM']}/{_ff['FTA']}")
@@ -1049,9 +1049,20 @@ def render_card(ctx):
                 "FT% 1st / 2nd",
                 f"{_h1:.0f} / {_h2:.0f}" if (_h1 is not None and _h2 is not None)
                 else (f"{_h1:.0f} / —" if _h1 is not None else "—"))
+            _ffc[5].metric(
+                "Clutch FT", (f"{_ff['cFTM']}/{_ff['cFTA']} "
+                              f"({_ff['ClutchFT%']:.0f}%)")
+                if _ff.get("cFTA") else "—",
+                help="Free throws in high-leverage moments (win-probability "
+                     "swing ≥ 1.5× the game's average — the Clutch WPA bar).")
+            _ffc[6].metric(
+                "And-1s", (f"{_ff.get('and1_made', 0)}/{_ff.get('and1', 0)}"
+                           if _ff.get("and1") else "—"),
+                help="Made basket + the bonus free throw: trips and conversions "
+                     "(linked from the event stream).")
             st.caption("Fouls drawn = times this player was fouled · FT% split by "
-                       "half (1st = Q1–2). A 2nd-half FT% drop can flag fatigue or "
-                       "pressure.")
+                       "half (1st = Q1–2) · Clutch FT = the line when it matters · "
+                       "And-1s = three-point-play trips (converted/earned).")
     else:
         empty_state("No tracked games yet",
                     "Track a game with this player in the Game Tracker and "

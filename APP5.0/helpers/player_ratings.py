@@ -225,6 +225,8 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
     rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
+    import helpers.fouls as FL
+    ftp = FL.player_foul_ft(events=events)       # clutch FT + and-1 detail
     meta = _player_meta(gender=gender)
 
     profiles = {}
@@ -283,6 +285,11 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             "RimD_pct": rpd.get(pid, {}).get("rim_pct"),
             "PerimD_FGA": rpd.get(pid, {}).get("per_fga", 0),
             "PerimD_pct": rpd.get(pid, {}).get("per_pct"),
+            # clutch free throws + and-1 trips (fouls.py pressure walk)
+            "cFTA": ftp.get(pid, {}).get("cFTA", 0),
+            "cFTM": ftp.get(pid, {}).get("cFTM", 0),
+            "And1": ftp.get(pid, {}).get("and1", 0),
+            "And1M": ftp.get(pid, {}).get("and1_made", 0),
             "DRtg":  ddr.get(pid),   # Oliver individual DRtg (per-100, lower=better)
             "PF/G":  per_g(b["PF"]),
             # ── PLAYMAKING ──────────────────────────────────────────
@@ -752,6 +759,11 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "PerimDShots": prof["PerimD_FGA"],
             "RimProt": _pct(prof["RimProt"]),
             "PerimD": _pct(prof["PerimD"]),
+            # clutch line trips + and-1s
+            "ClutchFTA": prof["cFTA"],
+            "ClutchFT%": (_pct(_safe(prof["cFTM"], prof["cFTA"]))
+                          if prof["cFTA"] else None),
+            "And1": prof["And1"], "And1M": prof["And1M"],
             # ── composite box metrics ───────────────────────────────
             "EFF": _round(S.eff(b)), "EFF/G": pg(S.eff(b)),
             "FIC": _round(S.fic(b)), "FIC/G": pg(S.fic(b)),

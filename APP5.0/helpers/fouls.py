@@ -26,10 +26,94 @@ def _half(q):
     return 1 if q <= 2 else 2
 
 
+# A free throw is "clutch" when the moment's leverage (the win-probability
+# swing a basket would cause) is >= CLUTCH_LI x the game's average moment —
+# the same 1.5 threshold Clutch WPA uses, so "clutch" means ONE thing app-wide.
+CLUTCH_LI = 1.5
+
+
+def _ft_pressure(events, out):
+    """Annotate `out` (the player_foul_ft accumulator) with clutch-FT and and-1
+    counts. Walks each game's timeline once: score state -> leverage at every
+    scoring event (normalized by the game's mean, mirroring wpa.py) for the
+    clutch split; event ADJACENCY for and-1s (a made FG by P followed, within
+    the next few rows, by a SINGLE-FT trip by P — a two/three-FT trip is a
+    fouled-on-the-miss trip, not an and-1)."""
+    import helpers.win_probability as WP
+    by_game = defaultdict(list)
+    for e in events:
+        by_game[e["game_id"]].append(e)
+    for evs in by_game.values():
+        evs.sort(key=lambda e: (S.elapsed(e["quarter"], e["time"]),
+                                e.get("id") or 0))
+        end = max((S.elapsed(e["quarter"], e["time"]) for e in evs),
+                  default=1) or 1
+        pts = defaultdict(int)               # team_id -> points so far
+        teams = []                           # the two team ids, discovery order
+        fts = []                             # (shooter, made, leverage)
+        lis = []
+        for e in evs:
+            if e["event_type"] not in ("shot", "free_throw"):
+                continue
+            team = e.get("shooter_team_id")
+            if team is None:
+                continue
+            if team not in teams:
+                teams.append(team)
+            opp = None
+            if len(teams) > 1:
+                opp = teams[0] if team == teams[1] else teams[1]
+            margin = pts[team] - (pts[opp] if opp is not None else 0)
+            secs_left = max(end - S.elapsed(e["quarter"], e["time"]), 0)
+            li = abs(WP.win_prob(margin + 2, secs_left, end)
+                     - WP.win_prob(margin - 2, secs_left, end))
+            lis.append(li)
+            made = e["shot_result"] == "make"
+            if e["event_type"] == "free_throw" \
+                    and e["primary_player_id"] is not None:
+                fts.append((e["primary_player_id"], made, li))
+            if made:
+                pts[team] += 1 if e["event_type"] == "free_throw" else \
+                    (3 if e["shot_type"] == 3 else 2)
+        mean_li = (sum(lis) / len(lis)) if lis else 0.0
+        if mean_li > 0:
+            for pid, made, li in fts:
+                if li / mean_li >= CLUTCH_LI:
+                    out[pid]["cFTA"] += 1
+                    if made:
+                        out[pid]["cFTM"] += 1
+        # and-1 pass: a made FG then a lone FT by the same shooter right after
+        for i, e in enumerate(evs):
+            if e["event_type"] != "shot" or e["shot_result"] != "make" \
+                    or e["primary_player_id"] is None:
+                continue
+            p = e["primary_player_id"]
+            for j in range(i + 1, min(i + 4, len(evs))):
+                nx = evs[j]
+                if nx["event_type"] == "foul":
+                    continue                 # the foul row between FG and FT
+                if nx["event_type"] == "free_throw" \
+                        and nx["primary_player_id"] == p:
+                    run = 1
+                    k = j + 1
+                    while k < len(evs) \
+                            and evs[k]["event_type"] == "free_throw" \
+                            and evs[k]["primary_player_id"] == p:
+                        run += 1
+                        k += 1
+                    if run == 1:             # one FT = the and-1 trip
+                        out[p]["and1"] += 1
+                        if nx["shot_result"] == "make":
+                            out[p]["and1_made"] += 1
+                break                        # anything else ends the window
+
+
 def player_foul_ft(game_ids=None, events=None):
     """
     Per player: {PF (committed), drawn (times fouled), FTA, FTM, 'FT%',
-    FTA_1h/FTM_1h, FTA_2h/FTM_2h} over the given games.
+    FTA_1h/FTM_1h, FTA_2h/FTM_2h, cFTA/cFTM/'ClutchFT%' (free throws in
+    high-leverage moments), and1/and1_made (made FG + a lone FT right after,
+    linked by event adjacency)} over the given games.
 
     PF = secondary_player_id on fouls (the fouler). drawn = primary_player_id on
     fouls (the player fouled). FT splits use the event's quarter (H1 = Q1-2).
@@ -37,7 +121,8 @@ def player_foul_ft(game_ids=None, events=None):
     if events is None:
         events = S.fetch_events(game_ids)
     out = defaultdict(lambda: {"PF": 0, "drawn": 0, "FTA": 0, "FTM": 0,
-                               "FTA_1h": 0, "FTM_1h": 0, "FTA_2h": 0, "FTM_2h": 0})
+                               "FTA_1h": 0, "FTM_1h": 0, "FTA_2h": 0, "FTM_2h": 0,
+                               "cFTA": 0, "cFTM": 0, "and1": 0, "and1_made": 0})
     for e in events:
         et = e["event_type"]
         if et == "foul":
@@ -59,8 +144,10 @@ def player_foul_ft(game_ids=None, events=None):
             if made:
                 d["FTM"] += 1
                 d["FTM" + half] += 1
+    _ft_pressure(events, out)
     for d in out.values():
         d["FT%"] = _safe(d["FTM"], d["FTA"]) * 100
+        d["ClutchFT%"] = (_safe(d["cFTM"], d["cFTA"]) * 100) if d["cFTA"] else None
     return dict(out)
 
 

@@ -135,6 +135,17 @@ def _rapm(gender):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _war(gender):
+    """HoopWAR per player {pid: {WAR, pts_added, ...}} — chains the cached RAPM
+    solve through helpers/hoopwar.py. {} when RAPM or finished scores are absent."""
+    import helpers.hoopwar as HW
+    try:
+        return HW.war_table(gender, rapm=_rapm(gender))
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _wpa(gender):
     """Season WPA per player in both modes {scoring:{pid:...}, possession:{...}}.
     scoring → wpa + clutch_wpa; possession → off_wpa (OWA) + def_wpa (DWA)."""
@@ -419,7 +430,9 @@ def render_card(ctx):
             v = d.get(k)
             return fmt.format(v) if v is not None else "—"
 
+        _wr = _war(_g).get(pid, {})
         _imp = [
+            ("HoopWAR", _sv(_wr, "WAR", "{:+.2f}"), "wins vs replacement"),
             ("ORAPM", _sv(_rp, "ORAPM"), "off pts/100"),
             ("DRAPM", _sv(_rp, "DRAPM"), "def pts/100"),
             ("RAPM", _sv(_rp, "RAPM"), "net pts/100"),
@@ -429,7 +442,8 @@ def render_card(ctx):
             ("Def WPA", _sv(_wq, "def_wpa", "{:+.2f}"), "defense value"),
         ]
         if any(v != "—" for _, v, _ in _imp):
-            st.markdown("<div class='pl-hdr'>Impact — RAPM &middot; WPA</div>",
+            st.markdown("<div class='pl-hdr'>Impact — HoopWAR &middot; RAPM "
+                        "&middot; WPA</div>",
                         unsafe_allow_html=True)
             _itiles = "".join(
                 f"<div style='background:#0d1117;border:1px solid #21262d;"
@@ -439,11 +453,14 @@ def render_card(ctx):
                 f"<div style='font-size:9px;color:#6e7681'>{s}</div></div>"
                 for l, v, s in _imp)
             st.markdown(
-                "<div style='display:grid;grid-template-columns:repeat(7,1fr);"
+                "<div style='display:grid;grid-template-columns:repeat(8,1fr);"
                 "gap:6px'>" + _itiles + "</div>", unsafe_allow_html=True)
-            st.caption("RAPM shrinks toward a box-score prior; WPA credits the shots "
-                       "(and stops) that swung win probability. Directional on a short "
-                       "book — read the sign and rough size, not the decimals.")
+            st.caption("HoopWAR = RAPM impact paid out over floor time, vs a "
+                       "replacement-level player, converted to wins (≈14 pts/win "
+                       "at HS scoring). RAPM shrinks toward a box-score prior; WPA "
+                       "credits the shots (and stops) that swung win probability. "
+                       "Directional on a short book — read the sign and rough size, "
+                       "not the decimals.")
 
     # ── signature / invented metrics (glass tiles) ────────────────────────────
     #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.

@@ -262,10 +262,13 @@ def player_card_html(player_id, gender=None, table=None):
     try:
         import helpers.rapm as RP
         import helpers.wpa as WP
+        import helpers.hoopwar as HW
         _gids = PT._tracked_game_ids(gender)
-        _rp = (RP.compute_rapm(game_ids=_gids,
-                               prior=RP.box_prior_from_ratings(gender=gender))
-               .get(player_id, {})) if _gids else {}
+        _rpall = (RP.compute_rapm(game_ids=_gids,
+                                  prior=RP.box_prior_from_ratings(gender=gender))
+                  if _gids else {})
+        _rp = _rpall.get(player_id, {})
+        _wr = (HW.war_table(gender, rapm=_rpall) or {}).get(player_id, {})
         _ws = WP.season_wpa(gender, mode="scoring").get(player_id, {})
         _wq = WP.season_wpa(gender, mode="possession").get(player_id, {})
 
@@ -274,13 +277,14 @@ def player_card_html(player_id, gender=None, table=None):
             return f.format(v) if v is not None else "—"
         if _rp or _ws or _wq:
             _cells = "".join([
+                _kpi("HOOPWAR", _sv(_wr, "WAR", "{:+.2f}")),
                 _kpi("ORAPM", _sv(_rp, "ORAPM")), _kpi("DRAPM", _sv(_rp, "DRAPM")),
                 _kpi("RAPM", _sv(_rp, "RAPM")), _kpi("WPA", _sv(_ws, "wpa", "{:+.2f}")),
                 _kpi("CLUTCH WPA", _sv(_ws, "clutch_wpa", "{:+.2f}")),
                 _kpi("OWA", _sv(_wq, "off_wpa", "{:+.2f}")),
                 _kpi("DWA", _sv(_wq, "def_wpa", "{:+.2f}")),
             ])
-            imp_html = (f"<h2>Impact — RAPM &middot; WPA</h2>"
+            imp_html = (f"<h2>Impact — HoopWAR &middot; RAPM &middot; WPA</h2>"
                         f"<table class='kpis'><tr>{_cells}</tr></table>")
     except Exception:
         imp_html = ""

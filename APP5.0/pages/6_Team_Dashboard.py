@@ -706,6 +706,17 @@ def _rapm(g, box_prior=False):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _war_tbl(g, box_prior=False):
+    """HoopWAR per player — chains the cached RAPM solve (same box-prior toggle)
+    through helpers/hoopwar.py. {} when RAPM or finished scores are absent."""
+    import helpers.hoopwar as HW
+    try:
+        return HW.war_table(g, rapm=_rapm(g, box_prior=box_prior))
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _shot_quality(g):
     """League-pooled continuous shot-quality (xPP-Q) + per-player SMOE (points over
     expected). Returns ({pid: smoe_row}, n_shots_fit) or ({}, 0) when there aren't
@@ -3563,6 +3574,11 @@ if _tdview == "Lab":
                 st.caption("Box-prior on: stars are anchored to their player-rating "
                            "box impact, then moved by the possession data (gentle).")
             rap = _rapm(gender, box_prior=_bp)
+            _wt = _war_tbl(gender, box_prior=_bp)
+            for _wpid, _wrow in rap.items():        # cache_data returns a copy —
+                _wv = _wt.get(_wpid)                 # safe to annotate per rerun
+                if _wv:
+                    _wrow["WAR"] = _wv["WAR"]
             rows_r = sorted([v for pid, v in rap.items() if pid in my_pids],
                             key=lambda v: v["RAPM"], reverse=True)
             if rows_r:
@@ -3630,9 +3646,13 @@ if _tdview == "Lab":
                                "book.")
                 with rc2:
                     st.dataframe(pd.DataFrame([{
-                        "Player": v["name"], "RAPM": v["RAPM"],
+                        "Player": v["name"], "WAR": v.get("WAR"),
+                        "RAPM": v["RAPM"],
                         "O": v["ORAPM"], "D": v["DRAPM"], "Poss": v["poss"],
                     } for v in rows_r]), hide_index=True, width="stretch")
+                    st.caption("WAR = HoopWAR — RAPM impact over the player's "
+                               "floor time vs a replacement-level player, in "
+                               "wins (≈14 pts/win at HS scoring).")
 
                 # ── RAPM with uncertainty (95% CI from the unregularized fit) ──
                 inf_rows = [v for v in rows_r if v.get("RAPM_se") is not None]

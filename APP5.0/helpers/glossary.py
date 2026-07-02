@@ -349,6 +349,18 @@ STAT_DEFS = [
      "Predicted point margin between two teams from the opponent-adjusted ratings, "
      "plus a class bridge and home-court edge; drives the matchup win probability.",
      "Positive favors team A; magnitude ≈ expected winning margin in points.", False),
+    ("HoopWAR", "Wins Above Replacement", "Advanced",
+     "(RAPM − replacement) × floor-time possessions × pts-to-wins",
+     "One number for a player's total season value, in WINS — baseball's WAR "
+     "brought to the court. Box-prior RAPM (points added per 100 possessions vs "
+     "an average player) is paid out over the possessions actually played, "
+     "measured against a REPLACEMENT-level player (−3 pts/100 — the bench kid "
+     "who'd absorb the minutes), then converted to wins with the Pythagorean "
+     "rate (≈14 points ≈ 1 win at HS scoring). Display-only: it is NOT part of "
+     "the OVERALL rating.",
+     "+1.0 = this player's floor time added about one win over a replacement. "
+     "0 is replacement level, not average — an average starter earns positive "
+     "WAR. Directional on a short book.", True),
     ("RAPM", "Regularized Adjusted +/-", "Advanced",
      "ridge regression over every possession",
      "Points a player adds per 100 possessions vs a league-average player, "

@@ -21,14 +21,6 @@ import helpers.manual_box as MB
 import helpers.team_analytics as TA
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _glance(gender, team_id):
-    """The team's most-distinctive stats vs the league — the 'at a glance' read
-    (moved up from the Insights tab, UI_DENSITY_PLAN phase A)."""
-    import helpers.insights_team as INT
-    return INT.team_glance(gender, team_id)
-
-
 @st.fragment
 def render(ctx):
     st.caption("Everything about this team at a glance — power ratings, record, "
@@ -67,102 +59,16 @@ def render(ctx):
             st.caption("From hand-entered box scores. Possession rates (PPP, ORtg) "
                        "are a Paid feature.")
 
-    _bytype = {}
-    for r in query("""SELECT game_type, team1_id, home_score, away_score FROM games
-                      WHERE (team1_id=? OR team2_id=?) AND home_score IS NOT NULL
-                        AND away_score IS NOT NULL AND season='Current'""",
-                   (ctx.team_id, ctx.team_id)):
-        won = ((r["home_score"] > r["away_score"]) if r["team1_id"] == ctx.team_id
-               else (r["away_score"] > r["home_score"]))
-        d = _bytype.setdefault(r["game_type"] or "Regular", [0, 0])
-        d[0 if won else 1] += 1
-    if _bytype and (len(_bytype) > 1 or "Regular" not in _bytype):
-        _seg = " · ".join(f"**{k}** {v[0]}-{v[1]}"
-                          for k, v in sorted(_bytype.items()))
-        st.caption(f"Record by game type — {_seg}  "
-                   f"<span style='color:#8b949e'>(set types on Setup)</span>",
-                   unsafe_allow_html=True)
-
-    # ── Team at a glance — the most-distinctive stats vs the league (moved up
-    #    from the Insights tab): the fastest read on who this team is.
-    #    Tracked-only, same guard the Insights tab used.
-    if getattr(ctx, "has_tracked", False) and getattr(ctx, "team_id", None):
-        _gl = _glance(ctx.gender, ctx.team_id)
-        if _gl:
-            _tiles = ""
-            for _gt in _gl:
-                _clr = ("#3fb950" if _gt["good"] else "#e74c3c") \
-                    if _gt["good"] is not None else "#58a6ff"
-                _tiles += (
-                    f"<div style='background:#0d1117;border:1px solid #21262d;"
-                    f"border-left:3px solid {_clr};border-radius:8px;"
-                    f"padding:8px 11px'>"
-                    f"<div style='font-size:11px;color:#8b949e'>{_gt['label']}</div>"
-                    f"<div style='font-size:18px;font-weight:700;color:#f0f6fc'>"
-                    f"{_gt['value']}</div>"
-                    f"<div style='font-size:11px;color:{_clr};font-weight:600'>"
-                    f"{_gt['pct']}th pct</div>"
-                    f"<div style='font-size:11px;color:#8b949e;margin-top:2px'>"
-                    f"{_gt['tag']}</div></div>")
-            st.markdown(
-                "<div style='display:grid;grid-template-columns:"
-                "repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px'>"
-                + _tiles + "</div>", unsafe_allow_html=True)
-
-    m = st.columns(5)
-    m[0].metric("Power", ctx.sc_score.get("Power", "—"),
-                help="Results-only 0-100 power rating (50 = league avg).")
-    m[1].metric("League rank", f"#{ctx.sc_score.get('Rank', '—')} of {len(ctx.scored)}",
-                help="Results-only Score ranking across every team in the league.")
-    m[2].metric("Record", f"{ctx.rec['wins']}-{ctx.rec['losses']}")
-    m[3].metric("Margin / game", f"{ctx.rec['MOV']:+.1f}")
-    m[4].metric("Points for / against", f"{ctx.rec['PF_pg']:.0f} / {ctx.rec['PA_pg']:.0f}")
-
-    # ── record vs ranked teams (results-based — every completed game counts) ─
-    _ranks = sorted(ctx.scored.items(), key=lambda kv: kv[1].get("Rank", 1e9))
-    _top10 = {tid for tid, _ in _ranks[:10]}
-    _top25 = {tid for tid, _ in _ranks[:25]}
-
-    def _rec_vs(idset):
-        wv = lv = 0
-        for gg in ctx.log:
-            if gg["opp_id"] in idset and gg["opp_id"] != ctx.team_id:
-                if gg["won"]:
-                    wv += 1
-                else:
-                    lv += 1
-        return wv, lv
-
-    _w10, _l10 = _rec_vs(_top10)
-    _w25, _l25 = _rec_vs(_top25)
-    vr = st.columns(2)
-    vr[0].metric("vs Top 10", f"{_w10}-{_l10}",
-                 help="Record vs the top-10 teams by Score ranking.")
-    vr[1].metric("vs Top 25", f"{_w25}-{_l25}",
-                 help="Record vs the top-25 teams by Score ranking.")
+    # ── the dense team header card (banner · glance · identity/engine/verdict)
+    #    — UI_DENSITY_PLAN phase C; shared with the Rankings deep dive (phase D).
+    #    Absorbs the old metric rows (Power/rank/record, vs-ranked, tracked row,
+    #    game-type caption) and the glance strip into one OOTP-style read.
+    import helpers.dashboard.team_card as TC
+    TC.render_header(ctx)
 
     if ctx.has_tracked:
-        m2 = st.columns(5)
-        m2[0].metric("Off Rtg", f"{ctx.summ.get('ORtg', 0):.1f}",
-                     help="Points scored per 100 possessions (tracked games).")
-        m2[1].metric("Def Rtg", f"{ctx.summ.get('DRtg', 0):.1f}",
-                     help="Points allowed per 100 possessions. Lower is better.")
-        m2[2].metric("Net Rtg", f"{ctx.summ.get('NetRtg', 0):+.1f}")
-        m2[3].metric("Pace", f"{ctx.summ.get('POSS_pg', 0):.1f}",
-                     help="Possessions per game.")
-        if ctx.rank_info["tracked"]:
-            _trk = ctx.rank_info["tracked"]
-            m2[4].metric("Tracked rank", f"#{_trk['rank']} of {_trk['of']}",
-                         help=f"Possession-based power rank over tracked games "
-                              f"(sparse sample — directional). Tracked Power "
-                              f"{_trk['power']} (50 = league avg).")
-        else:
-            m2[4].metric("Tracked Power", ctx.sc_track.get("Power", "—"),
-                         help="Possession-based power over tracked games (sparse "
-                              "sample — directional).")
-
         # ── efficiency rankings vs league (DEMOTED into an expander) ────────
-        # Restates the tracked metric row above + the per-stat four-factor
+        # Restates the header card's engine zone + the per-stat four-factor
         # percentile bars below — collapsed so the top of the card paints fast.
         if ctx.sc_track:
             with st.expander("Efficiency rankings — vs league"):

@@ -22,6 +22,26 @@ import helpers.predictor as PRED
 import helpers.team_ratings as TR
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _rest(team_id):
+    """Rest/density splits for one team (helpers/fatigue) — score-based."""
+    import helpers.fatigue as FT
+    try:
+        return FT.team_rest_splits(team_id)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _rest_edge(g):
+    """League margin-by-rest-differential curve (helpers/fatigue)."""
+    import helpers.fatigue as FT
+    try:
+        return FT.league_rest_edge(g)
+    except Exception:
+        return {}
+
+
 @st.fragment
 def render(ctx):
     st.caption("The full schedule with results, the record against every class, "
@@ -48,6 +68,39 @@ def render(ctx):
             rcfig.update_xaxes(title="Opponent class")
             ctx.style(rcfig, 300)
             st.plotly_chart(rcfig, width="stretch", key="sc_rvc")
+
+    # ── rest & fatigue — the schedule's dates as a signal (score-based) ──────
+    _rs = _rest(ctx.team_id)
+    if _rs and _rs["buckets"]:
+        st.markdown("<div class='lab-hdr'>Rest &amp; fatigue</div>",
+                    unsafe_allow_html=True)
+        _cells = list(_rs["buckets"])
+        _hv = _rs.get("heavy")
+        fcols = st.columns(max(len(_cells) + (1 if _hv else 0), 2))
+        for col, bkt in zip(fcols, _cells):
+            col.metric(bkt["label"], f"{bkt['w']}-{bkt['l']}",
+                       delta=f"{bkt['delta']:+.1f} MOV",
+                       help=f"{bkt['gp']} games · avg margin {bkt['mov']:+.1f} "
+                            f"(season MOV {_rs['overall_mov']:+.1f})")
+        if _hv:
+            fcols[len(_cells)].metric(
+                "3+ games in 7 days", f"{_hv['w']}-{_hv['l']}",
+                delta=f"{_hv['delta']:+.1f} MOV",
+                help=f"{_hv['gp']} games in heavy weeks · avg margin "
+                     f"{_hv['mov']:+.1f}")
+        _edge = _rest_edge(getattr(ctx, "gender", None))
+        _fresh = {d: v for d, v in _edge.items() if d > 0}
+        if _fresh:
+            _etxt = " · ".join(
+                f"+{d} day{'s' if d > 1 else ''} fresher: "
+                f"{v['mov']:+.1f} ({v['gp']} gms)"
+                for d, v in sorted(_fresh.items()))
+            st.caption(f"Record and margin-vs-usual by days of rest; MOV delta "
+                       f"is against this team's own season margin. League-wide "
+                       f"fatigue edge — {_etxt}.")
+        else:
+            st.caption("Record and margin-vs-usual by days of rest; MOV delta "
+                       "is against this team's own season margin.")
 
     st.markdown("<div class='lab-hdr'>Schedule</div>", unsafe_allow_html=True)
     st.caption("Opponent ranking (everything / tracked when possible), opponent "

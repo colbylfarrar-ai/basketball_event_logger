@@ -317,6 +317,17 @@ STAT_DEFS = [
     ("SOS",   "Strength of Sched.","Team & League", "avg opponent power rating",
      "Average power rating of the opponents a team has faced.",
      "Higher = tougher schedule.", False),
+    ("Rest", "Rest & Fatigue Splits", "Team & League",
+     "record + MOV by days since the previous game; league margin by rest differential",
+     "The schedule's dates as a signal: a team's record and margin-vs-usual on "
+     "back-to-backs / 2 days / 3-4 days / 5+ days of rest, plus heavy weeks "
+     "(3+ games in any 7 days). The MOV delta compares each bucket to the "
+     "team's own season margin, so a bad team isn't called 'tired' for losing "
+     "as usual. The league-wide fatigue edge is margin as a function of the "
+     "REST DIFFERENTIAL (my rest − theirs) — the honest test of whether fresh "
+     "legs matter in this league.",
+     "A big negative MOV delta on short rest = schedule fatigue is real for "
+     "this team; check the league edge before crediting excuses.", True),
     ("Volatility","Volatility",   "Team & League", "std-dev of game margin",
      "Game-to-game swing in scoring margin.",
      "Lower = steadier, more predictable team.", True),

@@ -1705,14 +1705,17 @@ def player_hand_splits(game_ids=None, events=None, player_id=None, hand=None):
 #  SHOT LOCATIONS  (tap-captured x/y — the real shot chart, superset of zones)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def located_shots(game_ids=None, events=None, player_id=None, team_id=None):
+def located_shots(game_ids=None, events=None, player_id=None, team_id=None,
+                  defender_id=None):
     """
     Tap-captured shot attempts that carry an (x, y) court location.
 
     Returns a list of {x, y, make, value, guarded, zone, player_id, team_id, dist}
     for every 'shot' event with shot_x/shot_y set, optionally filtered to one
-    player (the shooter) or one team. Legacy zone-only shots (no x/y) are skipped,
-    so callers can fall back to player_zone_splits()/shot_chart for those games.
+    player (the shooter), one team, or one DEFENDER (`defender_id` — shots the
+    player contested or blocked, for defended-shot maps). Legacy zone-only shots
+    (no x/y) are skipped, so callers can fall back to
+    player_zone_splits()/shot_chart for those games.
     """
     if events is None:
         events = fetch_events(game_ids)
@@ -1727,6 +1730,10 @@ def located_shots(game_ids=None, events=None, player_id=None, team_id=None):
         if player_id is not None and e["primary_player_id"] != player_id:
             continue
         if team_id is not None and e.get("shooter_team_id") != team_id:
+            continue
+        if defender_id is not None and not (
+                e["guarded_by_id"] == defender_id
+                or e["blocked_by_id"] == defender_id):
             continue
         out.append({
             "x": x, "y": y,
@@ -1767,6 +1774,74 @@ def shot_location_summary(shots):
         "mid_n": len(mid), "mid_fg": _fg(mid),
         "three_n": len(three), "three_fg": _fg(three),
     }
+
+
+# Rim cut for DEFENDED-shot splits, matching shot_location_summary's rim band.
+RIM_FT = 4.0
+
+
+def rim_perimeter_defense(game_ids=None, events=None, min_shots=8):
+    """
+    Per-defender rim protection + perimeter defense from contested shots.
+
+    A defender owns a shot when they are the listed contester (guarded_by) or
+    the blocker (blocked_by — the off-ball rim protector earns credit; a block
+    is already a miss in the FG% allowed). Buckets:
+      rim        tap-located 2s within RIM_FT of the hoop (x/y only — the legacy
+                 'C' zone spans the whole center sector, too coarse to call rim)
+      perimeter  every contested 3-point attempt (works without a tap location)
+
+    Returns ({pid: {"rim_fga","rim_fgm","rim_pct","per_fga","per_fgm","per_pct",
+    "RimProt","PerimD"}}, {"lg_rim_pct","lg_per_pct"}). RimProt / PerimD =
+    league FG% − FG% allowed (positive = saves points vs an average contest),
+    None below `min_shots` in that bucket so rating leaves drop cleanly.
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    import helpers.court_geom as CG
+    agg = defaultdict(lambda: {"rim_fga": 0, "rim_fgm": 0,
+                               "per_fga": 0, "per_fgm": 0})
+    lg = {"rim_fga": 0, "rim_fgm": 0, "per_fga": 0, "per_fgm": 0}
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        defenders = {d for d in (e["guarded_by_id"], e["blocked_by_id"])
+                     if d is not None}
+        if not defenders:
+            continue
+        made = e["shot_result"] == "make"
+        x, y = e.get("shot_x"), e.get("shot_y")
+        if e["shot_type"] == 3:
+            bucket = "per"
+        elif (x is not None and y is not None
+              and CG.shot_distance(x, y) <= RIM_FT):
+            bucket = "rim"
+        else:
+            continue                     # mid-range / unlocated 2s: neither
+        lg[f"{bucket}_fga"] += 1
+        if made:
+            lg[f"{bucket}_fgm"] += 1
+        for d in defenders:
+            agg[d][f"{bucket}_fga"] += 1
+            if made:
+                agg[d][f"{bucket}_fgm"] += 1
+
+    lg_rim = _safe(lg["rim_fgm"], lg["rim_fga"]) if lg["rim_fga"] else None
+    lg_per = _safe(lg["per_fgm"], lg["per_fga"]) if lg["per_fga"] else None
+    out = {}
+    for pid, v in agg.items():
+        rim_pct = _safe(v["rim_fgm"], v["rim_fga"]) if v["rim_fga"] else None
+        per_pct = _safe(v["per_fgm"], v["per_fga"]) if v["per_fga"] else None
+        out[pid] = {
+            **v, "rim_pct": rim_pct, "per_pct": per_pct,
+            "RimProt": (lg_rim - rim_pct
+                        if (lg_rim is not None and rim_pct is not None
+                            and v["rim_fga"] >= min_shots) else None),
+            "PerimD": (lg_per - per_pct
+                       if (lg_per is not None and per_pct is not None
+                           and v["per_fga"] >= min_shots) else None),
+        }
+    return out, {"lg_rim_pct": lg_rim, "lg_per_pct": lg_per}
 
 
 # Shot-length buckets — the single source for every "by shot distance" breakdown.

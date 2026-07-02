@@ -8,6 +8,7 @@ Rates every eligible player on FIVE numbers, each on a 0-100 scale where
     OVERALL      four category ratings + Game Score · EFF · FIC (production)
     OFFENSE      Shooting · Finishing · scoring VOLUME (PPG · PRF/G)
     DEFENSE      Steals · Blocks · Guarded% · DSHOT%(inv) · Fouls(inv)
+                 · RimProt · PerimD (FG% saved vs league at the rim / arc)
     PLAYMAKING   Assists · Shots Created · SC-Pass · AST/TOV · TOV%(inv) · pass look-quality
     REBOUNDING   OREB · DREB · REB · REB% · OREB% · DREB%
 
@@ -223,6 +224,7 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
     ddr = S.individual_defensive_rating_all(game_ids, events=events)  # DRtg (lower=better)
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
+    rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
     meta = _player_meta(gender=gender)
 
     profiles = {}
@@ -272,6 +274,15 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             "BLK/G": per_g(b["BLK"]),
             "Guarded%": o.get("guarded_pct") if o.get("opp_FGA_on") else None,
             "DSHOT%": df.get("pct") if df.get("def_FGA") else None,
+            # rim protection / perimeter defense: league FG% − FG% allowed on
+            # contested rim 2s / threes (positive = saves points); None below
+            # the 8-shot gate so the leaf drops from the weighted mean.
+            "RimProt": rpd.get(pid, {}).get("RimProt"),
+            "PerimD": rpd.get(pid, {}).get("PerimD"),
+            "RimD_FGA": rpd.get(pid, {}).get("rim_fga", 0),
+            "RimD_pct": rpd.get(pid, {}).get("rim_pct"),
+            "PerimD_FGA": rpd.get(pid, {}).get("per_fga", 0),
+            "PerimD_pct": rpd.get(pid, {}).get("per_pct"),
             "DRtg":  ddr.get(pid),   # Oliver individual DRtg (per-100, lower=better)
             "PF/G":  per_g(b["PF"]),
             # ── PLAYMAKING ──────────────────────────────────────────
@@ -313,7 +324,12 @@ _SHOOTING  = [("TS%", 1.5, False), ("3P%", 1.0, False), ("eFG%", 1.0, False),
               ("SMOE", 1.0, False), ("FTR", 0.75, False), ("3PR", 0.5, False)]
 _FINISHING = [("Paint%", 1.0, False), ("PaintSh/G", 0.75, False)]
 _DEFENSE   = [("DSHOT%", 1.25, True), ("DRtg", 1.0, True), ("STL/G", 1.0, False),
-              ("BLK/G", 1.0, False), ("Guarded%", 0.75, False), ("PF/G", 0.5, True)]
+              ("BLK/G", 1.0, False), ("Guarded%", 0.75, False), ("PF/G", 0.5, True),
+              # WHERE the defense happens: FG% saved vs league on contested rim
+              # 2s / threes (positive = better, so not inverted). Secondary
+              # weight — DSHOT% already carries the overall contest signal;
+              # these split it into rim protection and perimeter containment.
+              ("RimProt", 0.75, False), ("PerimD", 0.75, False)]
 _PLAYMAKING = [("AST/G", 1.0, False), ("AST/TOV", 1.0, False), ("SC/G", 0.75, False),
                ("SCPass/G", 0.75, False), ("TOV%", 0.75, True),
                # look QUALITY a passer's feeds create (xPPS), not just volume —
@@ -728,6 +744,14 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "PPP": _round(S.ppp(b), 2) if p_poss > 0 else None,
             "DSHOT%": _pct(d["pct"]) if d.get("def_FGA") else None,
             "defFGA": d.get("def_FGA", 0),
+            # rim / perimeter defended splits (FG% allowed + volume) and the
+            # league-relative saves that feed the DEFENSE rating (± FG points)
+            "RimDFG%": _pct(prof["RimD_pct"]),
+            "RimDShots": prof["RimD_FGA"],
+            "PerimDFG%": _pct(prof["PerimD_pct"]),
+            "PerimDShots": prof["PerimD_FGA"],
+            "RimProt": _pct(prof["RimProt"]),
+            "PerimD": _pct(prof["PerimD"]),
             # ── composite box metrics ───────────────────────────────
             "EFF": _round(S.eff(b)), "EFF/G": pg(S.eff(b)),
             "FIC": _round(S.fic(b)), "FIC/G": pg(S.fic(b)),

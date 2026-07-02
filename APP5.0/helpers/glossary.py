@@ -153,6 +153,23 @@ STAT_DEFS = [
      "Higher is better.", False),
 
     # ── Defense ────────────────────────────────────────────────────────────────
+    ("RimProt", "Rim Protection", "Defense",
+     "league rim FG% − rim FG% allowed (contested 2s within 4 ft)",
+     "How much a defender lowers opponents' finishing at the rim, in FG "
+     "percentage points vs a league-average contest. Counts every tap-located "
+     "shot inside 4 ft that the player contested OR blocked (the off-ball "
+     "rim protector earns the block credit; a block is already a miss). "
+     "Needs 8+ rim shots defended; feeds the DEFENSE rating.",
+     "+5 = opponents finish 5 points worse than league average when this "
+     "player meets them at the rim.", True),
+    ("PerimD", "Perimeter Defense", "Defense",
+     "league 3P% − 3P% allowed on contested threes",
+     "The perimeter companion to Rim Protection: how much a defender lowers "
+     "opponents' three-point shooting when contesting, in percentage points vs "
+     "a league-average contest. Every contested 3-point attempt counts (no tap "
+     "location needed). Needs 8+ threes defended; feeds the DEFENSE rating.",
+     "+4 = shooters hit 4 points worse than league average against this "
+     "player's closeouts.", True),
     ("STOCKS","Stocks",           "Defense", "STL + BLK",
      "Steals plus blocks — a single 'disruption' number.",
      "Higher = more defensive events.", False),

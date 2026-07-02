@@ -135,6 +135,17 @@ def _rapm(gender):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _defended_located(pid):
+    """Tap-located shots this player contested or blocked — the defended-shot
+    map. Restricted to events naming the player, so it only ever reads their
+    own games."""
+    try:
+        return S.located_shots(defender_id=pid)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _war(gender):
     """HoopWAR per player {pid: {WAR, pts_added, ...}} — chains the cached RAPM
     solve through helpers/hoopwar.py. {} when RAPM or finished scores are absent."""
@@ -565,6 +576,16 @@ def render_card(ctx):
                 gg[1].metric("Open FG%",
                              f"{gd['open']['pct']*100:.0f}%" if gd["open"]["FGA"] else "—",
                              help=f"{gd['open']['FGM']}/{gd['open']['FGA']}")
+            # defended-shot map: where opponents shot when THIS player was the
+            # contester/blocker (tap-located shots only)
+            _dshots = _defended_located(pid)
+            if _dshots:
+                dfig, _dn = _shot_map(
+                    _dshots, f"Shots defended · {len(_dshots)} located")
+                st.plotly_chart(dfig, width="stretch", key="pcard_defcourt")
+                st.caption("Opponent shots this player contested or blocked — "
+                           "makes vs misses show where they hold up (rim vs "
+                           "arc feeds the DEFENSE rating).")
 
     left, right = st.columns([2, 3])
     with left:
@@ -678,6 +699,23 @@ def render_card(ctx):
                 _row("Guarded% (on court)", "Guarded%", "pct"),
                 _row("Defended FG% allowed", "DSHOT%", "pct"),
             ]
+            # rim / perimeter defended splits (only when the player has faced
+            # shots in the bucket); ± = FG points saved vs a league-average
+            # contest — the values that feed the DEFENSE rating
+            if P.get("RimDShots"):
+                _rpd_rows.append(
+                    _row("Rim defense (FG% allowed)", "RimDFG%", "pct") | {
+                        "Value": f"{_fmt(P['RimDFG%'], 'pct')} on "
+                                 f"{P['RimDShots']} shots"
+                                 + (f" ({P['RimProt']:+.1f} vs lg)"
+                                    if P.get("RimProt") is not None else "")})
+            if P.get("PerimDShots"):
+                _rpd_rows.append(
+                    _row("Perimeter defense (3P% allowed)", "PerimDFG%", "pct") | {
+                        "Value": f"{_fmt(P['PerimDFG%'], 'pct')} on "
+                                 f"{P['PerimDShots']} threes"
+                                 + (f" ({P['PerimD']:+.1f} vs lg)"
+                                    if P.get("PerimD") is not None else "")})
         st.dataframe(pd.DataFrame(_rpd_rows), hide_index=True, width="stretch")
 
     # ── Shot diet · shot creation · quarter scoring (event-derived → Paid) ────

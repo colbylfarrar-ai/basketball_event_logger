@@ -49,18 +49,36 @@ GRID_CLR = {"OVERALL": "#58a6ff", "OFFENSE": "#f0a500", "DEFENSE": "#e74c3c",
             "PLAYMAKING": "#bc8cff", "REBOUNDING": "#3fb950", "Floor spacing": "#56d4dd"}
 
 
-def _rating_bar(label, value, color, ci=None):
-    """One dense rating row: label · track (+ faded confidence-interval band) · value.
+def _rating_bar(label, value, color, ci=None, trend=None):
+    """One dense rating row: label · track (+ faded confidence-interval band) ·
+    value · trajectory chip.
 
     `ci` (0-100 half-width from shrinkage.rating_confidence) draws a lighter band
     from value−ci to value+ci behind the solid fill — the OOTP 'scouted' read of
-    how firm the number is. None → no band (a fully-backed rating)."""
+    how firm the number is. None → no band (a fully-backed rating).
+
+    `trend` = (delta, eps, proxy_label) — the last-5-games-vs-season change in
+    the category's proxy stat (REAL measured games; deliberately NOT a video-game
+    'potential'). Renders ↗ / → / ↘ with the delta; |delta| < eps reads flat.
+    None → no chip (thin log)."""
+    chip = ""
+    if trend is not None:
+        d, eps, proxy = trend
+        if d >= eps:
+            _a, _c = "↗", "#3fb950"
+        elif d <= -eps:
+            _a, _c = "↘", "#e74c3c"
+        else:
+            _a, _c = "→", "#6e7681"
+        chip = (f"<div style='width:52px;text-align:right;font-size:10px;"
+                f"color:{_c};font-weight:700' title='{proxy}: last 5 games vs "
+                f"season average'>{_a} {d:+.1f}</div>")
     if value is None:
         return (f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0'>"
                 f"<div style='width:86px;font-size:11px;color:#8b949e'>{label}</div>"
                 f"<div style='flex:1;height:8px;border-radius:4px;background:#161b22'></div>"
                 f"<div style='width:28px;text-align:right;font-size:12px;color:#484f58'>—</div>"
-                f"</div>")
+                f"{chip}</div>")
     v = max(0.0, min(100.0, float(value)))
     band = ""
     if ci:
@@ -75,7 +93,39 @@ def _rating_bar(label, value, color, ci=None):
         f"<div style='position:absolute;top:0;height:8px;border-radius:4px;width:{v}%;"
         f"background:{color}'></div></div>"
         f"<div style='width:28px;text-align:right;font-size:12px;font-weight:700;"
-        f"color:#f0f6fc'>{value:.0f}</div></div>")
+        f"color:#f0f6fc'>{value:.0f}</div>{chip}</div>")
+
+
+# Trajectory proxies: each rating category tracked by ONE legible per-game stat
+# from the real log (finalized boxes). eps = flat band so tiny wobble reads "→".
+# This is the honest basketball read of OOTP's potential column — measured
+# recent form, never an invented ceiling.
+_TRAJ_SPEC = {
+    "OVERALL":    (lambda b: S.game_score(b), 1.5, "Game Score"),
+    "OFFENSE":    (lambda b: b["PTS"], 2.0, "Points"),
+    "DEFENSE":    (lambda b: b["STL"] + b["BLK"], 0.8, "Stocks"),
+    "PLAYMAKING": (lambda b: b["AST"], 0.8, "Assists"),
+    "REBOUNDING": (lambda b: b["TRB"], 1.2, "Rebounds"),
+}
+
+
+def _trajectory(pid, pgb, min_games=6, last=5):
+    """{category: (last-5 avg − season avg, eps, proxy label)} from the player's
+    real game log. {} below `min_games` (a 5-game 'trend' on a 5-game season is
+    just the season)."""
+    log = TRD.player_game_log(pid, boxes=pgb)
+    if len(log) < min_games:
+        return {}
+    out = {}
+    for cat, (fn, eps, lbl) in _TRAJ_SPEC.items():
+        try:
+            series = [fn(r["box"]) for r in log]
+        except Exception:
+            continue
+        season = sum(series) / len(series)
+        recent = sum(series[-last:]) / last
+        out[cat] = (recent - season, eps, lbl)
+    return out
 
 
 def _teamrow(label, tr):
@@ -359,14 +409,19 @@ def render_card(ctx):
             st.markdown("<div class='pl-hdr'>Career highs</div>" + ch,
                         unsafe_allow_html=True)
 
-        # ── col 2: rating bars (+CI band, +floor spacing) + signature tiles ──
+        # ── col 2: rating bars (+CI band, +trajectory chips) + signature tiles ──
         with g2:
+            _traj = _trajectory(pid, pgb)
             bars = "".join(
                 _rating_bar(k.title(), P.get(k), GRID_CLR.get(k, accent),
-                            ci=_conf["ci"] if k == "OVERALL" else None)
+                            ci=_conf["ci"] if k == "OVERALL" else None,
+                            trend=_traj.get(k))
                 for k in RATING_COLS)
             bars += _rating_bar("Floor spacing", _space, GRID_CLR["Floor spacing"])
-            st.markdown("<div class='pl-hdr' style='margin-top:0'>Ratings</div>"
+            _thdr = ("Ratings <span style='font-size:10px;color:#8b949e;"
+                     "font-weight:400'>· ↗↘ = last 5 games vs season (real "
+                     "form, not a projection)</span>") if _traj else "Ratings"
+            st.markdown(f"<div class='pl-hdr' style='margin-top:0'>{_thdr}</div>"
                         + bars, unsafe_allow_html=True)
             _selfcr = P.get("SelfCr%")
             _passpct = (100 - _selfcr) if _selfcr is not None else None

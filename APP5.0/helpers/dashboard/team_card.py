@@ -93,6 +93,54 @@ def _zone_hdr(t):
             f"letter-spacing:1.5px;margin:0 0 4px'>{t}</div>")
 
 
+def render_mini(team_id, gender, scored, tracked=None, show_tracked=False):
+    """Compact one-column team read for side-by-side comparisons (the War Room
+    tale of the tape) — banner line + key rows, same visual language as the
+    full header. Returns an HTML string (caller places it in a column).
+
+    `show_tracked` gates the possession-depth rows (adjusted ORtg/DRtg, pace,
+    Adj eFG) on the VIEWER's entitlement for this team — results-only rows
+    render for everyone on a Paid plan."""
+    r = (scored or {}).get(team_id) or {}
+    tr = (tracked or {}).get(team_id) if show_tracked else None
+    hue, tlabel = _tier(r.get("Power"))
+    _trow = query("SELECT name, class FROM teams WHERE id=?", (team_id,))
+    tname = _trow[0]["name"] if _trow else "Team"
+    fm = _form(gender).get(team_id, {})
+    _stk = (f" · {fm['streak_type']}{fm['streak_len']}"
+            if fm.get("streak_type") and fm.get("streak_len") else "")
+    html = (
+        f"<div style='background:#0d1117;border:1px solid {hue}55;"
+        f"border-radius:12px;padding:12px 14px'>"
+        f"<div style='display:flex;justify-content:space-between;"
+        f"align-items:baseline'>"
+        f"<div style='font-size:16px;font-weight:800;color:#f0f6fc'>{tname}"
+        f"</div><div style='font-size:22px;font-weight:900;color:{hue}'>"
+        f"{r.get('Power', '—')}</div></div>"
+        f"<div style='font-size:10px;color:{hue};letter-spacing:1px;"
+        f"margin-bottom:6px'>{tlabel} · #{r.get('Rank', '—')}</div>")
+    html += _kv("Record", f"{r.get('W', 0)}-{r.get('L', 0)}{_stk}")
+    if r.get("MOV") is not None:
+        html += _kv("Margin / game", f"{r['MOV']:+.1f}")
+    if r.get("PPG") is not None:
+        html += _kv("PPG / opp", f"{r['PPG']:.0f} / {r.get('oPPG', 0):.0f}")
+    if r.get("SOS") is not None:
+        html += _kv("SOS", f"{r['SOS']:.1f}")
+    if fm.get("mom_delta") is not None:
+        html += _kv("Momentum (L5 − season)", f"{fm['mom_delta']:+.1f}",
+                    vc="#3fb950" if fm["mom_delta"] >= 0 else "#e74c3c")
+    if tr:
+        html += _kv("Adj Off / Def rating",
+                    f"{tr['ORtg']:.0f} / {tr['DRtg']:.0f}")
+        html += _kv("Pace", f"{tr['Pace']:.1f}")
+        _aj = _adj_shoot(gender).get(team_id)
+        if _aj:
+            html += _kv("Adj eFG% (off / def)",
+                        f"{_aj['AdjeFG'] * 100:.0f} / {_aj['AdjoeFG'] * 100:.0f}")
+    html += "</div>"
+    return html
+
+
 def render_header(ctx):
     """The dense team header: banner · glance strip · identity/engine/verdict."""
     sc = ctx.sc_score or {}

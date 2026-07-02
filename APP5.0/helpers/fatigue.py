@@ -135,6 +135,18 @@ def team_rest_splits(team_id):
     return rest_splits(rows)
 
 
+def rest_on_date(team_id, date_iso):
+    """Days between `date_iso` and the team's most recent PLAYED game before it
+    (the rest they'll carry into that date). None when unparseable or the team
+    has no earlier game."""
+    d = _d(date_iso)
+    if d is None:
+        return None
+    played = sorted((_d(r["date"]) for r in _team_games().get(team_id, [])
+                     if _d(r["date"]) and _d(r["date"]) < d))
+    return (d - played[-1]).days if played else None
+
+
 def league_rest_edge(gender=None, min_gp=5):
     """League fatigue curve: average game margin by REST DIFFERENTIAL.
 

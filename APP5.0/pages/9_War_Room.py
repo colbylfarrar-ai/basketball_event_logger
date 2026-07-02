@@ -73,6 +73,17 @@ def _tracked(g):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _war_map(g):
+    """HoopWAR per player (wins vs replacement) — the lineup creator's value
+    column. {} when RAPM/scores can't support it."""
+    import helpers.hoopwar as HW
+    try:
+        return HW.war_table(g)
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _sim_game(g, a, b, home, n):
     return SIM.simulate_game(_scored(g), a, b, home=home, n=n)
 
@@ -286,6 +297,10 @@ def _lineup_statline(pred, ctx, table):
             "REB": _s("RPG"), "AST": _s("APG"), "STL": _s("SPG"),
             "BLK": _s("BPG"), "TOV": _s("TPG"),
             "SC/G": _s("SC/G"), "DEF z": c["def_z"],
+            # season value context (measured, not projected): wins vs
+            # replacement + the measurables rating when recorded
+            "WAR": (_war_map(gender).get(c["pid"], {}) or {}).get("WAR"),
+            "PHY": fr.get("PHYSICAL"),
         })
     return rows
 
@@ -301,7 +316,7 @@ def _render_proj_statline(pred, ctx, table, key):
     total = {"Player": "Unit total", "Team": "", "PTS": _sum("PTS"),
              "REB": _sum("REB"), "AST": _sum("AST"), "STL": _sum("STL"),
              "BLK": _sum("BLK"), "TOV": _sum("TOV"), "SC/G": _sum("SC/G"),
-             "DEF z": None}
+             "DEF z": None, "WAR": _sum("WAR"), "PHY": None}
     st.dataframe(pd.DataFrame(rows + [total]), hide_index=True,
                  width="stretch", key=key)
     st.caption(
@@ -309,7 +324,9 @@ def _render_proj_statline(pred, ctx, table, key):
         "player's share of the five's offense at the projected pace, so stacking "
         "scorers splits the ball. REB/AST/STL/BLK/TOV are per-game production pace-"
         "adjusted to the unit (rebound/assist interaction isn't modelled). "
-        "SC/G = shots created · DEF z = defensive value (0 = league average).")
+        "SC/G = shots created · DEF z = defensive value (0 = league average) · "
+        "WAR = HoopWAR, season wins vs replacement (measured, not projected) · "
+        "PHY = measurables rating when recorded.")
 
 
 # Paid + Solo (not in the Coaches' Co-op) get ONLY the Lineup creator — building
@@ -320,10 +337,12 @@ _wr_ident = AUTH.current_user()
 _wr_league_wide = ENT.viewer_is_league_wide(_wr_ident)
 _WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
 
-(tab_match, tab_season, tab_bracket, tab_lineup, tab_planner, tab_analyze,
- tab_gloss) = st.tabs(
-    ["Matchup", "Season sim", "Bracket", "Lineup", "Matchup planner", "Analyze",
-     "Glossary"])
+# View switcher — seg + if-dispatch (the lazy-load contract): only the chosen
+# view computes, where st.tabs ran EVERY body each rerun. "Matchup planner"
+# renamed "Defensive assignments" (what it actually is — who guards whom).
+_WR_VIEWS = ["Matchup", "Season sim", "Bracket", "Lineup",
+             "Defensive assignments", "Analyze", "Glossary"]
+_wrview = _seg("View", _WR_VIEWS, default="Matchup", key="wr_view") or "Matchup"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -388,6 +407,58 @@ def _render_matchup():
             _style(wp, 110, margin=dict(l=4, r=4, t=10, b=4))
             st.plotly_chart(wp, width="stretch", key="wr_wp")
 
+            # ── tale of the tape — the shared mini team cards (WAR_ROOM_PLAN
+            # W-B). Tracked-depth rows gate per team on the viewer's
+            # entitlement, exactly like the deep-dive card.
+            import helpers.dashboard.team_card as TC
+            _tt_user = AUTH.current_user()
+            tt1, tt2 = st.columns(2)
+            tt1.markdown(
+                TC.render_mini(ta, gender, scored, tracked,
+                               show_tracked=ENT.can_see_team_tracked(_tt_user, ta)),
+                unsafe_allow_html=True)
+            tt2.markdown(
+                TC.render_mini(tb, gender, scored, tracked,
+                               show_tracked=ENT.can_see_team_tracked(_tt_user, tb)),
+                unsafe_allow_html=True)
+
+            # ── scheduled-game extras: rest edge + crew outlook — only when
+            # this matchup is ACTUALLY on the calendar. Display-only reads;
+            # deliberately NOT folded into the spread (real-numbers rule).
+            _sched = query("""
+                SELECT g.id, g.date FROM games g
+                WHERE ((g.team1_id=? AND g.team2_id=?)
+                    OR (g.team1_id=? AND g.team2_id=?))
+                  AND (g.home_score IS NULL OR g.away_score IS NULL)
+                  AND g.date >= date('now') ORDER BY g.date LIMIT 1""",
+                (ta, tb, tb, ta))
+            if _sched:
+                import helpers.fatigue as FT
+                _sd = _sched[0]["date"]
+                _ra = FT.rest_on_date(ta, _sd)
+                _rb = FT.rest_on_date(tb, _sd)
+                if _ra is not None and _rb is not None:
+                    _fresh = (name_of[ta] if _ra > _rb
+                              else (name_of[tb] if _rb > _ra else None))
+                    st.caption(
+                        f"**Rest on {_sd}:** {team_short(name_of[ta])} "
+                        f"{_ra} day{'s' if _ra != 1 else ''} · "
+                        f"{team_short(name_of[tb])} {_rb} "
+                        f"day{'s' if _rb != 1 else ''}"
+                        + (f" — {_fresh} comes in fresher (context only; "
+                           "not in the spread)." if _fresh else " — even rest."))
+                _refs = [r["official_id"] for r in query(
+                    "SELECT official_id FROM game_lineup_officials WHERE game_id=?",
+                    (_sched[0]["id"],))]
+                if _refs:
+                    try:
+                        import helpers.ref_tendencies as RTD
+                        _co = RTD.crew_outlook(_refs, gender=gender)
+                        if _co:
+                            st.caption(f"**Crew outlook:** {_co['summary']}")
+                    except Exception:
+                        pass
+
             # simulated margin distribution
             with _eng("Simulating matchup…",
                       [f"{n:,} Monte-Carlo games", "Sampling possession outcomes",
@@ -450,7 +521,8 @@ def _render_matchup():
             pdf_or_html_download("Matchup one-pager", _sheet,
                                  f"matchup_{_slug}", key="wr_sheet_dl")
             st.caption("Print-ready scouting sheet — text it straight to the "
-                       "staff.")
+                       "staff. Next steps: **Defensive assignments** (who guards "
+                       "whom) and **Lineup** (pick the five) in the views above.")
 
             # ── game plan vs this opponent: exploit matrix + defensive plan ──
             # (Tier 2, ML_LAYER_ROADMAP — the cross-team bridge). A = you, B = the
@@ -531,7 +603,7 @@ def _render_matchup():
                                    f"(smallest leg) · ~{sp['poss']} possessions/game.")
 
 
-with tab_match:
+if _wrview == "Matchup":
     if _wr_league_wide:
         _render_matchup()
     else:
@@ -621,7 +693,7 @@ def _render_season():
             st.plotly_chart(fig, width="stretch", key="wr_seas_dist")
 
 
-with tab_season:
+if _wrview == "Season sim":
     if _wr_league_wide:
         _render_season()
     else:
@@ -743,7 +815,7 @@ def _render_bracket():
                         "Champ %", format="%.1f%%", min_value=0, max_value=100)})
 
 
-with tab_bracket:
+if _wrview == "Bracket":
     if _wr_league_wide:
         _render_bracket()
     else:
@@ -753,7 +825,7 @@ with tab_bracket:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 4 — LINEUP CREATOR
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_lineup:
+if _wrview == "Lineup":
     st.subheader("Lineup creator")
     # Solo (not League-wide) coaches build ONLY their own team — no "Any team"
     # mode and no cross-team selector. Admin / League-wide get every team.
@@ -1083,12 +1155,14 @@ with tab_lineup:
 @st.fragment
 def _render_planner():
     import helpers.scoutboard as SB
-    st.subheader("Matchup planner — who guards whom")
+    st.subheader("Defensive assignments — who guards whom")
     st.caption("Assign each of your defenders to an opponent scorer and see the "
                "edge: your defender's DEFENSE vs their OFFENSE (0-100, 50 = league "
                "avg). Uses your tracked ratings, or hand-entered intel for a team "
                "you haven't tracked (add it on the Team Dashboard → Scout tab). "
-               "Saved per opponent.")
+               "Saved per opponent. The prep flow: **Matchup** projects it → the "
+               "game plan picks the calls → assignments here → **Lineup** picks "
+               "the five.")
 
     tbl = _wl_table(gender)
     _id = AUTH.current_user()
@@ -1184,7 +1258,7 @@ def _render_planner():
         st.success("Matchup plan saved.")
 
 
-with tab_planner:
+if _wrview == "Defensive assignments":
     _render_planner()
 
 
@@ -1192,7 +1266,7 @@ with tab_planner:
 #  TAB — ANALYZE  (the self-serve analytics playground, folded in from the old
 #  Data Explorer page: filter the full table, scatter anything, correlate, map shots)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_analyze:
+if _wrview == "Analyze":
     from helpers.dashboard.analyze import render as _render_analyze
     st.subheader("Analyze — the stat playground")
     _render_analyze()
@@ -1201,5 +1275,5 @@ with tab_analyze:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_gloss:
+if _wrview == "Glossary":
     glossary_tab("wr")

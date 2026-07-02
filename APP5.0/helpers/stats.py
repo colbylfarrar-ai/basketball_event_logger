@@ -94,11 +94,22 @@ def _blank_box():
         "STL": 0, "BLK": 0, "TOV": 0, "PF": 0,
         # Shots Created components
         "SC_shoot": 0, "SC_pass": 0, "SC_screen": 0,
+        # screen assists: SCR_AST = screener credited on a MADE FG (the NBA
+        # stat; SC_screen counts every credited screen, make or miss).
+        # scr_tag_* = the shooter's shots where the SET CALL implies a screen
+        # (pnr/dho/offscreen) but no screener was logged — screen-created with
+        # the credit unassigned.
+        "SCR_AST": 0, "scr_tag_FGA": 0, "scr_tag_FGM": 0,
         # shot-creation classification (counts of the player's OWN shot attempts)
         "shots_self": 0, "shots_pass": 0, "shots_sc": 0, "shots_both": 0,
         # paint (2PA in center zone)
         "paint_FGA": 0, "paint_FGM": 0,
     }
+
+
+# Set calls whose action IS a screen (mirror of the keys in
+# playtypes.NAMED_PLAY_TYPES — kept local; playtypes imports this module).
+SCREEN_SETS = frozenset({"pnr", "dho", "offscreen"})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -156,6 +167,13 @@ def aggregate_player_boxes(game_ids=None, events=None):
                 else:
                     b["shots_self"] += 1
 
+                # screen-created by TAG, credit unassigned: the set call is a
+                # screen action but no screener was logged on the shot
+                if not has_sc and (e.get("play_type") or "") in SCREEN_SETS:
+                    b["scr_tag_FGA"] += 1
+                    if made:
+                        b["scr_tag_FGM"] += 1
+
             # passer: +1 Shot Created; assist only if the shot went in
             if has_pass:
                 pb = boxes[e["pass_from_id"]]
@@ -167,9 +185,12 @@ def aggregate_player_boxes(game_ids=None, events=None):
                     else:
                         pb["AST2"] += 1
 
-            # screener (SC field): +1 Shot Created
+            # screener (SC field): +1 Shot Created; a MAKE is a screen assist
             if has_sc:
-                boxes[e["shot_created_by_id"]]["SC_screen"] += 1
+                sb = boxes[e["shot_created_by_id"]]
+                sb["SC_screen"] += 1
+                if made:
+                    sb["SCR_AST"] += 1
 
             # block credited to defender
             if e["blocked_by_id"] is not None:

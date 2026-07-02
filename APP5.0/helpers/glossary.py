@@ -121,6 +121,22 @@ STAT_DEFS = [
     ("SC",    "Shot Creation",    "Playmaking", "shots self-created + created for others",
      "Credit for generating shots — taking a self-created shot or passing/"
      "setting up a teammate's shot.", "Higher = engine of the offense.", False),
+    ("PotAST", "Potential Assists", "Playmaking", "passes into a shot (make OR miss)",
+     "Every pass that directly produced a shot attempt, whether it fell or not — "
+     "the assists that COULD have been. AST only counts the makes, so a great "
+     "passer whose teammates miss open looks reads unfairly low; PotAST measures "
+     "the passing itself. The finished share (AST ÷ PotAST) shows how often "
+     "teammates converted the looks they were given.",
+     "High PotAST + low finished % = good passes, cold finishers — pair with "
+     "the passer's look quality (xPPS created), not just AST.", True),
+    ("ScrAST", "Screen Assists", "Playmaking", "credited screens on MADE field goals",
+     "Screens that directly freed a made basket — the screener's version of an "
+     "assist (a Second Spectrum staple, captured here through the shot's "
+     "created-by credit). Shots from a screen-action set call (PnR / DHO / off "
+     "screen) with no screener logged are counted separately as screen-created "
+     "with the credit unassigned.",
+     "The big who sets bone-rattling picks finally gets a number. Volume-"
+     "dependent on tagging.", True),
     ("SCE",   "Self-Creation %",  "Playmaking", "self-created shots / FGA",
      "Share of a player's own shots they created off the dribble (no pass into "
      "the shot).", "Higher = shot-maker who doesn't need setup.", False),

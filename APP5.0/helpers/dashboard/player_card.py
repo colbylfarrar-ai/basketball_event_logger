@@ -667,6 +667,14 @@ def render_card(ctx):
             _rpd_rows[2:2] = [_row("REB% (on court)", "REB%", "pct")]
             _rpd_rows += [
                 _row("Shots created", "SC", "int"),
+                # feeds = every pass into a shot (make or miss); conv% = the
+                # share teammates finished (the assists that could have been)
+                _row("Potential assists", "PotAST", "int") | {"Value":
+                    f"{P['PotAST']} ({P['PotAST/G']:.1f}/g"
+                    + (f" · {_fmt(P['FeedConv%'], 'pct')} finished)"
+                       if P.get("FeedConv%") is not None else ")")},
+                _row("Screen assists", "ScrAST", "int") | {"Value":
+                    f"{P['ScrAST']} ({P['ScrAST/G']:.1f}/g)"},
                 _row("Guarded% (on court)", "Guarded%", "pct"),
                 _row("Defended FG% allowed", "DSHOT%", "pct"),
             ]

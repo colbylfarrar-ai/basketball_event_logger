@@ -674,6 +674,18 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "AST": b["AST"], "STL": b["STL"], "BLK": b["BLK"],
             "STOCKS": b["STL"] + b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
             "SC": b["SC"], "PaintM": b["paint_FGM"], "PaintA": b["paint_FGA"],
+            # ── shots-created family: feeds + screens ───────────────
+            # PotAST = every pass into a shot, make or miss (the box SC_pass);
+            # ScrAST = credited screens that freed a MADE FG; Scrn* = the
+            # shooter's shots off a screen-action set call with no screener
+            # logged (screen-created, credit unassigned).
+            "PotAST": b["SC_pass"], "PotAST/G": pg(b["SC_pass"]),
+            "ScrAST": b["SCR_AST"], "ScrAST/G": pg(b["SCR_AST"]),
+            "ScrnFGA": b["scr_tag_FGA"], "ScrnFGM": b["scr_tag_FGM"],
+            "FeedConv%": (_pct(_safe(b["AST"], b["SC_pass"]))
+                          if b["SC_pass"] else None),
+            "ScrnFG%": (_pct(_safe(b["scr_tag_FGM"], b["scr_tag_FGA"]))
+                        if b["scr_tag_FGA"] else None),
             # ── per game ────────────────────────────────────────────
             "PPG": pg(b["PTS"]), "RPG": pg(b["TRB"]), "APG": pg(b["AST"]),
             "SPG": pg(b["STL"]), "BPG": pg(b["BLK"]), "TPG": pg(b["TOV"]),

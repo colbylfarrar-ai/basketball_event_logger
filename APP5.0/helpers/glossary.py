@@ -376,12 +376,17 @@ STAT_DEFS = [
     ("Archetype", "Play-Style Cluster", "Ratings", "k-means on z-scored stats",
      "A data-driven player group learned by clustering on standardized stats "
      "(including the OFFENSE/DEFENSE composites) and named from the cluster's "
-     "signature. Style names (Movement Shooter, Floor General, Rim Protector, …) "
-     "plus two-way profiles (Two-Way Star, Offensive Engine, Defensive Anchor, "
-     "Flamethrower) when a cluster splits on offense-vs-defense quality. Shown as "
-     "the 'Cluster' chip on a player's header and on the Lab → Archetypes tab.",
-     "Mostly a style read; the two-way names also reflect O/D quality. Distinct "
-     "from the rule-based Scouting Role below.", True),
+     "signature — using the SAME vocabulary as the badge archetypes (Sharpshooter, "
+     "Scorer, Floor General, Rebounder, Interior Anchor, Defensive Specialist, "
+     "Glue Guy, Role Player), plus the two-way profiles (Two-Way Star, Offensive "
+     "Engine, Defensive Anchor, Flamethrower) when a cluster splits on "
+     "offense-vs-defense quality. Shown as the 'Cluster' chip on a player's "
+     "header and on the Lab → Archetypes tab, where the two lenses can be read "
+     "side by side: badges say what a player has EARNED, the cluster says how "
+     "they PLAY.",
+     "Same names, two lenses — when both agree the role is solid; a disagreement "
+     "is the interesting scouting note. Distinct from the rule-based Scouting "
+     "Role below.", True),
     ("Role", "Scouting Role", "Ratings", "rule-based thresholds on ratings + percentiles",
      "The plain-language role on a player's profile hero card (Two-Way Force, "
      "Scoring Machine, Floor General, Glass Cleaner, Defensive Anchor, 3-and-D "

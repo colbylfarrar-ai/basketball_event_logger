@@ -1481,7 +1481,10 @@ def _fx_plab():
                                       for p in mem],
                                 color=PALETTE[ci % len(PALETTE)], opacity=0.8,
                                 line=dict(color="#0d1117", width=1)),
-                    text=[ltab[p]["name"] for p in mem],
+                    # name · team — bare names collide (jersey-number-as-name),
+                    # and the coach wants to know WHOSE dot it is (STATUS 58)
+                    text=[f"{ltab[p]['name']} · {_team_short(ltab[p]['team'])}"
+                          for p in mem],
                     hovertemplate="%{text}<br>OFF %{x:.0f} · DEF %{y:.0f}<extra>"
                                   + c["archetype"] + "</extra>"))
             afig.add_hline(y=50, line=dict(color="#30363d", width=1, dash="dot"))
@@ -1494,9 +1497,10 @@ def _fx_plab():
 
             for c in lclusters["clusters"]:
                 sig = " · ".join(f"{a}+{v:.1f}" for a, v in c["signature"] if v > 0.1)
-                roster = ", ".join(ltab[p]["name"] for p in
-                                   sorted(c["members"],
-                                          key=lambda p: -(ltab[p].get("OVERALL") or 0))[:6])
+                roster = ", ".join(
+                    f"{ltab[p]['name']} ({_team_short(ltab[p]['team'])})" for p in
+                    sorted(c["members"],
+                           key=lambda p: -(ltab[p].get("OVERALL") or 0))[:6])
                 st.markdown(
                     f"<div class='glass-tile' style='margin-bottom:8px'>"
                     f"<b>{c['archetype']}</b> "

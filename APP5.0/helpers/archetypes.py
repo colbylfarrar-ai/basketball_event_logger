@@ -233,36 +233,30 @@ def _name_for(axes):
     if top == "shooting" and tval >= 0.5 and d >= -0.1:
         return "Flamethrower"
 
-    # ── otherwise NAME BY STYLE ───────────────────────────────────────────────
+    # ── otherwise NAME BY STYLE, in the BADGE-ARCHETYPE vocabulary ────────────
+    # One shared taxonomy with badges.badge_archetype (founder ask): both lenses
+    # on Players → Lab → Archetypes now speak the same names, so "the badges
+    # call them a Scorer — does the style cluster agree?" is a direct read.
     # nobody stands out → a connector / role player
     if tval < 0.35:
-        return "Glue / Role Player"
+        return "Role Player"
 
-    if top == "shooting":
-        return "Movement Shooter" if axes["creation"] < 0 else "Shot Creator"
-    if top == "scoring":
-        if axes["shooting"] > 0.4:
-            return "Three-Level Scorer"
-        return "Slashing Scorer" if axes["rim"] > 0 else "Go-To Scorer"
-    if top == "rim":
-        return "Interior Force" if axes["rebounding"] > 0.3 else "Rim Runner"
+    if top in ("shooting", "spot_up"):
+        return "Sharpshooter"
+    if top in ("scoring", "rim", "creation"):
+        return "Scorer"
     if top == "rebounding":
-        return "Rim Protector" if axes["blocks"] > 0.5 else "Glass Cleaner"
+        return "Interior Anchor" if axes["blocks"] > 0.5 else "Rebounder"
     if top == "playmaking":
-        return "Scoring Lead Guard" if axes["scoring"] > 0.3 else "Floor General"
+        return "Floor General"
     if top == "blocks":
-        return "Rim Protector"
+        return "Interior Anchor"
     if top == "steals":
-        return "Ball Hawk"
-    if top == "efficiency":
-        return "Efficient Finisher"
-    if top == "creation":
-        return "Self-Creator"
-    if top == "spot_up":
-        return "Spot-Up Shooter"
-    if top == "screen_assist":
-        return "Screen Setter"
-    return f"{top.title()} Specialist · {second.title()}"
+        return "Defensive Specialist"
+    if top in ("efficiency", "screen_assist"):
+        return "Glue Guy"
+    _ = second     # ranked axes still feed the cluster signature elsewhere
+    return "Role Player"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

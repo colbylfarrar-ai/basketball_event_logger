@@ -44,19 +44,24 @@ def test_flamethrower_needs_shooting_to_be_the_identity():
 
 
 def test_pure_shooter_bad_defense_stays_style():
-    # great shooter, bad D, not the two-way profile → style name, not Flamethrower
+    # great shooter, bad D, not the two-way profile → style name (badge
+    # vocabulary since the taxonomy alignment), not Flamethrower
     n = A._name_for(_axes(shooting=0.9, defense_q=-0.5, offense_q=0.2,
                           creation=-0.2))
-    assert n in ("Movement Shooter", "Shot Creator")
+    assert n == "Sharpshooter"
 
 
 def test_role_player_when_nothing_stands_out():
-    assert A._name_for(_axes(offense_q=0.1, defense_q=-0.1)) == "Glue / Role Player"
+    assert A._name_for(_axes(offense_q=0.1, defense_q=-0.1)) == "Role Player"
 
 
 def test_style_fallback_still_works():
+    # style names now come from the shared badge-archetype taxonomy
     assert A._name_for(_axes(playmaking=0.8)) == "Floor General"
-    assert A._name_for(_axes(rebounding=0.8, blocks=0.6)) == "Rim Protector"
+    assert A._name_for(_axes(rebounding=0.8, blocks=0.6)) == "Interior Anchor"
+    assert A._name_for(_axes(rebounding=0.8)) == "Rebounder"
+    assert A._name_for(_axes(steals=0.8)) == "Defensive Specialist"
+    assert A._name_for(_axes(scoring=0.8)) == "Scorer"
 
 
 def test_offense_defense_are_clustering_features():

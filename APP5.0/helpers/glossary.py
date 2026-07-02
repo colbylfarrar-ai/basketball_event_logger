@@ -290,6 +290,14 @@ STAT_DEFS = [
      "0–100 rating of shot creation and ball security.", "Higher is better.", False),
     ("REBOUNDING","Rebounding Rating","Ratings", "OREB/DREB/REB per-g + REB%",
      "0–100 rating of rebounding volume and rate.", "Higher is better.", False),
+    ("PHYSICAL", "Physical Rating", "Ratings", "pool z of height + wingspan → 0-100",
+     "The measurables, rated like any other category: height and wingspan "
+     "(inches, from the roster) z-scored across the league pool, 50 = average. "
+     "Weight is excluded (no 'more is better'). Feeds OVERALL at a deliberately "
+     "small weight (0.25 — a nudge, not a pillar); players with no measurements "
+     "recorded simply have no PHYSICAL rating and lose nothing.",
+     "Length matters at the rim and on closeouts — but tape decides. Mostly a "
+     "roster-context read.", True),
     ("2WAY",  "Two-Way Rating",   "Ratings", "mean(OFFENSE, DEFENSE)",
      "Balance of offensive and defensive value in one number.",
      "Higher = impacts both ends.", True),

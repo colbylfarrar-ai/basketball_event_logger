@@ -192,11 +192,14 @@ def _wavg(pairs):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _player_meta(gender=None):
-    """{player_id: {'name','number','team_id','team'}} (optionally one gender)."""
+    """{player_id: {'name','number','team_id','team','height','wingspan',
+    'weight'}} (optionally one gender). The physical columns are nullable —
+    most rosters carry height at best."""
     clause = "WHERE t.gender = ?" if gender else ""
     params = (gender,) if gender else ()
     rows = query(
         f"""SELECT p.id, p.name, p.number, p.team_id,
+                   p.height, p.wingspan, p.weight,
                    t.name AS team, t.class AS class
             FROM players p JOIN teams t ON t.id = p.team_id
             {clause}""",
@@ -204,7 +207,9 @@ def _player_meta(gender=None):
     )
     return {r["id"]: {"name": r["name"], "number": r["number"],
                       "team_id": r["team_id"], "team": r["team"],
-                      "class": r["class"]} for r in rows}
+                      "class": r["class"], "height": r["height"],
+                      "wingspan": r["wingspan"], "weight": r["weight"]}
+            for r in rows}
 
 
 def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
@@ -344,6 +349,12 @@ _PLAYMAKING = [("AST/G", 1.0, False), ("AST/TOV", 1.0, False), ("SC/G", 0.75, Fa
                ("SCPassQ", 0.75, False)]
 _REBOUNDING = [("OREB%", 1.0, False), ("DREB%", 1.0, False), ("REB%", 0.75, False),
                ("OREB/G", 0.75, False), ("DREB/G", 0.75, False), ("REB/G", 0.5, False)]
+# PHYSICAL — the measurables (players.height/wingspan, inches), pool-z'd like any
+# leaf. Weight (mass) is deliberately excluded: no monotonic "more is better".
+# Mostly a descriptive rating (founder: ~15% utility); it feeds OVERALL at a
+# deliberately small weight below, and players with no measurements recorded
+# simply drop the part (no penalty for an unfilled roster column).
+_PHYSICAL   = [("height", 1.0, False), ("wingspan", 0.75, False)]
 
 # How the headline ratings combine their parts (re-standardized component z, weight).
 # OFFENSE folds scoring VOLUME (PPG/PRF) onto the two shooting sub-ratings so a
@@ -352,8 +363,10 @@ _OFFENSE_PARTS = [("shooting", 1.0), ("finishing", 0.6), ("PPG", 1.0), ("PRF/G",
 # OVERALL = the four pillars (offense-leaning) + three production anchors. PER was
 # a literal duplicate of Game Score, so it is gone; EFF + FIC add independent
 # all-around production signal instead of double-counting one composite.
+# `physical` rides at 0.25 — a nudge, not a pillar (length matters, tape decides).
 _OVERALL_PARTS = [("offense", 1.1), ("defense", 1.0), ("playmaking", 1.0),
-                  ("rebounding", 0.8), ("GS/G", 1.0), ("EFF/G", 0.6), ("FIC/G", 0.5)]
+                  ("rebounding", 0.8), ("GS/G", 1.0), ("EFF/G", 0.6), ("FIC/G", 0.5),
+                  ("physical", 0.25)]
 
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players
 # is meaningless) and fall back to the raw weighted-mean z.
@@ -448,11 +461,13 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     defense_z    = group_z(_DEFENSE)
     playmaking_z = group_z(_PLAYMAKING)
     rebounding_z = group_z(_REBOUNDING)
+    physical_z   = group_z(_PHYSICAL)
     offense_z = combine(_OFFENSE_PARTS,
                         {"shooting": shooting_z, "finishing": finishing_z})
     overall_z = combine(_OVERALL_PARTS,
                         {"offense": offense_z, "defense": defense_z,
-                         "playmaking": playmaking_z, "rebounding": rebounding_z})
+                         "playmaking": playmaking_z, "rebounding": rebounding_z,
+                         "physical": physical_z})
 
     def _rate(z, g):
         """0-100 rating from a z-score, regressed toward 50 by games when on."""
@@ -476,6 +491,9 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "REBOUNDING": _rate(rebounding_z[p], g),
             "Shooting":   _rate(shooting_z[p], g),
             "Finishing":  _rate(finishing_z[p], g),
+            # measurables rating — None when no height/wingspan recorded
+            "PHYSICAL":   (_rate(physical_z[p], g)
+                           if physical_z.get(p) is not None else None),
             # raw stats for display
             "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
             "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"],
@@ -689,6 +707,9 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "DEFENSE": rt.get("DEFENSE"), "PLAYMAKING": rt.get("PLAYMAKING"),
             "REBOUNDING": rt.get("REBOUNDING"),
             "Shooting": rt.get("Shooting"), "Finishing": rt.get("Finishing"),
+            "PHYSICAL": rt.get("PHYSICAL"),
+            "Height": prof.get("height"), "Wingspan": prof.get("wingspan"),
+            "Weight": prof.get("weight"),
             # ── totals ──────────────────────────────────────────────
             "PTS": b["PTS"], "FGM": b["FGM"], "FGA": b["FGA"],
             "2PM": b["2PM"], "2PA": b["2PA"], "3PM": b["3PM"], "3PA": b["3PA"],

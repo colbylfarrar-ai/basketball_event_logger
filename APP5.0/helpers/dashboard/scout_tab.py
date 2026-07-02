@@ -542,7 +542,18 @@ def render(ctx):
                 components.html(html_doc, height=620, scrolling=True)
         return
 
+    # ── group dividers (UI alignment with the profile/overview zone grammar):
+    #    pure display — no toggle keys, no printable change, every section keeps
+    #    its own _show() gate exactly as before.
+    def _group_hdr(txt):
+        st.markdown(
+            f"<div style='margin:20px 0 2px;padding-top:12px;"
+            f"border-top:2px solid #21262d;font-size:12px;letter-spacing:2px;"
+            f"color:#8b949e;text-transform:uppercase;font-weight:700'>{txt}"
+            f"</div>", unsafe_allow_html=True)
+
     # ── keys to the game ─────────────────────────────────────────────────────
+    _group_hdr("Game keys & report")
     if _show("keys"):
         k1, k2 = st.columns(2)
         with k1:
@@ -569,6 +580,7 @@ def render(ctx):
                        "scouting key.")
 
     # ── personnel ────────────────────────────────────────────────────────────
+    _group_hdr("Personnel")
     if _show("personnel") and sc["personnel"]:
         st.markdown("<div class='lab-hdr'>Personnel</div>", unsafe_allow_html=True)
         sc_arch = ctx.archetypes(ctx.gender)
@@ -672,6 +684,7 @@ def render(ctx):
         SB.render_intel(ctx.team_id)
 
     # ── four factors & tendencies (the single four-factors block) ────────────
+    _group_hdr("Team profile — factors & shooting")
     if _show("four_factors") and sc["factors"]:
         st.markdown("<div class='lab-hdr'>Team profile — four factors & "
                     "tendencies</div>", unsafe_allow_html=True)
@@ -859,6 +872,7 @@ def render(ctx):
     # pc_defense / pc_tendencies / pc_handoff).
     import pandas as pd
     pc = sc.get("play_calls")
+    _group_hdr("Sets & schemes")
     if _show("pc_offense"):
         st.markdown("<div class='lab-hdr'>How they get their shots — play calls"
                     "</div>", unsafe_allow_html=True)
@@ -866,18 +880,27 @@ def render(ctx):
             _pcrows = sorted(pc["rows"], key=lambda r: r["share"], reverse=True)
             st.dataframe(pd.DataFrame([{
                 "Play call": r["label"], "Share": r["share"] * 100,
-                "PPP": r["PPP"], "FG%": r["FG%"] * 100, "Poss": r["poss"],
+                "PPP": r["PPP"], "TO%": (r.get("TO%") or 0) * 100,
+                "FD": r.get("FD", 0),
+                "FG%": r["FG%"] * 100, "Poss": r["poss"],
             } for r in _pcrows]), hide_index=True, width="stretch",
                 column_config={
                     "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
                     "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                    "TO%": st.column_config.NumberColumn(
+                        "TO%", format="%.0f%%",
+                        help="Tagged turnovers ÷ possessions in the set."),
+                    "FD": st.column_config.NumberColumn(
+                        "FD", help="Fouls drawn running the set."),
                     "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
                 })
             st.caption(
-                f"Coach-tagged set calls on {pc['total_tagged']} shots "
-                f"({pc['untagged']} untagged) — share = % of tagged shots, PPP = "
-                "points per possession. Separate from the inferred shot-source mix "
-                "on each personnel card; tag plays one-tap in the Game Tracker.")
+                f"Coach-tagged set calls, {pc['total_tagged']} tagged "
+                f"({pc['untagged']} untagged shots) — share = % of tagged "
+                "possessions (shots + turnovers), TO% = the set's give-it-away "
+                "rate, FD = fouls drawn running it. Separate from the inferred "
+                "shot-source mix on each personnel card; tag plays one-tap in "
+                "the Game Tracker.")
         else:
             st.caption("No play-call tags yet — tap an optional **Play type** "
                        "(Pick & roll, Iso, Post-up…) on shots in the Game Tracker "
@@ -890,17 +913,24 @@ def render(ctx):
         _pcdrows = sorted(pcd["rows"], key=lambda r: r["share"], reverse=True)
         st.dataframe(pd.DataFrame([{
             "Play call": r["label"], "Share": r["share"] * 100,
-            "PPP": r["PPP"], "FG%": r["FG%"] * 100, "Poss": r["poss"],
+            "PPP": r["PPP"], "TO%": (r.get("TO%") or 0) * 100,
+            "FD": r.get("FD", 0),
+            "FG%": r["FG%"] * 100, "Poss": r["poss"],
         } for r in _pcdrows]), hide_index=True, width="stretch",
             column_config={
                 "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
                 "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+                "TO%": st.column_config.NumberColumn(
+                    "TO%", format="%.0f%%",
+                    help="Turnovers they FORCED from this set."),
+                "FD": st.column_config.NumberColumn(
+                    "FD", help="Fouls they committed defending it."),
                 "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
             })
         st.caption(
-            f"Set calls opponents ran on them, on {pcd['total_tagged']} "
-            f"shots ({pcd['untagged']} untagged) — higher PPP allowed = a "
-            "set to lean on against them.")
+            f"Set calls opponents ran on them, {pcd['total_tagged']} tagged "
+            f"({pcd['untagged']} untagged shots) — higher PPP allowed = a set "
+            "to lean on; high TO% = they strip it, watch the entries.")
     # cross-dimension: what each set PRODUCES — where it shoots from and the
     # 3PA / rim / assisted / open share ("they shoot HERE on X / hunt a 3").
     spf = sc.get("set_profiles")
@@ -1037,6 +1067,7 @@ def render(ctx):
 
     # ── situational tendencies (play/defense usage by quarter / score / run) ──
     sit = sc.get("situational")
+    _group_hdr("Situational & shot geography")
     if _show("situational"):
         st.markdown("<div class='lab-hdr'>Situational tendencies — when they run it"
                     "</div>", unsafe_allow_html=True)
@@ -1203,6 +1234,7 @@ def render(ctx):
                            + f". {con['note']}")
 
     # ── scoring by possession length (when tracked) ──────────────────────────
+    _group_hdr("Deep splits")
     if _show("poss_length") and ctx.bundle.get("poss_length"):
         _plen = [r for r in ctx.bundle["poss_length"]
                  if r["label"] != "Untimed" and r["FGA"]]

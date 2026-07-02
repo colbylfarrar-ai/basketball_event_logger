@@ -783,16 +783,20 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             f"<tr><td>{e(r['label'])}</td>"
             f"<td class='n'>{r['share'] * 100:.0f}%</td>"
             f"<td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{(r.get('TO%') or 0) * 100:.0f}%</td>"
+            f"<td class='n'>{r.get('FD', 0)}</td>"
             f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
             f"<td class='n'>{r['poss']}</td></tr>"
             for r in sorted(pc["rows"], key=lambda r: r["share"], reverse=True))
         pc_html += (
             "<h2>How they get their shots — play calls</h2><table><tr>"
             "<th>Play call</th><th class='n'>Share</th><th class='n'>PPP</th>"
+            "<th class='n'>TO%</th><th class='n'>FD</th>"
             f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_pc}</table>"
-            f"<p class='note'>Coach-tagged set calls on {pc['total_tagged']} shots "
-            f"({pc['untagged']} untagged). Share = % of tagged shots; PPP = points "
-            "per possession.</p>")
+            f"<p class='note'>Coach-tagged set calls, {pc['total_tagged']} tagged "
+            f"({pc['untagged']} untagged shots). Share = % of tagged possessions "
+            "(shots + turnovers); TO% = the set's give-it-away rate; FD = fouls "
+            "drawn running it; PPP = points per possession.</p>")
     # companion: what they ALLOW — the set calls opponents ran on them.
     pcd = sc.get("play_calls_def")
     if _show("pc_defense") and pcd and pcd.get("rows"):
@@ -800,16 +804,20 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             f"<tr><td>{e(r['label'])}</td>"
             f"<td class='n'>{r['share'] * 100:.0f}%</td>"
             f"<td class='n'>{r['PPP']:.2f}</td>"
+            f"<td class='n'>{(r.get('TO%') or 0) * 100:.0f}%</td>"
+            f"<td class='n'>{r.get('FD', 0)}</td>"
             f"<td class='n'>{r['FG%'] * 100:.0f}%</td>"
             f"<td class='n'>{r['poss']}</td></tr>"
             for r in sorted(pcd["rows"], key=lambda r: r["share"], reverse=True))
         pc_html += (
             "<h2>What they allow — play calls defended</h2><table><tr>"
             "<th>Play call</th><th class='n'>Share</th><th class='n'>PPP</th>"
+            "<th class='n'>TO%</th><th class='n'>FD</th>"
             f"<th class='n'>FG%</th><th class='n'>Poss</th></tr>{rows_pcd}</table>"
-            f"<p class='note'>Set calls opponents ran on them, on "
-            f"{pcd['total_tagged']} shots ({pcd['untagged']} untagged). Higher "
-            "PPP allowed = a set to lean on.</p>")
+            f"<p class='note'>Set calls opponents ran on them, "
+            f"{pcd['total_tagged']} tagged ({pcd['untagged']} untagged shots). "
+            "Higher PPP allowed = a set to lean on; high TO% here = they force "
+            "giveaways from it; FD = fouls they committed defending it.</p>")
     # cross-dimension: what each set PRODUCES — where it shoots from and the
     # 3PA / rim / assisted / open share. The "they shoot HERE on X / hunt a
     # 3 in transition" read, joined beside the play-calls table above.

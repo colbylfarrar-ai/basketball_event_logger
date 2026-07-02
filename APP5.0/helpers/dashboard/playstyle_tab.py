@@ -110,9 +110,10 @@ def _render_factors(ff, unit):
                 unsafe_allow_html=True)
     st.caption(
         f"*Why* each {unit} works, not just PPP — eFG% (shooting), OREB% (second "
-        f"chances), TOV% (ball security), FT-rate (getting to the line). Each "
-        f"{unit} unlocks at {MIN_POSS_DETAIL} possessions; these splits are noisy "
-        "below that, and OREB% needs enough missed-shot boards.")
+        f"chances), TOV% (ball security). FT-rate is dropped here — free-throw "
+        f"trips aren't tied to a set call in the tracking. Each {unit} unlocks "
+        f"at {MIN_POSS_DETAIL} possessions; these splits are noisy below that, "
+        "and OREB% needs enough missed-shot boards.")
     rows = (ff or {}).get("rows", [])
     stable = [r for r in rows if r.get("stable")]
     if not stable:
@@ -128,7 +129,7 @@ def _render_factors(ff, unit):
     df = pd.DataFrame([{
         unit.title(): r["label"], "Poss": r["poss"], "PPP": f"{r['PPP']:.2f}",
         "eFG%": _pct(r["eFG"]), "OREB%": _pct(r["OREB%"]),
-        "TOV%": _pct(r["TOV%"]), "FT-rate": f"{r['FTr']:.2f}",
+        "TOV%": _pct(r["TOV%"]),
     } for r in stable])
     st.dataframe(df, hide_index=True, width="stretch")
     thin = sorted((r for r in rows if not r.get("stable")),
@@ -267,22 +268,36 @@ def render(ctx):
                         unsafe_allow_html=True)
         st.dataframe(pd.DataFrame([{
             "Play call": r["label"], "Poss": r["poss"],
-            "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
+            "Share": round(r["share"] * 100, 0),
+            "PPP": round(r["PPP"], 2),
+            "TO%": (round(r["TO%"] * 100, 0)
+                    if r.get("TO%") is not None else None),
+            "FD": r.get("FD", 0),
+            "FG%": round(r["FG%"] * 100, 0),
             "3P%": round(r.get("3P%", 0) * 100, 0),
             "eFG%": round(r.get("eFG", 0) * 100, 0),
             "SCE": round(r.get("SCE", 0) * 100, 0),
-            "Share": round(r["share"] * 100, 0), "Tier": r["tier"],
+            "Tier": r["tier"],
         } for r in nrows]), hide_index=True, width="stretch", column_config={
+            "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
+            "TO%": st.column_config.NumberColumn(
+                "TO%", format="%.0f%%",
+                help="Tagged turnovers ÷ possessions in this set — the "
+                     "give-it-away rate (charged to whoever lost it, read at "
+                     "the set level)."),
+            "FD": st.column_config.NumberColumn(
+                "FD", help="Fouls drawn running this set."),
             "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
             "3P%": st.column_config.NumberColumn("3P%", format="%.0f%%"),
             "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
             "SCE": st.column_config.NumberColumn("SCE", format="%.0f%%"),
-            "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
         }, key="ps_named_tbl")
-        st.caption("PPP = points/possession · eFG% weights 3s · **SCE** = scoring "
-                   "efficiency (FG points ÷ max possible — rewards shot selection "
-                   "AND making) · Share = % of tagged shots.")
+        st.caption("PPP = points/possession (turnover possessions included once "
+                   "TOs are tagged) · TO% = the set's give-it-away rate · FD = "
+                   "fouls drawn in the set · eFG% weights 3s · **SCE** = scoring "
+                   "efficiency (FG points ÷ max possible) · Share = % of tagged "
+                   "possessions (shots + turnovers).")
 
         # ── play-call distribution pie ──────────────────────────────────────
         st.markdown("<div class='pl-hdr'>Play-call distribution</div>",

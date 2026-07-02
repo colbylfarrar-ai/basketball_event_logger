@@ -399,7 +399,8 @@ def render_card(ctx):
                 _kv("PTS", f"{_g('PPG'):.1f}")
                 + _kv("REB · AST", f"{_g('RPG'):.1f} · {_g('APG'):.1f}")
                 + _kv("STL · BLK", f"{_g('SPG'):.1f} · {_g('BPG'):.1f}")
-                + _kv("TOV", f"{_g('TPG'):.1f}")
+                + _kv("TOV · AST:TO",
+                      f"{_g('TPG'):.1f} · {_fmt(P.get('AST/TOV'), 'f2')}")
                 + _kv("3P% · TS%", f"{_fmt(P.get('3P%'),'pct')} · {_fmt(P.get('TS%'),'pct')}"))
             st.markdown("<div class='pl-hdr' style='margin-top:0'>Per game</div>"
                         + pg, unsafe_allow_html=True)
@@ -427,12 +428,14 @@ def render_card(ctx):
                         + bars, unsafe_allow_html=True)
             _selfcr = P.get("SelfCr%")
             _passpct = (100 - _selfcr) if _selfcr is not None else None
-            _sig = [("Paint FG%", _fmt(P.get("Paint%"), "pct")),
-                    ("Self-cr %", _fmt(_selfcr, "pct")),
+            # Paint FG% reads off the shot chart, AST:TO lives in Per game —
+            # their pills became the DEFENSE splits (FG% allowed rim / arc).
+            _sig = [("Self-cr %", _fmt(_selfcr, "pct")),
                     ("Pass %", _fmt(_passpct, "pct")),
-                    ("AST:TO", _fmt(P.get("AST/TOV"), "f2")),
                     ("Usage", _fmt(P.get("USG%"), "pct")),
-                    ("VPS", _fmt(P.get("VPS"), "f2"))]
+                    ("VPS", _fmt(P.get("VPS"), "f2")),
+                    ("Rim D FG%", _fmt(P.get("RimDFG%"), "pct")),
+                    ("Perim D FG%", _fmt(P.get("PerimDFG%"), "pct"))]
             # one thin pill strip (phase E) — the tiles were a 2-row grid that
             # pushed the fold down; same six numbers, a third of the height
             pills = "".join(
@@ -480,7 +483,8 @@ def render_card(ctx):
                         + "".join(_pt_row(k, c) for k, c in _pt_ranked),
                         unsafe_allow_html=True)
 
-        # ── col 4: the shot maps, IN the fold (phase E) ───────────────────────
+        # ── col 4: the shot map, IN the fold (phase E; defended map lives down
+        #    in Shot detail — a scouting read, not an at-a-glance one) ─────────
         with g4:
             if located:
                 sfig, _sn = _shot_map(located, "")
@@ -498,32 +502,23 @@ def render_card(ctx):
                         f"avg {_ls['avg_dist']:.1f} ft · rim {_ls['rim_n']} · "
                         f"mid {_ls['mid_n']} · three {_ls['three_n']} — hover a "
                         f"dot for the shot</div>", unsafe_allow_html=True)
-            _dshots = _defended_located(pid)
-            if _dshots:
-                dfig, _dn = _shot_map(_dshots, "")
-                dfig.update_layout(height=250,
-                                   margin=dict(l=0, r=0, t=6, b=0),
-                                   showlegend=False)
+                # the accuracy line the map itself can't show
                 st.markdown(
-                    f"<div class='pl-hdr'>Shots defended · {len(_dshots)}</div>",
+                    f"<div style='font-size:11px;color:#c9d1d9;margin-top:2px'>"
+                    f"Paint FG% <b>{_fmt(P.get('Paint%'), 'pct')}</b> · FG% "
+                    f"<b>{_fmt(P.get('FG%'), 'pct')}</b> · 3P% "
+                    f"<b>{_fmt(P.get('3P%'), 'pct')}</b></div>",
                     unsafe_allow_html=True)
-                st.plotly_chart(dfig, width="stretch", key="pcard_defcourt_fold")
-                _gd4 = zguard.get(pid, {})
-                if _gd4:
-                    _gg = _gd4.get("guarded", {})
-                    _go = _gd4.get("open", {})
-                    st.markdown(
-                        f"<div style='font-size:10px;color:#8b949e;margin-top:-6px'>"
-                        f"guarded FG% "
-                        f"{_gg['pct']*100:.0f}% ({_gg['FGM']}/{_gg['FGA']}) · open "
-                        f"{_go['pct']*100:.0f}% ({_go['FGM']}/{_go['FGA']})</div>"
-                        if _gg.get("FGA") and _go.get("FGA") else "",
-                        unsafe_allow_html=True)
-            if not located and not _dshots:
+            else:
                 st.markdown("<div class='pl-hdr' style='margin-top:0'>Shot map"
                             "</div><div style='font-size:11px;color:#8b949e'>"
                             "Tap-located shots build the court read — the zone "
-                            "chart below covers older games.</div>",
+                            "chart below covers older games.</div>"
+                            f"<div style='font-size:11px;color:#c9d1d9;"
+                            f"margin-top:6px'>Paint FG% "
+                            f"<b>{_fmt(P.get('Paint%'), 'pct')}</b> · FG% "
+                            f"<b>{_fmt(P.get('FG%'), 'pct')}</b> · 3P% "
+                            f"<b>{_fmt(P.get('3P%'), 'pct')}</b></div>",
                             unsafe_allow_html=True)
 
         # ── full league-percentile rail (all 21, three columns) ──────────────
@@ -706,6 +701,23 @@ def render_card(ctx):
                 _hot_zones(pz)
             else:
                 st.caption("No zone data.")
+            # defended-shot map — the scouting read, deliberately BELOW the
+            # fold (founder call): where opponents shot when this player was
+            # the contester/blocker, with the guarded/open split.
+            _dshots = _defended_located(pid)
+            if _dshots:
+                dfig, _dn = _shot_map(
+                    _dshots, f"Shots defended · {len(_dshots)} located")
+                st.plotly_chart(dfig, width="stretch", key="pcard_defcourt")
+                _gd4 = zguard.get(pid, {})
+                _gg = (_gd4 or {}).get("guarded", {})
+                _go = (_gd4 or {}).get("open", {})
+                if _gg.get("FGA") and _go.get("FGA"):
+                    st.caption(
+                        f"Guarded FG% {_gg['pct']*100:.0f}% "
+                        f"({_gg['FGM']}/{_gg['FGA']}) · open "
+                        f"{_go['pct']*100:.0f}% ({_go['FGM']}/{_go['FGA']}). "
+                        "Rim vs arc feeds the DEFENSE rating.")
 
     left, right = st.columns([2, 3])
     with left:

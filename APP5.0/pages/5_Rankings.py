@@ -298,6 +298,19 @@ def _tracked_ratings(g, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _adj_shoot(g, vis=None):
+    """Opponent-adjusted eFG per team (helpers/adj_efficiency) — closes the
+    KenPom gap for SHOOTING (ORtg/DRtg/PPP were already schedule-adjusted by
+    tracked_ratings). Same AXIS-2 pool scope as the tracked ratings."""
+    import helpers.adj_efficiency as AE
+    try:
+        return AE.adjusted_shooting(
+            g, game_ids=(set(vis) if vis is not None else None))
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _form_stats(g):
     return LA.team_form_stats(gender=g)
 
@@ -1080,9 +1093,18 @@ def _fx_track():
     else:
         st.caption(
             "Possession-based ratings over **tracked games only** — a far smaller, "
-            "sparsely-connected sample, so treat as directional. **NetRtg** is "
-            "points per 100 possessions vs an average team; **Pace** is "
-            "possessions per game.")
+            "sparsely-connected sample, so treat as directional. **ORtg / DRtg / "
+            "NetRtg / PPP are opponent-adjusted** (KenPom-style — corrected for "
+            "the schedule faced); **AdjeFG / Adj-oeFG** apply the same correction "
+            "to shooting (what you'd shoot vs an average defense / what an "
+            "average offense would shoot on you). **Pace** is possessions per "
+            "game.")
+
+        _adj = _adj_shoot(gender, _VISK)
+        for _at, _arow in tracked.items():     # cache returns a copy — safe to
+            _a = _adj.get(_at) or {}            # annotate per rerun
+            _arow["AdjeFG"] = _a.get("AdjeFG")
+            _arow["AdjoeFG"] = _a.get("AdjoeFG")
 
         rows = _filter_rows(
             sorted(tracked.values(), key=lambda r: r["Rank"]), "trk")
@@ -1092,7 +1114,8 @@ def _fx_track():
             df = pd.DataFrame(rows)[[
                 "Rank", "name", "class", "GP", "Power", "Rating", "RatingPts",
                 "NetRtg", "ORtg", "DRtg", "PPP", "oPPP", "Pace",
-                "eFG", "oeFG", "FGpct", "oFGpct", "TPpct", "SOS", "SOR",
+                "eFG", "oeFG", "AdjeFG", "AdjoeFG",
+                "FGpct", "oFGpct", "TPpct", "SOS", "SOR",
                 "ClassAdj"]].rename(columns={"name": "Team", "class": "Class"})
             st.dataframe(
                 df, hide_index=True, width="stretch",
@@ -1112,6 +1135,14 @@ def _fx_track():
                     "eFG": st.column_config.NumberColumn("eFG%", format="percent"),
                     "oeFG": st.column_config.NumberColumn("Opp eFG%",
                                                           format="percent"),
+                    "AdjeFG": st.column_config.NumberColumn(
+                        "Adj eFG%", format="percent",
+                        help="Opponent-adjusted: what this team would shoot "
+                             "against an AVERAGE defense."),
+                    "AdjoeFG": st.column_config.NumberColumn(
+                        "Adj Opp eFG%", format="percent",
+                        help="Opponent-adjusted: what an AVERAGE offense would "
+                             "shoot against this defense (lower is better)."),
                     "FGpct": st.column_config.NumberColumn("FG%", format="percent"),
                     "oFGpct": st.column_config.NumberColumn("Opp FG%",
                                                             format="percent"),

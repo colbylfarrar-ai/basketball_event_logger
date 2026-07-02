@@ -74,6 +74,17 @@ STAT_DEFS = [
      "Self-Creation %.",
      "Higher = you're capturing more of the points your shots could yield; "
      "100% would mean making everything.", True),
+    ("AdjeFG%", "Adjusted eFG%",  "Shooting",
+     "ridge fit of per-game eFG = league avg + offense effect + defense effect",
+     "Opponent-adjusted shooting, KenPom-style: what a team would shoot against "
+     "an AVERAGE defense (and, as Adj Opp eFG%, what an average offense would "
+     "shoot against them). Corrects raw eFG% for the schedule faced — a team "
+     "that shot 48% against elite defenses is better than one that shot 48% "
+     "against sieves. Weighted by attempts and shrunk toward league average on "
+     "thin samples. The efficiency numbers (ORtg/DRtg/PPP) get the same "
+     "treatment in the tracked ratings.",
+     "Compare to raw eFG%: adjusted above raw = tough schedule masked real "
+     "shooting; below = the raw number was schedule-inflated.", False),
     ("3PAr", "Three-Point Rate",  "Shooting", "3PA / FGA",
      "Share of a player's shots that are threes.",
      "Shot-profile, not quality — how often they shoot from deep.", False),

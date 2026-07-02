@@ -683,36 +683,37 @@ def _fx_team():
         oc = class_of.get(g["opp"], "N/A")
         by_class[oc][0 if g["won"] else 1] += 1
 
-    m = st.columns(5)
-    m[0].metric("Power", r["Power"])
-    m[1].metric("Rating", r["Rating"])
-    m[2].metric("Record", f"{r['W']}-{r['L']}", streak or None)
-    m[3].metric("Margin / game", f"{r['MOV']:+.1f}")
-    m[4].metric("SOS / SOR", f"{r['SOS']:.1f} / {r['SOR']:.1f}")
-
-    # both rankings in one place: league (results — public) + tracked (possession
-    # NetRtg → Paid AND own-team-or-league-wide; drop the clause otherwise).
+    # ── the shared team header card (UI_DENSITY_PLAN phase D) — the SAME
+    # render the Team Dashboard Overview uses, so the two team surfaces can't
+    # drift. Tracked depth (glance / engine zone / tracked rank) rides on the
+    # viewer's entitlement for THIS team, exactly like the old tracked clause.
     rk = TR.team_rank(pick, scored=scored, tracked=tracked)
-    _trk = rk["tracked"]
-    if not ENT.can_see_team_tracked(AUTH.current_user(), pick):
-        _trk_clause = ""                 # possession rank gated — show league only
-    elif _trk:
-        _trk_clause = (f"  ·  **Tracked ranking** #{_trk['rank']} of {_trk['of']} "
-                       f"(Power {_trk['power']}, Net {_trk['netrtg']:+.1f})")
-    else:
-        _trk_clause = "  ·  **Tracked ranking** — not tracked yet"
-    st.caption(f"**League ranking** #{r['Rank']} of {len(scored)}" + _trk_clause)
+    _see_trk = ENT.can_see_team_tracked(AUTH.current_user(), pick)
+    _tr = tracked.get(pick) if _see_trk else None
+    from types import SimpleNamespace as _NS
+    import helpers.dashboard.team_card as TC
+    TC.render_header(_NS(
+        team_id=pick, gender=gender, sc_score=r, scored=scored,
+        rec={"wins": r["W"], "losses": r["L"], "MOV": r["MOV"],
+             "PF_pg": r["PPG"], "PA_pg": r["oPPG"]},
+        log=[{"opp_id": g["opp"], "won": g["won"]} for g in results],
+        has_tracked=bool(_tr),
+        summ=({"ORtg": _tr["ORtg"], "DRtg": _tr["DRtg"],
+               "NetRtg": _tr["NetRtg"], "POSS_pg": _tr["Pace"]} if _tr else {}),
+        rank_info={"tracked": (rk["tracked"] if _see_trk else None)},
+        tracked=tracked,
+    ))
 
-    mt = st.columns(3)
-    mt[0].metric("vs Top 5", f"{t5_w}-{t5_l}")
-    mt[1].metric("vs Top 10", f"{t10_w}-{t10_l}")
-    mt[2].metric("vs Top 25", f"{t25_w}-{t25_l}")
-
-    m2 = st.columns(4)
-    m2[0].metric("PPG", r["PPG"])
-    m2[1].metric("Opp PPG", r["oPPG"])
-    m2[2].metric("Adj O (xPPG)", r["xPPG"])
-    m2[3].metric("Adj D (xoPPG)", r["xoPPG"])
+    # Rankings-only extras the card doesn't carry (schedule strength + the
+    # opponent-adjusted score-based O/D) + the earliest vs-Top split.
+    mx = st.columns(5)
+    mx[0].metric("Rating", r["Rating"],
+                 help="Opponent-adjusted rating (drives the rankings).")
+    mx[1].metric("SOS / SOR", f"{r['SOS']:.1f} / {r['SOR']:.1f}")
+    mx[2].metric("Adj O (xPPG)", r["xPPG"])
+    mx[3].metric("Adj D (xoPPG)", r["xoPPG"])
+    mx[4].metric("vs Top 5", f"{t5_w}-{t5_l}",
+                 help="Top 10 / Top 25 splits live on the card above.")
 
     # ── advanced profile (results-only composites + form) ────────────────────
     f = form_stats.get(pick, {})
@@ -738,14 +739,13 @@ def _fx_team():
     am[3].metric("Momentum", _mv(f.get("Momentum")))
     am[4].metric("Volatility", _mv(f.get("Volatility"), "{:.1f}"))
 
-    pm = st.columns(5)
-    pm[0].metric("Pythagorean W-L",
-                 f"{f.get('Pyth_W', 0):.1f}-{f.get('Pyth_L', 0):.1f}")
-    pm[1].metric("Luck (W vs exp)", _mv(f.get("Luck_wins"), "{:+.1f}"))
-    pm[2].metric("Ceiling", _mv(f.get("ceiling"), "{:+d}"))
-    pm[3].metric("Floor", _mv(f.get("floor"), "{:+d}"))
-    pm[4].metric("Close (≤5)",
-                 f"{f.get('close_w', 0)}-{f.get('close_l', 0)}")
+    # (Pythagorean / luck / close-game rows moved onto the header card's
+    #  Verdict zone — only the ceiling/floor extremes stay here.)
+    pm = st.columns(2)
+    pm[0].metric("Ceiling", _mv(f.get("ceiling"), "{:+d}"),
+                 help="Best win margin this season.")
+    pm[1].metric("Floor", _mv(f.get("floor"), "{:+d}"),
+                 help="Worst loss margin this season.")
 
     # league percentile profile (results-only, vs the whole field)
     st.markdown("**League percentile profile**")

@@ -18,7 +18,9 @@ Coaching notation implemented (standard playbook symbols):
   pass       dashed arrow           — the ball moving
   dribble    zigzag arrow           — player moving with the ball
   screen     line with a T-bar end  — pick/screen
-  O / X      numbered offense circles / defense X's (auto-number 1-5)
+  O / X      numbered offense circles / defense X's (auto-number 1-5) — DRAGGABLE
+             with any tool (numbered pieces a player can follow around the court)
+  ball       one gold ball per court, draggable; re-placing moves it
   erase      tap/drag removes whole marks (op hit-test, mirrors undo)
 
 Drawing coordinates are stored in FEET (canvas px / scale), so strokes survive
@@ -42,9 +44,10 @@ _cfg, ACCENT = page_chrome("Whiteboard")
 st.title("Whiteboard")
 st.caption(
     "Sketch plays on a half or full court — solid arrow = cut, dashed = pass, "
-    "zigzag = dribble, T-bar = screen, numbered O/X = players. **Nothing is "
-    "saved**: leaving or refreshing the page clears the board. Use PNG to keep "
-    "a copy on your device."
+    "zigzag = dribble, T-bar = screen, numbered O/X = players, gold dot = ball. "
+    "**Drag any O, X or the ball to move it** — walk a player through the "
+    "action piece by piece. **Nothing is saved**: leaving or refreshing clears "
+    "the board. Use PNG to keep a copy on your device."
 )
 
 # Court geometry, single-sourced from the shot-location model. The whiteboard
@@ -104,8 +107,9 @@ _HTML = r"""
       <button data-t="pass" title="Dashed arrow — pass">Pass &#8674;</button>
       <button data-t="dribble" title="Zigzag arrow — dribble">Dribble &#8767;</button>
       <button data-t="screen" title="T-bar — screen">Screen &#8869;</button>
-      <button data-t="O" title="Tap to place numbered offense marker">O</button>
-      <button data-t="X" title="Tap to place numbered defense marker">X</button>
+      <button data-t="O" title="Tap to place numbered offense marker — drag to move">O</button>
+      <button data-t="X" title="Tap to place numbered defense marker — drag to move">X</button>
+      <button data-t="ball" title="Ball marker — one per court, drag to move">Ball</button>
       <button data-t="erase" title="Tap or drag across a mark to remove it">Erase</button>
     </div>
     <div class="sep"></div>
@@ -145,6 +149,7 @@ _HTML = r"""
   const ops = { half: [], full: [] };   // per-mode strokes, coords in FEET
   let cur = null;                       // stroke in progress
   let erasing = false;                  // eraser drag in progress
+  let dragOp = null;                    // marker (O/X/ball) being dragged
   let scale = 10;                       // px per foot (set by layout)
 
   // feet-extent of the visible board per mode. Half court: portrait-ish,
@@ -304,6 +309,16 @@ _HTML = r"""
       }
       return;
     }
+    if (o.t === "ball") {
+      // the ball: small filled circle, always gold (rim/backboard colour), so
+      // it reads apart from the O markers at a glance
+      const x = px(o.x), y = px(o.y), r = px(0.75);
+      ctx.fillStyle = "#e6be64";
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "#12141e"; ctx.lineWidth = px(0.12);
+      ctx.stroke();
+      return;
+    }
     // two-point tools
     const x1 = px(o.x1), y1 = px(o.y1), x2 = px(o.x2), y2 = px(o.y2);
     const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
@@ -360,7 +375,8 @@ _HTML = r"""
     return Math.hypot(px_ - (x1 + t * dx), py_ - (y1 + t * dy));
   }
   function _hit(o, fx, fy) {
-    if (o.t === "O" || o.t === "X") return Math.hypot(o.x - fx, o.y - fy) < 1.7;
+    if (o.t === "O" || o.t === "X" || o.t === "ball")
+      return Math.hypot(o.x - fx, o.y - fy) < 1.7;
     if (o.t === "pen") {
       for (let i = 1; i < o.pts.length; i++)
         if (_segDist(fx, fy, o.pts[i - 1][0], o.pts[i - 1][1],
@@ -384,13 +400,37 @@ _HTML = r"""
     return ops[mode].filter((o) => o.t === t).length % 5 + 1;
   }
 
+  function markerAt(fx, fy) {               // topmost draggable piece under the tap
+    const arr = ops[mode];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const o = arr[i];
+      if ((o.t === "O" || o.t === "X" || o.t === "ball")
+          && Math.hypot(o.x - fx, o.y - fy) < 1.7) return o;
+    }
+    return null;
+  }
+
   drawCv.addEventListener("pointerdown", (ev) => {
     ev.preventDefault();
     drawCv.setPointerCapture(ev.pointerId);
     const [fx, fy] = pos(ev);
     if (tool === "erase") { erasing = true; eraseAt(fx, fy); return; }
+    // pieces are draggable with ANY drawing tool — grabbing an X/O/ball moves
+    // it instead of drawing over it (numbered players a kid can follow)
+    const m = markerAt(fx, fy);
+    if (m) { dragOp = m; return; }
+    if (tool === "ball") {                  // singleton: re-placing moves it
+      let b = ops[mode].find((o) => o.t === "ball");
+      if (!b) { b = { t: "ball", x: fx, y: fy }; ops[mode].push(b); }
+      b.x = fx; b.y = fy;
+      dragOp = b;
+      render();
+      return;
+    }
     if (tool === "O" || tool === "X") {
-      ops[mode].push({ t: tool, c: color, x: fx, y: fy, n: nextNum(tool) });
+      const nm = { t: tool, c: color, x: fx, y: fy, n: nextNum(tool) };
+      ops[mode].push(nm);
+      dragOp = nm;                          // place-and-drag in one gesture
       render();
       return;
     }
@@ -399,6 +439,12 @@ _HTML = r"""
       : { t: tool, c: color, x1: fx, y1: fy, x2: fx, y2: fy };
   });
   drawCv.addEventListener("pointermove", (ev) => {
+    if (dragOp) {
+      const [mx, my] = pos(ev);
+      dragOp.x = mx; dragOp.y = my;
+      render();
+      return;
+    }
     if (erasing) { const [ex, ey] = pos(ev); eraseAt(ex, ey); return; }
     if (!cur) return;
     const [fx, fy] = pos(ev);
@@ -408,6 +454,7 @@ _HTML = r"""
   });
   const finish = () => {
     erasing = false;
+    dragOp = null;
     if (!cur) return;
     const trivial = cur.t !== "pen" && Math.hypot(cur.x2 - cur.x1, cur.y2 - cur.y1) < 0.3;
     if (!trivial && !(cur.t === "pen" && cur.pts.length < 2)) ops[mode].push(cur);
@@ -416,7 +463,7 @@ _HTML = r"""
   };
   drawCv.addEventListener("pointerup", finish);
   drawCv.addEventListener("pointercancel", () => {
-    erasing = false; cur = null; render();
+    erasing = false; dragOp = null; cur = null; render();
   });
 
   // ── toolbar ───────────────────────────────────────────────────────────────

@@ -127,6 +127,7 @@ try {
       <span id="sync-badge" class="badge ok" title="Queued events">0</span>
       <span id="net-dot2" class="dot"></span>
       <button id="btn-subs" class="btn ghost">Subs</button>
+      <button id="btn-board" class="btn ghost">Board</button>
     </div>
   </header>
 
@@ -236,7 +237,31 @@ try {
   }
 })();
 </script>
+<!-- Courtside whiteboard overlay — tap Board to open, Close to get back to the
+     tracker (mirrors the Subs panel). Draw / draggable X-O pieces / ball / erase,
+     half or full court. Nothing is saved, ever. -->
+<div id="wb-overlay" hidden>
+  <div id="wb-bar">
+    <button id="wb-half" class="btn small">Half</button>
+    <button id="wb-full" class="btn small ghost">Full</button>
+    <span class="wb-sep"></span>
+    <button class="btn small wb-tool" data-t="pen">Draw</button>
+    <button class="btn small wb-tool ghost" data-t="O">O</button>
+    <button class="btn small wb-tool ghost" data-t="X">X</button>
+    <button class="btn small wb-tool ghost" data-t="ball">Ball</button>
+    <button class="btn small wb-tool ghost" data-t="erase">Erase</button>
+    <span class="wb-sep"></span>
+    <button id="wb-clear" class="btn small ghost">Clear</button>
+    <button id="wb-close" class="btn small">Close</button>
+  </div>
+  <div id="wb-stage"><div id="wb-frame">
+    <canvas id="wb-court"></canvas>
+    <canvas id="wb-draw"></canvas>
+  </div></div>
+</div>
+
 <script src="/static/court.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/wb.js"></script>
 </body>
 </html>

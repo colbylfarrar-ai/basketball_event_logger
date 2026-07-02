@@ -8,11 +8,12 @@
    - icons are cache-first; /api/* and /sw.js are never cached.
    The page reloads once when a NEW worker takes over (see index.html), so a reopen
    lands on the latest — no banner, no kill-and-reopen, no reinstall. */
-const CACHE = 'tracker-v29';
+const CACHE = 'tracker-v30';
 const ASSETS = [
   '/',
   '/static/app.js',
   '/static/court.js',
+  '/static/wb.js',
   '/static/style.css',
   '/manifest.json',
   '/static/icon-192.png',

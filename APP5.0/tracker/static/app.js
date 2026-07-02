@@ -1906,6 +1906,10 @@ function bindUI() {
 
   // tracker header
   $('btn-subs').addEventListener('click', function () { toggleSubsPanel(); });
+  // courtside whiteboard overlay (wb.js) — same tap-in/tap-out feel as Subs
+  $('btn-board').addEventListener('click', function () {
+    if (window.WB) window.WB.toggle();
+  });
   $('quick-toggle').addEventListener('click', function () {
     setQuickMode(!quickModeOn());
     setQuickBtn();

@@ -27,6 +27,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
+import helpers.badges as BG
 import helpers.stats as S
 import helpers.trends as TRD
 import helpers.player_ratings as PR
@@ -188,6 +189,20 @@ def render_card(ctx):
     #    Free users get a box-only header (name · team · class · GP).
     hue, tier = (_tier(P["OVERALL"]) if (paid and P["OVERALL"] is not None)
                  else (accent, ""))
+
+    # measurables for the identity line (roster columns; any may be missing)
+    def _ftin(v):
+        return f"{int(v) // 12}'{int(v) % 12}\""
+    _phys_bits = []
+    if P.get("Height"):
+        _phys_bits.append(_ftin(P["Height"]))
+    if P.get("Wingspan"):
+        _phys_bits.append(f"ws {_ftin(P['Wingspan'])}")
+    if P.get("Weight"):
+        _phys_bits.append(f"{P['Weight']:.0f} lb")
+    if paid and P.get("PHYSICAL") is not None:
+        _phys_bits.append(f"PHY {P['PHYSICAL']:.0f}")
+    _phys = (" · " + " · ".join(_phys_bits)) if _phys_bits else ""
     if paid and P["OVERALL"] is not None:
         badges = "".join(
             f"<div style='background:#0d1117;border:1px solid {hue}55;border-radius:8px;"
@@ -215,7 +230,7 @@ def render_card(ctx):
             f"<div style='font-size:13px;color:#8b949e;margin-top:5px'>"
             f"<span style='color:{hue};font-weight:700;letter-spacing:1px'>{tier}</span> · "
             f"{P['team']} · {P['class']} · {P['GP']} GP · rank #{P['Rank']} of {len(rows)}"
-            f"</div></div>"
+            f"{_phys}</div></div>"
             f"<div style='text-align:center'>"
             f"<div style='font-size:9px;color:{hue};letter-spacing:2px'>OVERALL</div>"
             f"<div style='font-size:60px;font-weight:900;color:{hue};line-height:1'>"
@@ -241,7 +256,7 @@ def render_card(ctx):
             f"<div style='font-size:34px;font-weight:900;color:#f0f6fc;line-height:1.05'>"
             f"{P['name']}</div>"
             f"<div style='font-size:13px;color:#8b949e;margin-top:5px'>"
-            f"{P['team']} · {P['class']} · {P['GP']} GP</div></div></div></div>",
+            f"{P['team']} · {P['class']} · {P['GP']} GP{_phys}</div></div></div></div>",
             unsafe_allow_html=True)
 
     # ── header extras: per-game line (box, Free) · archetype + badges (Paid) ───
@@ -287,12 +302,33 @@ def render_card(ctx):
         _space = _spacing(getattr(ctx, "gender", None)).get(pid, {}).get("index")
         _cclr = {"high": "#3fb950", "medium": "#f0a500",
                  "low": "#e74c3c", "very_low": "#e74c3c"}[_conf["tier"]]
+        # verdict strip (OOTP summary box): season value in wins + the two
+        # archetype lenses side by side — agreement is the scouting note
+        _gnd = getattr(ctx, "gender", None)
+        _gwar = _war(_gnd).get(pid, {}).get("WAR")
+        _gwpa = ((_wpa(_gnd).get("scoring") or {}).get(pid, {}) or {}).get("wpa")
+        _barch = BG.badge_archetype(lab_badges or [])["archetype"] \
+            if lab_badges is not None else None
+        _verdict_bits = []
+        if _gwar is not None:
+            _verdict_bits.append(f"HoopWAR <b>{_gwar:+.2f}</b>")
+        if _gwpa is not None:
+            _verdict_bits.append(f"WPA <b>{_gwpa:+.2f}</b>")
+        if _barch and _arch:
+            _agree = "✓ agree" if _barch == _arch else "↔ differ"
+            _verdict_bits.append(
+                f"Badges <b>{_barch}</b> / Style <b>{_arch}</b> "
+                f"<span style='color:{'#3fb950' if _barch == _arch else '#f0a500'}'>"
+                f"{_agree}</span>")
+        _verdict = ("<span style='font-size:11px;color:#8b949e;font-weight:400;"
+                    "float:right'>" + " · ".join(_verdict_bits) + "</span>"
+                    if _verdict_bits else "")
         st.markdown(
             "<div class='pl-hdr' style='margin-top:0'>Overview · scouted "
             f"<span style='color:{_cclr};font-weight:800'>{_conf['label']}</span> "
             f"<span style='font-size:11px;color:#8b949e;font-weight:400'>"
             f"({_conf['games']} game{'s' if _conf['games'] != 1 else ''} · "
-            f"OVERALL &plusmn;{_conf['ci']:.0f})</span></div>",
+            f"OVERALL &plusmn;{_conf['ci']:.0f})</span>{_verdict}</div>",
             unsafe_allow_html=True)
 
         def _kv(k, v):

@@ -21,6 +21,14 @@ import helpers.manual_box as MB
 import helpers.team_analytics as TA
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _glance(gender, team_id):
+    """The team's most-distinctive stats vs the league — the 'at a glance' read
+    (moved up from the Insights tab, UI_DENSITY_PLAN phase A)."""
+    import helpers.insights_team as INT
+    return INT.team_glance(gender, team_id)
+
+
 @st.fragment
 def render(ctx):
     st.caption("Everything about this team at a glance — power ratings, record, "
@@ -74,6 +82,32 @@ def render(ctx):
         st.caption(f"Record by game type — {_seg}  "
                    f"<span style='color:#8b949e'>(set types on Setup)</span>",
                    unsafe_allow_html=True)
+
+    # ── Team at a glance — the most-distinctive stats vs the league (moved up
+    #    from the Insights tab): the fastest read on who this team is.
+    #    Tracked-only, same guard the Insights tab used.
+    if getattr(ctx, "has_tracked", False) and getattr(ctx, "team_id", None):
+        _gl = _glance(ctx.gender, ctx.team_id)
+        if _gl:
+            _tiles = ""
+            for _gt in _gl:
+                _clr = ("#3fb950" if _gt["good"] else "#e74c3c") \
+                    if _gt["good"] is not None else "#58a6ff"
+                _tiles += (
+                    f"<div style='background:#0d1117;border:1px solid #21262d;"
+                    f"border-left:3px solid {_clr};border-radius:8px;"
+                    f"padding:8px 11px'>"
+                    f"<div style='font-size:11px;color:#8b949e'>{_gt['label']}</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:#f0f6fc'>"
+                    f"{_gt['value']}</div>"
+                    f"<div style='font-size:11px;color:{_clr};font-weight:600'>"
+                    f"{_gt['pct']}th pct</div>"
+                    f"<div style='font-size:11px;color:#8b949e;margin-top:2px'>"
+                    f"{_gt['tag']}</div></div>")
+            st.markdown(
+                "<div style='display:grid;grid-template-columns:"
+                "repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px'>"
+                + _tiles + "</div>", unsafe_allow_html=True)
 
     m = st.columns(5)
     m[0].metric("Power", ctx.sc_score.get("Power", "—"),

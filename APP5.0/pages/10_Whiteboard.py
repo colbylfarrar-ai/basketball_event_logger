@@ -19,6 +19,7 @@ Coaching notation implemented (standard playbook symbols):
   dribble    zigzag arrow           — player moving with the ball
   screen     line with a T-bar end  — pick/screen
   O / X      numbered offense circles / defense X's (auto-number 1-5)
+  erase      tap/drag removes whole marks (op hit-test, mirrors undo)
 
 Drawing coordinates are stored in FEET (canvas px / scale), so strokes survive
 window resizes; each court mode (half/full) keeps its own op list, so toggling
@@ -105,6 +106,7 @@ _HTML = r"""
       <button data-t="screen" title="T-bar — screen">Screen &#8869;</button>
       <button data-t="O" title="Tap to place numbered offense marker">O</button>
       <button data-t="X" title="Tap to place numbered defense marker">X</button>
+      <button data-t="erase" title="Tap or drag across a mark to remove it">Erase</button>
     </div>
     <div class="sep"></div>
     <div class="grp" id="colors"></div>
@@ -142,6 +144,7 @@ _HTML = r"""
   let color = COLORS[0];
   const ops = { half: [], full: [] };   // per-mode strokes, coords in FEET
   let cur = null;                       // stroke in progress
+  let erasing = false;                  // eraser drag in progress
   let scale = 10;                       // px per foot (set by layout)
 
   // feet-extent of the visible board per mode. Half court: portrait-ish,
@@ -346,6 +349,31 @@ _HTML = r"""
     if (cur) renderOp(dctx, cur);
   }
 
+  // ── eraser: removes whole marks by hit-test (vector model — clean removal,
+  // no pixel smudging; matches how undo works) ──────────────────────────────
+  const ERASE_R = 1.2;                                   // hit radius, feet
+  function _segDist(px_, py_, x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1, L2 = dx * dx + dy * dy;
+    if (L2 === 0) return Math.hypot(px_ - x1, py_ - y1);
+    let t = ((px_ - x1) * dx + (py_ - y1) * dy) / L2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px_ - (x1 + t * dx), py_ - (y1 + t * dy));
+  }
+  function _hit(o, fx, fy) {
+    if (o.t === "O" || o.t === "X") return Math.hypot(o.x - fx, o.y - fy) < 1.7;
+    if (o.t === "pen") {
+      for (let i = 1; i < o.pts.length; i++)
+        if (_segDist(fx, fy, o.pts[i - 1][0], o.pts[i - 1][1],
+                     o.pts[i][0], o.pts[i][1]) < ERASE_R) return true;
+      return false;
+    }
+    return _segDist(fx, fy, o.x1, o.y1, o.x2, o.y2) < ERASE_R;
+  }
+  function eraseAt(fx, fy) {
+    const kept = ops[mode].filter((o) => !_hit(o, fx, fy));
+    if (kept.length !== ops[mode].length) { ops[mode] = kept; render(); }
+  }
+
   // ── pointer input ─────────────────────────────────────────────────────────
   function pos(ev) {
     const r = drawCv.getBoundingClientRect();
@@ -360,6 +388,7 @@ _HTML = r"""
     ev.preventDefault();
     drawCv.setPointerCapture(ev.pointerId);
     const [fx, fy] = pos(ev);
+    if (tool === "erase") { erasing = true; eraseAt(fx, fy); return; }
     if (tool === "O" || tool === "X") {
       ops[mode].push({ t: tool, c: color, x: fx, y: fy, n: nextNum(tool) });
       render();
@@ -370,6 +399,7 @@ _HTML = r"""
       : { t: tool, c: color, x1: fx, y1: fy, x2: fx, y2: fy };
   });
   drawCv.addEventListener("pointermove", (ev) => {
+    if (erasing) { const [ex, ey] = pos(ev); eraseAt(ex, ey); return; }
     if (!cur) return;
     const [fx, fy] = pos(ev);
     if (cur.t === "pen") cur.pts.push([fx, fy]);
@@ -377,6 +407,7 @@ _HTML = r"""
     render();
   });
   const finish = () => {
+    erasing = false;
     if (!cur) return;
     const trivial = cur.t !== "pen" && Math.hypot(cur.x2 - cur.x1, cur.y2 - cur.y1) < 0.3;
     if (!trivial && !(cur.t === "pen" && cur.pts.length < 2)) ops[mode].push(cur);
@@ -384,7 +415,9 @@ _HTML = r"""
     render();
   };
   drawCv.addEventListener("pointerup", finish);
-  drawCv.addEventListener("pointercancel", () => { cur = null; render(); });
+  drawCv.addEventListener("pointercancel", () => {
+    erasing = false; cur = null; render();
+  });
 
   // ── toolbar ───────────────────────────────────────────────────────────────
   const toolBtns = document.querySelectorAll("#tools button");

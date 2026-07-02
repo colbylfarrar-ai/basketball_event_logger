@@ -389,7 +389,9 @@ def render_card(ctx):
         def _g(key, d=0.0):
             return P.get(key) if P.get(key) is not None else d
 
-        g1, g2, g3 = st.columns([0.95, 1.2, 1.0])
+        # 4th column = the shot maps IN the fold (phase E) — basketball's edge
+        # over the OOTP page: the spatial read sits beside the ratings.
+        g1, g2, g3, g4 = st.columns([0.9, 1.15, 0.9, 1.05])
 
         # ── col 1: per-game line + career highs ──────────────────────────────
         with g1:
@@ -431,16 +433,18 @@ def render_card(ctx):
                     ("AST:TO", _fmt(P.get("AST/TOV"), "f2")),
                     ("Usage", _fmt(P.get("USG%"), "pct")),
                     ("VPS", _fmt(P.get("VPS"), "f2"))]
-            tiles = "".join(
-                f"<div style='background:#0d1117;border:1px solid #21262d;"
-                f"border-radius:8px;padding:6px 9px'>"
-                f"<div style='font-size:10px;color:#8b949e'>{l}</div>"
-                f"<div style='font-size:16px;font-weight:700;color:#f0f6fc'>{v}</div>"
-                f"</div>" for l, v in _sig)
+            # one thin pill strip (phase E) — the tiles were a 2-row grid that
+            # pushed the fold down; same six numbers, a third of the height
+            pills = "".join(
+                f"<span style='background:#0d1117;border:1px solid #21262d;"
+                f"border-radius:14px;padding:3px 10px;font-size:11px;"
+                f"color:#8b949e;white-space:nowrap'>{l} "
+                f"<b style='color:#f0f6fc;font-size:12px'>{v}</b></span>"
+                for l, v in _sig)
             st.markdown(
-                "<div class='pl-hdr'>Signature metrics</div>"
-                "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px'>"
-                + tiles + "</div>", unsafe_allow_html=True)
+                "<div class='pl-hdr'>Signature</div>"
+                "<div style='display:flex;flex-wrap:wrap;gap:6px'>"
+                + pills + "</div>", unsafe_allow_html=True)
 
         # ── col 3: team-within (rank among teammates) + play-type breakdown ──
         with g3:
@@ -475,6 +479,52 @@ def render_card(ctx):
                         "&middot; PPP &middot; FG%</div>"
                         + "".join(_pt_row(k, c) for k, c in _pt_ranked),
                         unsafe_allow_html=True)
+
+        # ── col 4: the shot maps, IN the fold (phase E) ───────────────────────
+        with g4:
+            if located:
+                sfig, _sn = _shot_map(located, "")
+                sfig.update_layout(height=250,
+                                   margin=dict(l=0, r=0, t=6, b=0),
+                                   showlegend=False)
+                st.markdown(
+                    f"<div class='pl-hdr' style='margin-top:0'>Shot map · "
+                    f"{len(located)} located</div>", unsafe_allow_html=True)
+                st.plotly_chart(sfig, width="stretch", key="pcard_court_fold")
+                _ls = S.shot_location_summary(located)
+                if _ls:
+                    st.markdown(
+                        f"<div style='font-size:10px;color:#8b949e;margin-top:-6px'>"
+                        f"avg {_ls['avg_dist']:.1f} ft · rim {_ls['rim_n']} · "
+                        f"mid {_ls['mid_n']} · three {_ls['three_n']} — hover a "
+                        f"dot for the shot</div>", unsafe_allow_html=True)
+            _dshots = _defended_located(pid)
+            if _dshots:
+                dfig, _dn = _shot_map(_dshots, "")
+                dfig.update_layout(height=250,
+                                   margin=dict(l=0, r=0, t=6, b=0),
+                                   showlegend=False)
+                st.markdown(
+                    f"<div class='pl-hdr'>Shots defended · {len(_dshots)}</div>",
+                    unsafe_allow_html=True)
+                st.plotly_chart(dfig, width="stretch", key="pcard_defcourt_fold")
+                _gd4 = zguard.get(pid, {})
+                if _gd4:
+                    _gg = _gd4.get("guarded", {})
+                    _go = _gd4.get("open", {})
+                    st.markdown(
+                        f"<div style='font-size:10px;color:#8b949e;margin-top:-6px'>"
+                        f"guarded FG% "
+                        f"{_gg['pct']*100:.0f}% ({_gg['FGM']}/{_gg['FGA']}) · open "
+                        f"{_go['pct']*100:.0f}% ({_go['FGM']}/{_go['FGA']})</div>"
+                        if _gg.get("FGA") and _go.get("FGA") else "",
+                        unsafe_allow_html=True)
+            if not located and not _dshots:
+                st.markdown("<div class='pl-hdr' style='margin-top:0'>Shot map"
+                            "</div><div style='font-size:11px;color:#8b949e'>"
+                            "Tap-located shots build the court read — the zone "
+                            "chart below covers older games.</div>",
+                            unsafe_allow_html=True)
 
         # ── full league-percentile rail (all 21, three columns) ──────────────
         st.markdown("<div class='pl-hdr'>League percentiles</div>",
@@ -613,19 +663,16 @@ def render_card(ctx):
             "Right-handers' right half = dominant (lefties mirrored); "
             "dead-center shots ignored.")
 
-    # ── shot chart + hot zones (event-derived → Paid) ─────────────────────────
+    # ── shot detail (event-derived → Paid). The located shot map + defended map
+    #    moved INTO the overview grid's 4th column (phase E); this section keeps
+    #    the reads the fold can't carry — shot-length buckets, hot zones, and
+    #    the zone-chart fallback for legacy zone-only games.
     if paid:
-        st.markdown("<div class='pl-hdr'>Shot chart</div>", unsafe_allow_html=True)
+        st.markdown("<div class='pl-hdr'>Shot detail</div>", unsafe_allow_html=True)
         sc_l, sc_r = st.columns([3, 2])
         with sc_l:
-            # Real x/y map when tap-captured shots exist (same branch the Shot Lab
-            # uses); the zone bubbles stay as the legacy fallback.
-            p_shots = located
-            if p_shots:
-                fig, _n = _shot_map(p_shots, f"{P['name']} — shot map · "
-                                             f"{len(p_shots)} located")
-                st.plotly_chart(fig, width="stretch", key="pcard_court")
-                _ls = S.shot_location_summary(p_shots)
+            if located:
+                _ls = S.shot_location_summary(located)
                 if _ls:
                     def _seg(lbl, n, fg):
                         return f"{lbl} {n}" + (f" ({fg*100:.0f}%)" if fg is not None
@@ -634,8 +681,9 @@ def render_card(ctx):
                         f"Avg distance **{_ls['avg_dist']:.1f} ft** · "
                         + _seg("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
                         + _seg("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
-                        + _seg("Three", _ls["three_n"], _ls["three_fg"]))
-                _dbl = S.distance_buckets(p_shots)
+                        + _seg("Three", _ls["three_n"], _ls["three_fg"])
+                        + " — the shot map lives up in the Overview grid.")
+                _dbl = S.distance_buckets(located)
                 if _dbl:
                     st.caption("By length — " + S.distance_buckets_caption(_dbl))
             else:
@@ -645,7 +693,7 @@ def render_card(ctx):
                     st.plotly_chart(fig, width="stretch", key="pcard_court")
                     st.caption("Zone chart (older games) — ≥45% · 30–44% · <30% · "
                                "bubble size = attempts. Tap-captured shots show "
-                               "here as a precise shot map.")
+                               "as a precise shot map in the Overview grid.")
                 else:
                     empty_state("No shot locations yet",
                                 "Shots logged with a court tap (phone or Game "
@@ -658,25 +706,6 @@ def render_card(ctx):
                 _hot_zones(pz)
             else:
                 st.caption("No zone data.")
-            gd = zguard.get(pid, {})
-            if gd:
-                gg = st.columns(2)
-                gg[0].metric("Guarded FG%",
-                             f"{gd['guarded']['pct']*100:.0f}%" if gd["guarded"]["FGA"] else "—",
-                             help=f"{gd['guarded']['FGM']}/{gd['guarded']['FGA']}")
-                gg[1].metric("Open FG%",
-                             f"{gd['open']['pct']*100:.0f}%" if gd["open"]["FGA"] else "—",
-                             help=f"{gd['open']['FGM']}/{gd['open']['FGA']}")
-            # defended-shot map: where opponents shot when THIS player was the
-            # contester/blocker (tap-located shots only)
-            _dshots = _defended_located(pid)
-            if _dshots:
-                dfig, _dn = _shot_map(
-                    _dshots, f"Shots defended · {len(_dshots)} located")
-                st.plotly_chart(dfig, width="stretch", key="pcard_defcourt")
-                st.caption("Opponent shots this player contested or blocked — "
-                           "makes vs misses show where they hold up (rim vs "
-                           "arc feeds the DEFENSE rating).")
 
     left, right = st.columns([2, 3])
     with left:

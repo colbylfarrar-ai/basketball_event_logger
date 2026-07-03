@@ -245,9 +245,10 @@ def _top_performers(game_ids, team_id, limit=3):
 
 # ── card 1: game result — symmetric head-to-head ─────────────────────────────
 def game_result_png(game_id, team_id, color_a=None, color_b=None,
-                    show_quarters=False, gender=None):
+                    show_quarters=False, gender=None, title=None):
     """Head-to-head final-score card: two team-colour panels (same treatment for
-    both), the score, each team's Power/record/class-rank line, and an optional
+    both), the score, each team's Power/record/class-rank line, an optional
+    coach headline (`title`, e.g. "Region Championship") and an optional
     quarter-by-quarter line. `team_id` is the dashboard team → shown on top;
     `color_a`/`color_b` are its / the opponent's panel colours (defaults derived
     from team id). None if game not finished."""
@@ -278,7 +279,15 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
     sub = g["date"] or ""
     if g.get("location"):
         sub = f"{sub} · {g['location']}" if sub else g["location"]
-    if sub:
+    # coach headline (optional) rides above the date; both centred at the top
+    title = (title or "").strip()
+    if title:
+        ax.text(50, 88, _fit(title, 34), color=GOLD, fontsize=16,
+                fontweight="bold", ha="center", va="center")
+        if sub:
+            ax.text(50, 83.4, sub, color=GREY, fontsize=12.5, ha="center",
+                    va="center")
+    elif sub:
         ax.text(50, 87.5, sub, color=GREY, fontsize=13, ha="center", va="center")
 
     a_line = rank_line(scored, a_id)
@@ -525,9 +534,15 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
         clr = GOOD if gm["won"] else BAD
         ax.text(12, y, "W" if gm["won"] else "L", color=clr, fontsize=fs,
                 fontweight="bold", ha="left", va="center", zorder=2)
-        ax.text(16.5, y, f"{gm['pf']}–{gm['pa']}  vs {_fit(gm['opp'], 26)}",
+        ax.text(16.5, y, f"{gm['pf']}–{gm['pa']}  vs {_fit(gm['opp'], 22)}",
                 color=FG, fontsize=fs, ha="left", va="center", zorder=2)
-        ax.text(88, y, gm["date"], color=GREY, fontsize=fs - 2, ha="right",
+        # opponent identity on the right: their class rank · power rank · date
+        ocr, _ocn = class_rank(scored, gm["opp_id"])
+        ocls = scored.get(gm["opp_id"], {}).get("class", "")
+        opw = scored.get(gm["opp_id"], {}).get("Rank")
+        meta = (f"{ocls} #{ocr} · " if ocr else "") + \
+               (f"pwr #{opw} · " if opw else "") + gm["date"]
+        ax.text(88, y, meta, color=GREY, fontsize=fs - 2.5, ha="right",
                 va="center", zorder=2)
         y -= step
     if len(chosen) > len(rows):

@@ -27,9 +27,10 @@ def _team_color(tid):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_game(game_id, team_id, ca, cb, quarters, gender):
+def _card_game(game_id, team_id, ca, cb, quarters, gender, title):
     return SCARD.game_result_png(game_id, team_id, color_a=ca, color_b=cb,
-                                 show_quarters=quarters, gender=gender)
+                                 show_quarters=quarters, gender=gender,
+                                 title=title or None)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -91,6 +92,12 @@ def render(ctx):
         gm = next(g for g in games if g["id"] == pick)
         opp_id = gm["opp_id"]
 
+        gtitle = st.text_input(
+            "Card headline (optional)", value="", max_chars=40,
+            key="share_game_title",
+            placeholder="e.g. Region Championship · Senior Night",
+            help="Your own headline above the score. Leave blank for just the date.")
+
         cc1, cc2, cc3 = st.columns([1, 1, 1])
         ca = cc1.color_picker(f"{ctx.team_name} colour", _team_color(ctx.team_id),
                               key="share_ca")
@@ -105,7 +112,8 @@ def render(ctx):
         if cb != _team_color(opp_id):
             SU.set_setting(f"team_color:{opp_id}", cb)
 
-        png = _card_game(pick, ctx.team_id, ca, cb, quarters, ctx.gender)
+        png = _card_game(pick, ctx.team_id, ca, cb, quarters, ctx.gender,
+                         gtitle.strip())
         if png and quarters and not gm["tracked"]:
             st.caption("This game isn't tracked play-by-play — the quarter line "
                        "will be empty. Track it in the Game Tracker for the split.")

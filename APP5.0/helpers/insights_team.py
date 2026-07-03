@@ -47,7 +47,7 @@ _GAME_TYPE_ORDER = {"Regular": 0, "District": 1, "Rivalry": 2, "Tournament": 3,
                     "Showcase": 4, "Playoff": 5}
 
 
-def team_by_game_type(team_id, gender=None):
+def team_by_game_type(team_id, gender=None, season="Current"):
     """How the team plays by GAME TYPE (Regular / District / Playoff / …). Per
     type: record (W-L) + avg margin from every played game, plus — for the TRACKED
     games of that type — efficiency (off/def points-per-possession, eFG%/opp eFG%,
@@ -59,9 +59,9 @@ def team_by_game_type(team_id, gender=None):
     gs = query(
         """SELECT id, game_type, team1_id, home_score, away_score, tracked
            FROM games
-           WHERE (team1_id=? OR team2_id=?) AND season='Current'
+           WHERE (team1_id=? OR team2_id=?) AND season=?
              AND home_score IS NOT NULL AND away_score IS NOT NULL""",
-        (team_id, team_id))
+        (team_id, team_id, season))
     if not gs:
         return []
     buckets = defaultdict(lambda: {"trk": [], "W": 0, "L": 0, "mov": 0, "n": 0})
@@ -114,18 +114,19 @@ def team_by_game_type(team_id, gender=None):
     return out
 
 
-def team_glance(gender, team_id, n=6):
+def team_glance(gender, team_id, n=6, season="Current"):
     """The 4-8 stats this team is MOST distinctive on vs the league — a quick
     identity fingerprint. Percentile-ranks the team on each curated stat, keeps
     the single most-extreme stat per category (so the read stays diverse), and
     returns them most-distinctive first: [{label, value, pct, tag, good, dist}].
-    Empty when the team isn't in the tracked table."""
+    Empty when the team isn't in the tracked table. `season` scopes the field to
+    one season (archive views)."""
     import helpers.league_analytics as LA        # lazy — avoids an import cycle
     row = query("SELECT name FROM teams WHERE id=?", (team_id,))
     if not row:
         return []
     name = row[0]["name"]
-    rows = LA.team_stat_table(gender=gender)
+    rows = LA.team_stat_table(gender=gender, season=season)
     me = next((r for r in rows if r.get("Team") == name), None)
     if not me or len(rows) < 5:
         return []

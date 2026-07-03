@@ -37,10 +37,6 @@ def render(ctx):
     """Render the Situational super-tab. ``ctx`` carries plain values + the page-cached
     ``ctx.situational(gender, team_id)`` callable returning helpers.situational
     .team_situational output (or None)."""
-    if not getattr(ctx, "is_current", True):
-        st.info("Situational tags are current-season only — switch to the current "
-                "season to view this tab.")
-        return
     g, tid = ctx.gender, ctx.team_id
     st.markdown("<div class='pl-hdr'>Situational tendencies — when they run it</div>",
                 unsafe_allow_html=True)

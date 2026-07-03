@@ -291,7 +291,7 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
 #  SEASON WPA  (aggregate across tracked games)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def season_wpa(gender=None, mode="scoring", opp_adjust=True):
+def season_wpa(gender=None, mode="scoring", opp_adjust=True, season="Current"):
     """
     Aggregate WPA across every tracked game for a gender, in the chosen mode.
 
@@ -307,8 +307,8 @@ def season_wpa(gender=None, mode="scoring", opp_adjust=True):
     """
     tg = query(
         """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
-           WHERE g.tracked=1 AND g.season='Current' AND t.gender=?""", (gender,)) if gender else query(
-        "SELECT id FROM games WHERE tracked=1 AND season='Current'")
+           WHERE g.tracked=1 AND g.season=? AND t.gender=?""", (season, gender)) if gender else query(
+        "SELECT id FROM games WHERE tracked=1 AND season=?", (season,))
     ep = league_ep() if mode == "possession" else None
     game_ids = [row["id"] for row in tg]
 

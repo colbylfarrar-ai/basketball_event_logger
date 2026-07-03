@@ -724,14 +724,15 @@ def lineup_prediction(player_rows, pids, ctx, team_id, opp_id=None):
 #  LEAGUE CONTEXT  (four factors for every tracked team — for percentile ranking)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def league_four_factors(gender=None):
+def league_four_factors(gender=None, season="Current"):
     """
     {team_id: {'off': {...}, 'def': {...}, 'GP': n}} for every team in the
     league with at least one tracked game. Used by the Insights tab to say
     whether a team's factor is a strength or a weakness *relative to the field*.
     Built from one box pass per tracked game (TR._tracked_team_game_boxes).
+    `season` scopes the field to one season (archive views).
     """
-    games = TR._finished_games(gender=gender, tracked_only=True)
+    games = TR._finished_games(gender=gender, tracked_only=True, season=season)
     if not games:
         return {}
     boxes = TR._tracked_team_game_boxes(games)   # {(gid, tid): box}

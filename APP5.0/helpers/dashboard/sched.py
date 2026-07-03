@@ -157,14 +157,17 @@ def render(ctx):
     # "Upcoming" list. (Dates are ISO-normalised in the DB.) Today's games
     # stay listed — live tracked games keep NULL scores until finish_game.
     _today = datetime.now().strftime("%Y-%m-%d")
-    up_rows = query("""
+    # Upcoming only makes sense for the CURRENT season — a past season is over, so
+    # its "upcoming" would just be next season's games (the archive bug). Scope to
+    # the active season and skip entirely when viewing an archive.
+    up_rows = [] if not getattr(ctx, "is_current", True) else query("""
         SELECT g.id, g.date, g.location, g.team1_id, g.team2_id,
                t1.name AS t1, t2.name AS t2
         FROM games g JOIN teams t1 ON t1.id = g.team1_id
                      JOIN teams t2 ON t2.id = g.team2_id
         WHERE (g.team1_id = ? OR g.team2_id = ?)
           AND (g.home_score IS NULL OR g.away_score IS NULL)
-          AND g.date >= ?
+          AND g.date >= ? AND g.season = 'Current'
         ORDER BY g.date""", (ctx.team_id, ctx.team_id, _today))
     if up_rows:
         st.markdown("<div class='lab-hdr'>Upcoming — projections</div>",

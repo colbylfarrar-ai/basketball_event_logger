@@ -31,18 +31,22 @@ def _b(t):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _league(gender):
+def _league(gender, season="Current", season_gp=None):
     """League table + insight feed + role splits + win-impact + guarded cliffs,
     computed once per gender (the team view filters this to its own players, so the
-    z-scores stay league-relative)."""
-    table = PR.player_stat_table(gender=gender, min_games=1)
-    gids = PT._tracked_game_ids(gender)
+    z-scores stay league-relative). `season`/`season_gp` scope the whole pass to
+    one season — the gender's season tracked game ids (season_gp) drive the table +
+    events, so an archive roster's players are actually in the pool."""
+    gids = list(season_gp) if season_gp is not None else PT._tracked_game_ids(gender)
+    table = PR.player_stat_table(
+        gender=gender, min_games=1,
+        game_ids=(set(gids) if season_gp is not None else None))
     ev = S.fetch_events(gids) if gids else []
     feed = IN.build_feed(table, ev, top=3) if table else {}
     roles = PT.player_role_splits(events=ev) if ev else {}
     cliffs = IN.guarded_cliffs(ev) if ev else {}
     try:
-        impact = WPA.season_wpa(gender, mode="possession")
+        impact = WPA.season_wpa(gender, mode="possession", season=season)
     except Exception:
         impact = {}
     return table, feed, roles, impact, cliffs
@@ -100,7 +104,9 @@ def render(ctx):
         return
 
     # (Team at a glance moved to the Overview tab — UI_DENSITY_PLAN phase A.)
-    table, feed, roles, impact, cliffs = _league(ctx.gender)
+    table, feed, roles, impact, cliffs = _league(
+        ctx.gender, getattr(ctx, "season", "Current"),
+        getattr(ctx, "season_gp", None))
     if not table:
         st.caption("No tracked players yet for this league.")
         return

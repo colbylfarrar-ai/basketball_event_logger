@@ -27,15 +27,15 @@ import helpers.team_analytics as TA
 
 # ── cached data the header needs beyond ctx ─────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
-def _glance(gender, team_id):
+def _glance(gender, team_id, season="Current"):
     import helpers.insights_team as INT
-    return INT.team_glance(gender, team_id)
+    return INT.team_glance(gender, team_id, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _form(gender):
+def _form(gender, season="Current"):
     import helpers.league_analytics as LA
-    return LA.team_form_stats(gender=gender)
+    return LA.team_form_stats(gender=gender, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -48,26 +48,35 @@ def _rest(team_id):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _adj_shoot(gender):
+def _adj_shoot(gender, season="Current"):
     import helpers.adj_efficiency as AE
     try:
-        return AE.adjusted_shooting(gender)
+        return AE.adjusted_shooting(gender, season=season)
     except Exception:
         return {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _ledger(team_id):
+def _ledger(team_id, game_ids=None):
+    # `game_ids` scopes the ledger to a season's tracked games (the page passes the
+    # team's season-scoped bundle["tracked_ids"]); None = the engine's current
+    # default. Hashable tuple in, list out for the engine.
     import helpers.possession_value as PV
     try:
-        return PV.possession_ledger(team_id)
+        return PV.possession_ledger(
+            team_id, game_ids=(list(game_ids) if game_ids is not None else None))
     except Exception:
         return None
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _next_game(team_id):
-    """The next scheduled game (score-less, today or later) or None."""
+def _next_game(team_id, season="Current"):
+    """The next scheduled game (score-less, today or later) or None. A PAST season
+    is over — there is no 'next game', so archive views get None (fixes past-season
+    games showing under a prior season's 'Next')."""
+    import helpers.seasons as _SEAS
+    if not _SEAS.is_current(season):
+        return None
     from datetime import datetime
     rows = query("""
         SELECT g.id, g.date, g.team1_id, g.team2_id, t1.name n1, t2.name n2
@@ -75,7 +84,7 @@ def _next_game(team_id):
                      JOIN teams t2 ON t2.id = g.team2_id
         WHERE (g.team1_id = ? OR g.team2_id = ?)
           AND (g.home_score IS NULL OR g.away_score IS NULL)
-          AND g.date >= ?
+          AND g.date >= ? AND g.season = 'Current'
         ORDER BY g.date LIMIT 1""",
         (team_id, team_id, datetime.now().strftime("%Y-%m-%d")))
     return dict(rows[0]) if rows else None
@@ -152,8 +161,9 @@ def render_header(ctx):
     # class is per-season: a past-season view shows the class the team played in
     # (snapshotted at rollover), not the re-aligned current class.
     import helpers.seasons as _SEAS
-    _cls = _SEAS.team_class(ctx.team_id, getattr(ctx, "season", "Current")) or ""
-    fm = _form(ctx.gender).get(ctx.team_id, {})
+    _season = getattr(ctx, "season", "Current")
+    _cls = _SEAS.team_class(ctx.team_id, _season) or ""
+    fm = _form(ctx.gender, _season).get(ctx.team_id, {})
     _stk = (f"{fm['streak_type']}{fm['streak_len']}"
             if fm.get("streak_type") and fm.get("streak_len") else "")
 
@@ -179,7 +189,7 @@ def render_header(ctx):
 
     # ── glance strip — most-distinctive stats vs the league (tracked only) ───
     if getattr(ctx, "has_tracked", False) and getattr(ctx, "team_id", None):
-        _gl = _glance(ctx.gender, ctx.team_id)
+        _gl = _glance(ctx.gender, ctx.team_id, _season)
         if _gl:
             _tiles = ""
             for _gt in _gl:
@@ -227,8 +237,8 @@ def render_header(ctx):
         for r in query("""SELECT game_type, team1_id, home_score, away_score
                           FROM games WHERE (team1_id=? OR team2_id=?)
                             AND home_score IS NOT NULL
-                            AND away_score IS NOT NULL AND season='Current'""",
-                       (ctx.team_id, ctx.team_id)):
+                            AND away_score IS NOT NULL AND season=?""",
+                       (ctx.team_id, ctx.team_id, _season)):
             won = ((r["home_score"] > r["away_score"])
                    if r["team1_id"] == ctx.team_id
                    else (r["away_score"] > r["home_score"]))
@@ -261,11 +271,16 @@ def render_header(ctx):
             html += _kv("Net rating", f"{summ.get('NetRtg', 0):+.1f}",
                         vc="#3fb950" if summ.get("NetRtg", 0) >= 0 else "#e74c3c")
             html += _kv("Pace (poss/g)", f"{summ.get('POSS_pg', 0):.1f}")
-            _aj = _adj_shoot(ctx.gender).get(ctx.team_id)
+            _aj = _adj_shoot(ctx.gender, _season).get(ctx.team_id)
             if _aj:
                 html += _kv("Adj eFG% (off / def)",
                             f"{_aj['AdjeFG'] * 100:.1f} / {_aj['AdjoeFG'] * 100:.1f}")
-            _lg = _ledger(ctx.team_id)
+            # team-level pool: the season-scoped tracked ids from the bundle when
+            # present (Team Dashboard); Rankings' lean ctx has no bundle → None =
+            # current default.
+            _bd = getattr(ctx, "bundle", None)
+            _tids = tuple(_bd["tracked_ids"]) if _bd else None
+            _lg = _ledger(ctx.team_id, _tids)
             if _lg and _lg.get("outcomes"):
                 _mix = {o["key"]: o["pct"] for o in _lg["outcomes"]}
                 html += _kv("Possessions scored",
@@ -299,7 +314,7 @@ def render_header(ctx):
         if ctx.rank_info.get("tracked"):
             _trk = ctx.rank_info["tracked"]
             html += _kv("Tracked rank", f"#{_trk['rank']} of {_trk['of']}")
-        _ng = _next_game(ctx.team_id)
+        _ng = _next_game(ctx.team_id, _season)
         if _ng:
             import helpers.predictor as PRED
             at_home = _ng["team1_id"] == ctx.team_id

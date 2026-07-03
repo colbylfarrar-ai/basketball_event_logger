@@ -138,7 +138,7 @@ def render(ctx):
         st.markdown("<div class='lab-hdr'>Four factors &amp; scoring mix — vs "
                     "league</div>", unsafe_allow_html=True)
         _AMBER = "#d29922"
-        lpools = ctx.league_stat_pools(ctx.gender)
+        lpools = ctx.league_stat_pools(ctx.gender, getattr(ctx, "season", "Current"))
         me = lpools.get(ctx.team_id, {})
 
         def _vals(key):

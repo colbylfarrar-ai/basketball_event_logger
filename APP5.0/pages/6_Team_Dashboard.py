@@ -422,26 +422,46 @@ if not teams:
     st.stop()
 
 @st.cache_resource(show_spinner=False)
-def _score_ratings_fp(g, _fp):
+def _score_ratings_fp(g, season, _fp):
     # cache_resource SURVIVES st.cache_data.clear() (which fires on every write),
     # keyed on the results fingerprint so the ~0.5s league rating recomputes only
     # when a score actually moves — not on event-location edits or unrelated
-    # clears. Output is read-only across callers → safe to share.
-    return TR.score_ratings(gender=g)
+    # clears. Output is read-only across callers → safe to share. `season`
+    # partitions the cache so an archive view never serves current ratings.
+    return TR.score_ratings(gender=g, season=season)
 
 
-def _score_ratings(g):
-    return _score_ratings_fp(g, TR.results_fingerprint())
+def _score_ratings(g, season="Current"):
+    return _score_ratings_fp(g, season, TR.results_fingerprint())
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_ratings(g):
-    return TR.tracked_ratings(gender=g)
+def _tracked_ratings(g, season="Current"):
+    return TR.tracked_ratings(gender=g, season=season)
 
+
+# Season picker — view a past/archived season's data. Only appears once a season
+# has been rolled over (archived labels exist); the current season is the default
+# so the whole page is byte-identical when no archive exists. Computed BEFORE the
+# ratings/team ordering so every downstream fetch is scoped to it. A PAST season is
+# an open, self-contained archive: the whole dashboard (ratings, league %, play
+# style, defense, situational, player profile, lab) reads only that season's games.
+_season_opts = SEAS.season_options()
+if len(_season_opts) > 1:
+    _slbl = c2.selectbox(
+        "Season", [l for _v, l in _season_opts], key="ta_season",
+        help="View a past season's data. The whole dashboard scopes to it — "
+             "ratings, play style, defense, situational and player profiles are "
+             "that season's. (The Scout sheet and the Lab → Build tab stay "
+             "current-season.)")
+    season_pick = next(v for v, l in _season_opts if l == _slbl)
+else:
+    season_pick = SEAS.ACTIVE
+_is_cur_season = SEAS.is_current(season_pick)
 
 with st.spinner("Crunching team ratings…"):
-    scored = _score_ratings(gender)
-    tracked = _tracked_ratings(gender)
+    scored = _score_ratings(gender, season_pick)
+    tracked = _tracked_ratings(gender, season_pick)
 
 
 def _rank(t):
@@ -480,21 +500,6 @@ team_id = c2.selectbox("Team", order_ids, index=default_idx,
                        key="ta_team")
 team = team_by_id[team_id]
 
-# Season picker — view a past/archived season's game data. Only appears once a
-# season has been rolled over (archived labels exist); the current season is the
-# default so the whole page is byte-identical when no archive exists. Tag-dependent
-# super-tabs (play style / defense scheme / situational) stay current-season.
-_season_opts = SEAS.season_options()
-if len(_season_opts) > 1:
-    _slbl = c2.selectbox(
-        "Season", [l for _v, l in _season_opts], key="ta_season",
-        help="View a past season's game data. Play-type / defense / situational "
-             "tags are current-season only.")
-    season_pick = next(v for v, l in _season_opts if l == _slbl)
-else:
-    season_pick = SEAS.ACTIVE
-_is_cur_season = SEAS.is_current(season_pick)
-
 @st.cache_data(ttl=600, show_spinner=False)
 def _team_bundle(tid, g, vis=None, season="Current"):
     # `vis` (tuple of game ids, or None) is the entitlement read-filter: None for
@@ -508,17 +513,18 @@ def _team_bundle(tid, g, vis=None, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _league_ff(g):
-    return TA.league_four_factors(gender=g)
+def _league_ff(g, season="Current"):
+    return TA.league_four_factors(gender=g, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _league_stat_pools(g):
+def _league_stat_pools(g, season="Current"):
     """{team_id: {stat_key: value}} over tracked games for every team in the
     league — the pool that lets the Overview say where THIS team ranks and how
     it compares to the league average (the APP3-style league-aligned detail).
-    One box pass per tracked game (shared with the four-factors helper)."""
-    games = TR._finished_games(gender=g, tracked_only=True)
+    One box pass per tracked game (shared with the four-factors helper).
+    `season` scopes the whole pool to one season (archive views)."""
+    games = TR._finished_games(gender=g, tracked_only=True, season=season)
     if not games:
         return {}
     boxes = TR._tracked_team_game_boxes(games)        # {(gid, tid): box}
@@ -624,30 +630,37 @@ def _pack(g, _trk):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _ptable_full(g):
-    return PR.player_stat_table(gender=g, min_games=1)
+def _ptable_full(g, game_ids=None):
+    """Every player's flat stat line for the gender. `game_ids` scopes the pool to
+    a season (the page passes the season's gender tracked ids for an archive view),
+    so the profile/roster read that season's players; None = current."""
+    return PR.player_stat_table(
+        gender=g, min_games=1,
+        game_ids=(set(game_ids) if game_ids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _archetypes(g):
+def _archetypes(g, game_ids=None):
     """{player_id: archetype label} across the league pool (for the roster table)."""
-    res = AR.cluster_players(_ptable_full(g))
+    res = AR.cluster_players(_ptable_full(g, game_ids))
     return {pid: v["archetype"] for pid, v in res["players"].items()}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _badges(g):
+def _badges(g, game_ids=None):
     """{player_id: [badge, ...]} (NBA-2K-style) across the league pool."""
-    return BG.award_badges(_ptable_full(g))
+    return BG.award_badges(_ptable_full(g, game_ids))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _gender_tracked_ids(g):
-    """All tracked, completed game ids for a gender (the RAPM/WPA possession pool)."""
+def _gender_tracked_ids(g, season="Current"):
+    """All tracked, completed game ids for a gender in `season` (the RAPM/WPA
+    possession pool + every league-wide tracked baseline). `season` defaults to the
+    active season; a label scopes the pool to that archive."""
     rows = query(
         """SELECT g.id FROM games g JOIN teams t ON t.id = g.team1_id
-           WHERE g.tracked = 1 AND g.season = 'Current' AND g.home_score IS NOT NULL
-             AND g.away_score IS NOT NULL AND t.gender = ?""", (g,))
+           WHERE g.tracked = 1 AND g.season = ? AND g.home_score IS NOT NULL
+             AND g.away_score IS NOT NULL AND t.gender = ?""", (season, g))
     return [r["id"] for r in rows]
 
 
@@ -668,17 +681,21 @@ def _located_allowed(tid, gids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _league_pps_located(g):
-    """League-wide points-per-shot over located shots — the hexbin midpoint."""
-    shots = S.located_shots(game_ids=_gender_tracked_ids(g))
+def _league_pps_located(g, game_ids=None):
+    """League-wide points-per-shot over located shots — the hexbin midpoint.
+    `game_ids` scopes the pool to a season (None = current gender pool)."""
+    gids = list(game_ids) if game_ids is not None else _gender_tracked_ids(g)
+    shots = S.located_shots(game_ids=gids)
     return (sum(s["value"] for s in shots if s["make"]) / len(shots)
             if shots else None)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _shot_model(g):
-    """League distance×value make-rate model for points-over-expected heat."""
-    return S.distance_make_model(events=S.fetch_events(_gender_tracked_ids(g)))
+def _shot_model(g, game_ids=None):
+    """League distance×value make-rate model for points-over-expected heat.
+    `game_ids` scopes the fit to a season (None = current gender pool)."""
+    gids = list(game_ids) if game_ids is not None else _gender_tracked_ids(g)
+    return S.distance_make_model(events=S.fetch_events(gids))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -694,36 +711,42 @@ def _spacing(g, tid, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner="Computing RAPM…")
-def _rapm(g, box_prior=False):
+def _rapm(g, box_prior=False, season="Current"):
     """League-wide two-way RAPM over the gender's tracked games (holds teammates
     AND opponents constant — needs the whole pool, not one team). inference=True
-    attaches the statsmodels 95% CI / significance companion.
+    attaches the statsmodels 95% CI / significance companion. `season` scopes the
+    possession pool to one season (archive views).
 
     box_prior=True shrinks each player toward their player_ratings box impact
     instead of toward league average (0) — the small-sample fix that keeps stars
     off 'average' on a ~15-game book (ML_LAYER_ROADMAP Tier 1)."""
     prior = RA.box_prior_from_ratings(gender=g) if box_prior else None
-    return RA.compute_rapm(_gender_tracked_ids(g), inference=True, prior=prior)
+    return RA.compute_rapm(_gender_tracked_ids(g, season), inference=True,
+                           prior=prior)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _war_tbl(g, box_prior=False):
+def _war_tbl(g, box_prior=False, season="Current"):
     """HoopWAR per player — chains the cached RAPM solve (same box-prior toggle)
-    through helpers/hoopwar.py. {} when RAPM or finished scores are absent."""
+    through helpers/hoopwar.py. {} when RAPM or finished scores are absent.
+    `season` scopes the RAPM pool + WAR game set to one season."""
     import helpers.hoopwar as HW
     try:
-        return HW.war_table(g, rapm=_rapm(g, box_prior=box_prior))
+        _gids = None if season in (None, "Current") else list(_gender_tracked_ids(g, season))
+        return HW.war_table(g, rapm=_rapm(g, box_prior=box_prior, season=season),
+                            game_ids=_gids)
     except Exception:
         return {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _shot_quality(g):
+def _shot_quality(g, season="Current"):
     """League-pooled continuous shot-quality (xPP-Q) + per-player SMOE (points over
     expected). Returns ({pid: smoe_row}, n_shots_fit) or ({}, 0) when there aren't
-    enough located shots to fit (caller shows a fallback). Tier 2, ML_LAYER_ROADMAP."""
+    enough located shots to fit (caller shows a fallback). Tier 2, ML_LAYER_ROADMAP.
+    `season` scopes the shot pool to one season (archive views)."""
     import helpers.shotquality as SQ
-    sh = S.located_shots(events=S.fetch_events(_gender_tracked_ids(g)))
+    sh = S.located_shots(events=S.fetch_events(_gender_tracked_ids(g, season)))
     m = SQ.fit_league_model(shots=sh)
     return (SQ.player_smoe(shots=sh, model=m), m["n"]) if m else ({}, 0)
 
@@ -750,8 +773,8 @@ def _poss_ledger(tid, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _season_wpa(g, mode):
-    return WP.season_wpa(gender=g, mode=mode)
+def _season_wpa(g, mode, season="Current"):
+    return WP.season_wpa(gender=g, mode=mode, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -807,6 +830,33 @@ has_tracked, _tracked_lock = ENT.tracked_gate(
     AUTH.current_user(), team_id, _raw_tracked, season=season_pick)
 # one helper, both rankings: 'overall' (everything / results-only) + 'tracked'
 rank_info = TR.team_rank(team_id, scored=scored, tracked=tracked)
+
+# League-wide tracked pool for the selected season: the gender's tracked game ids
+# for season_pick. None for the CURRENT season → every league-wide engine below
+# keeps using its own current-season default (byte-identical behaviour). For a
+# PAST season this set is fed as `game_ids` into the tracked engines (play type,
+# defense, situational, player pool, RAPM/WPA, shot model, league stat pools) so
+# the archive is self-contained — the team is ranked vs THAT season's field only,
+# never the current one. `_season_arg(fn_takes_gender_only)` picks the value.
+_season_gp = None if _is_cur_season else tuple(_gender_tracked_ids(gender, season_pick))
+
+# Binders that pre-scope the tracked wrappers to the selected season. For the
+# CURRENT season they are the identity (byte-identical), so nothing changes; for a
+# PAST season they pre-bind the wrapper's `game_ids` to the archive pool:
+#   _LGBIND — league-wide field pool (gender's season tracked ids): play type /
+#             defense percentiles + leaders + profiles + shot model / league pps.
+#   _TMBIND — this team's season tracked ids (from the already-season-scoped
+#             bundle): the team-only situational view.
+from functools import partial as _partial
+
+
+def _LGBIND(fn):
+    return fn if _is_cur_season else _partial(fn, game_ids=_season_gp)
+
+
+def _TMBIND(fn):
+    return fn if _is_cur_season else _partial(
+        fn, game_ids=tuple(bundle["tracked_ids"]))
 
 # No completed games yet (a brand-new / empty season) is NOT a dead end: a coach
 # still needs the roster (returning players carried forward), the upcoming
@@ -921,147 +971,170 @@ def _pgb():
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _playtype_view(g, tid, offense):
-    """Synergy-style play-type table for one team, ranked vs the league pool."""
-    return PT.team_playtype_percentiles(tid, gender=g, offense=offense)
+def _playtype_view(g, tid, offense, game_ids=None):
+    """Synergy-style play-type table for one team, ranked vs the league pool.
+    `game_ids` scopes the whole pass (team cells + league baseline) to a season."""
+    return PT.team_playtype_percentiles(tid, gender=g, offense=offense,
+                                        game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _named_playtype_view(g, tid, offense):
+def _named_playtype_view(g, tid, offense, game_ids=None):
     """Explicit one-tap set calls for one team, each ranked vs the league pool."""
-    return PT.team_named_playtype_percentiles(tid, gender=g, offense=offense)
+    return PT.team_named_playtype_percentiles(tid, gender=g, offense=offense,
+                                              game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _pt_factors(g, tid, offense):
+def _pt_factors(g, tid, offense, game_ids=None):
     """Four-factors detail (eFG/OREB%/TOV%/FT-rate) per play_type, gated."""
-    return BR.play_type_factors(tid, gender=g, offense=offense)
+    return BR.play_type_factors(tid, gender=g, offense=offense, game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_factors(g, tid, offense):
+def _def_factors(g, tid, offense, game_ids=None):
     """Four-factors detail per defense scheme, gated."""
-    return BR.defense_factors(tid, gender=g, offense=offense)
+    return BR.defense_factors(tid, gender=g, offense=offense, game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _named_sets_all(g):
+def _named_sets_all(g, game_ids=None):
     """Per-player explicit set-call PPP, ranked vs the league pool (card ctx)."""
-    return PT.player_named_playtype_percentiles(gender=g)
+    return PT.player_named_playtype_percentiles(gender=g, game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _role_splits_all(g):
-    """Per-player handler/roller screen-action splits (card ctx)."""
+def _role_splits_all(g, game_ids=None):
+    """Per-player handler/roller screen-action splits (card ctx). `game_ids` scopes
+    to a season's events; None keeps the full-sample events (current behaviour)."""
+    if game_ids is not None:
+        return PT.player_role_splits(game_ids=list(game_ids))
     return PT.player_role_splits(events=S.fetch_events())
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _set_profiles_view(g, tid, offense):
+def _set_profiles_view(g, tid, offense, game_ids=None):
     """WAVE-2 cross-dimension: per set call, what it PRODUCES (PPP, 3PA/rim/mid
     rates, assisted%, open%, top zone, avg secs) — the set fingerprint."""
-    return PT.team_playtype_shot_profiles(tid, gender=g, offense=offense)
+    return PT.team_playtype_shot_profiles(tid, gender=g, offense=offense,
+                                          game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _feeders_view(g, tid, offense):
+def _feeders_view(g, tid, offense, game_ids=None):
     """WAVE-2: hand-off / inbounds feeder hubs (DHO hander, BLOB/SLOB inbounder)
     — who feeds the action, how often, and to what efficiency / target."""
-    return PT.team_playtype_feeders(tid, gender=g, offense=offense)
+    return PT.team_playtype_feeders(tid, gender=g, offense=offense,
+                                    game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _set_profiles_all(g):
+def _set_profiles_all(g, game_ids=None):
     """Per-player set-call shot profiles (card ctx) — what each player's sets
     produce. Keyed by player_id; mirrors how _named_sets_all is wired."""
+    if game_ids is not None:
+        return PT.player_playtype_shot_profiles(game_ids=list(game_ids))
     return PT.player_playtype_shot_profiles(events=S.fetch_events())
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _team_role_splits_view(g, tid, offense):
+def _team_role_splits_view(g, tid, offense, game_ids=None):
     """Team handler-vs-roller / roll-vs-pop split per pnr/dho/offscreen set.
-    team_role_splits has no gender= kwarg; it filters events by team_id, and a
-    team belongs to one gender, so the full-sample events are safe."""
+    team_role_splits has no gender= kwarg; it filters events by team_id. Current
+    uses the full-sample events (a team is one gender, so that's safe); a season
+    view passes that season's game_ids so it doesn't mix seasons."""
+    if game_ids is not None:
+        return PT.team_role_splits(tid, game_ids=list(game_ids), offense=offense)
     return PT.team_role_splits(tid, events=S.fetch_events(), offense=offense)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _named_leaders_view(g, offense):
+def _named_leaders_view(g, offense, game_ids=None):
     """League leaderboard per named set call — where this team ranks vs the pool."""
-    return PT.league_named_playtype_leaders(gender=g, offense=offense)
+    return PT.league_named_playtype_leaders(gender=g, offense=offense,
+                                            game_ids=game_ids)
 
 
 # ── DEFENSE-SCHEME views (helpers/defenses.py — the Defense super-tab) ────────────
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_view(g, tid, offense):
+def _def_view(g, tid, offense, game_ids=None):
     """Per-scheme PPP for one team, each ranked vs the league pool."""
-    return DEF.team_defense_percentiles(tid, gender=g, offense=offense)
+    return DEF.team_defense_percentiles(tid, gender=g, offense=offense,
+                                        game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_families(g, tid, offense):
+def _def_families(g, tid, offense, game_ids=None):
     """Scheme rollup to families (man/zone/press) for one team."""
-    return DEF.team_defense_families(tid, gender=g, offense=offense)
+    return DEF.team_defense_families(tid, gender=g, offense=offense,
+                                     game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_profiles(g, tid, offense):
+def _def_profiles(g, tid, offense, game_ids=None):
     """Per-scheme shot profile — what each defense gives up (3PA/rim/zone/open)."""
-    return DEF.team_defense_shot_profiles(tid, gender=g, offense=offense)
+    return DEF.team_defense_shot_profiles(tid, gender=g, offense=offense,
+                                          game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_cross(g, tid, offense):
+def _def_cross(g, tid, offense, game_ids=None):
     """play_type × defense cross-tab — 'their PnR vs a 2-3 zone'."""
-    return DEF.cross_play_defense(tid, gender=g, offense=offense)
+    return DEF.cross_play_defense(tid, gender=g, offense=offense,
+                                  game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_tovs(g, tid, offense):
+def _def_tovs(g, tid, offense, game_ids=None):
     """Turnovers forced/committed per scheme (the press/trap disruption read)."""
-    return DEF.team_defense_turnovers(tid, gender=g, offense=offense)
+    return DEF.team_defense_turnovers(tid, gender=g, offense=offense,
+                                      game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_fouls(g, tid, offense):
+def _def_fouls(g, tid, offense, game_ids=None):
     """Fouls committed/drawn per scheme (the line-risk read)."""
-    return DEF.team_defense_fouls(tid, gender=g, offense=offense)
+    return DEF.team_defense_fouls(tid, gender=g, offense=offense,
+                                  game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_leaders(g, offense):
+def _def_leaders(g, offense, game_ids=None):
     """League leaderboard per scheme — where this team ranks vs the pool."""
-    return DEF.league_defense_leaders(gender=g, offense=offense)
+    return DEF.league_defense_leaders(gender=g, offense=offense,
+                                      game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _defender_profiles(g, tid):
+def _defender_profiles(g, tid, game_ids=None):
     """Per-defender on-ball FG%/PPS allowed (the `guarded_by_id` tag). Dormant
     until coaches tag who contested — fills in as coverage grows."""
-    return EXPL.defender_profiles(tid, gender=g)
+    return EXPL.defender_profiles(tid, gender=g, game_ids=game_ids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _def_players_faced(g):
+def _def_players_faced(g, game_ids=None):
     """Per-player PPP vs each defense faced, ranked vs the league pool (card ctx)."""
-    return DEF.player_defenses_faced(gender=g)
+    return DEF.player_defenses_faced(gender=g, game_ids=game_ids)
 
 
 # ── SITUATIONAL views (helpers/situational.py — the Situational super-tab) ────────
 @st.cache_data(ttl=600, show_spinner=False)
-def _situational_view(g, tid):
+def _situational_view(g, tid, game_ids=None):
     """play_type / defense usage + scoring by quarter / score-state / on-a-run, for
-    one team's tracked games (events scoped via _team_game_ids — a team is already
-    one gender, so g is signature-parity only)."""
-    return SIT.team_situational(tid, S.fetch_events(S._team_game_ids(tid)), gender=g)
+    one team's tracked games. `game_ids` scopes to a season's tracked games (the
+    page passes the team's season-scoped bundle ids); None = current via
+    _team_game_ids."""
+    gids = list(game_ids) if game_ids is not None else S._team_game_ids(tid)
+    return SIT.team_situational(tid, S.fetch_events(gids), gender=g)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _by_game_type(g, tid):
+def _by_game_type(g, tid, season="Current"):
     """How the team plays by GAME TYPE (Regular/District/Playoff/…) — record +
     margin from every game, efficiency + shot mix from the tracked ones."""
     import helpers.insights_team as INT
-    return INT.team_by_game_type(tid, gender=g)
+    return INT.team_by_game_type(tid, gender=g, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1164,7 +1237,7 @@ _players_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                                PLAYER_LEADER_GROUPS=PLAYER_LEADER_GROUPS,
                                GOOD=GOOD, BLUE=BLUE, GREY=GREY, ACCENT=ACCENT,
                                PURPLE=PURPLE, PINK=PINK, style=_style,
-                               pctf=_pctf, archetypes=_archetypes,
+                               pctf=_pctf, archetypes=_LGBIND(_archetypes),
                                zone_player_shooting=_zone_player_shooting,
                                player_leaderboards=_player_leaderboards,
                                season=season_pick)
@@ -1183,7 +1256,8 @@ _players_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
 # module of the Big Bet 5 split; ctx carries the page-level shared state.
 _sched_ctx = SimpleNamespace(bundle=bundle, rec=rec, log=log, scored=scored,
                              tracked=tracked, team_id=team_id,
-                             GOOD=GOOD, BAD=BAD, style=_style)
+                             GOOD=GOOD, BAD=BAD, style=_style,
+                             is_current=_is_cur_season)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1219,12 +1293,15 @@ if _tdview == "Charts":
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD,
             BAD=BAD, PURPLE=PURPLE, PINK=PINK,
             located_team=_located_team, located_allowed=_located_allowed,
-            league_pps=_league_pps_located, shot_model=_shot_model,
-            def_view=_def_view, def_families=_def_families,
-            def_profiles=_def_profiles, cross_pd=_def_cross,
-            def_tovs=_def_tovs, def_fouls=_def_fouls, def_leaders=_def_leaders,
-            def_players_faced=_def_players_faced, factors=_def_factors,
-            defender_profiles=_defender_profiles, is_current=_is_cur_season)
+            league_pps=_LGBIND(_league_pps_located), shot_model=_LGBIND(_shot_model),
+            def_view=_LGBIND(_def_view), def_families=_LGBIND(_def_families),
+            def_profiles=_LGBIND(_def_profiles), cross_pd=_LGBIND(_def_cross),
+            def_tovs=_LGBIND(_def_tovs), def_fouls=_LGBIND(_def_fouls),
+            def_leaders=_LGBIND(_def_leaders),
+            def_players_faced=_LGBIND(_def_players_faced),
+            factors=_LGBIND(_def_factors),
+            defender_profiles=_LGBIND(_defender_profiles),
+            is_current=_is_cur_season)
         DDEFENSE.render(_def_ctx)
 
     # ── Play Style super-tab (the explicit set-call deep dive) ──────────────
@@ -1239,13 +1316,17 @@ if _tdview == "Charts":
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
             PURPLE=PURPLE, PINK=PINK, pctf=_pctf,
             located_team=_located_team,
-            named_view=_named_playtype_view, playtype_view=_playtype_view,
-            set_profiles=_set_profiles_view, feeders=_feeders_view,
-            role_splits=_team_role_splits_view,
-            league_leaders=_named_leaders_view,
-            league_pps=_league_pps_located, shot_model=_shot_model,
-            named_sets_all=_named_sets_all, set_profiles_all=_set_profiles_all,
-            factors=_pt_factors, is_current=_is_cur_season)
+            named_view=_LGBIND(_named_playtype_view),
+            playtype_view=_LGBIND(_playtype_view),
+            set_profiles=_LGBIND(_set_profiles_view),
+            feeders=_LGBIND(_feeders_view),
+            role_splits=_LGBIND(_team_role_splits_view),
+            league_leaders=_LGBIND(_named_leaders_view),
+            league_pps=_LGBIND(_league_pps_located),
+            shot_model=_LGBIND(_shot_model),
+            named_sets_all=_LGBIND(_named_sets_all),
+            set_profiles_all=_LGBIND(_set_profiles_all),
+            factors=_LGBIND(_pt_factors), is_current=_is_cur_season)
         DPLAYSTYLE.render(_ps_ctx)
 
     # ── Situational super-tab (play_type/defense by quarter/score/run) ──────
@@ -1257,7 +1338,9 @@ if _tdview == "Charts":
             players=players, tracked_ids=tuple(bundle["tracked_ids"]),
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
             PURPLE=PURPLE, PINK=PINK,
-            situational=_situational_view, by_game_type=_by_game_type,
+            situational=_TMBIND(_situational_view),
+            by_game_type=(_by_game_type if _is_cur_season
+                          else _partial(_by_game_type, season=season_pick)),
             is_current=_is_cur_season)
         DSITUATIONAL.render(_sit_ctx)
 
@@ -2890,7 +2973,10 @@ def _fx_chqt():
             st.caption("Every team FG attempt split by how it was created — off a "
                        "teammate's pass (Off-Pass / assisted) vs taken with no pass "
                        "into the shot (Self-Created) — broken out by quarter.")
-            creg = [q for q in qsq if q <= 4]
+            # Only quarters that actually have creation data — a sparse book (few
+            # tracked games, or an archive) can miss a quarter, and the unguarded
+            # cq[q] series below would KeyError on it.
+            creg = [q for q in qsq if q <= 4 and q in cq]
 
             def _cr_merge(lines):
                 """Sum agg_shots lines (FGA/FGM/3PA/3PM) → totals + recomputed rates."""
@@ -2982,8 +3068,8 @@ def _fx_chqt():
                         "%", height=300, text_fmt=lambda v: f"{v:.0f}"),
                 width="stretch", key="cr_3p")
 
-            fa = _cr_merge([cq[q]["ast"] for q in qsq])
-            fs = _cr_merge([cq[q]["sc"] for q in qsq])
+            fa = _cr_merge([cq[q]["ast"] for q in qsq if q in cq])
+            fs = _cr_merge([cq[q]["sc"] for q in qsq if q in cq])
             ftot = fa["FGA"] + fs["FGA"]
             if ftot:
                 st.info(
@@ -3363,7 +3449,7 @@ def _fx_chadv():
             # ── team DNA radar (8 percentile axes vs league) ────────────────
             st.markdown("<div class='lab-hdr'>Team DNA — league percentiles</div>",
                         unsafe_allow_html=True)
-            lff = _league_ff(gender)
+            lff = _league_ff(gender, season_pick)
             offp = {k: [v["off"][k] for v in lff.values()]
                     for k in ["eFG", "TOV", "ORB", "FTR"]}
             defp = {k: [v["def"][k] for v in lff.values()]
@@ -3588,8 +3674,8 @@ if _tdview == "Lab":
             if _bp:
                 st.caption("Box-prior on: stars are anchored to their player-rating "
                            "box impact, then moved by the possession data (gentle).")
-            rap = _rapm(gender, box_prior=_bp)
-            _wt = _war_tbl(gender, box_prior=_bp)
+            rap = _rapm(gender, box_prior=_bp, season=season_pick)
+            _wt = _war_tbl(gender, box_prior=_bp, season=season_pick)
             for _wpid, _wrow in rap.items():        # cache_data returns a copy —
                 _wv = _wt.get(_wpid)                 # safe to annotate per rerun
                 if _wv:
@@ -3705,7 +3791,7 @@ if _tdview == "Lab":
                 st.caption("Not enough possessions to solve RAPM for this team yet.")
 
             # ── shot quality — SMOE (points over expected, Tier 2) ───────────
-            _sq, _sqn = _shot_quality(gender)
+            _sq, _sqn = _shot_quality(gender, season_pick)
             if _sq:
                 _rows_sq = sorted((v for pid, v in _sq.items() if pid in my_pids),
                                   key=lambda v: -v["poe_shrunk"])
@@ -3729,7 +3815,8 @@ if _tdview == "Lab":
                         })
 
             # ── rotation: stagger coverage + foul trouble (Tier 2) ──────────
-            _cov, _prone = _rotation(team_id, _vis_key)
+            _cov, _prone = _rotation(
+                team_id, _vis_key if _is_cur_season else tuple(bundle["tracked_ids"]))
             if _cov.get("bleed") is not None or _prone:
                 st.markdown("<div class='lab-hdr'>Rotation — stagger &amp; foul "
                             "trouble</div>", unsafe_allow_html=True)
@@ -3755,7 +3842,8 @@ if _tdview == "Lab":
                         for r in _prone[:5]))
 
             # ── possession-value ledger: points/100 sources vs leaks (Tier 2) ─
-            _pl = _poss_ledger(team_id, _vis_key)
+            _pl = _poss_ledger(
+                team_id, _vis_key if _is_cur_season else tuple(bundle["tracked_ids"]))
             if _pl["offense"] or _pl["defense"]:
                 st.markdown("<div class='lab-hdr'>Possession value — where points "
                             "come from vs leak</div>", unsafe_allow_html=True)
@@ -3797,7 +3885,8 @@ if _tdview == "Lab":
                        "win-probability model, so a stop or comeback earned as the "
                        "underdog (vs a stronger team) is worth more, and padding a "
                        "blowout is worth less.")
-            sw = _season_wpa(gender, "scoring" if wmode == "Scoring" else "possession")
+            sw = _season_wpa(gender, "scoring" if wmode == "Scoring" else "possession",
+                             season_pick)
             wrows = sorted([dict(v, _pid=pid) for pid, v in sw.items()
                             if pid in my_pids],
                            key=lambda v: v.get("wpa", 0), reverse=True)
@@ -3993,7 +4082,8 @@ if _tdview == "Scout":
 # ══════════════════════════════════════════════════════════════════════════════
 _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
                                 has_tracked=has_tracked,
-                                tracked_ids=tuple(bundle["tracked_ids"]))
+                                tracked_ids=tuple(bundle["tracked_ids"]),
+                                season=season_pick, season_gp=_season_gp)
 if _tdview == "Insights":
     DINS.render(_insights_ctx)
 
@@ -4432,9 +4522,9 @@ def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
 # renderer (_render_profile) and zone tables stay here and ride in as callables.
 _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
                             has_tracked=has_tracked,
-                            ptable_full=_ptable_full,
+                            ptable_full=_LGBIND(_ptable_full),
                             pp_zone_tables=_pp_zone_tables,
-                            render_profile=_render_profile)
+                            render_profile=_render_profile, season=season_pick)
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — ROSTER  (Players roster scan + Player Profile drill, merged)
 # ══════════════════════════════════════════════════════════════════════════════

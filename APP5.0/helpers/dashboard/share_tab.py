@@ -27,10 +27,12 @@ def _team_color(tid):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_game(game_id, team_id, ca, cb, quarters, gender, title, bg):
+def _card_game(game_id, team_id, ca, cb, quarters, gender, title, bg,
+               logo_a, logo_b):
     return SCARD.game_result_png(game_id, team_id, color_a=ca, color_b=cb,
                                  show_quarters=quarters, gender=gender,
-                                 title=title or None, bg=bg)
+                                 title=title or None, bg=bg,
+                                 logo_a=logo_a, logo_b=logo_b)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -107,14 +109,24 @@ def render(ctx):
         quarters = cc4.toggle("Quarter-by-quarter", value=False, key="share_qtr",
                               help="Add the per-quarter scoring line under the "
                                    "score (needs a tracked game).")
-        # persist any change (global, per team)
+        # optional logos — used in-memory only, nothing saved
+        lc1, lc2 = st.columns(2)
+        up_a = lc1.file_uploader(f"{ctx.team_name} logo (optional)",
+                                 type=["png", "jpg", "jpeg", "webp"],
+                                 key="share_logo_a")
+        up_b = lc2.file_uploader(f"{gm['opp']} logo (optional)",
+                                 type=["png", "jpg", "jpeg", "webp"],
+                                 key="share_logo_b")
+        logo_a = up_a.getvalue() if up_a else None
+        logo_b = up_b.getvalue() if up_b else None
+        # persist any colour change (global, per team) — logos are NOT saved
         if ca != _team_color(ctx.team_id):
             SU.set_setting(f"team_color:{ctx.team_id}", ca)
         if cb != _team_color(opp_id):
             SU.set_setting(f"team_color:{opp_id}", cb)
 
         png = _card_game(pick, ctx.team_id, ca, cb, quarters, ctx.gender,
-                         gtitle.strip(), gbg)
+                         gtitle.strip(), gbg, logo_a, logo_b)
         if png and quarters and not gm["tracked"]:
             st.caption("This game isn't tracked play-by-play — the quarter line "
                        "will be empty. Track it in the Game Tracker for the split.")

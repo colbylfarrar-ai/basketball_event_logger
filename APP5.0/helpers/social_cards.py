@@ -116,6 +116,32 @@ def _panel(ax, x, y, w, h, panel=PANEL, edge=EDGE):
         facecolor=panel, edgecolor=edge, lw=1.2, zorder=1))
 
 
+def _place_logo(ax, img_bytes, cx, cy, max_w, max_h, zorder=5):
+    """Draw a coach-uploaded logo centred at (cx, cy), fit inside a max_w × max_h
+    data-unit box with aspect preserved. Silently no-ops on a bad image. The
+    bytes are used in-memory only — nothing is written to disk."""
+    if not img_bytes:
+        return
+    try:
+        import numpy as np
+        from PIL import Image
+        from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+        im = Image.open(io.BytesIO(img_bytes))
+        im.thumbnail((600, 600))                 # cap work for big uploads
+        im = im.convert("RGBA")
+    except Exception:
+        return
+    iw, ih = im.size
+    if not iw or not ih:
+        return
+    ppu = 1080 / 100.0                            # px per data unit (1080px / 100)
+    zoom = min(max_w * ppu / iw, max_h * ppu / ih)
+    oi = OffsetImage(np.asarray(im), zoom=zoom)
+    ax.add_artist(AnnotationBbox(
+        oi, (cx, cy), frameon=False, box_alignment=(0.5, 0.5),
+        pad=0, zorder=zorder))
+
+
 def _tile(ax, cx, cy, label, value, color=FG, vsize=27):
     ax.text(cx, cy + 2.4, str(value), color=color, fontsize=vsize,
             fontweight="bold", ha="center", va="center", zorder=2)
@@ -322,14 +348,16 @@ def _top_performers(game_ids, team_id, limit=3):
 
 # ── card 1: game result — symmetric head-to-head ─────────────────────────────
 def game_result_png(game_id, team_id, color_a=None, color_b=None,
-                    show_quarters=False, gender=None, title=None, bg=None):
+                    show_quarters=False, gender=None, title=None, bg=None,
+                    logo_a=None, logo_b=None):
     """Head-to-head final-score card: two team-colour panels (same treatment for
     both), the score, each team's Power/record/class-rank line, an optional
     coach headline (`title`, e.g. "Region Championship") and an optional
     quarter-by-quarter line. `team_id` is the dashboard team → shown on top;
     `color_a`/`color_b` are its / the opponent's panel colours (defaults derived
-    from team id); `bg` sets the card background (default dark). None if game not
-    finished."""
+    from team id); `bg` sets the card background (default dark). `logo_a`/`logo_b`
+    are optional in-memory image bytes drawn on each panel (never persisted).
+    None if game not finished."""
     from matplotlib.patches import FancyBboxPatch
     T = _theme(bg or BG)
     _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
@@ -376,7 +404,7 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
 
     # two team panels — identical geometry, each filled in its team colour so
     # the card reads the same for either side.
-    def _team_panel(y, h, name, pts, color, winner, subline):
+    def _team_panel(y, h, name, pts, color, winner, subline, logo):
         ink = _ink(color)
         # a faint border so a panel whose colour is near the background (a coach
         # can pick anything) still shows its shape.
@@ -388,13 +416,18 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
             ax.add_patch(FancyBboxPatch(
                 (7, y), 2.4, h, boxstyle="round,pad=0,rounding_size=1",
                 facecolor=GOLD, edgecolor="none", zorder=2))
+        # optional coach-uploaded logo on the left; the name slides right for it
+        name_x, fit = 13, 22
+        if logo:
+            _place_logo(ax, logo, 18, y + h / 2, max_w=15, max_h=h * 0.64)
+            name_x, fit = 28, 16
         # name sits a touch high so Power/record/class rank rides beneath it
         _ny = y + h / 2 + (2.6 if subline else 0)
-        _nm, _nfs = _team_label(name, 26, 22)
-        ax.text(13, _ny, _nm, color=ink, fontsize=_nfs,
+        _nm, _nfs = _team_label(name, 26, fit)
+        ax.text(name_x, _ny, _nm, color=ink, fontsize=_nfs,
                 fontweight="bold", ha="left", va="center", zorder=3)
         if subline:
-            ax.text(13, _ny - 5.0, subline, color=ink, fontsize=12.5,
+            ax.text(name_x, _ny - 5.0, subline, color=ink, fontsize=12.5,
                     ha="left", va="center", zorder=3, alpha=0.82)
         ax.text(88, y + h / 2, str(pts), color=ink, fontsize=50,
                 fontweight="bold", ha="right", va="center", zorder=3)
@@ -409,8 +442,9 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
         ph, gap, a_top = 21, 3, 61          # A: 61–82, B: 37–58
     else:
         ph, gap, a_top = 25, 6, 47          # A: 47–72, B: 16–41 (centred ~45)
-    _team_panel(a_top, ph, a_name, a_pts, ca, a_pts > b_pts, a_line)
-    _team_panel(a_top - ph - gap, ph, b_name, b_pts, cb, b_pts > a_pts, b_line)
+    _team_panel(a_top, ph, a_name, a_pts, ca, a_pts > b_pts, a_line, logo_a)
+    _team_panel(a_top - ph - gap, ph, b_name, b_pts, cb, b_pts > a_pts, b_line,
+                logo_b)
 
     if show_quarters:
         per, qs = _quarter_points(game_id)

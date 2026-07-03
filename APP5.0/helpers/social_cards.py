@@ -112,6 +112,14 @@ def _team_label(name, base_fs, fit_chars):
     return s, max(base_fs * fit_chars / len(s), base_fs * 0.55)
 
 
+def _shrink(text, base_fs, fit_chars, floor=0.5):
+    """Font size that keeps a freeform string (a coach's card headline) fully on
+    the card — shrinks past `fit_chars`, never truncates. Text stays unchanged."""
+    n = len(str(text))
+    return base_fs if n <= fit_chars else max(base_fs * fit_chars / n,
+                                              base_fs * floor)
+
+
 def _row_name(prefix, name, base_fs, fit_chars):
     """(text, fontsize) for a 'prefix + team name' list row that always shows in
     full: drops the redundant gender suffix if the combined line is too long,
@@ -317,7 +325,7 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
     # coach headline (optional) rides above the date; both centred at the top
     title = (title or "").strip()
     if title:
-        ax.text(50, 88, _fit(title, 34), color=GOLD, fontsize=16,
+        ax.text(50, 88, title, color=GOLD, fontsize=_shrink(title, 16, 34),
                 fontweight="bold", ha="center", va="center")
         if sub:
             ax.text(50, 83.4, sub, color=GREY, fontsize=12.5, ha="center",
@@ -548,9 +556,9 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
         ax.text(50, 83.2, chips, color=GREY, fontsize=13, ha="center",
                 va="center")
     # the coach's own label for the set (tournament / stretch name), else a count
-    ax.text(50, 78.4, title or f"{len(chosen)} selected games",
-            color=GOLD if title else GREY,
-            fontsize=15 if title else 14,
+    _sub = title or f"{len(chosen)} selected games"
+    ax.text(50, 78.4, _sub, color=GOLD if title else GREY,
+            fontsize=_shrink(_sub, 15, 40) if title else 14,
             fontweight="bold" if title else "normal",
             ha="center", va="center")
 

@@ -93,7 +93,7 @@ def render(ctx):
         opp_id = gm["opp_id"]
 
         gtitle = st.text_input(
-            "Card headline (optional)", value="", max_chars=40,
+            "Card headline (optional)", value="", max_chars=60,
             key="share_game_title",
             placeholder="e.g. Region Championship · Senior Night",
             help="Your own headline above the score. Leave blank for just the date.")
@@ -134,7 +134,7 @@ def render(ctx):
         st.caption("Pick the games to feature — every one you select lands on the "
                    "card (newest first).")
         title = st.text_input(
-            "Card title", value="", max_chars=40, key="share_title",
+            "Card title", value="", max_chars=60, key="share_title",
             placeholder="e.g. Catoosa Tournament · Road to State",
             help="Your own headline for the set. Leave blank for a game count.")
         default = [g["id"] for g in games[-5:]]

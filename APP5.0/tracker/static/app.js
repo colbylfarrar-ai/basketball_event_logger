@@ -326,7 +326,10 @@ async function searchGames(raw) {
   const gf = genderFilter();
   $('setup-status').textContent = 'Searching…';
   try {
-    const res = await api('/api/games?q=' + encodeURIComponent(raw));
+    // Scope the search to the season the picker is browsing — without this the
+    // server defaults to 'Current', so a past-season search "only showed current".
+    const res = await api('/api/games?q=' + encodeURIComponent(raw)
+      + '&season=' + encodeURIComponent(currentSeason || 'Current'));
     if (res.ok) {
       const data = await res.json();
       const list = (data.games || []).filter(function (g) { return _genderKeep(g, gf); });

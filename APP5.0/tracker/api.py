@@ -223,9 +223,12 @@ def list_games(q: str | None = None, season: str | None = None):
             "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 100",
             (szn, like, like))
     elif szn != "Current":
-        # A past season is a finite, hand-picked set — list it whole (capped).
+        # Past-season default = its TRACKED games only (review / continue) — soft,
+        # like the current picker, so a past season doesn't dump its whole schedule
+        # (the "random games" flood). Untracked retro games stay reachable via the
+        # ?q= team-name search below, which is season-scoped.
         games = query(
-            f"SELECT {cols} {joins} WHERE g.season=? "
+            f"SELECT {cols} {joins} WHERE g.season=? AND g.tracked=1 "
             "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 300", (szn,))
     else:
         # Default picker = current-season TRACKED games (resume) + recently-dated

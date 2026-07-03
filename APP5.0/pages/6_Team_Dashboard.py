@@ -89,6 +89,7 @@ import helpers.dashboard.profile_tab as DPROF
 import helpers.dashboard.playstyle_tab as DPLAYSTYLE
 import helpers.dashboard.defense_tab as DDEFENSE
 import helpers.dashboard.situational_tab as DSITUATIONAL
+import helpers.dashboard.share_tab as DSHARE
 import helpers.breakdown as BR
 import helpers.situational as SIT
 import helpers.seasons as SEAS
@@ -1114,7 +1115,7 @@ def _matchup_grid(g, tid, _ids):
 # Only the chosen sub-view's fragment runs (see the Roster gate near the file tail,
 # after _prof_ctx is built).
 _TD_VIEWS = ["Overview", "Scout", "Insights", "Roster",
-             "Schedule", "Charts", "Lab", "Glossary"]
+             "Schedule", "Charts", "Lab", "Share", "Glossary"]
 _tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view") or "Overview"
 
 
@@ -3981,6 +3982,13 @@ _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
                                 tracked_ids=tuple(bundle["tracked_ids"]))
 if _tdview == "Insights":
     DINS.render(_insights_ctx)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB — SHARE (premade social-media cards; own-team surface — see share_tab)
+# ══════════════════════════════════════════════════════════════════════════════
+if _tdview == "Share":
+    DSHARE.render(SimpleNamespace(team_id=team_id, gender=gender,
+                                  team_name=team["name"], vis_key=_vis_key))
 
 
 @st.fragment

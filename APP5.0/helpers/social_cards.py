@@ -192,6 +192,24 @@ def _quarter_points(game_id):
     return per, qs
 
 
+def rank_line(scored, team_id, record=True, power=True, cls=True):
+    """A compact identity line for a team — 'Power #3 · 29–2 · 3A #2' — from the
+    already-computed `scored` table. Empty pieces drop out; '' when unrated."""
+    s = scored.get(team_id)
+    if not s:
+        return ""
+    bits = []
+    if power and s.get("Rank"):
+        bits.append(f"Power #{s['Rank']}")
+    if record:
+        bits.append(f"{s.get('W', 0)}–{s.get('L', 0)}")
+    if cls:
+        cr, _cn = class_rank(scored, team_id)
+        if cr:
+            bits.append(f"{s.get('class', '')} #{cr}")
+    return "  ·  ".join(bits)
+
+
 def class_rank(scored, team_id):
     """(rank, n) of `team_id` among same-class teams by Power (1 = best), or
     (None, 0)."""
@@ -227,12 +245,14 @@ def _top_performers(game_ids, team_id, limit=3):
 
 # ── card 1: game result — symmetric head-to-head ─────────────────────────────
 def game_result_png(game_id, team_id, color_a=None, color_b=None,
-                    show_quarters=False):
+                    show_quarters=False, gender=None):
     """Head-to-head final-score card: two team-colour panels (same treatment for
-    both), the score, and an optional quarter-by-quarter line. `team_id` is the
-    dashboard team → shown on top; `color_a`/`color_b` are its / the opponent's
-    panel colours (defaults derived from team id). None if game not finished."""
+    both), the score, each team's Power/record/class-rank line, and an optional
+    quarter-by-quarter line. `team_id` is the dashboard team → shown on top;
+    `color_a`/`color_b` are its / the opponent's panel colours (defaults derived
+    from team id). None if game not finished."""
     from matplotlib.patches import FancyBboxPatch
+    scored = TR.score_ratings(gender=gender) if gender else {}
     g = query(
         """SELECT g.*, t1.name n1, t2.name n2
            FROM games g JOIN teams t1 ON t1.id=g.team1_id
@@ -261,9 +281,12 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
     if sub:
         ax.text(50, 87.5, sub, color=GREY, fontsize=13, ha="center", va="center")
 
+    a_line = rank_line(scored, a_id)
+    b_line = rank_line(scored, b_id)
+
     # two team panels — identical geometry, each filled in its team colour so
     # the card reads the same for either side.
-    def _team_panel(y, h, name, pts, color, winner):
+    def _team_panel(y, h, name, pts, color, winner, subline):
         ink = _ink(color)
         # a faint border so a panel whose colour is near the background (a coach
         # can pick anything) still shows its shape.
@@ -275,23 +298,28 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
             ax.add_patch(FancyBboxPatch(
                 (7, y), 2.4, h, boxstyle="round,pad=0,rounding_size=1",
                 facecolor=GOLD, edgecolor="none", zorder=2))
-        ax.text(13, y + h / 2, _fit(name, 22), color=ink, fontsize=27,
+        # name sits a touch high so Power/record/class rank rides beneath it
+        _ny = y + h / 2 + (2.6 if subline else 0)
+        ax.text(13, _ny, _fit(name, 22), color=ink, fontsize=26,
                 fontweight="bold", ha="left", va="center", zorder=3)
-        ax.text(88, y + h / 2, str(pts), color=ink, fontsize=52,
+        if subline:
+            ax.text(13, _ny - 5.0, subline, color=ink, fontsize=12.5,
+                    ha="left", va="center", zorder=3, alpha=0.82)
+        ax.text(88, y + h / 2, str(pts), color=ink, fontsize=50,
                 fontweight="bold", ha="right", va="center", zorder=3)
         if winner:
-            ax.text(13, y + 2.6, "WINNER", color=ink, fontsize=11,
-                    fontweight="bold", ha="left", va="center", zorder=3,
-                    alpha=0.85)
+            ax.text(88, y + h - 3.4, "WINNER", color=ink, fontsize=10.5,
+                    fontweight="bold", ha="right", va="center", zorder=3,
+                    alpha=0.82)
 
     # quarters on → shorter panels up top, leaving the lower third for the line;
     # quarters off → taller panels centred in the open space (no dead gap).
     if show_quarters:
-        ph, gap, a_top = 20, 3, 62          # A: 62–82, B: 39–59
+        ph, gap, a_top = 21, 3, 61          # A: 61–82, B: 37–58
     else:
         ph, gap, a_top = 25, 6, 47          # A: 47–72, B: 16–41 (centred ~45)
-    _team_panel(a_top, ph, a_name, a_pts, ca, a_pts > b_pts)
-    _team_panel(a_top - ph - gap, ph, b_name, b_pts, cb, b_pts > a_pts)
+    _team_panel(a_top, ph, a_name, a_pts, ca, a_pts > b_pts, a_line)
+    _team_panel(a_top - ph - gap, ph, b_name, b_pts, cb, b_pts > a_pts, b_line)
 
     if show_quarters:
         per, qs = _quarter_points(game_id)
@@ -384,7 +412,7 @@ def season_record_png(team_id, gender):
         [gm for gm in wins if gm.get("_opp_rank")],
         key=lambda gm: gm["_opp_rank"])[:3]
     if ranked_wins:
-        _panel(ax, 8, 30, 84, 22)
+        _panel(ax, 8, 27, 84, 25)           # extends lower so text isn't flush
         ax.text(12, 48.3, "SIGNATURE WINS", color=GOLD, fontsize=12.5,
                 fontweight="bold", ha="left", va="center", zorder=2)
         y = 42.5
@@ -405,7 +433,7 @@ def season_record_png(team_id, gender):
     else:
         top = sorted(mine, key=lambda r: -(r.get("PPG") or 0))[:3]
     if top:
-        _panel(ax, 8, 8.5, 84, 19.5)
+        _panel(ax, 8, 6.5, 84, 21.5)        # extends lower so text isn't flush
         ax.text(12, 24.5, "TOP PLAYERS", color=GOLD, fontsize=12.5,
                 fontweight="bold", ha="left", va="center", zorder=2)
         y = 19.5
@@ -447,13 +475,22 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
     margin = sum(gm["pf"] - gm["pa"] for gm in chosen) / len(chosen)
     name = query("SELECT name FROM teams WHERE id=?", (team_id,))
     tname = name[0]["name"] if name else f"#{team_id}"
+    scored = TR.score_ratings(gender=gender) if gender else {}
+    chips = rank_line(scored, team_id, record=False)   # Power + class rank
 
     fig, ax = _fig()
     _brand(ax, f"{len(chosen)} games")
-    ax.text(50, 87, _fit(tname, 30), color=FG, fontsize=28, fontweight="bold",
+    ax.text(50, 88, _fit(tname, 30), color=FG, fontsize=28, fontweight="bold",
             ha="center", va="center")
-    ax.text(50, 82, title or f"{len(chosen)} selected games", color=GREY,
-            fontsize=14, ha="center", va="center")
+    if chips:
+        ax.text(50, 83.2, chips, color=GREY, fontsize=13, ha="center",
+                va="center")
+    # the coach's own label for the set (tournament / stretch name), else a count
+    ax.text(50, 78.4, title or f"{len(chosen)} selected games",
+            color=GOLD if title else GREY,
+            fontsize=15 if title else 14,
+            fontweight="bold" if title else "normal",
+            ha="center", va="center")
 
     ax.text(30, 71.5, f"{w}–{l}", color=GOLD, fontsize=56, fontweight="bold",
             ha="center", va="center")

@@ -27,9 +27,9 @@ def _team_color(tid):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_game(game_id, team_id, ca, cb, quarters):
+def _card_game(game_id, team_id, ca, cb, quarters, gender):
     return SCARD.game_result_png(game_id, team_id, color_a=ca, color_b=cb,
-                                 show_quarters=quarters)
+                                 show_quarters=quarters, gender=gender)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -38,8 +38,9 @@ def _card_season(team_id, gender):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_games(team_id, gender, game_ids):
-    return SCARD.games_png(team_id, gender, game_ids=list(game_ids))
+def _card_games(team_id, gender, game_ids, title):
+    return SCARD.games_png(team_id, gender, game_ids=list(game_ids),
+                           title=title or None)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -104,7 +105,7 @@ def render(ctx):
         if cb != _team_color(opp_id):
             SU.set_setting(f"team_color:{opp_id}", cb)
 
-        png = _card_game(pick, ctx.team_id, ca, cb, quarters)
+        png = _card_game(pick, ctx.team_id, ca, cb, quarters, ctx.gender)
         if png and quarters and not gm["tracked"]:
             st.caption("This game isn't tracked play-by-play — the quarter line "
                        "will be empty. Track it in the Game Tracker for the split.")
@@ -124,6 +125,10 @@ def render(ctx):
     else:   # Selected games — pick any set from the schedule
         st.caption("Pick the games to feature — every one you select lands on the "
                    "card (newest first).")
+        title = st.text_input(
+            "Card title", value="", max_chars=40, key="share_title",
+            placeholder="e.g. Catoosa Tournament · Road to State",
+            help="Your own headline for the set. Leave blank for a game count.")
         default = [g["id"] for g in games[-5:]]
         sel = st.multiselect("Games", [g["id"] for g in reversed(games)],
                              default=default,
@@ -132,7 +137,8 @@ def render(ctx):
         if not sel:
             st.info("Select at least one game.")
             return
-        png = _card_games(ctx.team_id, ctx.gender, tuple(sorted(sel)))
+        png = _card_games(ctx.team_id, ctx.gender, tuple(sorted(sel)),
+                          title.strip())
         if not png:
             st.info("Not enough data for this card yet.")
             return

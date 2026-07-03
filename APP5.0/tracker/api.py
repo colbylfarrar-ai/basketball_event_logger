@@ -35,6 +35,7 @@ from database.db import (execute, initialize_database, normalize_date, query,
 import helpers.event_log as EL
 import helpers.game_events as GE
 import helpers.entitlement as ENT
+import helpers.seasons as SEAS
 
 _STATIC = Path(__file__).resolve().parent / "static"
 
@@ -162,6 +163,9 @@ class NewGame(BaseModel):
     date: str
     location: str | None = None
     video_url: str = ""
+    # Optional season override ('Current' or a label). None -> inferred from the
+    # date (Oct 1 cutoff), so a back-dated game lands in its real past season.
+    season: str | None = None
 
 
 class NewTeam(BaseModel):
@@ -197,24 +201,32 @@ def _scoreboard(game_id: int) -> dict:
 
 # ── API routes ──────────────────────────────────────────────────────────────────
 @api.get("/games")
-def list_games(q: str | None = None):
+def list_games(q: str | None = None, season: str | None = None):
     """Tracker game picker. Default = current-season tracked OR recent games,
     capped — a fast, bounded list (the OSSAA importer can hold 13k+ schedule
     rows, which froze the PWA when sent whole). Pass ?q=<text> to SEARCH every
-    current-season game by team name (also capped), so any game is reachable."""
+    game of the chosen season by team name (also capped), so any game is
+    reachable. ?season=<label> switches the picker to a PAST season (retro
+    tracking): its games list whole — no 30-day recency rule there."""
     cols = ("g.id, g.date, g.tracked, g.team1_id AS home_id, "
             "g.team2_id AS away_id, t1.name AS home, t2.name AS away, "
             "t1.gender AS gender")
     joins = ("FROM games g JOIN teams t1 ON t1.id=g.team1_id "
              "JOIN teams t2 ON t2.id=g.team2_id")
+    szn = "Current" if SEAS.is_current(season) else str(season).strip()
     q = (q or "").strip()
     if len(q) >= 2:
         like = f"%{q}%"
         games = query(
-            f"SELECT {cols} {joins} WHERE g.season='Current' "
+            f"SELECT {cols} {joins} WHERE g.season=? "
             "AND (t1.name LIKE ? OR t2.name LIKE ?) "
             "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 100",
-            (like, like))
+            (szn, like, like))
+    elif szn != "Current":
+        # A past season is a finite, hand-picked set — list it whole (capped).
+        games = query(
+            f"SELECT {cols} {joins} WHERE g.season=? "
+            "ORDER BY g.tracked DESC, g.date DESC, g.id DESC LIMIT 300", (szn,))
     else:
         # Default picker = current-season TRACKED games (resume) + recently-dated
         # games, so a just-created game appears and you can start tracking it. The
@@ -227,10 +239,16 @@ def list_games(q: str | None = None):
     return {"games": games}
 
 
+@api.get("/seasons")
+def list_seasons():
+    """Season picker options for the PWA: [{value, label}], active first."""
+    return {"seasons": [{"value": v, "label": l} for v, l in SEAS.season_options()]}
+
+
 @api.get("/games/{game_id}")
 def game_detail(game_id: int):
     g = query("""
-        SELECT g.id, g.date, g.team1_id, g.team2_id, t1.name n1, t2.name n2
+        SELECT g.id, g.date, g.season, g.team1_id, g.team2_id, t1.name n1, t2.name n2
         FROM games g JOIN teams t1 ON t1.id=g.team1_id
                      JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""", (game_id,))
     if not g:
@@ -239,10 +257,21 @@ def game_detail(game_id: int):
     # Archived players included (flagged) so the event EDITOR can resolve and
     # re-assign them — the lineup screen filters archived=1 out client-side.
     # Mirrors event_log.game_people(), which includes archived by design.
+    #
+    # Retro tracking: `archived` in this payload is RELATIVE TO THE GAME'S
+    # SEASON — on a past-season game, that season's (rollover-archived) players
+    # report archived=0 so they take the floor, while everyone else (including
+    # today's active roster) reports archived=1 (pickable-but-dimmed in the
+    # editor). Current games keep the raw flag, i.e. today's exact behaviour.
     players = query(
-        "SELECT id, name, number, team_id, archived, handedness FROM players "
-        "WHERE team_id IN (?,?) ORDER BY team_id, number, name",
+        "SELECT id, name, number, team_id, archived, season, handedness "
+        "FROM players WHERE team_id IN (?,?) ORDER BY team_id, number, name",
         (g["team1_id"], g["team2_id"]))
+    gszn = g["season"] or "Current"
+    if not SEAS.is_current(gszn):
+        players = [{**p, "archived": 0 if (p["season"] or "") == gszn else 1}
+                   for p in players]
+    players = [{k: v for k, v in p.items() if k != "season"} for p in players]
     # archived included (flagged) like players: the editor must resolve a ref on an
     # existing foul; the client filters archived out of the lineup picker.
     officials = query("SELECT id, name, archived FROM officials ORDER BY name")
@@ -371,13 +400,16 @@ def create_game(g: NewGame, user: dict = Depends(require_full_user)):
     for tid in (g.team1_id, g.team2_id):
         if not query("SELECT id FROM teams WHERE id=?", (tid,)):
             raise HTTPException(status_code=422, detail=f"no such team {tid}")
+    # season: explicit override wins, else inferred from the date (Oct 1 cutoff)
+    # so a back-dated game lands directly in its real past season.
+    szn = SEAS.resolve_new_game_season(date, g.season)
     gid = execute(
-        "INSERT INTO games (team1_id, team2_id, date, location, video_url, tracked_by) "
-        "VALUES (?,?,?,?,?,?)",
+        "INSERT INTO games (team1_id, team2_id, date, location, video_url, tracked_by, season) "
+        "VALUES (?,?,?,?,?,?,?)",
         (g.team1_id, g.team2_id, date, (g.location or "").strip() or None,
-         g.video_url.strip(), (user.get("email") or "")))
+         g.video_url.strip(), (user.get("email") or ""), szn))
     GE.bump_data_version()
-    return {"id": gid, "created": True}
+    return {"id": gid, "created": True, "season": szn}
 
 
 @api.post("/games/{game_id}/players")
@@ -391,17 +423,21 @@ def quick_add_player(game_id: int, p: NewPlayer,
     name = p.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="name required")
-    # Same dup rule as the Streamlit Quick Add: active player of that name on
-    # that team already exists -> reuse it.
-    existing = query("SELECT id FROM players WHERE team_id=? AND name=? AND archived=0",
-                     (p.team_id, name))
+    # Same dup rule as the Streamlit Quick Add: a player of that name already on
+    # THIS GAME'S season roster -> reuse it. A retro game adds the player to its
+    # own past season (archived, so they never surface in current pickers).
+    gszn = SEAS.game_season(game_id)
+    rc, rp = SEAS.roster_clause(gszn)
+    existing = query(f"SELECT id FROM players WHERE team_id=? AND name=? AND {rc}",
+                     (p.team_id, name, *rp))
     if existing:
         return {"id": existing[0]["id"], "created": False}
     hand = "left" if p.handedness == "left" else "right"
     pid = execute(
-        "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (p.team_id, name, int(p.number or 0), p.height, p.wingspan, p.weight, hand))
+        "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness, season, archived) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (p.team_id, name, int(p.number or 0), p.height, p.wingspan, p.weight, hand,
+         gszn, 0 if SEAS.is_current(gszn) else 1))
     GE.bump_data_version()
     return {"id": pid, "created": True}
 

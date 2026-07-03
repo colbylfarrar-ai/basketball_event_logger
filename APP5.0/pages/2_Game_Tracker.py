@@ -26,6 +26,7 @@ import helpers.defenses as DEF
 import helpers.playtypes as PT
 import helpers.fouls as FOULS
 import helpers.game_events as GE
+import helpers.seasons as SEAS
 from PIL import Image
 
 try:
@@ -139,11 +140,13 @@ def compute_box(game_id: int, t1id: int, t2id: int):
         return {"pts":0,"ast":0,"oreb":0,"dreb":0,"stl":0,"blk":0,"tov":0,
                 "fgm":0,"fga":0,"tpm":0,"tpa":0,"ftm":0,"fta":0,"sc":0,"pf":0}
 
-    # All players on both rosters always appear
+    # All players on both rosters always appear — the roster is the GAME's
+    # season (retro-tracking: a past game lists who actually played that year).
+    _rc, _rp = SEAS.roster_clause(SEAS.game_season(game_id))
     all_players = query(
-        "SELECT id AS pid, name AS pname, team_id FROM players "
-        "WHERE team_id IN (?,?) AND archived=0 ORDER BY name",
-        (t1id, t2id)
+        f"SELECT id AS pid, name AS pname, team_id FROM players "
+        f"WHERE team_id IN (?,?) AND {_rc} ORDER BY name",
+        (t1id, t2id, *_rp)
     )
     stats = {p["pid"]: {**blank(), "name": p["pname"], "team_id": p["team_id"]}
              for p in all_players}
@@ -263,6 +266,14 @@ game_info   = lineup["game"]
 t1id, t2id  = game_info["team1_id"], game_info["team2_id"]
 t1name, t2name = game_info["t1_name"], game_info["t2_name"]
 is_tracked  = bool(game_info["tracked"])
+
+# Retro-tracking: rosters below are scoped to the GAME's season, so a past
+# game surfaces the players who actually played it (rollover-archived rows).
+_gszn = SEAS.game_season(game_id)
+_roster_c, _roster_p = SEAS.roster_clause(_gszn)
+if not SEAS.is_current(_gszn):
+    st.caption(f"📅 **{_gszn} season game** — rosters and quick-adds use that "
+               "season's players; nothing here touches current-season stats.")
 
 # Tier gate: event-logging AND the live tracked depth this screen renders (live box,
 # shot chart, win-probability, possession line, foul/bonus) are a Paid feature.
@@ -729,8 +740,8 @@ if is_tracked:
 else:
     # ── the floor: on-court five + officials (feeds minutes and +/-) ───────────
     with st.expander("Floor — on-court five & officials", expanded=False):
-        t1_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t1id,))
-        t2_db  = query("SELECT id, name, number FROM players WHERE team_id=? AND archived=0 ORDER BY number, name", (t2id,))
+        t1_db  = query(f"SELECT id, name, number FROM players WHERE team_id=? AND {_roster_c} ORDER BY number, name", (t1id, *_roster_p))
+        t2_db  = query(f"SELECT id, name, number FROM players WHERE team_id=? AND {_roster_c} ORDER BY number, name", (t2id, *_roster_p))
         all_offs = query("SELECT id, name FROM officials WHERE archived=0 ORDER BY name")
 
         t1_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t1_db]
@@ -801,10 +812,11 @@ else:
                     st.warning(f"{_tname}: only {_n} of 5 lineup slots selected.")
         on_court_offs = [off_imap[s] for s in cur_offs if s != "—"]
 
-    # Build player option lists for the event form
+    # Build player option lists for the event form (game-season roster)
     all_player_rows = query(
-        "SELECT id AS pid, name AS pname, number, team_id FROM players "
-        "WHERE team_id IN (?,?) AND archived=0 ORDER BY name", (t1id, t2id)
+        f"SELECT id AS pid, name AS pname, number, team_id FROM players "
+        f"WHERE team_id IN (?,?) AND {_roster_c} ORDER BY name",
+        (t1id, t2id, *_roster_p)
     )
     pid_to_row = {p["pid"]: p for p in all_player_rows}
 
@@ -1110,17 +1122,20 @@ with st.expander("＋ Quick Add Player / Official"):
                     continue
                 tid = qa_tm_map[team]
                 exists = query(
-                    "SELECT id FROM players WHERE team_id=? AND name=? AND archived=0",
-                    (tid, name)
+                    f"SELECT id FROM players WHERE team_id=? AND name=? AND {_roster_c}",
+                    (tid, name, *_roster_p)
                 )
                 if exists:
                     skipped += 1
                     continue
+                # retro game -> the new player joins THAT season's roster
+                # (archived so they never surface in current-season pickers)
                 execute(
-                    "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness) VALUES (?,?,?,?,?,?,?)",
+                    "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness, season, archived) VALUES (?,?,?,?,?,?,?,?,?)",
                     (tid, name, int(r.get("number") or 0),
                      r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
-                     "left" if r.get("handedness") == "left" else "right")
+                     "left" if r.get("handedness") == "left" else "right",
+                     _gszn, 0 if SEAS.is_current(_gszn) else 1)
                 )
                 saved += 1
             if saved or skipped:
@@ -1140,9 +1155,9 @@ with st.expander("＋ Quick Add Player / Official"):
         # Flip handedness on existing players without leaving the tracker.
         st.markdown("**Edit shooting hand**")
         _hand_rows = query(
-            "SELECT id, name, number, team_id, handedness FROM players "
-            "WHERE team_id IN (?,?) AND archived=0 ORDER BY team_id, number, name",
-            (t1id, t2id))
+            f"SELECT id, name, number, team_id, handedness FROM players "
+            f"WHERE team_id IN (?,?) AND {_roster_c} ORDER BY team_id, number, name",
+            (t1id, t2id, *_roster_p))
         if not _hand_rows:
             st.caption("No players yet.")
         else:

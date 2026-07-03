@@ -350,18 +350,49 @@ async function searchGames(raw) {
   }
 }
 
+/* season the game picker browses ('Current' = active season). Past seasons let
+   a coach retro-track old games; the server scopes lists + rosters to it. */
+let currentSeason = 'Current';
+
+function seasonCacheKey() {
+  return currentSeason === 'Current' ? LS.games : LS.games + '_' + currentSeason;
+}
+
+async function loadSeasons() {
+  const sel = $('season-select');
+  if (!sel) return;
+  try {
+    const res = await api('/api/seasons');
+    if (!res.ok) return;
+    const data = await res.json();
+    const seasons = data.seasons || [];
+    if (seasons.length < 2) { sel.hidden = true; return; }  // nothing to switch
+    sel.innerHTML = '';
+    seasons.forEach(function (s) {
+      const o = document.createElement('option');
+      o.value = s.value; o.textContent = s.label;
+      sel.appendChild(o);
+    });
+    sel.value = currentSeason;
+    sel.hidden = false;
+  } catch (e) { /* offline: keep hidden, current-season cache still works */ }
+}
+
 async function loadGames() {
-  let games = lsGet(LS.games, null);
+  let games = lsGet(seasonCacheKey(), null);
   // A pre-fix cache could hold thousands of schedule games (OSSAA import) and
   // freeze the list on render — drop an oversize cache and refetch the bounded set.
-  if (games && games.length > 400) { games = null; try { localStorage.removeItem(LS.games); } catch (e) {} }
+  if (games && games.length > 400) { games = null; try { localStorage.removeItem(seasonCacheKey()); } catch (e) {} }
   if (games) { allGames = games; applyGameFilter(); }
   try {
-    const res = await api('/api/games');
+    const url = currentSeason === 'Current'
+      ? '/api/games'
+      : '/api/games?season=' + encodeURIComponent(currentSeason);
+    const res = await api(url);
     if (res.ok) {
       const data = await res.json();
       games = data.games || [];
-      lsSet(LS.games, games);
+      lsSet(seasonCacheKey(), games);
       allGames = games;
       applyGameFilter();
       $('setup-status').textContent = '';
@@ -644,9 +675,13 @@ async function createGame() {
   if (!NG.date) { st.textContent = 'Pick a date'; return; }
   if (!isOnline()) { st.textContent = 'Needs connection'; return; }
   try {
+    // browsing a past season → stamp the new game there; else let the server
+    // infer from the date (Oct 1 cutoff).
+    const body = { team1_id: NG.sel.home, team2_id: NG.sel.away, date: NG.date };
+    if (currentSeason && currentSeason !== 'Current') body.season = currentSeason;
     const res = await api('/api/games', {
       method: 'POST',
-      body: JSON.stringify({ team1_id: NG.sel.home, team2_id: NG.sel.away, date: NG.date })
+      body: JSON.stringify(body)
     });
     if (!res.ok) { st.textContent = 'Failed (HTTP ' + res.status + ')'; return; }
     const d = await res.json();
@@ -1874,6 +1909,10 @@ function bindUI() {
   // setup: new game / new team
   $('btn-new-game').addEventListener('click', toggleNewGame);
   $('game-search').addEventListener('input', applyGameFilter);
+  $('season-select').addEventListener('change', function () {
+    currentSeason = this.value || 'Current';
+    loadGames();
+  });
   renderGenderFilter();
 
   // lineup
@@ -2029,11 +2068,13 @@ async function init() {
         showScreen('lineup');
       }
       loadGames(); // refresh cache in background
+      loadSeasons();
       return;
     }
   }
 
   showScreen('setup');
+  loadSeasons();
   loadGames();
 }
 

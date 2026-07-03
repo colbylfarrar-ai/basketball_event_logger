@@ -589,6 +589,14 @@ with tab_games:
             },
         )
 
+        # Season for NEW rows: Auto = infer from each game's date (Oct 1 cutoff —
+        # a past-dated game lands in its real season automatically); or force one.
+        _szn_opts = ["Auto (from date)"] + [v for v, _l in SZ.season_options()]
+        _szn_pick = st.selectbox(
+            "Season for new games", _szn_opts, index=0, key="games_szn",
+            help="Auto stamps each new game with the season its DATE falls in "
+                 "(seasons run Oct 1 – Apr 30), so back-dated games go straight "
+                 "into their real season and never mix into current stats.")
         if st.button("Save Changes", key="save_games", type="primary"):
             tm = team_map()
             skipped = []
@@ -598,12 +606,15 @@ with tab_games:
                                    "and away — pick two different teams.")
                     return
                 if r.get("date","").strip() and r.get("team1") and r.get("team2"):
+                    _d = normalize_date(r["date"])
+                    _szn = SZ.resolve_new_game_season(
+                        _d, None if _szn_pick.startswith("Auto") else _szn_pick)
                     execute(
-                        "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url) VALUES (?,?,?,?,?,?,?,?)",
-                        (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
+                        "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (tm[r["team1"]], tm[r["team2"]], _d,
                          r.get("location") or None, r.get("home_score") or None,
                          r.get("away_score") or None, int(bool(r.get("tracked", False))),
-                         (r.get("video_url") or "").strip())
+                         (r.get("video_url") or "").strip(), _szn)
                     )
             def upd_game(r):
                 if r.get("team1") and r.get("team1") == r.get("team2"):
@@ -714,10 +725,12 @@ with tab_schedule:
                     t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
                 else:
                     t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
+                _d = normalize_date(date)
                 execute(
-                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url) VALUES (?,?,?,?,?,?,?,?)",
-                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, tracked,
-                     (r.get("video_url") or "").strip())
+                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (t1, t2, _d, r.get("location") or None, h_sc, a_sc, tracked,
+                     (r.get("video_url") or "").strip(),
+                     SZ.resolve_new_game_season(_d))
                 )
 
             def upd_sched(r):

@@ -62,6 +62,69 @@ def season_options() -> list[tuple[str, str]]:
     return opts
 
 
+# ── Season-of-a-game: tag on creation, resolve when tracking ─────────────────────
+#: Month a new HS season opens (founder rule: seasons run Oct 1 → Apr 30). A game
+#: dated Oct–Dec belongs to the season OPENING that calendar year; Jan–Sep belongs
+#: to the season that opened the previous year — so Jan–Apr 2026 (and offseason
+#: May–Sep 2026 play) -> '2025-2026', and Nov 2026 -> '2026-2027'.
+SEASON_START_MONTH = 10
+
+
+def season_for_date(date_str) -> str | None:
+    """The season LABEL a game date falls in ('2025-2026'), by the October cutoff.
+    None if the date can't be parsed (caller then falls back to the active season)."""
+    import datetime as _dt
+    s = str(date_str or "").strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            d = _dt.datetime.strptime(s, fmt).date()
+            break
+        except ValueError:
+            d = None
+    if d is None:
+        return None
+    start = d.year if d.month >= SEASON_START_MONTH else d.year - 1
+    return f"{start}-{start + 1}"
+
+
+def resolve_new_game_season(date_str, override=None) -> str:
+    """The `games.season` value to STAMP on a new game.
+
+    `override` (a value from season_options, or None) wins when given: 'Current'
+    or '' -> the active sentinel; any label -> that label. With no override the
+    season is inferred from the date, mapped to the ACTIVE sentinel when it is the
+    active label so current-season play keeps the normal 'Current' behaviour.
+    Unparseable date + no override -> 'Current' (the safe default)."""
+    if override is not None and str(override).strip():
+        return ACTIVE if is_current(override) else str(override).strip()
+    lbl = season_for_date(date_str)
+    if not lbl or lbl == active_label():
+        return ACTIVE
+    return lbl
+
+
+def game_season(game_id) -> str:
+    """The season a game is stamped with ('Current' or a label). 'Current' if the
+    game is missing (safe default for roster/scope lookups)."""
+    r = query("SELECT season FROM games WHERE id=?", (game_id,))
+    return (r[0]["season"] if r else ACTIVE) or ACTIVE
+
+
+def roster_clause(season, alias="") -> tuple[str, tuple]:
+    """(SQL fragment, params) selecting the players who belong to `season`'s
+    roster — THE invariant for retro-tracking (a game's pickable roster is the
+    players of its own season, so a 2024-2025 game shows who actually played it).
+
+    Current season -> archived=0 (unchanged live behaviour; manually-archived
+    quit-mid-season players stay hidden). Past season -> season=<label> (those
+    rows are archived by the rollover, or created directly onto that season by
+    the retro quick-add — the archived flag is irrelevant there)."""
+    col = f"{alias}." if alias else ""
+    if is_current(season):
+        return f"{col}archived=0", ()
+    return f"{col}season=?", (str(season),)
+
+
 # ── New-Season rollover with grad-year auto-graduate + roster carry-forward ──────
 def graduating_year(label) -> int | None:
     """The class year that graduates after a season — the END year of the label

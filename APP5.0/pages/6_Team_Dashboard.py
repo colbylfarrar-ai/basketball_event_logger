@@ -808,10 +808,19 @@ has_tracked, _tracked_lock = ENT.tracked_gate(
 # one helper, both rankings: 'overall' (everything / results-only) + 'tracked'
 rank_info = TR.team_rank(team_id, scored=scored, tracked=tracked)
 
+# No completed games yet (a brand-new / empty season) is NOT a dead end: a coach
+# still needs the roster (returning players carried forward), the upcoming
+# schedule and player profiles to scout with. Show a note and keep rendering —
+# the results-, tracked- and trend-based sections self-gate below (has_tracked /
+# empty log), so they fall back to their own empty states instead of the whole
+# page stopping. (Was a hard st.stop() that blanked the dashboard.)
 if not log:
-    st.info(f"**{team['name']}** has no completed games yet. Enter results in "
-            "the Input Hub and they'll show up here.")
-    st.stop()
+    st.info(
+        f"**{team['name']}** has no completed games "
+        f"{'this season' if _is_cur_season else 'in that season'} yet — the "
+        "roster, upcoming schedule and player profiles are ready below. "
+        "Results-based ratings, trends and box scores fill in once games are "
+        "played and entered in the Input Hub.")
 
 # ── futuristic identity band (neon hero + recent-form strip) ────────────────
 strk = bundle["streaks"]
@@ -1157,7 +1166,8 @@ _players_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                                PURPLE=PURPLE, PINK=PINK, style=_style,
                                pctf=_pctf, archetypes=_archetypes,
                                zone_player_shooting=_zone_player_shooting,
-                               player_leaderboards=_player_leaderboards)
+                               player_leaderboards=_player_leaderboards,
+                               season=season_pick)
 
 
 # _players_ctx is rendered under the merged "Roster" view (file tail), alongside

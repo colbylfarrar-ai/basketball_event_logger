@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 from database.db import (query, execute, normalize_date,
                          delete_or_archive_player, delete_or_archive_official)
-from helpers.ui import page_chrome, page_header, lab_hero as _lab_hero
+from helpers.ui import page_chrome, page_header, lab_hero as _lab_hero, seg as _seg
 import helpers.seasons as SZ
 import helpers.auth as AUTH
 import helpers.change_requests as CR
@@ -106,14 +106,20 @@ def load_officials():
     rows = query("SELECT id, name, official_id, state FROM officials WHERE archived=0 ORDER BY name")
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","official_id","state"])
 
-def load_games():
-    rows = query("""
+def load_games(season=None):
+    """Games for the editor, optionally scoped to one season. `season` None or
+    '__all__' loads every season; a label ('Current' / '2025-2026') filters to it,
+    so the table doesn't balloon with every past season's games at once."""
+    where = "" if season in (None, "__all__") else "WHERE g.season = ?"
+    params = () if season in (None, "__all__") else (season,)
+    rows = query(f"""
         SELECT g.id, t1.name AS team1, t2.name AS team2,
                g.date, g.location, g.home_score, g.away_score, g.tracked, g.video_url
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
-    """)
+        {where}
+    """, params)
     df = pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["id","team1","team2","date","location","home_score","away_score","tracked","video_url"])
     if not df.empty:
@@ -358,15 +364,20 @@ else:
 st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-tab_teams, tab_players, tab_games, tab_schedule, tab_officials, tab_archive = st.tabs(
-    ["Teams", "Players", "Games", "Team Schedule", "Officials", "Season Archive"]
-)
+# Lazy sections via a segmented control (not st.tabs): st.tabs snaps back to the
+# first tab on every full rerun (each Save fires st.rerun()), which kept bouncing
+# the coach back to Teams. A keyed segmented_control persists the selection in
+# session_state, so a Save leaves you on the section you were editing — and only
+# the chosen section's queries run each rerun.
+_HUB_TABS = ["Teams", "Players", "Games", "Team Schedule", "Officials",
+             "Season Archive"]
+_hubview = _seg("Section", _HUB_TABS, default="Teams", key="hub_section") or "Teams"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TEAMS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_teams:
+if _hubview == "Teams":
     st.caption(EDITOR_HELP)
     orig = get_orig("_teams_orig", load_teams)
     orig = _sortable(orig, "teams_editor", ["name", "class", "gender", "state"])
@@ -419,7 +430,7 @@ with tab_teams:
 # ══════════════════════════════════════════════════════════════════════════════
 #  PLAYERS  (standalone team picker)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_players:
+if _hubview == "Players":
     tnames = team_names()
     if not tnames:
         st.warning("Add at least one team first.")
@@ -557,13 +568,32 @@ with tab_players:
 # ══════════════════════════════════════════════════════════════════════════════
 #  GAMES
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_games:
+if _hubview == "Games":
     tnames = team_names()
     if not tnames:
         st.warning("Add at least one team first.")
     else:
+        # Season filter for the LIST below (separate from the "Season for new
+        # games" stamp-picker under the editor). Only shown once an archive
+        # exists; defaults to the active season so the table stays lean. Changing
+        # it resets the editor so pending edits can't misapply to another season.
+        _gv_opts = SZ.season_options() + [("__all__", "All seasons")]
+        if len(_gv_opts) > 2:
+            _gv_lbls = [l for _v, l in _gv_opts]
+            _gv_sel = st.selectbox(
+                "Show games from", _gv_lbls, index=0, key="games_view_szn",
+                help="Filters the table below to one season (or all). The 'Season "
+                     "for new games' picker under the editor controls what NEW "
+                     "rows are stamped with.")
+            _gv_val = next(v for v, l in _gv_opts if l == _gv_sel)
+        else:
+            _gv_val = SZ.ACTIVE
+        if st.session_state.get("_games_view_prev") != _gv_val:
+            invalidate("_games_orig", "games_editor")
+            st.session_state["_games_view_prev"] = _gv_val
+
         st.caption(EDITOR_HELP)
-        orig = get_orig("_games_orig", load_games)
+        orig = get_orig("_games_orig", lambda: load_games(_gv_val))
         orig = _sortable(orig, "games_editor",
                          ["date", "team1", "team2", "location",
                           "home_score", "away_score"])
@@ -669,7 +699,7 @@ with tab_games:
 # ══════════════════════════════════════════════════════════════════════════════
 #  TEAM SCHEDULE  — same games table as the Games tab, team POV
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_schedule:
+if _hubview == "Team Schedule":
     tnames = team_names()
     if not tnames:
         st.warning("Add at least one team first.")
@@ -786,7 +816,7 @@ with tab_schedule:
 # ══════════════════════════════════════════════════════════════════════════════
 #  OFFICIALS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_officials:
+if _hubview == "Officials":
     st.caption(EDITOR_HELP)
     orig = get_orig("_officials_orig", load_officials)
     orig = _sortable(orig, "officials_editor", ["name", "official_id", "state"])
@@ -836,7 +866,7 @@ with tab_officials:
 # ══════════════════════════════════════════════════════════════════════════════
 #  SEASON ARCHIVE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_archive:
+if _hubview == "Season Archive":
     past_seasons = query(
         "SELECT DISTINCT season FROM players WHERE archived=1 ORDER BY season"
     )

@@ -56,6 +56,7 @@ from helpers.dashboard.player_edge import render as _render_edge
 import helpers.wpa as WPA
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.seasons as SEAS
 
 _cfg, ACCENT = page_chrome("Rankings")
 
@@ -64,7 +65,12 @@ def _paid_pool_lock():
     """Lock reason for a LEAGUE-WIDE tracked surface (the whole pool's possession
     data at once), or None if the viewer may see it. Needs Paid AND League-wide
     (the per-coach Coaches' Co-op toggle) — a Solo coach gets an INVITE to share,
-    not a denial. See helpers.entitlement.viewer_is_league_wide."""
+    not a denial. See helpers.entitlement.viewer_is_league_wide.
+
+    A PAST season is an open archive (last year's roster turned over) — no gate,
+    so the whole league's tracked history is free to everyone."""
+    if not SEAS.is_current(season_pick):
+        return None
     _ident = AUTH.current_user()
     if not ENT.has_paid_plan(_ident):
         return ("🔒 Tracked league analytics — possession ratings, four factors "
@@ -74,6 +80,21 @@ def _paid_pool_lock():
         return (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_ident)
                 else ENT.MSG_COOP_INVITE)
     return None
+
+
+def _archive_note():
+    """Note for a CURRENT-season-only pooled surface when a PAST season is picked,
+    else None. The league-wide tag / edge engines (play type, defense, player edge,
+    excitement, by-game-type) aren't partitioned per season, so an archive view
+    shows this note instead of silently serving the CURRENT season's data under a
+    past-season header. Mirrors the Team Dashboard rule (tag tabs are current-only).
+    Used as `_archive_note() or _paid_pool_lock()` so past short-circuits the lock."""
+    if _is_cur_season:
+        return None
+    return ("🗄️ This view is **current-season only** — the league-wide play-type, "
+            "defense and player-edge tables aren't archived per season yet. Switch "
+            "back to the current season to see them. (Rankings, records, tracked "
+            "efficiency and the KenPom map DO show the archived season.)")
 
 # futuristic-lab palette (mirrors the Team Analytics advanced layer)
 GOOD = "#3fb950"
@@ -99,16 +120,18 @@ TIER_FLOOR = ("D · REBUILDING", "#e74c3c")
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _team_results(team_id):
-    """Completed games for a team, oldest first. team1 = home, team2 = away."""
+    """Completed games for a team, oldest first. team1 = home, team2 = away.
+    Scoped to the page's selected season (`season_pick` — 'Current' or an archive
+    label)."""
     rows = query(
         """SELECT g.id, g.date, g.location, g.tracked,
                   g.team1_id, g.team2_id, g.home_score, g.away_score
            FROM games g
            WHERE (g.team1_id=? OR g.team2_id=?)
-             AND g.season='Current'
+             AND g.season=?
              AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
            ORDER BY g.date, g.id""",
-        (team_id, team_id))
+        (team_id, team_id, season_pick))
     out = []
     for g in rows:
         if g["team1_id"] == team_id:
@@ -200,7 +223,7 @@ def _pctile_bar(label, val_txt, pct):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _team_tracked_deep(team_id, vis=None):
+def _team_tracked_deep(team_id, vis=None, season="Current"):
     """Possession-based tracked deep dive for one team — None if no tracked games.
 
     Mirrors (and extends) APP3's 'Team Deep Dive': pace-adjusted ratings, the
@@ -211,7 +234,7 @@ def _team_tracked_deep(team_id, vis=None):
     `vis` (tuple of game ids, or None) is the AXIS-2 read-filter: None for own
     team / admin (full depth); a League-wide scout passes the team's POOLED games.
     """
-    game_log = TA.team_game_log(team_id)
+    game_log = TA.team_game_log(team_id, season=season)
     tracked_ids = [g["game_id"] for g in game_log if g["tracked"]]
     if vis is not None:
         _vis = set(vis)
@@ -276,63 +299,85 @@ _lab_hero("Rankings", phase="ANALYZE",
 
 gender = gender_radio()
 
+# Season picker — view a past/archived season's rankings. Only appears once a
+# season has been rolled over (archived labels exist); the active season is the
+# default, so the page is byte-identical when no archive exists. A PAST season is
+# an OPEN ARCHIVE (no entitlement gate — see _paid_pool_lock + _VIS below), the
+# same rule the Team Dashboard follows. season_pick is a module global the page
+# helpers read.
+_season_opts = SEAS.season_options()
+if len(_season_opts) > 1:
+    _slbl = st.selectbox(
+        "Season", [l for _v, l in _season_opts], key="rk_season",
+        help="View a past season's rankings. Past seasons are an open archive — "
+             "free, full depth, to everyone.")
+    season_pick = next(v for v, l in _season_opts if l == _slbl)
+else:
+    season_pick = SEAS.ACTIVE
+_is_cur_season = SEAS.is_current(season_pick)
+
 @st.cache_resource(show_spinner=False)
-def _score_ratings_fp(g, _fp):
+def _score_ratings_fp(g, season, _fp):
     # cache_resource survives the app-wide st.cache_data.clear() on every write;
     # keyed on the results fingerprint so the ~0.5s league rating recomputes only
-    # when a score moves. Read-only output → safe to share.
-    return TR.score_ratings(gender=g)
+    # when a score moves. Read-only output → safe to share. `season` partitions
+    # the cache so an archive view never serves the active season's ratings.
+    return TR.score_ratings(gender=g, season=season)
 
 
-def _score_ratings(g):
-    return _score_ratings_fp(g, TR.results_fingerprint())
+def _score_ratings(g, season="Current"):
+    return _score_ratings_fp(g, season, TR.results_fingerprint())
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_ratings(g, vis=None):
+def _tracked_ratings(g, vis=None, season="Current"):
     # `vis` (tuple of game ids, or None) is the AXIS-2 read-filter: the whole
     # tracked surface here is league-wide, so it aggregates only games the viewer
     # may see (None = admin/local = all; a League-wide coach = the pooled set).
+    # `season` scopes to the active season (default) or an archive label.
     return TR.tracked_ratings(gender=g,
-                              game_ids=(set(vis) if vis is not None else None))
+                              game_ids=(set(vis) if vis is not None else None),
+                              season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _adj_shoot(g, vis=None):
+def _adj_shoot(g, vis=None, season="Current"):
     """Opponent-adjusted eFG per team (helpers/adj_efficiency) — closes the
     KenPom gap for SHOOTING (ORtg/DRtg/PPP were already schedule-adjusted by
     tracked_ratings). Same AXIS-2 pool scope as the tracked ratings."""
     import helpers.adj_efficiency as AE
     try:
         return AE.adjusted_shooting(
-            g, game_ids=(set(vis) if vis is not None else None))
+            g, game_ids=(set(vis) if vis is not None else None), season=season)
     except Exception:
         return {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _form_stats(g):
-    return LA.team_form_stats(gender=g)
+def _form_stats(g, season="Current"):
+    return LA.team_form_stats(gender=g, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_pack(g, _tracked, vis=None):
+def _tracked_pack(g, _tracked, vis=None, season="Current"):
     return LA.team_tracked_pack(gender=g, tracked=_tracked,
-                                game_ids=(set(vis) if vis is not None else None))
+                                game_ids=(set(vis) if vis is not None else None),
+                                season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _win_net(g, _scored):
-    return LA.win_network(gender=g, scored=_scored)
+def _win_net(g, _scored, season="Current"):
+    return LA.win_network(gender=g, scored=_scored, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _team_stat_rows(g, _tracked, _pack, _form, vis=None):
+def _team_stat_rows(g, _tracked, _pack, _form, vis=None, season="Current"):
     # Every-team-stat table (the Tracked tab's full stat grid). `_tracked/_pack/
-    # _form` are passed-in caches (underscore = not hashed); the key is (g, vis),
-    # and `vis` keeps the tracked columns pool-scoped to this viewer.
+    # _form` are passed-in caches (underscore = not hashed); the key is
+    # (g, vis, season), and `vis` keeps the tracked columns pool-scoped to viewer.
     return LA.team_stat_table(gender=g, tracked=_tracked, pack=_pack, form=_form,
-                              game_ids=(set(vis) if vis is not None else None))
+                              game_ids=(set(vis) if vis is not None else None),
+                              season=season)
 
 
 # AXIS-2 read-filter for every LEAGUE-WIDE tracked aggregation on this page: the
@@ -340,12 +385,12 @@ def _team_stat_rows(g, _tracked, _pack, _form, vis=None):
 # a League-wide coach = own ∪ pooled = pooled). Solo / Free coaches don't reach
 # the tracked tabs (the lock stops them); their visible set just yields a sparse
 # `tracked` used only for graceful "tracked rank" fallbacks.
-_VIS = ENT.visible_tracked_game_ids(AUTH.current_user())
+_VIS = ENT.visible_tracked_game_ids(AUTH.current_user(), season=season_pick)
 _VISK = None if _VIS is None else tuple(sorted(_VIS))
 
-scored = _score_ratings(gender)
-tracked = _tracked_ratings(gender, _VISK)
-form_stats = _form_stats(gender)
+scored = _score_ratings(gender, season_pick)
+tracked = _tracked_ratings(gender, _VISK, season_pick)
+form_stats = _form_stats(gender, season_pick)
 
 if not scored:
     empty_state("No finished games for this league yet",
@@ -363,7 +408,7 @@ TOP25 = {tid for tid, r in scored.items() if r["Rank"] <= 25}
 # tracked advanced bundle (one cached box pass) — shared by League Lab tab.
 # Pool-scoped to the viewer (_VISK) so the league-wide charts never surface a
 # Solo coach's tracked depth.
-pack = _tracked_pack(gender, tracked, _VISK)
+pack = _tracked_pack(gender, tracked, _VISK, season_pick)
 
 # Page-level Class + Min-games filter — set the scope ONCE here (instead of each
 # tab rendering its own copy) so a coach picks classes + a games threshold and
@@ -418,7 +463,8 @@ if _view == "Overview":
     # League-wide counts are context, not decisions — a thin caption instead of a
     # 5-metric row so the leaderboards and rankings table rise to the top.
     tracked_ct = sum(1 for g in TR._finished_games(gender=gender,
-                                                   tracked_only=True))
+                                                   tracked_only=True,
+                                                   season=season_pick))
     st.caption(
         f"**League pulse** — {len(all_rows)} teams · "
         f"{int(sum(r['GP'] for r in all_rows) // 2)} games · "
@@ -435,9 +481,9 @@ if _view == "Overview":
            JOIN teams t1 ON t1.id = g.team1_id
            JOIN teams t2 ON t2.id = g.team2_id
            WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL
-             AND g.season='Current'
+             AND g.season=?
              AND t1.gender = ?
-           ORDER BY g.date DESC, g.id DESC LIMIT 8""", (gender,))
+           ORDER BY g.date DESC, g.id DESC LIMIT 8""", (season_pick, gender))
     if recent:
         st.markdown("<div class='section-hdr'>Recent results</div>",
                     unsafe_allow_html=True)
@@ -554,7 +600,7 @@ if _view == "Overview":
         # Inline margin-trend sparkline per team (last 7 games, oldest→newest) —
         # reads the engine's per_team_results; aligned to ov_tids row order.
         try:
-            _ptr = LA.per_team_results(gender)
+            _ptr = LA.per_team_results(gender, season=season_pick)
             df["Form"] = [[r["margin"] for r in _ptr.get(t, [])[-7:]]
                           for t in ov_tids]
         except Exception:
@@ -803,10 +849,10 @@ def _fx_team():
                       CASE WHEN team1_id=? THEN 'Home'   ELSE 'Away'    END AS home_away,
                       location
                FROM games
-               WHERE (team1_id=? OR team2_id=?) AND season='Current'
+               WHERE (team1_id=? OR team2_id=?) AND season=?
                  AND (home_score IS NULL OR away_score IS NULL)
                  AND date >= date('now', 'localtime')
-               ORDER BY date""", (pick, pick, pick, pick))
+               ORDER BY date""", (pick, pick, pick, pick, season_pick))
         if upcoming:
             st.markdown("**Upcoming**")
             up = [{"Date": u["date"],
@@ -869,8 +915,9 @@ def _fx_team():
     # the last section of _fx_team, so a locked viewer just gets the message + return.
     _ident = AUTH.current_user()
     _raw_trk = bool(query("SELECT 1 FROM games WHERE (team1_id=? OR team2_id=?) "
-                          "AND tracked=1 LIMIT 1", (pick, pick)))
-    _ok, _lock = ENT.tracked_gate(_ident, pick, _raw_trk)
+                          "AND tracked=1 AND season=? LIMIT 1",
+                          (pick, pick, season_pick)))
+    _ok, _lock = ENT.tracked_gate(_ident, pick, _raw_trk, season=season_pick)
     if not _ok:
         if _lock:
             st.info(_lock)
@@ -878,8 +925,9 @@ def _fx_team():
             empty_state("No tracked games for this team yet",
                         "Track a game in the Game Tracker to unlock the deep dive.")
         return
-    _dv = ENT.team_visible_tracked_ids(_ident, pick)
-    _deep = _team_tracked_deep(pick, None if _dv is None else tuple(sorted(_dv)))
+    _dv = ENT.team_visible_tracked_ids(_ident, pick, season=season_pick)
+    _deep = _team_tracked_deep(pick, None if _dv is None else tuple(sorted(_dv)),
+                               season=season_pick)
     if not _deep:
         empty_state("No tracked games for this team yet",
                     "Track a game in the Game Tracker to unlock possession "
@@ -1100,7 +1148,7 @@ def _fx_track():
             "average offense would shoot on you). **Pace** is possessions per "
             "game.")
 
-        _adj = _adj_shoot(gender, _VISK)
+        _adj = _adj_shoot(gender, _VISK, season_pick)
         for _at, _arow in tracked.items():     # cache returns a copy — safe to
             _a = _adj.get(_at) or {}            # annotate per rerun
             _arow["AdjeFG"] = _a.get("AdjeFG")
@@ -1159,7 +1207,8 @@ def _fx_track():
             # ── full team stat table — every tracked-team stat in one grid ────
             st.markdown("<div class='section-hdr'>Full team stat table</div>",
                         unsafe_allow_html=True)
-            full_rows = _team_stat_rows(gender, tracked, pack, form_stats, _VISK)
+            full_rows = _team_stat_rows(gender, tracked, pack, form_stats, _VISK,
+                                        season_pick)
             _keep = {r["name"] for r in rows}          # same Class / min-games filter
             full = pd.DataFrame([fr for fr in full_rows if fr["Team"] in _keep])
             if full.empty:
@@ -1651,37 +1700,39 @@ _GAME_TYPES = ["Regular", "District", "Rivalry", "Tournament", "Showcase", "Play
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _type_game_ids(g, game_type):
-    """Current-season game ids of `game_type` for gender `g` (played games only).
+def _type_game_ids(g, game_type, season="Current"):
+    """Game ids of `game_type` for gender `g` in `season` (played games only).
     'Regular' also picks up untyped games (NULL/'') — the default type."""
     if game_type == "Regular":
         rows = query(
             """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
-               WHERE g.season='Current' AND t.gender=? AND g.home_score IS NOT NULL
+               WHERE g.season=? AND t.gender=? AND g.home_score IS NOT NULL
                  AND (g.game_type='Regular' OR g.game_type IS NULL OR g.game_type='')""",
-            (g,))
+            (season, g))
     else:
         rows = query(
             """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
-               WHERE g.season='Current' AND t.gender=? AND g.home_score IS NOT NULL
-                 AND g.game_type=?""", (g, game_type))
+               WHERE g.season=? AND t.gender=? AND g.home_score IS NOT NULL
+                 AND g.game_type=?""", (season, g, game_type))
     return tuple(r["id"] for r in rows)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _type_power(g, game_type):
+def _type_power(g, game_type, season="Current"):
     """Opponent-adjusted power/record over just this game type's games (every team
     with a game of that type). {} when the type has no games."""
-    gids = _type_game_ids(g, game_type)
-    return TR.score_ratings(gender=g, game_ids=list(gids)) if gids else {}
+    gids = _type_game_ids(g, game_type, season)
+    return (TR.score_ratings(gender=g, game_ids=list(gids), season=season)
+            if gids else {})
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _type_stat_table(g, game_type):
+def _type_stat_table(g, game_type, season="Current"):
     """Team tracked-stat table scoped to this game type's tracked games (efficiency
     in-type; record cols may be season-wide). [] when no tracked game of the type."""
-    gids = _type_game_ids(g, game_type)
-    return LA.team_stat_table(gender=g, game_ids=list(gids)) if gids else []
+    gids = _type_game_ids(g, game_type, season)
+    return (LA.team_stat_table(gender=g, game_ids=list(gids), season=season)
+            if gids else [])
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1765,7 +1816,7 @@ def _fx_evr():
             "View", ["All games — power & record", "Tracked — efficiency"],
             horizontal=True, key="lab_gt_view")
         if _gt_view.startswith("All"):
-            _sc = _type_power(gender, _gt)
+            _sc = _type_power(gender, _gt, season_pick)
             if not _sc:
                 st.info(f"No **{_gt}** games yet. Set game types on the Roster & "
                         "District page (bulk-set makes playoffs quick).")
@@ -1795,7 +1846,7 @@ def _fx_evr():
                                f"the {_gt} games · scoped by the Class / min-games "
                                "filter above.")
         else:
-            _tt = [r for r in _type_stat_table(gender, _gt)
+            _tt = [r for r in _type_stat_table(gender, _gt, season_pick)
                    if r.get("Class") in _PICKED_CLASSES
                    and (r.get("Trk GP") or 0) >= _MIN_GP]
             if not _tt:
@@ -1813,7 +1864,7 @@ def _fx_evr():
     #  EXCITEMENT — Game Excitement Index leaderboard (tracked games)
     # ──────────────────────────────────────────────────────────────────────
     with lab_exc:
-        _exc_lock = _paid_pool_lock()   # tracked-depth, league-wide pooled
+        _exc_lock = _archive_note() or _paid_pool_lock()   # current-only tag surface
         if _exc_lock:
             st.info(_exc_lock)
         else:
@@ -1840,7 +1891,7 @@ def _fx_evr():
     #  PLAY TYPES — league leaders by one-tap set call (team + player)
     # ──────────────────────────────────────────────────────────────────────
     with lab_pt:
-        _pt_lock = _paid_pool_lock()  # league-wide pooled possession surface
+        _pt_lock = _archive_note() or _paid_pool_lock()  # current-only tag surface
         if _pt_lock:
             st.info(_pt_lock)
         else:
@@ -1929,7 +1980,7 @@ def _fx_evr():
     #  to Play types: man / 2-3 / press / trap / junk, team board + scorers)
     # ──────────────────────────────────────────────────────────────────────
     with lab_def:
-        _def_lock = _paid_pool_lock()  # league-wide pooled possession surface
+        _def_lock = _archive_note() or _paid_pool_lock()  # current-only tag surface
         if _def_lock:
             st.info(_def_lock)
         else:
@@ -2020,7 +2071,7 @@ def _fx_evr():
     with lab_pl:
         # League-wide, multi-team player tracked depth (SMOE / hand-split / Def WPA)
         # → Paid AND league-wide (Coaches' Co-op).
-        _pl_lock = _paid_pool_lock()
+        _pl_lock = _archive_note() or _paid_pool_lock()  # current-only edge surface
         if _pl_lock:
             st.info(_pl_lock)
         else:
@@ -2325,7 +2376,7 @@ def _fx_evr():
         st.caption("Each arrow-free link is a head-to-head result; teams sit on "
                    "the ring by rank. Node size = games, color = Power. Filter to "
                    "keep it readable.")
-        net = _win_net(gender, scored)
+        net = _win_net(gender, scored, season_pick)
         classes = sorted({n["class"] for n in net["nodes"]},
                          key=lambda c: TR._CLASS_RANK.get(c, 99))
         fc1, fc2 = st.columns([2, 1])
@@ -2389,7 +2440,7 @@ def _fx_evr():
         st.markdown(f"**Biggest upsets** — winners who beat much higher-Power teams"
                     f"{_cls_note}")
         node_cls = {n["id"]: n["class"] for n in net["nodes"]}
-        rows = LA._finished_rows(gender)
+        rows = LA._finished_rows(gender, season_pick)
         ups = []
         for g in rows:
             hp, ap = g["home_score"], g["away_score"]

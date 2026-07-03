@@ -57,8 +57,33 @@ def _full_stat_df(ctx):
 @st.fragment
 def render(ctx):
     if not ctx.players:
-        st.info("No eligible players for this team yet — track a game in the "
-                "Game Tracker.")
+        # No stat rows yet (a brand-new / empty season, or an untracked archive) —
+        # but a coach still needs the roster to scout returning players. Fall back
+        # to the raw roster from the players table, scoped to the viewed season,
+        # with measurables. Per-game stats and ratings fill in once games are
+        # tracked or entered. (Was a dead-end "track a game" info.)
+        import helpers.seasons as _SEAS
+        _clause, _cp = _SEAS.roster_clause(getattr(ctx, "season", "Current"))
+        _roster = query(
+            f"SELECT number, name, position, availability, height, wingspan, "
+            f"weight, grad_year, handedness FROM players WHERE team_id=? "
+            f"AND {_clause} ORDER BY number", (ctx.team_id, *_cp))
+        if not _roster:
+            st.info("No players on this team's roster yet — add them in the "
+                    "Input Hub (Players).")
+        else:
+            st.caption("Roster — no completed games yet, so ratings and per-game "
+                       "stats appear once you track or enter a game. Returning "
+                       "players are carried forward at each New Season rollover.")
+            st.dataframe(pd.DataFrame([{
+                "#": r["number"], "Player": r["name"],
+                "Pos": (r["position"] or "—"),
+                "Status": (r["availability"] or "Active"),
+                "Grad": (r["grad_year"] or "—"),
+                "Hand": (r["handedness"] or "right").title(),
+                "Ht (in)": r["height"], "Wing (in)": r["wingspan"],
+                "Wt (lb)": r["weight"],
+            } for r in _roster]), hide_index=True, width="stretch")
     else:
         st.caption("The roster localized: ratings side-by-side, per-game "
                    "production, an offense/defense map, and a lineup builder "

@@ -42,15 +42,16 @@ import helpers.stats as S
 LAMBDA_GAMES = 2.0
 
 
-def _tracked_pairs(gender=None, game_ids=None):
-    """[(game_id, team1, team2)] for finished tracked Current-season games."""
+def _tracked_pairs(gender=None, game_ids=None, season="Current"):
+    """[(game_id, team1, team2)] for finished tracked games of `season`
+    (default = the active season; pass a label to view an archive)."""
     sql = """SELECT g.id, g.team1_id t1, g.team2_id t2
              FROM games g JOIN teams t ON t.id = g.team1_id
-             WHERE g.tracked = 1 AND g.season = 'Current'"""
-    params: tuple = ()
+             WHERE g.tracked = 1 AND g.season = ?"""
+    params: tuple = (season,)
     if gender:
         sql += " AND t.gender = ?"
-        params = (gender,)
+        params = (season, gender)
     rows = query(sql, params)
     out = [(r["id"], r["t1"], r["t2"]) for r in rows]
     if game_ids is not None:
@@ -77,7 +78,8 @@ def _game_shooting(pairs):
     return box
 
 
-def adjusted_shooting(gender=None, game_ids=None, lambda_games=LAMBDA_GAMES):
+def adjusted_shooting(gender=None, game_ids=None, lambda_games=LAMBDA_GAMES,
+                      season="Current"):
     """Opponent-adjusted eFG% for every tracked team.
 
     Returns {team_id: {"AdjeFG","AdjoeFG","RawEFG","RawOeFG","dEFG","dOeFG",
@@ -85,7 +87,7 @@ def adjusted_shooting(gender=None, game_ids=None, lambda_games=LAMBDA_GAMES):
     "_meta" key {"mu","lam","rows"}; {} below 2 games or 2 teams.
     `game_ids` is the entitlement read-filter, same contract as tracked_ratings.
     """
-    pairs = _tracked_pairs(gender, game_ids)
+    pairs = _tracked_pairs(gender, game_ids, season=season)
     box = _game_shooting(pairs)
 
     # one offense row per (game, shooting team) with a known defender

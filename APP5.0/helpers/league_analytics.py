@@ -68,14 +68,14 @@ def _finished_rows(gender=None, season="Current"):
     )
 
 
-def per_team_results(gender=None, rows=None):
+def per_team_results(gender=None, rows=None, season="Current"):
     """
     {team_id: [ {game_id, date, opp, pf, pa, margin, won, tracked}, ... ]} with
     each team's completed games oldest-first (team1 = home). One game contributes
-    a row to each side.
+    a row to each side. `season` partitions to the active season by default.
     """
     if rows is None:
-        rows = _finished_rows(gender)
+        rows = _finished_rows(gender, season)
     out = defaultdict(list)
     for g in rows:
         h, a = g["team1_id"], g["team2_id"]
@@ -151,7 +151,7 @@ def _longest(results):
 #  RESULTS-ONLY TEAM PACK  (Pythagoras, luck, volatility, clutch, momentum)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP):
+def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP, season="Current"):
     """
     A rich, results-only stat pack for EVERY team in the league (needs final
     scores only, so it covers the whole field). Per team:
@@ -180,7 +180,7 @@ def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP):
       Momentum        recent-vs-season form (mom_delta), scaled
     """
     if results is None:
-        results = per_team_results(gender)
+        results = per_team_results(gender, season=season)
     raw = {}
     for tid, gl in results.items():
         n = len(gl)
@@ -259,7 +259,7 @@ def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP):
 #  WIN NETWORK  (who beat whom — directed edges for a node-link graph)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def win_network(gender=None, rows=None, scored=None):
+def win_network(gender=None, rows=None, scored=None, season="Current"):
     """
     The league's results as a directed graph: an edge winner → loser for each
     head-to-head result (count = how many times). Returns
@@ -269,9 +269,9 @@ def win_network(gender=None, rows=None, scored=None):
     supplies power / rank / name when given.
     """
     if rows is None:
-        rows = _finished_rows(gender)
+        rows = _finished_rows(gender, season)
     if scored is None:
-        scored = TR.score_ratings(gender=gender)
+        scored = TR.score_ratings(gender=gender, season=season)
     edges = defaultdict(int)
     wins = defaultdict(int)
     losses = defaultdict(int)
@@ -309,7 +309,7 @@ def win_network(gender=None, rows=None, scored=None):
 #  TRACKED STAT PACK  (one box pass → every per-team advanced number)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_tracked_pack(gender=None, tracked=None, game_ids=None):
+def team_tracked_pack(gender=None, tracked=None, game_ids=None, season="Current"):
     """
     Assemble the per-team advanced stat bundle from tracked games ONCE, so every
     chart that needs possession / shooting / quarter data reads the same numbers.
@@ -336,8 +336,9 @@ def team_tracked_pack(gender=None, tracked=None, game_ids=None):
       stl_r, blk_r   (steals / blocks per 100 opponent possessions)
     """
     if tracked is None:
-        tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids)
-    games = TR._finished_games(gender=gender, tracked_only=True, game_ids=game_ids)
+        tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids, season=season)
+    games = TR._finished_games(gender=gender, tracked_only=True, game_ids=game_ids,
+                               season=season)
     if not tracked or not games:
         return {"teams": [], "tracked": tracked or {}, "own": {}, "opp": {},
                 "gp": {}, "ts": {}, "qfor": {}, "qagn": {}, "tqbox": {},
@@ -563,7 +564,7 @@ def _fmt_cell(val, ndigits, pct):
 
 
 def team_stat_table(gender=None, tracked=None, pack=None, form=None,
-                    game_ids=None):
+                    game_ids=None, season="Current"):
     """
     The team analog of player_ratings.player_stat_table: ONE flat row per TRACKED
     team holding every team stat (power, efficiency, shooting on both ends,
@@ -584,11 +585,12 @@ def team_stat_table(gender=None, tracked=None, pack=None, form=None,
     formatting. None = undefined for this sample (never coerced to 0).
     """
     if tracked is None:
-        tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids)
+        tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids, season=season)
     if pack is None:
-        pack = team_tracked_pack(gender=gender, tracked=tracked, game_ids=game_ids)
+        pack = team_tracked_pack(gender=gender, tracked=tracked, game_ids=game_ids,
+                                 season=season)
     if form is None:
-        form = team_form_stats(gender=gender)
+        form = team_form_stats(gender=gender, season=season)
 
     ts = pack.get("ts", {})
     teams = pack.get("teams", sorted(tracked, key=lambda t: tracked[t]["Rank"]))

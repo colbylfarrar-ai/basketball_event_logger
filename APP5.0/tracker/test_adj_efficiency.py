@@ -10,7 +10,7 @@ def _run(pairs, box, monkey_teams=None):
     the two data readers."""
     from helpers import adj_efficiency as AE
     op, ob = AE._tracked_pairs, AE._game_shooting
-    AE._tracked_pairs = lambda gender=None, game_ids=None: pairs
+    AE._tracked_pairs = lambda gender=None, game_ids=None, season="Current": pairs
     AE._game_shooting = lambda p: box
     try:
         return AE.adjusted_shooting("F")

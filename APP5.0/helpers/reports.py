@@ -8,7 +8,6 @@ Streamlit-free.
 """
 from __future__ import annotations
 
-import datetime
 import html as _html
 
 from database.db import query
@@ -23,65 +22,17 @@ import helpers.archetypes as ARC
 import helpers.court_png as CPNG
 import helpers.shrinkage as SH
 import helpers.playtypes as PT
-from helpers.scout import _BRAND_MARK   # baked HoopTracks mark (xhtml2pdf-safe)
+import helpers.printouts as PO   # shared print chrome (band / KPI tiles / doc / mark)
 
 e = _html.escape
 
-_CSS = """
-*{box-sizing:border-box}
-html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#16202c;margin:0;
-  font-size:13px;line-height:1.45;background:#fff}
-.wrap{max-width:920px;margin:0 auto;padding:0 26px 30px}
-.band{background:linear-gradient(120deg,#0d1117 0%,#1b2433 60%,#243049 100%);
-  color:#f0f6fc;padding:20px 26px;border-bottom:5px solid #f0a500;margin-bottom:16px}
-.band .mark{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#f0a500;font-weight:800}
-.band h1{margin:4px 0 2px;font-size:25px}
-.band .meta{color:#aeb9c7;font-size:12.5px}
-.chips{margin-top:10px}
-.chip{display:inline-block;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
-  border-radius:999px;padding:4px 11px;margin:3px 6px 0 0;font-size:11.5px;color:#dbe4ee}
-.chip b{color:#fff}
-h2{font-size:13px;text-transform:uppercase;letter-spacing:1.4px;color:#0d1117;
-  border-left:4px solid #f0a500;padding-left:9px;margin:18px 0 9px}
-table{border-collapse:collapse;width:100%;font-size:12.5px}
-th{text-align:left;font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;color:#5b6675;
-  border-bottom:2px solid #16202c;padding:6px 8px}
-td{padding:5px 8px;border-bottom:1px solid #e7ebf0}
-tr:nth-child(even) td{background:#f7f9fb}
-.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-table.kpis{width:100%;border-collapse:separate;border-spacing:5px 0;margin:6px 0 4px}
-td.kpi{background:#f7f9fb;border:1px solid #e7ebf0;border-radius:9px;
-  padding:9px 6px;text-align:center}
-.kpi .v{font-size:20px;font-weight:800;color:#16202c;font-variant-numeric:tabular-nums}
-.kpi .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:#5b6675}
-.bdg{display:inline-block;font-size:10px;font-weight:700;color:#6b4e00;background:#fff3d6;
-  border:1px solid #f0d692;border-radius:5px;padding:2px 7px;margin:3px 5px 0 0}
-.foot{margin-top:20px;padding-top:10px;border-top:1px solid #e7ebf0;color:#8a94a2;font-size:11px}
-@media print{.break{page-break-before:always}}
-.court-img{display:block;margin:8px auto;border:1px solid #e7ebf0;border-radius:8px}
-"""
-
-
-def _today():
-    try:
-        d = datetime.date.today()
-        return f"{d.strftime('%b')} {d.day}, {d.year}"
-    except Exception:
-        return ""
-
-
-def _doc(title, body):
-    return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
-            f"<title>{e(title)}</title><style>{_CSS}</style></head><body>{body}"
-            f"<div class='wrap'><div class='foot'>Made with HoopTracks · app.hooptracks.com"
-            f"{(' · ' + _today()) if _today() else ''}.</div></div></body></html>")
-
-
-def _kpi(label, value):
-    # A table cell, not a flex child — xhtml2pdf (the PDF engine) has no flexbox.
-    return f"<td class='kpi'><div class='v'>{value}</div><div class='l'>{e(label)}</div></td>"
+# Shared HoopTracks print chrome — the CSS, doc wrapper, KPI tile and baked mark
+# now live in [[helpers.printouts]] so the scout sheet and these reports never
+# drift. Aliased so the body assembly below reads unchanged.
+_BRAND_MARK = PO.BRAND_MARK
+_today = PO.today
+_doc = PO.doc
+_kpi = PO.kpi
 
 
 def _pctile(val, key, pool):

@@ -26,23 +26,11 @@ import helpers.spacing as SPACE
 ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
                "RW": "Right wing", "RC": "Right corner"}
 
-# Official HoopTracks mark (baked from assets/logo_mark.svg — kept self-contained
-# so the print sheet never depends on the asset file being on the server). The
-# gold "HoopTracks" text beside it always renders even where SVG is dropped
-# (the pure-pip xhtml2pdf engine), so the brand survives every print path.
-_BRAND_MARK = (
-    "<svg width='15' height='15' viewBox='0 0 64 64' style='vertical-align:-2px'>"
-    "<path d='M12 46 L23 35 L31 43 L41 38' fill='none' stroke='#f0a500' "
-    "stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/>"
-    "<circle cx='12' cy='46' r='2.9' fill='#0d1117' stroke='#f0a500' stroke-width='1.7'/>"
-    "<circle cx='23' cy='35' r='2.9' fill='#0d1117' stroke='#f0a500' stroke-width='1.7'/>"
-    "<circle cx='31' cy='43' r='2.9' fill='#0d1117' stroke='#f0a500' stroke-width='1.7'/>"
-    "<circle cx='46' cy='35' r='12' fill='#f0a500'/>"
-    "<path d='M46 23 L46 47 M34 35 L58 35' stroke='#0d1117' stroke-width='1.8' "
-    "stroke-linecap='round'/>"
-    "<path d='M40 24 C45 30 45 40 40 46' fill='none' stroke='#0d1117' stroke-width='1.5'/>"
-    "<path d='M52 24 C47 30 47 40 52 46' fill='none' stroke='#0d1117' stroke-width='1.5'/>"
-    "</svg>")
+# Official HoopTracks mark — single-sourced from the shared print chrome
+# ([[helpers.printouts]]); the alias keeps existing importers working.
+import helpers.printouts as PO
+
+_BRAND_MARK = PO.BRAND_MARK
 
 # Coarse scout-section keys that were split into per-table keys (so a coach can
 # print just one table). A coach who previously hid the bundle keeps every child
@@ -626,15 +614,8 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     diagram layout); each section is independently guarded so the sheet still
     renders if a block is missing. Honours the same per-coach `hidden` toggles as
     the on-screen tab."""
-    import datetime
     e = html.escape
     extra = extra or {}
-    try:
-        _d = datetime.date.today()
-        today = f"{_d.strftime('%b')} {_d.day}, {_d.year}"
-    except Exception:
-        today = ""
-
     hidden = expand_hidden(hidden or set())
 
     def _show(k):
@@ -647,8 +628,6 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     _flow_close = "</div>" if compact else ""
 
     trk = sc["trk"]
-    rng = (f"ORtg {trk['ORtg']:.0f} · DRtg {trk['DRtg']:.0f} · "
-           f"Net {trk['NetRtg']:+.0f} · Pace {trk['Pace']:.0f}") if trk else ""
 
     # ── keys: how to guard / attack ──
     keys_html = ""
@@ -1330,99 +1309,117 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                                        "Defense-usage map — share by situation",
                                        "Scheme")
 
-    return f"""<!doctype html><html lang='en'><head><meta charset='utf-8'>
-<title>Scout · {e(sc['name'])}</title>
-<style>
-*{{box-sizing:border-box}}
-html{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-body{{font-family:'Segoe UI',Arial,sans-serif;color:#111;margin:0;font-size:11px;
-  line-height:1.35;background:#fff}}
-.wrap{{max-width:760px;margin:0 auto;padding:14px 18px}}
-h1{{margin:0;font-size:18px;letter-spacing:.2px}}
-.meta{{color:#555;font-size:11px;margin-top:2px}}
-.rng{{color:#222;font-size:11px;font-weight:600;margin:1px 0 8px}}
-h2{{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#111;
-  border-bottom:1.5px solid #111;padding-bottom:2px;margin:11px 0 5px}}
-table.cols{{width:100%;border-collapse:separate;border-spacing:10px 0;font-size:11px}}
-td.col{{width:50%;vertical-align:top;border:none;padding:0}}
-ul{{margin:2px 0;padding-left:15px}} li{{margin:2px 0}}
-table{{border-collapse:collapse;width:100%;font-size:11px}}
-th{{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;
-  color:#666;border-bottom:1px solid #111;padding:2px 6px}}
-td{{padding:2px 6px;border-bottom:1px solid #ddd;vertical-align:top}}
-.n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
-.note{{color:#555;font-size:10px;margin:3px 0}}
-table.two{{width:100%;border-collapse:separate;border-spacing:10px 0;font-size:11px}}
-td.two-col{{width:50%;vertical-align:top;border:none;padding:0}}
-.chart{{text-align:center;margin:4px 0}}
-img.court-img{{max-width:100%;height:auto}}
-table.cards{{border-collapse:separate;border-spacing:8px 8px;width:100%}}
-td.pcard{{width:50%;border:1px solid #ccc;padding:6px 8px;vertical-align:top}}
-td.pcard.empty{{border:none}}
-.phead{{font-size:12px;margin-bottom:1px}}
-.ovr{{color:#444;font-size:10px;font-weight:700}}
-.pos{{color:#444;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}}
-.brk{{color:#555;font-size:10px}}
-.pstat{{font-size:11px;margin:1px 0}}
-.pnote{{color:#b25e00;font-size:10px;margin-top:1px}}
-.mini{{text-align:center;margin-top:4px}}
-.notes-box{{white-space:pre-wrap;border:1px solid #ddd;padding:6px;font-size:11px;
-  min-height:46px}}
-table.diag{{border-collapse:separate;border-spacing:7px;width:100%}}
-table.diag td{{border:none;text-align:center;vertical-align:top;padding:1px}}
-.diagname{{border-bottom:1px solid #999;height:13px;margin:0 3px 3px}}
-.foot{{margin-top:12px;color:#999;font-size:9px}}
+    # ── shared print chrome: gradient band header + team-snapshot KPI strip ──
+    # (aligned with the player-card printout in helpers/reports.py; both draw
+    # their look from helpers/printouts.py so they never drift again).
+    _chips = ""
+    if trk:
+        _chips = (PO.chip("ORtg", f"{trk['ORtg']:.0f}")
+                  + PO.chip("DRtg", f"{trk['DRtg']:.0f}")
+                  + PO.chip("Net", f"{trk['NetRtg']:+.0f}")
+                  + PO.chip("Pace", f"{trk['Pace']:.0f}"))
+    _band = PO.band(
+        "Scouting Report", f"SCOUT — {e(sc['name'])}",
+        f"{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} · "
+        f"Power #{sc['rank']}/{sc['of']}", _chips)
+
+    # Team snapshot — the at-a-glance tile row the player card leads with.
+    # Values come straight from the four-factor spec rows already on the sheet.
+    _fmap = {f["label"]: f for f in (sc.get("factors") or [])
+             if f.get("value") is not None}
+
+    def _fv(label):
+        f = _fmap.get(label)
+        return f"{f['value']:.1f}" if f else "—"
+
+    # (the band chips already carry ORtg/DRtg/Net/Pace — the strip holds the
+    # four-factor + tendency reads so nothing prints twice)
+    snap_html = ""
+    if _fmap:
+        snap_html = PO.kpis(
+            PO.kpi("EFG%", _fv("Shooting (eFG%)"))
+            + PO.kpi("TOV%", _fv("Ball security (TOV%)"))
+            + PO.kpi("OREB%", _fv("Off. rebounding (OREB%)"))
+            + PO.kpi("FTR", _fv("Getting to line (FTr)"))
+            + PO.kpi("OPP EFG%", _fv("Shooting allowed (opp eFG%)"))
+            + PO.kpi("DREB%", _fv("Def. rebounding (DREB%)"))
+            + PO.kpi("3PA RATE", _fv("3-pt reliance (3PA rate)")))
+
+    # Scout-specific styling on top of the shared base: denser tables (the sheet
+    # must fit a page), the two-column layouts, personnel cards, blank-diagram
+    # grid and the compact flow. Layout cells pin background:#fff so the base
+    # zebra striping never paints a structural cell.
+    _extra_css = """
+.wrap{max-width:840px;padding:0 20px 24px}
+table{font-size:11px}
+th{font-size:9px;padding:3px 6px}
+td{padding:3px 6px;vertical-align:top}
+h2{font-size:11px;margin:14px 0 6px}
+ul{margin:2px 0;padding-left:15px} li{margin:2px 0;font-size:11.5px}
+.note{color:#5b6675;font-size:10px;margin:3px 0}
+.kpi .v{font-size:16px}
+table.cols{width:100%;border-collapse:separate;border-spacing:10px 0}
+td.col{width:50%;vertical-align:top;border:none;padding:0;background:#fff}
+table.two{width:100%;border-collapse:separate;border-spacing:10px 0}
+td.two-col{width:50%;vertical-align:top;border:none;padding:0;background:#fff}
+.chart{text-align:center;margin:4px 0}
+table.cards{border-collapse:separate;border-spacing:8px 8px;width:100%}
+td.pcard{width:50%;border:1px solid #e2e7ee;border-radius:9px;padding:7px 9px;
+  vertical-align:top;background:#fbfcfe}
+td.pcard.empty{border:none;background:#fff}
+.phead{font-size:12px;margin-bottom:1px}
+.ovr{color:#5b6675;font-size:10px;font-weight:700}
+.pos{color:#5b6675;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.brk{color:#5b6675;font-size:10px}
+.pstat{font-size:11px;margin:1px 0}
+.pnote{color:#b25e00;font-size:10px;margin-top:1px}
+.mini{text-align:center;margin-top:4px}
+.notes-box{white-space:pre-wrap;border:1px solid #e7ebf0;border-radius:8px;
+  background:#f7f9fb;padding:7px;font-size:11px;min-height:46px}
+table.diag{border-collapse:separate;border-spacing:7px;width:100%}
+table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;background:#fff}
+.diagname{border-bottom:1px solid #999;height:13px;margin:0 3px 3px}
 /* Compact layout: flow the text/table sections into TWO columns so far more
    fits per page (browser print honours column-count; xhtml2pdf ignores it and
    falls back to a single column — still valid). Keep each h2+table together. */
-.flow2{{column-count:2;column-gap:18px}}
-.flow2>h2:first-child{{margin-top:0}}
-.flow2 h2{{break-after:avoid;-webkit-column-break-after:avoid}}
-.flow2 table,.flow2 ul,.flow2 .note,.flow2 .notes-box,.flow2 .hb{{
-  break-inside:avoid;-webkit-column-break-inside:avoid}}
-table.brandbar{{width:100%;border-collapse:collapse;border-bottom:2px solid #f0a500;
-  margin-bottom:6px}}
-table.brandbar td{{border:none;padding:0 0 3px;vertical-align:bottom}}
-.brand{{color:#f0a500;font-weight:800;font-size:14px;letter-spacing:.2px}}
-.brandtag{{text-align:right;color:#999;font-size:9px;text-transform:uppercase;
-  letter-spacing:1.2px}}
-@page{{margin:.4in}}
-@media print{{.wrap{{padding:6px 10px}} td.pcard,table.diag td{{page-break-inside:avoid}}}}
-</style></head><body><div class='wrap'>
-<table class='brandbar'><tr>
-<td class='brand'>{_BRAND_MARK} HoopTracks</td>
-<td class='brandtag'>scouting report</td></tr></table>
-<h1>SCOUT — {e(sc['name'])}</h1>
-<div class='meta'>{e(opponent_label)} · {e(sc['class'])} · {e(sc['record'])} ·
-  Power #{sc['rank']}/{sc['of']}</div>
-<div class='rng'>{e(rng)}</div>
-{keys_html}
-{report_html}
-{coach_html}
-{pers_html}
-{intel_html}
-{mu_html}
-{two_html}
-{_flow_open}{eff_html}
-{breakeven_html}
-{pred_html}
-{pc_html}
-{three_html}
-{cr_html}
-{plen_html}
-{qs_html}
-{def_html}
-{con_html}
-{sit_html}
-{gs_html}
-{zx_html}
-{notes_html}{_flow_close}
-{shot_html}
-{sbp_html}
-{sbd_html}
-{sbpd_html}
-{sbdd_html}
-{diag_html}
-<div class='foot'>Made with <b style='color:#f0a500'>HoopTracks</b> ·
-  app.hooptracks.com{(' · ' + today) if today else ''}</div>
-</div></body></html>"""
+.flow2{column-count:2;column-gap:18px}
+.flow2>h2:first-child{margin-top:0}
+.flow2 h2{break-after:avoid;-webkit-column-break-after:avoid}
+.flow2 table,.flow2 ul,.flow2 .note,.flow2 .notes-box,.flow2 .hb{
+  break-inside:avoid;-webkit-column-break-inside:avoid}
+@page{margin:.4in}
+@media print{.wrap{padding:6px 12px} td.pcard,table.diag td{page-break-inside:avoid}}
+"""
+
+    body = (
+        f"{_band}<div class='wrap'>"
+        f"{snap_html}"
+        f"{keys_html}"
+        f"{report_html}"
+        f"{coach_html}"
+        f"{pers_html}"
+        f"{intel_html}"
+        f"{mu_html}"
+        f"{two_html}"
+        f"{_flow_open}{eff_html}"
+        f"{breakeven_html}"
+        f"{pred_html}"
+        f"{pc_html}"
+        f"{three_html}"
+        f"{cr_html}"
+        f"{plen_html}"
+        f"{qs_html}"
+        f"{def_html}"
+        f"{con_html}"
+        f"{sit_html}"
+        f"{gs_html}"
+        f"{zx_html}"
+        f"{notes_html}{_flow_close}"
+        f"{shot_html}"
+        f"{sbp_html}"
+        f"{sbd_html}"
+        f"{sbpd_html}"
+        f"{sbdd_html}"
+        f"{diag_html}"
+        "</div>")
+    return PO.doc(f"Scout · {sc['name']}", body, extra_css=_extra_css)

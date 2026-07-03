@@ -411,18 +411,6 @@ def season_record_png(team_id, gender):
     ranked_wins = sorted(
         [gm for gm in wins if gm.get("_opp_rank")],
         key=lambda gm: gm["_opp_rank"])[:3]
-    if ranked_wins:
-        _panel(ax, 8, 27, 84, 25)           # extends lower so text isn't flush
-        ax.text(12, 48.3, "SIGNATURE WINS", color=GOLD, fontsize=12.5,
-                fontweight="bold", ha="left", va="center", zorder=2)
-        y = 42.5
-        for gm in ranked_wins:
-            ax.text(12, y, f"{gm['pf']}–{gm['pa']}  vs {_fit(gm['opp'], 24)}",
-                    color=FG, fontsize=15, fontweight="bold", ha="left",
-                    va="center", zorder=2)
-            ax.text(88, y, f"power #{gm['_opp_rank']} · {gm['date']}",
-                    color=GREY, fontsize=12.5, ha="right", va="center", zorder=2)
-            y -= 5.6
 
     # ── top 3 players — OVERALL (fallback: scoring) ──────────────────────────
     table = PR.player_stat_table(gender=gender, min_games=1)
@@ -432,22 +420,46 @@ def season_record_png(team_id, gender):
         top = sorted(rated, key=lambda r: -r["OVERALL"])[:3]
     else:
         top = sorted(mine, key=lambda r: -(r.get("PPG") or 0))[:3]
-    if top:
-        _panel(ax, 8, 6.5, 84, 21.5)        # extends lower so text isn't flush
-        ax.text(12, 24.5, "TOP PLAYERS", color=GOLD, fontsize=12.5,
-                fontweight="bold", ha="left", va="center", zorder=2)
-        y = 19.5
-        for r in top:
-            ax.text(12, y, f"#{r.get('number', '')} {_fit(r['name'], 22)}",
-                    color=FG, fontsize=15, fontweight="bold", ha="left",
-                    va="center", zorder=2)
-            line = (f"{(r.get('PPG') or 0):.1f} PPG · {(r.get('RPG') or 0):.1f} REB · "
-                    f"{(r.get('APG') or 0):.1f} AST")
-            if r.get("OVERALL") is not None:
-                line += f" · {r['OVERALL']:.0f} OVR"
-            ax.text(88, y, line, color=GREY, fontsize=12.5, ha="right",
-                    va="center", zorder=2)
-            y -= 5.3
+
+    # ── one panel holds both sections (Signature Wins over Top Players), so the
+    #    boxes never collide and clear the stat block above. Top edge sits below
+    #    the MARGIN/PPG label; a thin rule splits the two halves.
+    if ranked_wins or top:
+        _panel(ax, 8, 7, 84, 43)            # 7 → 50
+        if ranked_wins:
+            ax.text(12, 46, "SIGNATURE WINS", color=GOLD, fontsize=12.5,
+                    fontweight="bold", ha="left", va="center", zorder=2)
+            y = 40.6
+            for gm in ranked_wins:
+                # the OPPONENT's identity: their class rank, power rank, date
+                orank = gm["_opp_rank"]
+                ocr, _ocn = class_rank(scored, gm["opp_id"])
+                ocls = scored.get(gm["opp_id"], {}).get("class", "")
+                meta = (f"{ocls} #{ocr} · " if ocr else "") + \
+                       f"power #{orank} · {gm['date']}"
+                ax.text(12, y, f"{gm['pf']}–{gm['pa']}  vs {_fit(gm['opp'], 22)}",
+                        color=FG, fontsize=14.5, fontweight="bold", ha="left",
+                        va="center", zorder=2)
+                ax.text(88, y, meta, color=GREY, fontsize=12, ha="right",
+                        va="center", zorder=2)
+                y -= 4.9
+        if ranked_wins and top:
+            ax.plot([12, 88], [27.6, 27.6], color=EDGE, lw=1, zorder=2)
+        if top:
+            ax.text(12, 23.5, "TOP PLAYERS", color=GOLD, fontsize=12.5,
+                    fontweight="bold", ha="left", va="center", zorder=2)
+            y = 18.4
+            for r in top:
+                ax.text(12, y, f"#{r.get('number', '')} {_fit(r['name'], 22)}",
+                        color=FG, fontsize=14.5, fontweight="bold", ha="left",
+                        va="center", zorder=2)
+                line = (f"{(r.get('PPG') or 0):.1f} PPG · {(r.get('RPG') or 0):.1f} REB · "
+                        f"{(r.get('APG') or 0):.1f} AST")
+                if r.get("OVERALL") is not None:
+                    line += f" · {r['OVERALL']:.0f} OVR"
+                ax.text(88, y, line, color=GREY, fontsize=12, ha="right",
+                        va="center", zorder=2)
+                y -= 4.9
     _foot(ax)
     return _png(fig)
 

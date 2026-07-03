@@ -95,6 +95,41 @@ def _fit(name, limit=26):
     return n if len(n) <= limit else n[:limit - 1] + "…"
 
 
+def _team_label(name, base_fs, fit_chars):
+    """(text, fontsize) for a team name that ALWAYS shows in full — never an
+    ellipsis. Fits at `base_fs` when short enough; a long name first drops its
+    redundant ' Girls'/' Boys' suffix (every team carries it), then shrinks the
+    font as a last resort so the whole name still fits the width."""
+    s = str(name)
+    if len(s) <= fit_chars:
+        return s, base_fs
+    for suf in (" Girls", " Boys"):
+        if s.endswith(suf):
+            s = s[:-len(suf)]
+            break
+    if len(s) <= fit_chars:
+        return s, base_fs
+    return s, max(base_fs * fit_chars / len(s), base_fs * 0.55)
+
+
+def _row_name(prefix, name, base_fs, fit_chars):
+    """(text, fontsize) for a 'prefix + team name' list row that always shows in
+    full: drops the redundant gender suffix if the combined line is too long,
+    then shrinks the font — never an ellipsis."""
+    full = prefix + str(name)
+    if len(full) <= fit_chars:
+        return full, base_fs
+    nm = str(name)
+    for suf in (" Girls", " Boys"):
+        if nm.endswith(suf):
+            nm = nm[:-len(suf)]
+            break
+    full = prefix + nm
+    if len(full) <= fit_chars:
+        return full, base_fs
+    return full, max(base_fs * fit_chars / len(full), base_fs * 0.55)
+
+
 def _png(fig):
     import matplotlib.pyplot as plt
     buf = io.BytesIO()
@@ -309,7 +344,8 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
                 facecolor=GOLD, edgecolor="none", zorder=2))
         # name sits a touch high so Power/record/class rank rides beneath it
         _ny = y + h / 2 + (2.6 if subline else 0)
-        ax.text(13, _ny, _fit(name, 22), color=ink, fontsize=26,
+        _nm, _nfs = _team_label(name, 26, 22)
+        ax.text(13, _ny, _nm, color=ink, fontsize=_nfs,
                 fontweight="bold", ha="left", va="center", zorder=3)
         if subline:
             ax.text(13, _ny - 5.0, subline, color=ink, fontsize=12.5,
@@ -350,7 +386,8 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
                 ax.add_patch(FancyBboxPatch(
                     (9, row_y - 2.4), 1.8, 4.8, boxstyle="round,pad=0,rounding_size=.6",
                     facecolor=clr, edgecolor="none", zorder=2))
-                ax.text(13, row_y, _fit(nm, 16), color=FG, fontsize=13,
+                _qnm, _qfs = _team_label(nm, 13, 16)
+                ax.text(13, row_y, _qnm, color=FG, fontsize=_qfs,
                         fontweight="bold", ha="left", va="center", zorder=2)
                 for x, q in zip(xs, cols):
                     ax.text(x, row_y, str(per.get(tid, {}).get(q, 0)), color=FG,
@@ -386,7 +423,8 @@ def season_record_png(team_id, gender):
 
     fig, ax = _fig()
     _brand(ax, "season report")
-    ax.text(50, 86.5, _fit(s["name"], 30), color=FG, fontsize=28, fontweight="bold",
+    _hn, _hfs = _team_label(s["name"], 28, 30)
+    ax.text(50, 86.5, _hn, color=FG, fontsize=_hfs, fontweight="bold",
             ha="center", va="center")
     ax.text(50, 81.5, f"Class {s.get('class', 'N/A')} · Season to date",
             color=GREY, fontsize=14, ha="center", va="center")
@@ -446,9 +484,10 @@ def season_record_png(team_id, gender):
                 ocls = scored.get(gm["opp_id"], {}).get("class", "")
                 meta = (f"{ocls} #{ocr} · " if ocr else "") + \
                        f"power #{orank} · {gm['date']}"
-                ax.text(12, y, f"{gm['pf']}–{gm['pa']}  vs {_fit(gm['opp'], 22)}",
-                        color=FG, fontsize=14.5, fontweight="bold", ha="left",
-                        va="center", zorder=2)
+                _rt, _rfs = _row_name(f"{gm['pf']}–{gm['pa']}  vs ",
+                                      gm["opp"], 14.5, 32)
+                ax.text(12, y, _rt, color=FG, fontsize=_rfs, fontweight="bold",
+                        ha="left", va="center", zorder=2)
                 ax.text(88, y, meta, color=GREY, fontsize=12, ha="right",
                         va="center", zorder=2)
                 y -= 4.9
@@ -459,9 +498,10 @@ def season_record_png(team_id, gender):
                     fontweight="bold", ha="left", va="center", zorder=2)
             y = 18.4
             for r in top:
-                ax.text(12, y, f"#{r.get('number', '')} {_fit(r['name'], 22)}",
-                        color=FG, fontsize=14.5, fontweight="bold", ha="left",
-                        va="center", zorder=2)
+                _pt, _pfs = _row_name(f"#{r.get('number', '')} ", r["name"],
+                                      14.5, 26)
+                ax.text(12, y, _pt, color=FG, fontsize=_pfs, fontweight="bold",
+                        ha="left", va="center", zorder=2)
                 line = (f"{(r.get('PPG') or 0):.1f} PPG · {(r.get('RPG') or 0):.1f} REB · "
                         f"{(r.get('APG') or 0):.1f} AST")
                 if r.get("OVERALL") is not None:
@@ -501,7 +541,8 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
 
     fig, ax = _fig()
     _brand(ax, f"{len(chosen)} games")
-    ax.text(50, 88, _fit(tname, 30), color=FG, fontsize=28, fontweight="bold",
+    _hn, _hfs = _team_label(tname, 28, 30)
+    ax.text(50, 88, _hn, color=FG, fontsize=_hfs, fontweight="bold",
             ha="center", va="center")
     if chips:
         ax.text(50, 83.2, chips, color=GREY, fontsize=13, ha="center",
@@ -534,8 +575,9 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
         clr = GOOD if gm["won"] else BAD
         ax.text(12, y, "W" if gm["won"] else "L", color=clr, fontsize=fs,
                 fontweight="bold", ha="left", va="center", zorder=2)
-        ax.text(16.5, y, f"{gm['pf']}–{gm['pa']}  vs {_fit(gm['opp'], 22)}",
-                color=FG, fontsize=fs, ha="left", va="center", zorder=2)
+        _rt, _rfs = _row_name(f"{gm['pf']}–{gm['pa']}  vs ", gm["opp"], fs, 30)
+        ax.text(16.5, y, _rt, color=FG, fontsize=_rfs, ha="left", va="center",
+                zorder=2)
         # opponent identity on the right: their class rank · power rank · date
         ocr, _ocn = class_rank(scored, gm["opp_id"])
         ocls = scored.get(gm["opp_id"], {}).get("class", "")

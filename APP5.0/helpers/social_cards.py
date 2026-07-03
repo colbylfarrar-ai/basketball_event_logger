@@ -5,9 +5,12 @@ Coach-facing "post this" cards rendered with matplotlib Agg (the court_png.py
 engine — zero new dependencies, renders identically on the VPS): a branded dark
 canvas in the app palette with the numbers dropped in. Three cards:
 
-  game_result_png(game_id, team_id)   — final score, W/L, top performers
-  season_record_png(team_id, gender)  — record, power rank, margin, best player
-  last_n_png(team_id, gender, n)      — the stretch: record, margin, hot hand
+  game_result_png(game_id, team_id …)  — head-to-head score, ranks, quarters
+  season_record_png(team_id, gender …) — record, power/class rank, wins, players
+  games_png(team_id, gender, ids …)    — a selected set: record, margin, results
+
+Every card takes an optional `bg` background colour; the palette
+(_theme) adapts text / panel / accent contrast to it.
 
 Display-only assembly of existing engines (score_ratings, player_stat_table,
 aggregate_player_boxes) — no new stats, real numbers only. Streamlit-free;
@@ -35,22 +38,52 @@ BAD = "#e74c3c"
 _W = 10.8      # 1080 px at dpi=100, square
 
 
-def _fig():
+def _mix(c1, c2, t):
+    """Blend hex `c1` → `c2` by fraction `t` (0..1)."""
+    a = c1.lstrip("#")
+    b = c2.lstrip("#")
+    r = tuple(round(int(a[i:i + 2], 16) * (1 - t) + int(b[i:i + 2], 16) * t)
+              for i in (0, 2, 4))
+    return "#%02x%02x%02x" % r
+
+
+def _theme(bg):
+    """A card palette derived from the chosen background colour so text and panels
+    keep their contrast on any bg (dark → light text, light → dark text). Brand
+    gold is kept as-is. Returns bg/fg/grey/panel/edge."""
+    bg = _norm_hex(bg, BG)
+    ink = _ink(bg)                              # near-white or near-black
+    dark = ink == "#ffffff"                     # bg is dark → light text
+    fg = "#f0f6fc" if dark else "#0d1117"
+    return {
+        "bg": bg,
+        "fg": fg,
+        "grey": _mix(fg, bg, 0.42),             # secondary text
+        "panel": _mix(bg, fg, 0.09),            # subtly raised card
+        "edge": _mix(bg, fg, 0.22),
+        # brand gold reads on dark; on a light bg darken it so the data accents
+        # (record, ranks, section headers) don't wash out gold-on-light.
+        "accent": GOLD if dark else "#9a6400",
+    }
+
+
+def _fig(bg=BG):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     fig = plt.figure(figsize=(_W, _W), dpi=100)
-    fig.patch.set_facecolor(BG)
+    fig.patch.set_facecolor(bg)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, 100)
     ax.set_ylim(0, 100)
     ax.axis("off")
-    ax.set_facecolor(BG)
+    ax.set_facecolor(bg)
     return fig, ax
 
 
-def _brand(ax, kicker):
-    """Top brand bar: ball mark + wordmark left, card kicker right, gold rule."""
+def _brand(ax, kicker, bg=BG, grey=GREY):
+    """Top brand bar: ball mark + wordmark left, card kicker right, gold rule.
+    `bg` fills the mark cut-outs so it reads on any card background."""
     from matplotlib.patches import Circle
     # the "tracked path → ball" mark, simplified for raster
     pts = [(4.2, 93.4), (5.9, 95.0), (7.3, 93.9)]
@@ -58,29 +91,29 @@ def _brand(ax, kicker):
         ax.plot([pts[i][0], pts[i + 1][0]], [pts[i][1], pts[i + 1][1]],
                 color=GOLD, lw=2.4, solid_capstyle="round", zorder=3)
     for p in pts:
-        ax.add_patch(Circle(p, 0.42, facecolor=BG, edgecolor=GOLD, lw=1.6, zorder=4))
+        ax.add_patch(Circle(p, 0.42, facecolor=bg, edgecolor=GOLD, lw=1.6, zorder=4))
     ball = Circle((9.4, 94.4), 1.15, facecolor=GOLD, edgecolor=GOLD, zorder=4)
     ax.add_patch(ball)
-    ax.plot([8.25, 10.55], [94.4, 94.4], color=BG, lw=1.1, zorder=5)
-    ax.plot([9.4, 9.4], [93.25, 95.55], color=BG, lw=1.1, zorder=5)
+    ax.plot([8.25, 10.55], [94.4, 94.4], color=bg, lw=1.1, zorder=5)
+    ax.plot([9.4, 9.4], [93.25, 95.55], color=bg, lw=1.1, zorder=5)
     ax.text(11.5, 94.4, "HOOPTRACKS", color=GOLD, fontsize=21,
             fontweight="bold", va="center", ha="left")
-    ax.text(96, 94.4, kicker.upper(), color=GREY, fontsize=14,
+    ax.text(96, 94.4, kicker.upper(), color=grey, fontsize=14,
             va="center", ha="right", fontweight="bold")
     ax.plot([4, 96], [91.2, 91.2], color=GOLD, lw=2.5)
 
 
-def _foot(ax):
-    ax.plot([4, 96], [5.4, 5.4], color=EDGE, lw=1.2)
-    ax.text(50, 3.2, "app.hooptracks.com", color=GREY, fontsize=12,
+def _foot(ax, grey=GREY, edge=EDGE):
+    ax.plot([4, 96], [5.4, 5.4], color=edge, lw=1.2)
+    ax.text(50, 3.2, "app.hooptracks.com", color=grey, fontsize=12,
             ha="center", va="center")
 
 
-def _panel(ax, x, y, w, h):
+def _panel(ax, x, y, w, h, panel=PANEL, edge=EDGE):
     from matplotlib.patches import FancyBboxPatch
     ax.add_patch(FancyBboxPatch(
         (x, y), w, h, boxstyle="round,pad=0,rounding_size=1.4",
-        facecolor=PANEL, edgecolor=EDGE, lw=1.2, zorder=1))
+        facecolor=panel, edgecolor=edge, lw=1.2, zorder=1))
 
 
 def _tile(ax, cx, cy, label, value, color=FG, vsize=27):
@@ -141,7 +174,8 @@ def _row_name(prefix, name, base_fs, fit_chars):
 def _png(fig):
     import matplotlib.pyplot as plt
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=BG, dpi=100)
+    # honour the figure's own background (set per card by _fig(bg))
+    fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), dpi=100)
     plt.close(fig)
     return buf.getvalue()
 
@@ -288,14 +322,18 @@ def _top_performers(game_ids, team_id, limit=3):
 
 # ── card 1: game result — symmetric head-to-head ─────────────────────────────
 def game_result_png(game_id, team_id, color_a=None, color_b=None,
-                    show_quarters=False, gender=None, title=None):
+                    show_quarters=False, gender=None, title=None, bg=None):
     """Head-to-head final-score card: two team-colour panels (same treatment for
     both), the score, each team's Power/record/class-rank line, an optional
     coach headline (`title`, e.g. "Region Championship") and an optional
     quarter-by-quarter line. `team_id` is the dashboard team → shown on top;
     `color_a`/`color_b` are its / the opponent's panel colours (defaults derived
-    from team id). None if game not finished."""
+    from team id); `bg` sets the card background (default dark). None if game not
+    finished."""
     from matplotlib.patches import FancyBboxPatch
+    T = _theme(bg or BG)
+    _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
+                                        T["panel"], T["edge"], T["accent"])
     scored = TR.score_ratings(gender=gender) if gender else {}
     g = query(
         """SELECT g.*, t1.name n1, t2.name n2
@@ -317,8 +355,8 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
     ca = _norm_hex(color_a, default_team_color(a_id))
     cb = _norm_hex(color_b, default_team_color(b_id))
 
-    fig, ax = _fig()
-    _brand(ax, "final score")
+    fig, ax = _fig(_BG)
+    _brand(ax, "final score", bg=_BG, grey=GREY)
     sub = g["date"] or ""
     if g.get("location"):
         sub = f"{sub} · {g['location']}" if sub else g["location"]
@@ -377,7 +415,7 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
     if show_quarters:
         per, qs = _quarter_points(game_id)
         if qs:
-            _panel(ax, 7, 9.5, 86, 21)
+            _panel(ax, 7, 9.5, 86, 21, panel=PANEL, edge=EDGE)
             cols = qs[:5]                       # Q1–Q4 (+ up to one OT)
             n = len(cols) + 1                   # + total
             x0, x1 = 30, 90
@@ -402,14 +440,18 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
                             fontsize=14, ha="center", va="center", zorder=2)
                 ax.text(xs[-1], row_y, str(tot), color=GOLD, fontsize=14,
                         fontweight="bold", ha="center", va="center", zorder=2)
-    _foot(ax)
+    _foot(ax, grey=GREY, edge=EDGE)
     return _png(fig)
 
 
 # ── card 2: season record ────────────────────────────────────────────────────
-def season_record_png(team_id, gender):
+def season_record_png(team_id, gender, bg=None):
     """Season-to-date card: record, power + class rank, streak, margin, the
-    marquee wins and the top-3 players."""
+    marquee wins and the top-3 players. `bg` sets the card background (defaults
+    to the team's colour, resolved by the caller)."""
+    T = _theme(bg or default_team_color(team_id))
+    _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
+                                        T["panel"], T["edge"], T["accent"])
     scored = TR.score_ratings(gender=gender)
     s = scored.get(team_id)
     if not s:
@@ -429,8 +471,8 @@ def season_record_png(team_id, gender):
                 break
         streak = f"{'W' if last else 'L'}{n}"
 
-    fig, ax = _fig()
-    _brand(ax, "season report")
+    fig, ax = _fig(_BG)
+    _brand(ax, "season report", bg=_BG, grey=GREY)
     _hn, _hfs = _team_label(s["name"], 28, 30)
     ax.text(50, 86.5, _hn, color=FG, fontsize=_hfs, fontweight="bold",
             ha="center", va="center")
@@ -480,7 +522,7 @@ def season_record_png(team_id, gender):
     #    boxes never collide and clear the stat block above. Top edge sits below
     #    the MARGIN/PPG label; a thin rule splits the two halves.
     if ranked_wins or top:
-        _panel(ax, 8, 7, 84, 43)            # 7 → 50
+        _panel(ax, 8, 7, 84, 43, panel=PANEL, edge=EDGE)   # 7 → 50
         if ranked_wins:
             ax.text(12, 46, "SIGNATURE WINS", color=GOLD, fontsize=12.5,
                     fontweight="bold", ha="left", va="center", zorder=2)
@@ -517,16 +559,20 @@ def season_record_png(team_id, gender):
                 ax.text(88, y, line, color=GREY, fontsize=12, ha="right",
                         va="center", zorder=2)
                 y -= 4.9
-    _foot(ax)
+    _foot(ax, grey=GREY, edge=EDGE)
     return _png(fig)
 
 
 # ── card 3: a selected group of games ────────────────────────────────────────
-def games_png(team_id, gender, game_ids=None, n=5, title=None):
+def games_png(team_id, gender, game_ids=None, n=5, title=None, bg=None):
     """Record + margin over a chosen set of games, the full results strip (every
     selected game shown) and the player of the run (top scorer over the TRACKED
     games in the set). `game_ids` = an explicit selection (schedule multiselect);
-    None → the last `n`. Newest → oldest in the strip."""
+    None → the last `n`. Newest → oldest in the strip. `bg` sets the card
+    background (defaults to the team's colour, resolved by the caller)."""
+    T = _theme(bg or default_team_color(team_id))
+    _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
+                                        T["panel"], T["edge"], T["accent"])
     games = _team_games(team_id)
     if not games:
         return None
@@ -547,8 +593,8 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
     scored = TR.score_ratings(gender=gender) if gender else {}
     chips = rank_line(scored, team_id, record=False)   # Power + class rank
 
-    fig, ax = _fig()
-    _brand(ax, f"{len(chosen)} games")
+    fig, ax = _fig(_BG)
+    _brand(ax, f"{len(chosen)} games", bg=_BG, grey=GREY)
     _hn, _hfs = _team_label(tname, 28, 30)
     ax.text(50, 88, _hn, color=FG, fontsize=_hfs, fontweight="bold",
             ha="center", va="center")
@@ -574,7 +620,7 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
     # height adapting to how many there are so the panel always fills cleanly.
     rows = chosen[:10]
     ph = 45.5                                    # panel height budget
-    _panel(ax, 8, 10, 84, ph)
+    _panel(ax, 8, 10, 84, ph, panel=PANEL, edge=EDGE)
     top, bot = 51, 13.5
     step = (top - bot) / max(len(rows) - 1, 1) if len(rows) > 1 else 0
     y = top if len(rows) > 1 else (top + bot) / 2
@@ -598,5 +644,5 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None):
     if len(chosen) > len(rows):
         ax.text(88, bot - 3, f"+{len(chosen) - len(rows)} more", color=GREY,
                 fontsize=11, ha="right", va="center", zorder=2)
-    _foot(ax)
+    _foot(ax, grey=GREY, edge=EDGE)
     return _png(fig)

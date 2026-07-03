@@ -27,21 +27,21 @@ def _team_color(tid):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_game(game_id, team_id, ca, cb, quarters, gender, title):
+def _card_game(game_id, team_id, ca, cb, quarters, gender, title, bg):
     return SCARD.game_result_png(game_id, team_id, color_a=ca, color_b=cb,
                                  show_quarters=quarters, gender=gender,
-                                 title=title or None)
+                                 title=title or None, bg=bg)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_season(team_id, gender):
-    return SCARD.season_record_png(team_id, gender)
+def _card_season(team_id, gender, bg):
+    return SCARD.season_record_png(team_id, gender, bg=bg)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_games(team_id, gender, game_ids, title):
+def _card_games(team_id, gender, game_ids, title, bg):
     return SCARD.games_png(team_id, gender, game_ids=list(game_ids),
-                           title=title or None)
+                           title=title or None, bg=bg)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -98,12 +98,13 @@ def render(ctx):
             placeholder="e.g. Region Championship · Senior Night",
             help="Your own headline above the score. Leave blank for just the date.")
 
-        cc1, cc2, cc3 = st.columns([1, 1, 1])
+        cc1, cc2, cc3, cc4 = st.columns([1, 1, 1, 1])
         ca = cc1.color_picker(f"{ctx.team_name} colour", _team_color(ctx.team_id),
                               key="share_ca")
         cb = cc2.color_picker(f"{gm['opp']} colour", _team_color(opp_id),
                               key="share_cb")
-        quarters = cc3.toggle("Quarter-by-quarter", value=False, key="share_qtr",
+        gbg = cc3.color_picker("Background", SCARD.BG, key="share_game_bg")
+        quarters = cc4.toggle("Quarter-by-quarter", value=False, key="share_qtr",
                               help="Add the per-quarter scoring line under the "
                                    "score (needs a tracked game).")
         # persist any change (global, per team)
@@ -113,7 +114,7 @@ def render(ctx):
             SU.set_setting(f"team_color:{opp_id}", cb)
 
         png = _card_game(pick, ctx.team_id, ca, cb, quarters, ctx.gender,
-                         gtitle.strip())
+                         gtitle.strip(), gbg)
         if png and quarters and not gm["tracked"]:
             st.caption("This game isn't tracked play-by-play — the quarter line "
                        "will be empty. Track it in the Game Tracker for the split.")
@@ -124,7 +125,10 @@ def render(ctx):
         _dl(png, fname, "share_dl_game")
 
     elif kind == "Season record":
-        png = _card_season(ctx.team_id, ctx.gender)
+        sbg = st.color_picker("Background", _team_color(ctx.team_id),
+                              key="share_season_bg",
+                              help="Defaults to your team colour.")
+        png = _card_season(ctx.team_id, ctx.gender, sbg)
         if not png:
             st.info("Not enough data for this card yet.")
             return
@@ -137,6 +141,9 @@ def render(ctx):
             "Card title", value="", max_chars=60, key="share_title",
             placeholder="e.g. Catoosa Tournament · Road to State",
             help="Your own headline for the set. Leave blank for a game count.")
+        gbg2 = st.color_picker("Background", _team_color(ctx.team_id),
+                               key="share_games_bg",
+                               help="Defaults to your team colour.")
         default = [g["id"] for g in games[-5:]]
         sel = st.multiselect("Games", [g["id"] for g in reversed(games)],
                              default=default,
@@ -146,7 +153,7 @@ def render(ctx):
             st.info("Select at least one game.")
             return
         png = _card_games(ctx.team_id, ctx.gender, tuple(sorted(sel)),
-                          title.strip())
+                          title.strip(), gbg2)
         if not png:
             st.info("Not enough data for this card yet.")
             return

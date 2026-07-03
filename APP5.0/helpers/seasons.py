@@ -110,6 +110,32 @@ def game_season(game_id) -> str:
     return (r[0]["season"] if r else ACTIVE) or ACTIVE
 
 
+def team_class(team_id, season=ACTIVE) -> str | None:
+    """A team's class DURING `season`. Current season (or unsnapshotted) → the
+    live teams.class; a past season → the class snapshotted at that rollover
+    (falls back to the live class if a team predates the snapshot)."""
+    live = query("SELECT class FROM teams WHERE id=?", (team_id,))
+    live_cls = live[0]["class"] if live else None
+    if is_current(season):
+        return live_cls
+    hist = query(
+        "SELECT class FROM team_class_history WHERE team_id=? AND season=?",
+        (team_id, season))
+    return hist[0]["class"] if hist else live_cls
+
+
+def team_classes_for(season=ACTIVE) -> dict:
+    """{team_id: class} for a whole season in one query — the live teams.class for
+    the current season, else the snapshot overlaid on the live class as fallback."""
+    live = {r["id"]: r["class"] for r in query("SELECT id, class FROM teams")}
+    if is_current(season):
+        return live
+    for r in query("SELECT team_id, class FROM team_class_history WHERE season=?",
+                   (season,)):
+        live[r["team_id"]] = r["class"]
+    return live
+
+
 def roster_clause(season, alias="") -> tuple[str, tuple]:
     """(SQL fragment, params) selecting the players who belong to `season`'s
     roster — THE invariant for retro-tracking (a game's pickable roster is the
@@ -174,6 +200,13 @@ def execute_rollover(new_label, carry_pids, outgoing_label=None):
         carry = query(
             f"SELECT {', '.join(_CARRY_COLS)}, COALESCE(identity_id, id) AS person "
             f"FROM players WHERE id IN ({ph})", tuple(int(p) for p in carry_pids))
+
+    # Snapshot every team's CURRENT class under the outgoing label BEFORE the
+    # class is re-aligned for the new season, so a past-season view keeps the
+    # class the team actually played in. teams.class stays the live (current)
+    # value, free to edit for the new season.
+    execute("INSERT OR REPLACE INTO team_class_history (team_id, season, class) "
+            "SELECT id, ?, class FROM teams", (outgoing_label,))
 
     # stamp the outgoing season onto every current row (same as the legacy rollover)
     execute("UPDATE players  SET archived=1, season=? WHERE archived=0", (outgoing_label,))

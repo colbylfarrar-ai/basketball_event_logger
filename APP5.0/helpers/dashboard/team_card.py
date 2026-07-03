@@ -149,7 +149,10 @@ def render_header(ctx):
     hue, tlabel = _tier(power)
     _trow = query("SELECT name, class FROM teams WHERE id=?", (ctx.team_id,))
     tname = _trow[0]["name"] if _trow else "Team"
-    _cls = (_trow[0]["class"] if _trow else "") or ""
+    # class is per-season: a past-season view shows the class the team played in
+    # (snapshotted at rollover), not the re-aligned current class.
+    import helpers.seasons as _SEAS
+    _cls = _SEAS.team_class(ctx.team_id, getattr(ctx, "season", "Current")) or ""
     fm = _form(ctx.gender).get(ctx.team_id, {})
     _stk = (f"{fm['streak_type']}{fm['streak_len']}"
             if fm.get("streak_type") and fm.get("streak_len") else "")

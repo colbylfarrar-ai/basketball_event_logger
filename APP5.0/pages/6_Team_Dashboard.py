@@ -801,7 +801,10 @@ sc_track = tracked.get(team_id, {})
 # place. raw_has_tracked reads the UNFILTERED game_log (box level) so the gate
 # can tell "no tracked data" apart from "tracked but not shared with you".
 _raw_tracked = any(g["tracked"] for g in bundle["game_log"])
-has_tracked, _tracked_lock = ENT.tracked_gate(AUTH.current_user(), team_id, _raw_tracked)
+# season_pick threads the archive rule: a PAST season is open (full depth to
+# everyone) — the gate self-bypasses on a non-current label.
+has_tracked, _tracked_lock = ENT.tracked_gate(
+    AUTH.current_user(), team_id, _raw_tracked, season=season_pick)
 # one helper, both rankings: 'overall' (everything / results-only) + 'tracked'
 rank_info = TR.team_rank(team_id, scored=scored, tracked=tracked)
 
@@ -1132,7 +1135,8 @@ _over_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                             GOOD=GOOD, BAD=BAD, BLUE=BLUE, GREY=GREY,
                             ACCENT=ACCENT, style=_style,
                             leader_bar=_leader_bar,
-                            league_stat_pools=_league_stat_pools)
+                            league_stat_pools=_league_stat_pools,
+                            season=season_pick)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

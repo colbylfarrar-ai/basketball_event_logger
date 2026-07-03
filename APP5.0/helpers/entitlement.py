@@ -43,6 +43,16 @@ from datetime import date
 from database.db import query, execute
 import helpers.game_dedup as GD
 
+# The active-season sentinel (mirrors helpers.seasons.ACTIVE; kept local so this
+# gating module has no import cycle). A PAST season is an OPEN ARCHIVE — the co-op
+# / Paid depth gates below all bypass it (owner rule: last year's data is public,
+# full depth, to everyone; no competitive edge left to protect).
+_ACTIVE_SEASON = "Current"
+
+
+def _is_past_season(season) -> bool:
+    return season not in (None, "", _ACTIVE_SEASON)
+
 
 # ── lock / invite copy (one source so it stays consistent across surfaces) ──────
 MSG_PAID = ("🔒 Tracked analytics — shot charts, lineups, four factors and "
@@ -192,7 +202,10 @@ def visible_tracked_game_ids(ident: dict | None, season="Current") -> set[int] |
     read-filter's teeth. None means UNRESTRICTED (admin / local owner). Otherwise:
     own-team tracked games ∪ (the pooled set, if League-wide). A Solo coach gets
     own games only; a Free viewer gets an empty set (depth is gated upstream).
-    `season` scopes to the active season by default (archived labels view history)."""
+    `season` scopes to the active season by default (archived labels view history).
+    A PAST season is an open archive → unrestricted (None) for everyone."""
+    if _is_past_season(season):
+        return None                          # past = open archive, full depth
     if ident and ident.get("role") == "admin":
         return None
     ids: set[int] = set()
@@ -214,7 +227,10 @@ def team_visible_tracked_ids(ident: dict | None, team_id, season="Current") -> s
     A league-wide scout of another team → only that team's POOLED games (so a
     coach who opponent-tracked this team while League-wide shares those, but the
     team's own Solo games stay private). Used to scope the team dashboard bundle.
-    `season` scopes the pooled-visibility query (frozen in_pool → correct history)."""
+    `season` scopes the pooled-visibility query (frozen in_pool → correct history).
+    A PAST season is an open archive → unrestricted (None) for everyone."""
+    if _is_past_season(season):
+        return None                      # past = open archive, full depth
     if ident and ident.get("role") == "admin":
         return None
     if team_id is not None and int(team_id) in _own_teams(ident):
@@ -226,16 +242,22 @@ def team_visible_tracked_ids(ident: dict | None, team_id, season="Current") -> s
         "AND (team1_id=? OR team2_id=?)", (season, team_id, team_id))})
 
 
-def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None):
+def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
+                 season="Current"):
     """Resolve a team's tracked-depth visibility for the UI.
 
     Returns (visible, lock_msg):
       visible  — viewer may see this team's tracked depth.
       lock_msg — None when visible, or when there's simply no tracked data at all
                  (caller shows its own 'track a game' note). Otherwise one of the
-                 three co-op messages: Paid feature / co-op INVITE / not-shared."""
+                 three co-op messages: Paid feature / co-op INVITE / not-shared.
+
+    A PAST season is an open archive: any viewer sees full tracked depth, no Paid
+    / co-op gate (owner rule)."""
     if not raw_has_tracked:
         return False, None
+    if _is_past_season(season):
+        return True, None                    # past = open archive, full depth
     if not has_paid_plan(ident):
         return False, MSG_PAID
     if ident.get("role") == "admin":

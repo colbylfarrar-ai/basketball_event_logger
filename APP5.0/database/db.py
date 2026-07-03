@@ -445,6 +445,16 @@ def initialize_database():
                )""",
             "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts)",
             "CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)",
+            # Per-season TEAM CLASS. `teams.class` is the CURRENT season's class
+            # (freely re-aligned each year); the rollover snapshots the outgoing
+            # season's class here so a past-season view shows the class the team
+            # actually played in. (team_id, season) unique; N/A carries as-is.
+            """CREATE TABLE IF NOT EXISTS team_class_history (
+                   team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                   season  TEXT    NOT NULL,
+                   class   TEXT    NOT NULL,
+                   PRIMARY KEY (team_id, season)
+               )""",
         ]
 
         for stmt in migrations:

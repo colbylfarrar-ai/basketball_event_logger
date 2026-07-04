@@ -207,12 +207,81 @@ def project_next(identity_key, gender=None, curve=None):
             "note": "Rough — built on limited year-over-year change; treat as a lean."}
 
 
+def project_rest_of_season(player_id, boxes=None, form_weight=0.25,
+                           shrink_k=3, min_gp=3):
+    """Rest-of-THIS-season projection for a current-season player — no linked
+    past season required (the next-season projection stays gated on two).
+
+    Method (real numbers, no invented ceiling): per-game rates so far, tilted
+    toward last-5 form (``form_weight``); under 6 games the rate is also shrunk
+    toward the league per-game mean (weight gp/(gp+shrink_k)) so a 3-game line
+    doesn't extrapolate raw. Remaining games = the team's scoreless games this
+    season. Returns {"ok": False, "reason"} when the player is archived, has
+    fewer than ``min_gp`` games, or the schedule has no games left; else
+    {"ok": True, "gp", "remaining", "per_game": {lab: rate},
+     "season_end": {lab: projected season total}, "note"}."""
+    p = query("SELECT team_id, archived FROM players WHERE id=?", (player_id,))
+    if not p:
+        return {"ok": False, "reason": "Unknown player."}
+    if p[0]["archived"]:
+        return {"ok": False, "reason": "Season over — this is an archived "
+                                       "season's line."}
+    if boxes is None:
+        boxes = S.player_game_boxes()
+    pb = boxes.get(player_id, {})
+    gp = len(pb)
+    if gp < min_gp:
+        return {"ok": False,
+                "reason": f"Rest-of-season projection needs {min_gp}+ tracked "
+                          f"games ({gp} so far)."}
+    remaining = query(
+        """SELECT COUNT(*) n FROM games
+           WHERE (team1_id=? OR team2_id=?) AND season='Current'
+             AND (home_score IS NULL OR away_score IS NULL)""",
+        (p[0]["team_id"], p[0]["team_id"]))[0]["n"]
+    if not remaining:
+        return {"ok": False, "reason": "No games left on the schedule — the "
+                                       "season line is final."}
+    # per-game rates: season + last-5 form tilt (game_id order = insertion
+    # order, a fine recency proxy)
+    ordered = [pb[g] for g in sorted(pb)]
+    per_game, season_end = {}, {}
+    lg_mean = {}
+    if gp < 6:            # small book → also shrink toward the league mean
+        for lab, key in _PERGAME:
+            vals = [sum(b.get(key, 0) for b in d.values()) / len(d)
+                    for d in boxes.values() if d]
+            lg_mean[lab] = sum(vals) / len(vals) if vals else 0.0
+    w_form = form_weight if gp >= 6 else 0.0
+    w_self = gp / (gp + shrink_k) if gp < 6 else 1.0
+    for lab, key in _PERGAME:
+        tot = sum(b.get(key, 0) for b in ordered)
+        season = tot / gp
+        last5 = sum(b.get(key, 0) for b in ordered[-5:]) / min(5, gp)
+        rate = (1 - w_form) * season + w_form * last5
+        rate = w_self * rate + (1 - w_self) * lg_mean.get(lab, rate)
+        per_game[lab] = round(rate, 1)
+        season_end[lab] = round(tot + rate * remaining)
+    return {"ok": True, "gp": gp, "remaining": remaining,
+            "per_game": per_game, "season_end": season_end,
+            "note": ("Measured rates carried over the remaining schedule"
+                     + (" (last-5 form tilted)" if w_form else
+                        " (small sample — shrunk toward league average)")
+                     + "; scoreless scheduled games count as remaining.")}
+
+
 def player_development(player_id, gender=None, curve=None):
-    """One bundle for the player card: {identity_key, progression, projection}.
-    Graceful — single-season players get a one-line history and a 'needs a 2nd
-    season' projection. `curve` (a precomputed class_curve) lets the caller cache
+    """One bundle for the player card: {identity_key, progression, projection,
+    rest_of_season}. Graceful — single-season players get a one-line history and
+    a 'needs a 2nd season' projection, but rest_of_season works from the FIRST
+    season (3+ games). `curve` (a precomputed class_curve) lets the caller cache
     the expensive league pass; only consulted once a player has two rated seasons."""
     key = identity_of(player_id)
     prog = progression(key)
     proj = project_next(key, gender=gender, curve=curve)
-    return {"identity_key": key, "progression": prog, "projection": proj}
+    try:
+        ros = project_rest_of_season(player_id)
+    except Exception:
+        ros = {"ok": False, "reason": ""}
+    return {"identity_key": key, "progression": prog, "projection": proj,
+            "rest_of_season": ros}

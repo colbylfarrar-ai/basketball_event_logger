@@ -321,7 +321,16 @@ def combined_player_line(player_id, tracked_boxes=None):
     """
     import helpers.stats as S
     if tracked_boxes is None:
-        tracked_boxes = S.player_game_boxes()
+        # the default event pass covers season='Current' only — an ARCHIVED
+        # player row must fetch its own season's tracked games explicitly
+        prow = query("SELECT season FROM players WHERE id=?", (player_id,))
+        szn = (prow[0]["season"] if prow else None) or "Current"
+        if szn == "Current":
+            tracked_boxes = S.player_game_boxes()
+        else:
+            gids = [r["id"] for r in query(
+                "SELECT id FROM games WHERE tracked=1 AND season=?", (szn,))]
+            tracked_boxes = S.player_game_boxes(game_ids=gids) if gids else {}
     F = ["PTS", "TRB", "AST", "STL", "BLK", "TOV",
          "FGM", "FGA", "3PM", "3PA", "FTM", "FTA", "OREB", "DREB"]
     tot = {f: 0 for f in F}

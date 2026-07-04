@@ -711,9 +711,17 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None, bg=None,
 # ── card 4: player spotlight (career / season / game / stretch) ──────────────
 def _pid_game_rows(pid):
     """[{game_id,date,opp,box}] — a player row's TRACKED games, oldest first.
-    One players.id = one season (rollover archives rows), so this is naturally
-    season-scoped."""
-    boxes = S.player_game_boxes().get(pid, {})
+    One players.id = one season (rollover archives rows) — but the default
+    event pass only covers season='Current', so an ARCHIVED row must fetch its
+    OWN season's tracked games explicitly or it reads zero games."""
+    prow = query("SELECT team_id, season FROM players WHERE id=?", (pid,))
+    tid = prow[0]["team_id"] if prow else None
+    szn = (prow[0]["season"] if prow else None) or "Current"
+    season_gids = [r["id"] for r in query(
+        "SELECT id FROM games WHERE tracked=1 AND season=?", (szn,))]
+    if not season_gids:
+        return []
+    boxes = S.player_game_boxes(game_ids=season_gids).get(pid, {})
     if not boxes:
         return []
     gids = list(boxes)
@@ -723,8 +731,6 @@ def _pid_game_rows(pid):
             FROM games g JOIN teams t1 ON t1.id=g.team1_id
                          JOIN teams t2 ON t2.id=g.team2_id
             WHERE g.id IN ({ph})""", tuple(gids))}
-    prow = query("SELECT team_id FROM players WHERE id=?", (pid,))
-    tid = prow[0]["team_id"] if prow else None
     rows = []
     for gid, b in boxes.items():
         m = gmeta.get(gid)

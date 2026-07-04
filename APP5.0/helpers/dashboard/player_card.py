@@ -867,7 +867,10 @@ def render_card(ctx):
     if paid:
         st.markdown("<div class='pl-hdr'>Shot diet & impact mix</div>",
                     unsafe_allow_html=True)
-        pbox = S.player_box(pid)
+        # season-scope like every other fetcher — the bare default is
+        # Current-season only, which reads ZERO for an archive/fallback pid
+        _gp_list = list(_gp) if _gp is not None else None
+        pbox = S.player_box(pid, game_ids=_gp_list)
         d1, d2, d3 = st.columns(3)
         with d1:
             st.markdown("**Shot diet** — how their shots are created")
@@ -900,7 +903,7 @@ def render_card(ctx):
                 st.caption("No shots created.")
         with d3:
             st.markdown("**Scoring by quarter**")
-            qb = S.quarter_boxes().get(pid, {})
+            qb = S.quarter_boxes(game_ids=_gp_list).get(pid, {})
             qs = sorted(qb)
             if qs:
                 qfig = go.Figure(go.Bar(
@@ -1053,6 +1056,24 @@ def render_card(ctx):
                                 f"{_d['delta']:+.1f} {_d['trend']}",
                                 delta_color="inverse" if _lab in _DEV_INVERTED
                                 else "normal")
+        # rest-of-THIS-season projection — works from the player's first
+        # season (3+ games), no linked past season needed
+        _ros = _dv.get("rest_of_season") or {}
+        if _ros.get("ok"):
+            st.markdown(
+                f"<div class='pl-hdr'>Rest of season "
+                f"<span style='font-size:11px;color:#8b949e;font-weight:400'>"
+                f"· {_ros['gp']} played · {_ros['remaining']} left — projected "
+                f"season-end totals (per-game)</span></div>",
+                unsafe_allow_html=True)
+            _rcols = st.columns(len(_DEV_STATS))
+            for _col, _lab in zip(_rcols, _DEV_STATS):
+                _t = _ros["season_end"].get(_lab)
+                _r = _ros["per_game"].get(_lab)
+                if _t is not None:
+                    _col.metric(_lab.replace("PG", ""), f"{_t:g}",
+                                f"{_r:g}/g", delta_color="off")
+            st.caption(_ros["note"])
         # projection (two+ rated seasons) or the unlock note
         if _proj.get("ok"):
             st.markdown("<div class='pl-hdr'>Projected next season</div>",

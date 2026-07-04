@@ -335,6 +335,127 @@ def winloss_splits(team_id, gender=None, game_ids=None, events=None):
     }
 
 
+# ── win/loss stat alignment — "what separates wins from losses" ────────────────
+# Per-game team stats split by result, ranked by effect size. Founder read:
+# most teams have ~4 stats that visibly track their win/loss expectancy, and
+# they're different stats for every team — this finds each team's own set.
+_WL_SPEC = [
+    # key, label, higher-is-what-wins-look-like?, pct format?
+    ("PPP",    "Points / possession",   "{:.2f}"),
+    ("eFG",    "eFG%",                  "pct"),
+    ("3P%",    "3P%",                   "pct"),
+    ("3PAr",   "3PA rate",              "pct"),
+    ("TOVr",   "Turnover rate",         "pct"),
+    ("FTr",    "FT rate",               "{:.2f}"),
+    ("ORBpct", "Off. rebound %",        "pct"),
+    ("AST%",   "Assisted rate",         "pct"),
+    ("oPPP",   "Opp points / poss",     "{:.2f}"),
+    ("oeFG",   "Opp eFG%",              "pct"),
+    ("forced", "Forced TO rate",        "pct"),
+    ("pace",   "Possessions",           "{:.0f}"),
+]
+
+
+def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
+                      min_each=2, top=4, min_d=0.8):
+    """The ~``top`` stats that most separate this team's WINS from its LOSSES.
+
+    Splits every tracked, finished game by result, computes a per-game stat
+    line (offense + defense), and ranks each stat by effect size
+    d = (win mean − loss mean) / all-games SD. Returns {available, win_games,
+    loss_games, rows: [{key,label,win,loss,d,fmt}]} — rows sorted by |d|,
+    gated at |d| >= min_d and both sides >= min_each games. game_ids (when
+    given) is trusted as season-scoped, same contract as winloss_splits."""
+    import helpers.team_analytics as TA          # lazy — avoids an import cycle
+    if game_ids is not None:
+        allow = set(game_ids)
+        if not allow:
+            return {"available": False}
+        ph = ",".join("?" * len(allow))
+        rows = query(
+            f"SELECT id, team1_id, home_score, away_score FROM games "
+            f"WHERE id IN ({ph}) AND (team1_id=? OR team2_id=?) AND tracked=1 "
+            f"AND home_score IS NOT NULL AND away_score IS NOT NULL",
+            tuple(allow) + (team_id, team_id))
+    else:
+        rows = query(
+            "SELECT id, team1_id, home_score, away_score FROM games "
+            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current' "
+            "AND home_score IS NOT NULL AND away_score IS NOT NULL",
+            (team_id, team_id))
+    result = {}
+    for r in rows:
+        my = r["home_score"] if r["team1_id"] == team_id else r["away_score"]
+        opp = r["away_score"] if r["team1_id"] == team_id else r["home_score"]
+        if my != opp:
+            result[r["id"]] = "win" if my > opp else "loss"
+    n_w = sum(1 for v in result.values() if v == "win")
+    n_l = len(result) - n_w
+    if n_w < min_each or n_l < min_each:
+        return {"available": False, "win_games": n_w, "loss_games": n_l}
+
+    if events is None:
+        events = S.fetch_events(list(result))
+    by_game = {}
+    for e in events:
+        if e["game_id"] in result:
+            by_game.setdefault(e["game_id"], []).append(e)
+
+    def _line(gid):
+        evg = by_game.get(gid) or []
+        if not evg:
+            return None
+        tb, ob = TA.team_and_opp_box(team_id, [gid], events=evg)
+        poss = (tb.get("FGA", 0) or 0) + (tb.get("TOV", 0) or 0)
+        opos = (ob.get("FGA", 0) or 0) + (ob.get("TOV", 0) or 0)
+        if not poss:
+            return None
+        sf = lambda a, b_: (a / b_) if b_ else None
+        return {
+            "PPP":  sf(tb.get("PTS", 0), poss),
+            "eFG":  S.efg(tb) if tb.get("FGA") else None,
+            "3P%":  sf(tb.get("3PM", 0), tb.get("3PA", 0)),
+            "3PAr": sf(tb.get("3PA", 0), tb.get("FGA", 0)),
+            "TOVr": sf(tb.get("TOV", 0), poss),
+            "FTr":  sf(tb.get("FTA", 0), tb.get("FGA", 0)),
+            "ORBpct": sf(tb.get("ORB", 0),
+                         (tb.get("ORB", 0) or 0) + (ob.get("DRB", 0) or 0)),
+            "AST%": sf(tb.get("AST", 0), tb.get("FGM", 0)),
+            "oPPP": sf(ob.get("PTS", 0), opos) if opos else None,
+            "oeFG": S.efg(ob) if ob.get("FGA") else None,
+            "forced": sf(ob.get("TOV", 0), opos) if opos else None,
+            "pace": float(poss),
+        }
+
+    lines = {gid: ln for gid in result if (ln := _line(gid))}
+    if (sum(1 for g in lines if result[g] == "win") < min_each
+            or sum(1 for g in lines if result[g] == "loss") < min_each):
+        return {"available": False, "win_games": n_w, "loss_games": n_l}
+
+    out_rows = []
+    for key, label, fmt in _WL_SPEC:
+        wv = [lines[g][key] for g in lines
+              if result[g] == "win" and lines[g][key] is not None]
+        lv = [lines[g][key] for g in lines
+              if result[g] == "loss" and lines[g][key] is not None]
+        if len(wv) < min_each or len(lv) < min_each:
+            continue
+        allv = wv + lv
+        mean = sum(allv) / len(allv)
+        sd = (sum((v - mean) ** 2 for v in allv) / len(allv)) ** 0.5
+        if not sd:
+            continue
+        mw, ml = sum(wv) / len(wv), sum(lv) / len(lv)
+        d = (mw - ml) / sd
+        if abs(d) < min_d:
+            continue
+        out_rows.append({"key": key, "label": label, "win": mw, "loss": ml,
+                         "d": d, "fmt": fmt})
+    out_rows.sort(key=lambda r: -abs(r["d"]))
+    return {"available": bool(out_rows), "win_games": n_w, "loss_games": n_l,
+            "rows": out_rows[:top]}
+
+
 def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=None,
                     season="Current"):
     """The team's own-offense profile split by OPPONENT STRENGTH (top vs bottom

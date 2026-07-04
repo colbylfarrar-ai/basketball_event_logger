@@ -74,8 +74,10 @@ def _team_feed(gender, season="Current", team_id=None, tids=None):
             _ex = TIN.team_extras(team_id,
                                   game_ids=(list(tids) if tids else None))
             extras = {team_id: _ex} if _ex else None
+        # top=None → EVERY qualifying team read (the tab is the deep-dive home;
+        # the 3-line cap stays on the league-wide surfaces).
         return TIN.team_insight_feed(gender=gender, season=season,
-                                     extras=extras)
+                                     extras=extras, top=None)
     except Exception:
         return {}
 
@@ -94,6 +96,13 @@ def _winloss(gender, team_id, tids):
     """Wins-vs-losses offense split for this team, cached per (gender, team, games)."""
     return INT.winloss_splits(team_id, gender=gender,
                               game_ids=list(tids) if tids else None)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _wl_align(gender, team_id, tids):
+    """This team's most win/loss-aligned stats (effect-size ranked)."""
+    return INT.winloss_alignment(team_id, gender=gender,
+                                 game_ids=list(tids) if tids else None)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -175,24 +184,28 @@ def render(ctx):
         st.markdown(f"<div class='gloss-card'>{_tbody}</div>",
                     unsafe_allow_html=True)
 
-    # ── per-player auto-scout (the team-by-team feed) ─────────────────────────
+    # ── per-player auto-scout (the team-by-team feed) — 2-col boxed grid so a
+    #    full roster's reads fit on ~half the page length ──────────────────────
     st.markdown("<div class='lab-hdr'>Auto-scout — this team</div>",
                 unsafe_allow_html=True)
-    any_line = False
+    _cards = []
     for pid in pids:
         lines = feed.get(pid, [])
         if not lines:
             continue
-        any_line = True
         nm = table[pid]["name"]
         body = "".join(
-            f"<div style='margin-top:4px'><span class='badge accent'>{ln['metric']}</span> "
+            f"<div style='margin-top:4px;font-size:12px'>"
+            f"<span class='badge accent'>{ln['metric']}</span> "
             f"<span style='color:var(--subtext);font-size:10px'>n={ln['n']}</span> "
             f"{_b(ln['text'])}</div>" for ln in lines)
-        st.markdown(
-            f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>{body}</div>",
-            unsafe_allow_html=True)
-    if not any_line:
+        _cards.append(
+            f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>{body}</div>")
+    if _cards:
+        _pcols = st.columns(2)
+        for i, c in enumerate(_cards):
+            _pcols[i % 2].markdown(c, unsafe_allow_html=True)
+    else:
         st.caption("No standout signals yet — this roster reads close to league "
                    "average on the tracked splits, or needs more games.")
 
@@ -252,6 +265,42 @@ def render(ctx):
             f"{_pct(_l.get(_sw[1]))}). eFG% "
             f"{_pct(_w.get('eFG'))} in wins vs {_pct(_l.get('eFG'))} in losses — "
             "what shows up when this team is at its best.")
+
+    # ── what separates wins from losses — THIS team's signature stats ────────
+    _wa = _wl_align(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id",
+                                                               None) \
+        else {"available": False}
+    if _wa.get("available"):
+        st.markdown("<div class='lab-hdr'>What separates wins from losses — "
+                    "this team's signature stats</div>", unsafe_allow_html=True)
+        st.caption(
+            f"Every team has its own handful of stats that track its results — "
+            f"these are the ones that split this team's **{_wa['win_games']} "
+            f"wins** from its **{_wa['loss_games']} losses** hardest "
+            "(effect-size ranked over the tracked games).")
+
+        def _wlfmt(v, fmt):
+            return f"{v * 100:.0f}%" if fmt == "pct" else fmt.format(v)
+        _wcols = st.columns(min(4, max(2, len(_wa["rows"]))))
+        for i, r in enumerate(_wa["rows"]):
+            up = r["d"] > 0
+            arrow = "▲" if up else "▼"
+            clr = "var(--good)" if up else "var(--bad)"
+            _wcols[i % len(_wcols)].markdown(
+                f"<div class='gloss-card' style='text-align:center'>"
+                f"<div style='font-size:11px;color:var(--subtext)'>{r['label']}"
+                f"</div><div style='font-size:17px;font-weight:800;color:{clr}'>"
+                f"{arrow} {_wlfmt(r['win'], r['fmt'])}"
+                f"<span style='font-size:11px;color:var(--subtext)'> in wins"
+                f"</span></div><div style='font-size:11px;color:var(--subtext)'>"
+                f"{_wlfmt(r['loss'], r['fmt'])} in losses · d={r['d']:+.1f}"
+                f"</div></div>", unsafe_allow_html=True)
+        st.caption("▲ = higher in wins · ▼ = higher in losses (for opponent "
+                   "stats, lower is the winning direction). d = effect size — "
+                   "how many SDs apart the win and loss averages sit.")
+    elif _wl.get("available"):
+        st.caption("Signature win/loss stats need ≥2 tracked games on each "
+                   "side of the record — fills in as results build.")
 
     # ── self-scout: shot tendencies (force left/right, where shots live) ──────
     _te = _tendencies(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id",

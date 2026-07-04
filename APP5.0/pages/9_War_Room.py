@@ -437,13 +437,37 @@ def _render_matchup():
             wa, wb = pred["win_prob_a"] * 100, pred["win_prob_b"] * 100
             ca, cb = _team_pair_colors(ta, tb)
 
-            m = st.columns(3)
-            m[0].metric(pred["a_name"], f"{pred['pf_a']:.0f}", f"{wa:.0f}% win",
-                        delta_color="off")
-            m[1].metric("Spread", f"{name_of[pred['favorite']]} −{pred['spread']:.1f}",
-                        pred["confidence"], delta_color="off")
-            m[2].metric(pred["b_name"], f"{pred['pf_b']:.0f}", f"{wb:.0f}% win",
-                        delta_color="off")
+            # verdict banner — the team-card banner grammar, matchup-sized:
+            # projected score + win% per side, the spread verdict in the middle
+            _fav_a = pred["favorite"] == ta
+            st.markdown(
+                f"<div style='background:linear-gradient(135deg,#080c14,"
+                f"#0d1117 55%,#111827);border:1px solid {ca}55;"
+                f"border-radius:18px;padding:18px 26px;margin:4px 0 12px;"
+                f"display:flex;align-items:center;gap:18px'>"
+                f"<div style='flex:1'>"
+                f"<div style='font-size:20px;font-weight:900;color:#f0f6fc'>"
+                f"{pred['a_name']}</div>"
+                f"<div style='font-size:40px;font-weight:900;color:{ca};"
+                f"line-height:1.1'>{pred['pf_a']:.0f}</div>"
+                f"<div style='font-size:12px;color:{ca};font-weight:700'>"
+                f"{wa:.0f}% win</div></div>"
+                f"<div style='text-align:center;min-width:170px'>"
+                f"<div style='font-size:9px;color:#8b949e;letter-spacing:2px'>"
+                f"MODEL VERDICT</div>"
+                f"<div style='font-size:17px;font-weight:800;color:#f0f6fc;"
+                f"margin:3px 0'>{team_short(name_of[pred['favorite']])} "
+                f"−{pred['spread']:.1f}</div>"
+                f"<div style='font-size:11px;color:{(ca if _fav_a else cb)};"
+                f"font-weight:700'>{pred['confidence']}</div></div>"
+                f"<div style='flex:1;text-align:right'>"
+                f"<div style='font-size:20px;font-weight:900;color:#f0f6fc'>"
+                f"{pred['b_name']}</div>"
+                f"<div style='font-size:40px;font-weight:900;color:{cb};"
+                f"line-height:1.1'>{pred['pf_b']:.0f}</div>"
+                f"<div style='font-size:12px;color:{cb};font-weight:700'>"
+                f"{wb:.0f}% win</div></div></div>",
+                unsafe_allow_html=True)
 
             # win-probability split bar (team-coloured)
             wp = go.Figure()

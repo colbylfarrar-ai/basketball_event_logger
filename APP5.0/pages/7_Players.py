@@ -823,8 +823,8 @@ with tab_rate:
         for col, key in zip(lead_cols, rcols):
             ld = _leaders(rows, key, n=1)
             if ld:
-                col.metric(key, f"{ld[0][key]:.1f}")
-                col.caption(ld[0]["name"])
+                col.markdown(_glass(key, f"{ld[0][key]:.1f}", ld[0]["name"]),
+                             unsafe_allow_html=True)
 
         # ── Best per class (fragment — the rating picker reruns only this) ────
         @st.fragment
@@ -842,11 +842,34 @@ with tab_rate:
             with lc:
                 st.markdown(f"**Top 10 — {pick_rate}**")
                 top = _leaders(rows, pick_rate, n=10)
-                st.dataframe(
-                    pd.DataFrame([{"#": i, "Player": r["name"], "Team": r["team"],
-                                   "Cls": r["class"], pick_rate: r[pick_rate]}
-                                  for i, r in enumerate(top, 1)]),
-                    hide_index=True, width="stretch")
+                # mini banner rows — the player-card grammar in one line each:
+                # rank chip · name · team/class · rating track + value
+                _rows_html = ""
+                for i, r in enumerate(top, 1):
+                    hue, _t = _tier(r[pick_rate])
+                    v = max(0.0, min(100.0, float(r[pick_rate])))
+                    _rows_html += (
+                        f"<div style='display:flex;align-items:center;gap:10px;"
+                        f"background:#0d1117;border:1px solid #21262d;"
+                        f"border-radius:10px;padding:6px 10px;margin-bottom:5px'>"
+                        f"<div style='background:{hue}18;border:1px solid {hue}55;"
+                        f"border-radius:8px;min-width:30px;text-align:center;"
+                        f"font-size:13px;font-weight:800;color:{hue};"
+                        f"padding:2px 0'>{i}</div>"
+                        f"<div style='flex:1;min-width:0'>"
+                        f"<div style='font-size:13px;font-weight:700;color:#f0f6fc;"
+                        f"white-space:nowrap;overflow:hidden;"
+                        f"text-overflow:ellipsis'>{r['name']}</div>"
+                        f"<div style='font-size:10px;color:#8b949e'>"
+                        f"{_team_short(r['team'])} · {r['class']}</div></div>"
+                        f"<div style='flex:1;position:relative;height:7px;"
+                        f"border-radius:4px;background:#161b22'>"
+                        f"<div style='position:absolute;height:7px;"
+                        f"border-radius:4px;width:{v}%;background:{hue}'></div></div>"
+                        f"<div style='width:38px;text-align:right;font-size:14px;"
+                        f"font-weight:800;color:{hue}'>{r[pick_rate]:.1f}</div>"
+                        f"</div>")
+                st.markdown(_rows_html, unsafe_allow_html=True)
             with rc:
                 st.markdown(f"**Class champions — {pick_rate}**")
                 by_class = defaultdict(list)

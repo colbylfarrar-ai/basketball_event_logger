@@ -17,7 +17,7 @@ from __future__ import annotations
 import plotly.graph_objects as go
 import streamlit as st
 
-from helpers.cards import glass
+from helpers.cards import glass, dense_table
 from helpers.ui import empty_state, style_fig
 
 # Identity palette for the usage bars (separate from any performance colour).
@@ -55,31 +55,27 @@ def render(ctx):
     # ── By game type — how they play in Regular / District / Playoff / … ──────
     _bgt = ctx.by_game_type(g, tid) if getattr(ctx, "by_game_type", None) else None
     if _bgt and len(_bgt) > 1:
-        import pandas as pd
         st.markdown("<div class='pl-hdr'>By game type — how they play in each</div>",
                     unsafe_allow_html=True)
         st.caption("Record + margin from every game; efficiency (points per "
                    "possession, eFG%, pace) and shot mix from the tracked ones — so "
                    "you can compare their playoff / rivalry self to the regular-season "
                    "baseline.")
-        _bdf = pd.DataFrame([{
+
+        def _n(v, fmt):
+            return fmt.format(v) if v is not None else None
+        st.markdown(dense_table([{
             "Type": r["type"], "GP": r["GP"], "W-L": f"{r['W']}-{r['L']}",
-            "MOV": r["MOV"], "Off PPP": r.get("oPPP"), "Def PPP": r.get("dPPP"),
-            "eFG%": r.get("eFG"), "Opp eFG%": r.get("oeFG"), "Pace": r.get("pace"),
-            "Rim%": r.get("rim%"), "3PA%": r.get("3PA%"), "Trk GP": r.get("trk_gp"),
-        } for r in _bgt])
-        st.dataframe(
-            _bdf, hide_index=True, width="stretch", key="sit_bygametype",
-            column_config={
-                "MOV": st.column_config.NumberColumn("MOV", format="%+.1f"),
-                "Off PPP": st.column_config.NumberColumn("Off PPP", format="%.2f"),
-                "Def PPP": st.column_config.NumberColumn("Def PPP", format="%.2f"),
-                "eFG%": st.column_config.NumberColumn("eFG%", format="%d%%"),
-                "Opp eFG%": st.column_config.NumberColumn("Opp eFG%", format="%d%%"),
-                "Pace": st.column_config.NumberColumn("Pace", format="%.1f"),
-                "Rim%": st.column_config.NumberColumn("Rim%", format="%d%%"),
-                "3PA%": st.column_config.NumberColumn("3PA%", format="%d%%"),
-            })
+            "MOV": _n(r["MOV"], "{:+.1f}"),
+            "Off PPP": _n(r.get("oPPP"), "{:.2f}"),
+            "Def PPP": _n(r.get("dPPP"), "{:.2f}"),
+            "eFG%": _n(r.get("eFG"), "{:.0f}%"),
+            "Opp eFG%": _n(r.get("oeFG"), "{:.0f}%"),
+            "Pace": _n(r.get("pace"), "{:.1f}"),
+            "Rim%": _n(r.get("rim%"), "{:.0f}%"),
+            "3PA%": _n(r.get("3PA%"), "{:.0f}%"),
+            "Trk GP": r.get("trk_gp"),
+        } for r in _bgt]), unsafe_allow_html=True)
         st.caption("Efficiency / eFG% / pace / shot-mix come from tracked games only "
                    "(Trk GP); '—' = no tracked game of that type yet. Set a game's "
                    "type on the Roster & District page.")
@@ -103,39 +99,30 @@ def render(ctx):
     # ── §A — headline: go-to set & efficiency by situation ───────────────────
     st.markdown("<div class='pl-hdr'>Go-to set &amp; efficiency by situation</div>",
                 unsafe_allow_html=True)
-    import pandas as pd
     arows = []
     for s in sits[1:]:
         arows.append({
-            "Situation": s["label"], "Group": s["group"], "Poss": s["off_poss"],
-            "Poss len": (round(s["secs"], 1) if s.get("secs") is not None else None),
-            "PPP": round(s["PPP"], 2), "eFG%": round(s["eFG"] * 100),
-            "FG%": round(s["FG%"] * 100),
+            "Situation": s["label"] + ("" if s["stable"] else " ⚠"),
+            "Group": s["group"], "Poss": s["off_poss"],
+            "Poss len": (f"{s['secs']:.1f} s"
+                         if s.get("secs") is not None else None),
+            "PPP": f"{s['PPP']:.2f}", "eFG%": f"{s['eFG'] * 100:.0f}%",
+            "FG%": f"{s['FG%'] * 100:.0f}%",
             "Go-to set": _fmt_top(s["top_play"]),
             "Defense run": _fmt_top(s["top_def"]),
-            "_thin": not s["stable"],
         })
-    adf = pd.DataFrame(arows)
-    st.dataframe(adf.drop(columns=["_thin"]), hide_index=True, width="stretch",
-                 column_config={
-                     "Poss len": st.column_config.NumberColumn(
-                         "Poss len", format="%.1f s",
-                         help="Average possession length (seconds) in this "
-                              "situation — tempo. ~16% of plays are untimed and "
-                              "excluded."),
-                     "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-                     "eFG%": st.column_config.NumberColumn("eFG%", format="%d%%"),
-                     "FG%": st.column_config.NumberColumn("FG%", format="%d%%"),
-                 }, key="sit_headline")
+    st.markdown(dense_table(
+        arows, num_cols=("Poss", "Poss len", "PPP", "eFG%", "FG%")),
+        unsafe_allow_html=True)
     _blen = (f" · {baseline['secs']:.1f}s/poss"
              if baseline.get("secs") is not None else "")
     st.caption(
         f"Baseline (all possessions): **{baseline['PPP']:.2f} PPP** · "
         f"{baseline['eFG'] * 100:.0f}% eFG{_blen} over {baseline['off_poss']} poss. "
         "Compare each situation's PPP to that. 'Go-to set' / 'Defense run' need "
-        "tagged plays; '—' = untagged. Situations under "
+        "tagged plays; '—' = untagged. ⚠ marks situations under "
         f"{__import__('helpers.situational', fromlist=['SIT_MIN_POSS']).SIT_MIN_POSS} "
-        "possessions are thin — read them lightly.")
+        "possessions — thin, read them lightly.")
 
     # ── §B — drill into one situation ────────────────────────────────────────
     st.markdown("<div class='pl-hdr'>Drill into a situation</div>",
@@ -171,16 +158,11 @@ def render(ctx):
         pfig.update_yaxes(title="Share of tagged plays (%)")
         style_fig(pfig, 300)
         st.plotly_chart(pfig, width="stretch", key="sit_play_bar")
-        st.dataframe(pd.DataFrame([{
+        st.markdown(dense_table([{
             "Set": p["label"], "Poss": p["poss"],
-            "Share": round(p["share"] * 100), "PPP": round(p["PPP"], 2),
-            "eFG%": round(p["eFG"] * 100), "FG%": round(p["FG%"] * 100),
-        } for p in plays]), hide_index=True, width="stretch", column_config={
-            "Share": st.column_config.NumberColumn("Share", format="%d%%"),
-            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-            "eFG%": st.column_config.NumberColumn("eFG%", format="%d%%"),
-            "FG%": st.column_config.NumberColumn("FG%", format="%d%%"),
-        }, key="sit_play_tbl")
+            "Share": f"{p['share'] * 100:.0f}%", "PPP": f"{p['PPP']:.2f}",
+            "eFG%": f"{p['eFG'] * 100:.0f}%", "FG%": f"{p['FG%'] * 100:.0f}%",
+        } for p in plays]), unsafe_allow_html=True)
     else:
         st.caption("No tagged offensive sets in this situation yet.")
 
@@ -199,13 +181,11 @@ def render(ctx):
         dfig.update_yaxes(title="Share of tagged defensive poss (%)")
         style_fig(dfig, 300)
         st.plotly_chart(dfig, width="stretch", key="sit_def_bar")
-        st.dataframe(pd.DataFrame([{
+        st.markdown(dense_table([{
             "Scheme": d["label"], "Poss": d["poss"],
-            "Share": round(d["share"] * 100), "PPP allowed": round(d["PPP"], 2),
-        } for d in defs]), hide_index=True, width="stretch", column_config={
-            "Share": st.column_config.NumberColumn("Share", format="%d%%"),
-            "PPP allowed": st.column_config.NumberColumn("PPP allowed", format="%.2f"),
-        }, key="sit_def_tbl")
+            "Share": f"{d['share'] * 100:.0f}%",
+            "PPP allowed": f"{d['PPP']:.2f}",
+        } for d in defs]), unsafe_allow_html=True)
 
     # ── §C — situational sets (usage concentration) ──────────────────────────
     conc = data.get("concentration", [])

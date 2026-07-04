@@ -69,6 +69,19 @@ def _ledger(team_id, game_ids=None):
         return None
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _style_tags(gender, season="Current"):
+    """League-wide team style archetypes (tracked plane) — one compute per
+    gender; the banner shows only this team's tag."""
+    import helpers.league_analytics as LA
+    import helpers.archetypes as AR
+    try:
+        pack = LA.team_tracked_pack(gender=gender, season=season)
+        return AR.team_style_tags(pack.get("ts", {}))
+    except Exception:
+        return {}
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _next_game(team_id, season="Current"):
     """The next scheduled game (score-less, today or later) or None. A PAST season
@@ -166,6 +179,15 @@ def render_header(ctx):
     fm = _form(ctx.gender, _season).get(ctx.team_id, {})
     _stk = (f"{fm['streak_type']}{fm['streak_len']}"
             if fm.get("streak_type") and fm.get("streak_len") else "")
+    # data-driven style identity (tracked plane, same gate as the glance strip)
+    _style = (_style_tags(ctx.gender, _season).get(ctx.team_id)
+              if getattr(ctx, "has_tracked", False) else None)
+    _style_bit = ""
+    if _style and _style.get("tag") and _style["tag"] != "Balanced":
+        _sig = f" — {_style['signature']}" if _style.get("signature") else ""
+        _style_bit = (f" · <span style='color:#bc8cff;font-weight:700' "
+                      f"title='Data-driven style read vs the league"
+                      f"{_sig}'>{_style['tag']}</span>")
 
     # ── banner — the player-card banner grammar, team-sized ──────────────────
     st.markdown(
@@ -178,6 +200,7 @@ def render_header(ctx):
         f"{tname}</div>"
         f"<div style='font-size:13px;color:#8b949e;margin-top:4px'>"
         f"<span style='color:{hue};font-weight:700;letter-spacing:1px'>{tlabel}</span>"
+        f"{_style_bit}"
         f"{' · ' + _cls if _cls else ''} · {rec['wins']}-{rec['losses']}"
         f"{' · ' + _stk if _stk else ''} · MOV {rec['MOV']:+.1f} · "
         f"#{sc.get('Rank', '—')} of {len(ctx.scored)}</div></div>"

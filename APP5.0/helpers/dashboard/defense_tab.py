@@ -26,7 +26,6 @@ Sections, in order:
 """
 from __future__ import annotations
 
-import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -36,7 +35,7 @@ import helpers.entitlement as ENT
 import helpers.playtypes as PT
 import helpers.stats as S
 import helpers.court as court
-from helpers.cards import pctile_bar, glass
+from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
 
 # Identity palette per family for the distribution donut (kept separate from the
@@ -102,16 +101,13 @@ def _render_factors(ff, unit):
                 f"{MIN_POSS_DETAIL} possessions per {unit} (most so far: {best}). "
                 "It fills in automatically as you tag plays.")
         return
-    import pandas as pd
-
     def _pct(v):
         return f"{v * 100:.0f}%" if v is not None else "—"
-    df = pd.DataFrame([{
+    st.markdown(dense_table([{
         unit.title(): r["label"], "Poss": r["poss"], "PPP": f"{r['PPP']:.2f}",
         "eFG%": _pct(r["eFG"]), "OREB%": _pct(r["OREB%"]),
         "TOV%": _pct(r["TOV%"]), "FT-rate": f"{r['FTr']:.2f}",
-    } for r in stable])
-    st.dataframe(df, hide_index=True, width="stretch")
+    } for r in stable]), unsafe_allow_html=True)
     thin = sorted((r for r in rows if not r.get("stable")),
                   key=lambda r: r["poss"], reverse=True)
     if thin:
@@ -229,25 +225,15 @@ def render(ctx):
         if _drows:
             st.markdown("<div class='pl-hdr'>On-ball defenders — FG% allowed when "
                         "contesting</div>", unsafe_allow_html=True)
-            _dd = pd.DataFrame([{
+            st.markdown(dense_table([{
                 "Defender": r["name"], "Contested": r["contested"],
-                "FG% allowed": round(r["FGpct"] * 100, 1),
-                "PPS allowed": round(r["PPS"], 2),
-                "2P% allowed": round(r["twos_pct"] * 100, 1),
-                "3P% allowed": round(r["threes_pct"] * 100, 1),
-            } for r in _drows])
-            st.dataframe(
-                _dd, hide_index=True, width="stretch",
-                column_config={
-                    "FG% allowed": st.column_config.ProgressColumn(
-                        "FG% allowed", format="%.1f", min_value=0, max_value=100,
-                        help="Field-goal % on the shots this defender contested — "
-                             "LOWER is better on-ball defense."),
-                    "PPS allowed": st.column_config.NumberColumn(
-                        "PPS allowed", format="%.2f",
-                        help="Points per contested shot allowed. Lower is better."),
-                })
-            st.caption(_dp.get("note", ""))
+                "FG% allowed": f"{r['FGpct'] * 100:.1f}%",
+                "PPS allowed": f"{r['PPS']:.2f}",
+                "2P% allowed": f"{r['twos_pct'] * 100:.1f}%",
+                "3P% allowed": f"{r['threes_pct'] * 100:.1f}%",
+            } for r in _drows]), unsafe_allow_html=True)
+            st.caption("Lower FG%/PPS allowed = better on-ball defense. "
+                       + _dp.get("note", ""))
 
     if not drows and dv.get("total_tagged", 0) == 0:
         st.info("No defense tags on these shots yet — set the **Defense** "
@@ -300,21 +286,14 @@ def render(ctx):
                    f"{r['poss']} poss")
             st.markdown(_pctile_or_thin(r["label"], val, r["pct"]),
                         unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame([{
+        st.markdown(dense_table([{
             "Defense": r["label"], "Poss": r["poss"],
-            "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
-            "3P%": round(r.get("3P%", 0) * 100, 0),
-            "eFG%": round(r.get("eFG", 0) * 100, 0),
-            "SCE": round(r.get("SCE", 0) * 100, 0),
-            "Share": round(r["share"] * 100, 0), "Tier": r["tier"],
-        } for r in drows]), hide_index=True, width="stretch", column_config={
-            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-            "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
-            "3P%": st.column_config.NumberColumn("3P%", format="%.0f%%"),
-            "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
-            "SCE": st.column_config.NumberColumn("SCE", format="%.0f%%"),
-            "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
-        }, key="def_scheme_tbl")
+            "PPP": f"{r['PPP']:.2f}", "FG%": f"{r['FG%'] * 100:.0f}%",
+            "3P%": f"{r.get('3P%', 0) * 100:.0f}%",
+            "eFG%": f"{r.get('eFG', 0) * 100:.0f}%",
+            "SCE": f"{r.get('SCE', 0) * 100:.0f}%",
+            "Share": f"{r['share'] * 100:.0f}%", "Tier": r["tier"],
+        } for r in drows]), unsafe_allow_html=True)
         st.caption("PPP = points/possession · eFG% weights 3s · SCE = scoring "
                    "efficiency · Share = % of tagged possessions. Rank is good-"
                    "oriented for this side.")
@@ -380,25 +359,18 @@ def render(ctx):
         st.markdown("<div class='pl-hdr'>Scheme fingerprint — what each gives up"
                     "</div>", unsafe_allow_html=True)
         from helpers.team_analytics import ZONE_LABELS as _ZL
-        fdf = pd.DataFrame([{
-            "Defense": p["label"], "Poss": p["poss"], "PPP": round(p["PPP"], 2),
-            "eFG%": round(p.get("eFG", 0) * 100, 0),
-            "3PA%": round(p["3PA_rate"] * 100, 0),
-            "Rim%": round(p["rim_rate"] * 100, 0),
-            "Assisted%": round(p["ast_rate"] * 100, 0),
-            "Open%": round(p["open_rate"] * 100, 0),
+        st.markdown(dense_table([{
+            "Defense": p["label"], "Poss": p["poss"], "PPP": f"{p['PPP']:.2f}",
+            "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
+            "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
+            "Rim%": f"{p['rim_rate'] * 100:.0f}%",
+            "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
+            "Open%": f"{p['open_rate'] * 100:.0f}%",
             "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
-            "Avg s": round(p["avg_secs"], 1) if p["avg_secs"] is not None else None,
-        } for p in sorted(prof.values(), key=lambda p: -p["poss"])])
-        st.dataframe(fdf, hide_index=True, width="stretch", column_config={
-            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-            "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
-            "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
-            "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
-            "Assisted%": st.column_config.NumberColumn("Assisted%", format="%.0f%%"),
-            "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
-            "Avg s": st.column_config.NumberColumn("Avg s", format="%.1f"),
-        }, key="def_fingerprint")
+            "Avg s": (f"{p['avg_secs']:.1f}"
+                      if p["avg_secs"] is not None else None),
+        } for p in sorted(prof.values(), key=lambda p: -p["poss"])]),
+            unsafe_allow_html=True)
         st.caption("3PA% / Rim% = shot-type share " +
                    ("allowed" if not _off else "you get") +
                    " · Assisted% = off a pass · Open% = uncontested · Where = the "
@@ -530,23 +502,22 @@ def render(ctx):
         best = (min(lead, key=lambda x: x["PPP"]) if not _off
                 else max(lead, key=lambda x: x["PPP"])) if lead else None
         _lr.append({
-            "Defense": blk["label"], "Your PPP": round(mine["PPP"], 2),
-            "Pctile": mine.get("pct"),
-            "Lg avg": round(blk["lg_ppp"], 2) if blk.get("lg_ppp") is not None else None,
-            "Lg best": round(best["PPP"], 2) if best else None,
+            "Defense": blk["label"], "Your PPP": f"{mine['PPP']:.2f}",
+            "Pctile": (f"{mine['pct']:.0f}"
+                       if mine.get("pct") is not None else None),
+            "_p": mine.get("pct") or -1,
+            "Lg avg": (f"{blk['lg_ppp']:.2f}"
+                       if blk.get("lg_ppp") is not None else None),
+            "Lg best": f"{best['PPP']:.2f}" if best else None,
             "Poss": mine["poss"],
         })
     if _lr:
         st.markdown("<div class='pl-hdr'>League context — you vs the field</div>",
                     unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(_lr).sort_values("Pctile", ascending=False,
-                                                   na_position="last"),
-                     hide_index=True, width="stretch", column_config={
-                         "Your PPP": st.column_config.NumberColumn("Your PPP", format="%.2f"),
-                         "Lg avg": st.column_config.NumberColumn("Lg avg", format="%.2f"),
-                         "Lg best": st.column_config.NumberColumn("Lg best", format="%.2f"),
-                         "Pctile": st.column_config.NumberColumn("Pctile", format="%.0f"),
-                     }, key="def_league_rank")
+        _lr.sort(key=lambda r: -r["_p"])
+        st.markdown(dense_table(
+            _lr, columns=["Defense", "Your PPP", "Pctile", "Lg avg", "Lg best",
+                          "Poss"]), unsafe_allow_html=True)
         st.caption("Where this team ranks on each scheme vs every tracked team's "
                    "pool (good-oriented for this side).")
 

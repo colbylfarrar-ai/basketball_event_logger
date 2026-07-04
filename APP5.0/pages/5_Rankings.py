@@ -40,6 +40,7 @@ from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, rank_chip, grid as _grid,
                         page_header, lab_hero as _lab_hero, empty_state,
                         seg as _rkseg, HEAT, DIVERGE)
+import helpers.cards as CD
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
@@ -753,13 +754,13 @@ def _fx_team():
     # Rankings-only extras the card doesn't carry (schedule strength + the
     # opponent-adjusted score-based O/D) + the earliest vs-Top split.
     mx = st.columns(5)
-    mx[0].metric("Rating", r["Rating"],
-                 help="Opponent-adjusted rating (drives the rankings).")
-    mx[1].metric("SOS / SOR", f"{r['SOS']:.1f} / {r['SOR']:.1f}")
-    mx[2].metric("Adj O (xPPG)", r["xPPG"])
-    mx[3].metric("Adj D (xoPPG)", r["xoPPG"])
-    mx[4].metric("vs Top 5", f"{t5_w}-{t5_l}",
-                 help="Top 10 / Top 25 splits live on the card above.")
+    for col, (lbl, val, sub) in zip(mx, [
+            ("Rating", r["Rating"], "opponent-adjusted"),
+            ("SOS / SOR", f"{r['SOS']:.1f} / {r['SOR']:.1f}", "schedule · record"),
+            ("Adj O (xPPG)", r["xPPG"], "score-based offense"),
+            ("Adj D (xoPPG)", r["xoPPG"], "score-based defense"),
+            ("vs Top 5", f"{t5_w}-{t5_l}", "Top 10/25 on the card")]):
+        col.markdown(CD.glass(lbl, val, sub), unsafe_allow_html=True)
 
     # ── advanced profile (results-only composites + form) ────────────────────
     f = form_stats.get(pick, {})
@@ -779,19 +780,23 @@ def _fx_team():
                     unsafe_allow_html=True)
 
     am = st.columns(5)
-    am[0].metric("Dominance", _mv(f.get("Dominance")))
-    am[1].metric("Consistency", _mv(f.get("Consistency")))
-    am[2].metric("Clutch", _mv(f.get("Clutch")))
-    am[3].metric("Momentum", _mv(f.get("Momentum")))
-    am[4].metric("Volatility", _mv(f.get("Volatility"), "{:.1f}"))
+    for col, (lbl, val, sub) in zip(am, [
+            ("Dominance", _mv(f.get("Dominance")), "MOV · win% · blowouts"),
+            ("Consistency", _mv(f.get("Consistency")), "steady margins"),
+            ("Clutch", _mv(f.get("Clutch")), "close-game execution"),
+            ("Momentum", _mv(f.get("Momentum")), "last 5 vs season"),
+            ("Volatility", _mv(f.get("Volatility"), "{:.1f}"), "margin swing")]):
+        col.markdown(CD.glass(lbl, val, sub), unsafe_allow_html=True)
 
     # (Pythagorean / luck / close-game rows moved onto the header card's
     #  Verdict zone — only the ceiling/floor extremes stay here.)
     pm = st.columns(2)
-    pm[0].metric("Ceiling", _mv(f.get("ceiling"), "{:+d}"),
-                 help="Best win margin this season.")
-    pm[1].metric("Floor", _mv(f.get("floor"), "{:+d}"),
-                 help="Worst loss margin this season.")
+    pm[0].markdown(CD.glass("Ceiling", _mv(f.get("ceiling"), "{:+d}"),
+                            "best win margin", "#3fb950"),
+                   unsafe_allow_html=True)
+    pm[1].markdown(CD.glass("Floor", _mv(f.get("floor"), "{:+d}"),
+                            "worst loss margin", "#e74c3c"),
+                   unsafe_allow_html=True)
 
     # league percentile profile (results-only, vs the whole field)
     st.markdown("**League percentile profile**")

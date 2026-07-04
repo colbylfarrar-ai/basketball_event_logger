@@ -488,14 +488,37 @@ def _league_intel(gender, vis=None):
         table = _PR.player_stat_table(game_ids=_gset, gender=gender, min_games=2)
         gids = list(_gset)
     ev = _S.fetch_events(gids) if gids else []
-    feed = _IN.build_feed(table, ev, top=1) if (table and ev) else {}
+    # on-floor impact (RAPM/HoopWAR) for the stats-vs-substance read — the
+    # entitlement-filtered pool passes its own game ids so nothing leaks
+    imp = None
+    try:
+        from helpers.dashboard.player_card import _rapm as _rapm_pc, _war as _war_pc
+        _gp = tuple(sorted(gids)) if vis is not None else None
+        imp = _IN.impact_map(rapm=_rapm_pc(gender, _gp),
+                             war=_war_pc(gender, "Current", _gp))
+    except Exception:
+        pass
+    feed = _IN.build_feed(table, ev, top=1, impact=imp) if (table and ev) else {}
     import re as _re
-    flat = sorted(((abs(l["z"]), table[p]["name"],
-                    _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", l["text"]),
-                    l["metric"], l["n"])
-                   for p, ls in feed.items() for l in ls),
-                  key=lambda t: -t[0])
-    return flat[:6]
+
+    def _b(t):
+        return _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
+    flat = [(abs(l["z"]), table[p]["name"], _b(l["text"]), l["metric"], l["n"])
+            for p, ls in feed.items() for l in ls]
+    # the TEAM miner's biggest reads join the strip (results-math + tracked
+    # pools; per-team extras like lineups stay on the Team Dashboard)
+    try:
+        import helpers.team_insights as _TIN
+        from database.db import query as _q
+        _tname = {r["id"]: r["name"] for r in _q("SELECT id, name FROM teams")}
+        tfeed = _TIN.team_insight_feed(gender=gender)
+        flat += [(abs(l["z"]), _tname.get(t, "Team"), _b(l["text"]),
+                  l["metric"], l["n"])
+                 for t, ls in tfeed.items() for l in ls[:1]]
+    except Exception:
+        pass
+    flat.sort(key=lambda t: -t[0])
+    return flat[:8]
 
 
 if D["scored"]:

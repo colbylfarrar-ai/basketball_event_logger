@@ -23,7 +23,6 @@ Sections, in order:
 """
 from __future__ import annotations
 
-import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -33,7 +32,7 @@ import helpers.playtypes as PT
 import helpers.stats as S
 import helpers.team_analytics as TA
 import helpers.court as court
-from helpers.cards import pctile_bar, glass
+from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
 
 _PTL = dict(PT.NAMED_PLAY_TYPES)
@@ -119,15 +118,14 @@ def _render_turnovers(tv, off):
             "or the phone tracker's detailed mode and this breakdown fills in. "
             f"({tv.get('total', 0)} untagged turnover(s) so far.)")
         return
-    df = pd.DataFrame([{
+    st.markdown(dense_table([{
         "Kind": r["label"], "TOs": r["n"],
         "Share": f"{r['share'] * 100:.0f}%", "Stolen": r["stolen"],
         "Top set calls": " · ".join(
             f"{_PTL.get(k, k)} ×{n}" for k, n in list(r["sets"].items())[:3])
         or "—",
-    } for r in rows])
-    st.dataframe(df, hide_index=True, width="stretch",
-                 key=f"ps_tov_{'o' if off else 'd'}")
+    } for r in rows], num_cols=("TOs", "Share", "Stolen")),
+        unsafe_allow_html=True)
     st.caption(
         f"{tv.get('total_tagged', 0)} tagged · {tv.get('untagged', 0)} untagged "
         f"{'giveaways' if off else 'forced turnovers'}. **Stolen** = live-ball "
@@ -157,16 +155,13 @@ def _render_factors(ff, unit):
                 f"{MIN_POSS_DETAIL} possessions per {unit} (most so far: {best}). "
                 "It fills in automatically as you tag plays.")
         return
-    import pandas as pd
-
     def _pct(v):
         return f"{v * 100:.0f}%" if v is not None else "—"
-    df = pd.DataFrame([{
+    st.markdown(dense_table([{
         unit.title(): r["label"], "Poss": r["poss"], "PPP": f"{r['PPP']:.2f}",
         "eFG%": _pct(r["eFG"]), "OREB%": _pct(r["OREB%"]),
         "TOV%": _pct(r["TOV%"]),
-    } for r in stable])
-    st.dataframe(df, hide_index=True, width="stretch")
+    } for r in stable]), unsafe_allow_html=True)
     thin = sorted((r for r in rows if not r.get("stable")),
                   key=lambda r: r["poss"], reverse=True)
     if thin:
@@ -301,33 +296,19 @@ def render(ctx):
                    f"{r['poss']} poss")
             st.markdown(_pctile_or_thin(r["label"], val, r["pct"]),
                         unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame([{
+        st.markdown(dense_table([{
             "Play call": r["label"], "Poss": r["poss"],
-            "Share": round(r["share"] * 100, 0),
-            "PPP": round(r["PPP"], 2),
-            "TO%": (round(r["TO%"] * 100, 0)
+            "Share": f"{r['share'] * 100:.0f}%",
+            "PPP": f"{r['PPP']:.2f}",
+            "TO%": (f"{r['TO%'] * 100:.0f}%"
                     if r.get("TO%") is not None else None),
             "FD": r.get("FD", 0),
-            "FG%": round(r["FG%"] * 100, 0),
-            "3P%": round(r.get("3P%", 0) * 100, 0),
-            "eFG%": round(r.get("eFG", 0) * 100, 0),
-            "SCE": round(r.get("SCE", 0) * 100, 0),
+            "FG%": f"{r['FG%'] * 100:.0f}%",
+            "3P%": f"{r.get('3P%', 0) * 100:.0f}%",
+            "eFG%": f"{r.get('eFG', 0) * 100:.0f}%",
+            "SCE": f"{r.get('SCE', 0) * 100:.0f}%",
             "Tier": r["tier"],
-        } for r in nrows]), hide_index=True, width="stretch", column_config={
-            "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
-            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-            "TO%": st.column_config.NumberColumn(
-                "TO%", format="%.0f%%",
-                help="Tagged turnovers ÷ possessions in this set — the "
-                     "give-it-away rate (charged to whoever lost it, read at "
-                     "the set level)."),
-            "FD": st.column_config.NumberColumn(
-                "FD", help="Fouls drawn running this set."),
-            "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
-            "3P%": st.column_config.NumberColumn("3P%", format="%.0f%%"),
-            "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
-            "SCE": st.column_config.NumberColumn("SCE", format="%.0f%%"),
-        }, key="ps_named_tbl")
+        } for r in nrows]), unsafe_allow_html=True)
         st.caption("PPP = points/possession (turnover possessions included once "
                    "TOs are tagged) · TO% = the set's give-it-away rate · FD = "
                    "fouls drawn in the set · eFG% weights 3s · **SCE** = scoring "
@@ -411,27 +392,19 @@ def render(ctx):
                     f"{worst['PPP']:.2f} PPP · {worst['pct']}th pct · "
                     f"{worst['poss']} poss", color=worst["color"]),
                     unsafe_allow_html=True)
-        fdf = pd.DataFrame([{
-            "Set": p["label"], "Poss": p["poss"], "PPP": round(p["PPP"], 2),
-            "eFG%": round(p.get("eFG", 0) * 100, 0),
-            "SCE": round(p.get("SCE", 0) * 100, 0),
-            "3PA%": round(p["3PA_rate"] * 100, 0),
-            "Rim%": round(p["rim_rate"] * 100, 0),
-            "Assisted%": round(p["ast_rate"] * 100, 0),
-            "Open%": round(p["open_rate"] * 100, 0),
+        st.markdown(dense_table([{
+            "Set": p["label"], "Poss": p["poss"], "PPP": f"{p['PPP']:.2f}",
+            "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
+            "SCE": f"{p.get('SCE', 0) * 100:.0f}%",
+            "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
+            "Rim%": f"{p['rim_rate'] * 100:.0f}%",
+            "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
+            "Open%": f"{p['open_rate'] * 100:.0f}%",
             "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
-            "Avg s": round(p["avg_secs"], 1) if p["avg_secs"] is not None else None,
-        } for p in sorted(prof.values(), key=lambda p: -p["poss"])])
-        st.dataframe(fdf, hide_index=True, width="stretch", column_config={
-            "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-            "eFG%": st.column_config.NumberColumn("eFG%", format="%.0f%%"),
-            "SCE": st.column_config.NumberColumn("SCE", format="%.0f%%"),
-            "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
-            "Rim%": st.column_config.NumberColumn("Rim%", format="%.0f%%"),
-            "Assisted%": st.column_config.NumberColumn("Assisted%", format="%.0f%%"),
-            "Open%": st.column_config.NumberColumn("Open%", format="%.0f%%"),
-            "Avg s": st.column_config.NumberColumn("Avg s", format="%.1f"),
-        }, key="ps_set_fingerprint")
+            "Avg s": (f"{p['avg_secs']:.1f}"
+                      if p["avg_secs"] is not None else None),
+        } for p in sorted(prof.values(), key=lambda p: -p["poss"])]),
+            unsafe_allow_html=True)
         st.caption("eFG% weights 3s · SCE = scoring efficiency · 3PA% / Rim% = "
                    "shot-type share · Assisted% = off a pass · Open% = uncontested "
                    "· Where = the zone the set most lives in · Avg s = poss length.")
@@ -531,17 +504,15 @@ def render(ctx):
                 "Set": blk["label"],
                 "Initiator": _name_of.get(f["feeder_id"], f"#{f['feeder_id']}"),
                 "Feeds": f["feeds"], "FGM": f["FGM"],
-                "PPP": round(f["PPP"], 2), "FG%": round(f["FG%"] * 100, 0),
+                "PPP": f"{f['PPP']:.2f}", "FG%": f"{f['FG%'] * 100:.0f}%",
                 "Top target": _name_of.get(f.get("top_target_id"), "—"),
             })
     if _fd_rows:
         st.markdown("<div class='pl-hdr'>Hand-off & inbounds hubs (who initiates)"
                     "</div>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(_fd_rows), hide_index=True, width="stretch",
-                     column_config={
-                         "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
-                         "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
-                     }, key="ps_feeders")
+        st.markdown(dense_table(_fd_rows,
+                                num_cols=("Feeds", "FGM", "PPP", "FG%")),
+                    unsafe_allow_html=True)
 
     # ══ §I — inferred tempo/creation cross-read ══════════════════════════════
     pv = ctx.playtype_view(g, tid, _off) or {}
@@ -579,23 +550,22 @@ def render(ctx):
             continue
         best = max(lead, key=lambda x: x["PPP"]) if lead else None
         _lr.append({
-            "Set": blk["label"], "Your PPP": round(mine["PPP"], 2),
-            "Pctile": mine.get("pct"),
-            "Lg avg": round(blk["lg_ppp"], 2) if blk.get("lg_ppp") is not None else None,
-            "Lg best": round(best["PPP"], 2) if best else None,
+            "Set": blk["label"], "Your PPP": f"{mine['PPP']:.2f}",
+            "Pctile": (f"{mine['pct']:.0f}"
+                       if mine.get("pct") is not None else None),
+            "_p": mine.get("pct") or -1,
+            "Lg avg": (f"{blk['lg_ppp']:.2f}"
+                       if blk.get("lg_ppp") is not None else None),
+            "Lg best": f"{best['PPP']:.2f}" if best else None,
             "Poss": mine["poss"],
         })
     if _lr:
         st.markdown("<div class='pl-hdr'>League context — you vs the field</div>",
                     unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(_lr).sort_values("Pctile", ascending=False,
-                                                   na_position="last"),
-                     hide_index=True, width="stretch", column_config={
-                         "Your PPP": st.column_config.NumberColumn("Your PPP", format="%.2f"),
-                         "Lg avg": st.column_config.NumberColumn("Lg avg", format="%.2f"),
-                         "Lg best": st.column_config.NumberColumn("Lg best", format="%.2f"),
-                         "Pctile": st.column_config.NumberColumn("Pctile", format="%.0f"),
-                     }, key="ps_league_rank")
+        _lr.sort(key=lambda r: -r["_p"])
+        st.markdown(dense_table(
+            _lr, columns=["Set", "Your PPP", "Pctile", "Lg avg", "Lg best",
+                          "Poss"]), unsafe_allow_html=True)
         st.caption(f"Where this team's {'offense' if _off else 'defense'} ranks "
                    "on each set call vs every tracked team's pool.")
 

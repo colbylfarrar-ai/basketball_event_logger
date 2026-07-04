@@ -200,6 +200,47 @@ def stat_kpi(label, value, *, ovrl=None, pct=None, conf_n=None, conf_k=3.0,
             + bar + "</div>")
 
 
+def dense_table(rows, columns=None, *, highlight=None, num_cols=None):
+    """OOTP-dense HTML table — the card-styled replacement for a plain
+    ``st.dataframe`` where sorting isn't needed. ``rows`` = list of dicts;
+    ``columns`` = ordered subset (default: keys of the first row). First column
+    left-aligned (the label), the rest right-aligned unless ``num_cols`` names
+    the right-aligned set explicitly. ``highlight`` = optional
+    ``fn(row) -> css color`` for the label cell (e.g. a tier hue).
+
+    Returns an HTML string — render with ``st.markdown(..., unsafe_allow_html
+    =True)``. Values are escaped; pass pre-formatted strings for numbers."""
+    if not rows:
+        return ""
+    cols = list(columns) if columns else list(rows[0].keys())
+    right = set(num_cols) if num_cols is not None else set(cols[1:])
+    th = "".join(
+        f"<th style='text-align:{'right' if c in right else 'left'};"
+        f"font-size:9px;color:#8b949e;text-transform:uppercase;"
+        f"letter-spacing:1px;font-weight:600;padding:3px 8px 4px;"
+        f"border-bottom:1px solid #21262d;white-space:nowrap'>"
+        f"{html.escape(str(c))}</th>" for c in cols)
+    body = ""
+    for r in rows:
+        lbl_clr = (highlight(r) if highlight else None) or "#f0f6fc"
+        tds = ""
+        for i, c in enumerate(cols):
+            v = r.get(c)
+            v = "—" if v is None else str(v)
+            clr = lbl_clr if i == 0 else "#c9d1d9"
+            wt = "600" if i == 0 else "500"
+            tds += (f"<td style='text-align:{'right' if c in right else 'left'};"
+                    f"font-size:12px;color:{clr};font-weight:{wt};"
+                    f"padding:3px 8px;border-bottom:1px solid #161b22;"
+                    f"white-space:nowrap'>{html.escape(v)}</td>")
+        body += f"<tr>{tds}</tr>"
+    return (f"<div style='background:#0d1117;border:1px solid #21262d;"
+            f"border-radius:10px;padding:6px 4px 2px;overflow-x:auto;"
+            f"margin:2px 0 8px'>"
+            f"<table style='width:100%;border-collapse:collapse'>"
+            f"<thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>")
+
+
 # ── glass KPI tile + on/off comparison card ───────────────────────────────────
 def glass(label, value, sub="", color="var(--text)"):
     """Glassmorphism KPI tile (HTML string; uses the .pl-glass-* classes)."""

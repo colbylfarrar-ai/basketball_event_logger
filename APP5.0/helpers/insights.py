@@ -258,9 +258,188 @@ def _g_situational(row, pools, d):
     return {"text": txt, "score": abs(z), "z": z, "metric": "Situational", "n": n}
 
 
+def _g_totype(row, pools, d):
+    """Turnover signature: one giveaway kind dominating the tagged mix — the
+    'how to force it' read for a defense."""
+    tt = d.get("totype")
+    if not tt or (_num(row, "TPG") or 0) < 1.5:
+        return None
+    share, n = tt["share"], tt["n"]
+    score = (share - 0.4) / 0.15
+    if score < MIN_Z:
+        return None
+    key, label = tt["key"], tt["label"].lower()
+    if key == "pass":
+        txt = (f"**Telegraphs the pass** — **{share:.0%} of their giveaways are "
+               f"bad passes** ({n} tagged); jump the passing lanes and run.")
+    elif key == "drive":
+        txt = (f"**Strip them on the drive** — **{share:.0%} of their turnovers "
+               f"come attacking off the bounce** ({n} tagged); wall up and dig "
+               f"at the ball.")
+    else:
+        txt = (f"**Turnover tell** — **{share:.0%} of their giveaways are "
+               f"{label}** ({n} tagged); a pattern a defense can sit on.")
+    return {"text": txt, "score": score, "z": score, "metric": "TO type", "n": n}
+
+
+def _g_ftdraw(row, pools, d):
+    """Contact rate: how often they get fouled — the free-point engine (or the
+    green light to play them physical)."""
+    dpg = d.get("drawn_pg")
+    ff = d.get("foulft") or {}
+    if dpg is None or (_num(row, "GP") or 0) < 4:
+        return None
+    z = _z(dpg, pools.get("drawn_pg"))
+    if abs(z) < MIN_Z:
+        return None
+    n = int(ff.get("drawn") or 0)
+    if z >= 0:
+        a1 = ff.get("and1") or 0
+        a1_bit = f" ({a1} and-1s)" if a1 else ""
+        txt = (f"**Lives at the line** — draws **{dpg:.1f} fouls a game**"
+               f"{a1_bit}, tops in the pool; fouling them is the offense's "
+               f"best friend.")
+    else:
+        txt = (f"**Never draws contact** — just {dpg:.1f} fouls drawn a game; "
+               f"play them physical, the whistle isn't coming.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Fouls drawn", "n": n}
+
+
+def _g_clutchft(row, pools, d):
+    """High-leverage free throws vs the season rate — who to foul late."""
+    ff = d.get("foulft") or {}
+    cfta, cpct, base = ff.get("cFTA") or 0, ff.get("ClutchFT%"), ff.get("FT%")
+    if cfta < 6 or cpct is None or base is None:
+        return None
+    swing = cpct - base
+    if abs(swing) < 12:
+        return None
+    z = swing / 10.0
+    if swing > 0:
+        txt = (f"**Ice water** — **{cpct:.0f}% at the line in high-leverage "
+               f"moments** (vs {base:.0f}% overall, {cfta} clutch FTs); fouling "
+               f"them late is a gift.")
+    else:
+        txt = (f"**Foul them late** — free-throw shooting falls to "
+               f"**{cpct:.0f}%** under pressure (vs {base:.0f}% overall, "
+               f"{cfta} clutch FTs).")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Clutch FT", "n": cfta}
+
+
+def _g_pnr_role(row, pools, d):
+    """Screen-action role split: markedly better as the ball-handler or as the
+    screener rolling to the rim — the 'who should screen for whom' read."""
+    pr = d.get("pnr_role")
+    if not pr:
+        return None
+    hp, rp = pr["h_ppp"], pr["r_ppp"]
+    gap = hp - rp
+    if abs(gap) < 0.35:
+        return None
+    z = gap / 0.25
+    n = pr["h_n"] + pr["r_n"]
+    if gap > 0:
+        txt = (f"**Keep the ball in their hands** — **{hp:.2f} PPP using the "
+               f"screen** vs {rp:.2f} finishing as the screener "
+               f"({pr['h_n']}/{pr['r_n']} poss); a handler, not a roller.")
+    else:
+        txt = (f"**Let them screen and finish** — **{rp:.2f} PPP as the "
+               f"roller** vs {hp:.2f} with the ball off the screen "
+               f"({pr['r_n']}/{pr['h_n']} poss); use them as the screener.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "PnR role", "n": n}
+
+
+def _g_spacing(row, pools, d):
+    """Floor gravity: the spacing index (0-100 percentile composite) at either
+    extreme — bends the defense, or lets it sag."""
+    sp = d.get("spacing")
+    if not sp:
+        return None
+    idx, n = sp["index"], sp["n"]
+    if idx is None:
+        return None
+    if idx >= 88:
+        txt = (f"**Gravity** — spacing index **{idx}** (top of the league): "
+               f"their positioning alone bends the defense; every teammate "
+               f"gets cleaner driving lanes ({n} located shots).")
+    elif idx <= 12:
+        txt = (f"**Sag off** — spacing index **{idx}**: the defense can help "
+               f"off them without cost; they shrink the floor for everyone "
+               f"else ({n} located shots).")
+    else:
+        return None
+    z = (idx - 50) / 15.0
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Spacing", "n": n}
+
+
+def _g_matchup(row, pools, d):
+    """Assignment difficulty: who this defender actually guards (attempt-weighted
+    quality of the shooters they contested). The two reads: takes the toughest
+    cover every night, or gets hidden on weak shooters AND still leaks."""
+    mu = d.get("matchup")
+    if not mu or (mu.get("n") or 0) < 20:
+        return None
+    diff = mu.get("diff")
+    if diff is None:
+        return None
+    z = (diff - 50.0) / 10.0          # Difficulty100 is 50-mean, 10/SD by design
+    n = int(mu["n"])
+    ds = _num(row, "DSHOT%")
+    if z >= 1.2:
+        held = (f", holding them to **{ds:.0f}%**" if ds is not None else "")
+        txt = (f"**Takes the toughest cover** — assignment difficulty "
+               f"**{diff:.0f}** (guards the other team's best scorer "
+               f"night after night){held} ({n} shots contested).")
+        return {"text": txt, "score": abs(z), "z": z, "metric": "Matchup", "n": n}
+    if z <= -1.2 and ds is not None:
+        zd = _z(ds, pools.get("DSHOT%"))
+        if zd >= 0.5:
+            txt = (f"**Hidden on D — and still leaking** — guards the weakest "
+                   f"assignment (difficulty {diff:.0f}) yet allows "
+                   f"**{ds:.0f}%**; there is nowhere left to stash them "
+                   f"({n} shots contested).")
+            return {"text": txt, "score": abs(z) + zd * 0.3, "z": z,
+                    "metric": "Matchup", "n": n}
+    return None
+
+
+def _g_impact(row, pools, d):
+    """Impact vs production: the box-score line vs what the scoreboard says when
+    they're on the floor (RAPM, with HoopWAR as the wins read). The two headline
+    divergences: a big box line that isn't turning into team points ('stats over
+    substance'), and a modest box line hiding real on-floor impact ('quiet
+    winner'). RAPM is shrunk toward a box prior, so only genuine gaps fire."""
+    imp = d.get("impact")
+    if not imp:
+        return None
+    rapm, gs = imp.get("rapm"), _num(row, "GS/G")
+    poss = imp.get("poss") or 0
+    if rapm is None or gs is None or poss < 300 or (_num(row, "GP") or 0) < 4:
+        return None
+    zb = _z(gs, pools.get("GS/G"))
+    zi = _z(rapm, pools.get("RAPM"))
+    div = zi - zb
+    war = imp.get("war")
+    war_bit = f" · {war:+.1f} HoopWAR" if war is not None else ""
+    n = int(poss)
+    if div <= -1.8 and zb >= 0.5 and rapm < 0:
+        txt = (f"**Stats over substance?** — a big box line (**{gs:.1f} Game "
+               f"Score/g**) but the team is **{rapm:+.1f} pts/100** with them on"
+               f"{war_bit}; the production isn't turning into team points yet "
+               f"({n} poss).")
+    elif div >= 1.8 and zi >= 0.5:
+        txt = (f"**Quiet winner** — a modest box line ({gs:.1f} Game Score/g) "
+               f"hides **{rapm:+.1f} pts/100** of on-floor impact{war_bit}; the "
+               f"team is simply better with them out there ({n} poss).")
+    else:
+        return None
+    return {"text": txt, "score": abs(div), "z": div, "metric": "Impact", "n": n}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
-               _g_situational]
+               _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
+               _g_clutchft, _g_pnr_role, _g_spacing]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -277,15 +456,18 @@ def _derive(row):
 
 
 def league_insights(table, *, guarded=None, q4=None, playtypes=None,
-                    playstyles=None, situational=None, top=3):
+                    playstyles=None, situational=None, impact=None,
+                    matchup=None, totypes=None, foulft=None, pnr=None,
+                    spacing=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
-    'poss','share'}}, and ``playstyles`` = {pid: {'kind','key','label','val',
-    'poss','PPP'}} are optional precomputed splits (guarded-vs-open, 4th-Q,
-    signature play_type PPP, and cross-dimension play-type profile); when omitted
-    those generators simply don't fire. Generators tied to play_type or x,y light
-    up automatically once games carry that data."""
+    'poss','share'}}, ``playstyles`` = {pid: {'kind','key','label','val',
+    'poss','PPP'}}, and ``impact`` = {pid: {'rapm','war','poss'}} (see
+    ``impact_map``) are optional precomputed splits (guarded-vs-open, 4th-Q,
+    signature play_type PPP, cross-dimension play-type profile, on-floor impact);
+    when omitted those generators simply don't fire. Generators tied to
+    play_type or x,y light up automatically once games carry that data."""
     rows = list(table.items())
     derived = {}
     for pid, row in rows:
@@ -302,6 +484,21 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
             d["playstyle"] = playstyles[pid]
         if situational and pid in situational:
             d["situational"] = situational[pid]
+        if impact and pid in impact:
+            d["impact"] = impact[pid]
+        if matchup and pid in matchup:
+            d["matchup"] = matchup[pid]
+        if totypes and pid in totypes:
+            d["totype"] = totypes[pid]
+        if foulft and pid in foulft:
+            d["foulft"] = foulft[pid]
+            gp = _num(row, "GP")
+            if gp:
+                d["drawn_pg"] = (foulft[pid].get("drawn") or 0) / gp
+        if pnr and pid in pnr:
+            d["pnr_role"] = pnr[pid]
+        if spacing and pid in spacing:
+            d["spacing"] = spacing[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -316,6 +513,9 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
         "ShotRating": col(lambda p, r: _num(r, "ShotRating")),
         "3P%": col(lambda p, r: _num(r, "3P%")),
         "DSHOT%": col(lambda p, r: _num(r, "DSHOT%")),
+        "GS/G": col(lambda p, r: _num(r, "GS/G")),
+        "RAPM": col(lambda p, r: (derived[p].get("impact") or {}).get("rapm")),
+        "drawn_pg": col(lambda p, r: derived[p].get("drawn_pg")),
     }
 
     out = {}
@@ -452,6 +652,94 @@ def playtype_profile_edges(events):
     return out
 
 
+def turnover_type_edges(events):
+    """{pid: {'key','label','share','n'}} — a player's dominant tagged giveaway
+    kind (≥50% of their tagged TOs). Empty until turnovers carry a kind tag."""
+    import helpers.turnovers as TOV
+    per = TOV.player_turnover_types(events=events)
+    out = {}
+    for pid, d in per.items():
+        if d["total_tagged"] < 8 or not d["rows"]:
+            continue
+        top = d["rows"][0]
+        if top["share"] >= 0.5:
+            out[pid] = {"key": top["key"], "label": top["label"],
+                        "share": top["share"], "n": d["total_tagged"]}
+    return out
+
+
+def foul_ft_edges(events):
+    """{pid: foul/FT detail} — fouls drawn, and-1s, clutch FT splits. Reads
+    fouls.player_foul_ft."""
+    import helpers.fouls as FL
+    ff = FL.player_foul_ft(events=events)
+    return {pid: {"drawn": d.get("drawn"), "and1": d.get("and1"),
+                  "FTA": d.get("FTA"), "FT%": d.get("FT%"),
+                  "cFTA": d.get("cFTA"), "ClutchFT%": d.get("ClutchFT%")}
+            for pid, d in ff.items()}
+
+
+def pnr_role_edges(events):
+    """{pid: {'h_ppp','r_ppp','h_n','r_n'}} — PnR handler-vs-roller PPP where
+    both roles carry real volume. Empty until shots carry play_type tags."""
+    import helpers.playtypes as PT
+    rs = PT.player_role_splits(events=events)
+    out = {}
+    for pid, d in rs.items():
+        pnr = d.get("pnr")
+        if not pnr:
+            continue
+        h, r = pnr.get("handler") or {}, pnr.get("roller") or {}
+        hp, rp = h.get("poss") or 0, r.get("poss") or 0
+        if hp >= 6 and rp >= 6 and h.get("PPP") is not None \
+                and r.get("PPP") is not None:
+            out[pid] = {"h_ppp": h["PPP"], "r_ppp": r["PPP"],
+                        "h_n": hp, "r_n": rp}
+    return out
+
+
+def spacing_edges(events):
+    """{pid: {'index','n'}} — the 0-100 floor-spacing index per qualified player.
+    Empty until enough shots carry a tap (x,y) location."""
+    import helpers.spacing as SP
+    gids = list({e["game_id"] for e in events if e.get("game_id") is not None})
+    if not gids:
+        return {}
+    sp = SP.league_player_spacing(None, events=events, game_ids=gids)
+    return {pid: {"index": v.get("index"), "n": v.get("n")}
+            for pid, v in sp.items() if v.get("index") is not None}
+
+
+def matchup_edges(events, table):
+    """{pid: {'diff','n'}} — attempt-weighted assignment difficulty per defender
+    (matchups.matchup_difficulty's 0-100 index). Empty until shots carry
+    guarded_by tags."""
+    import helpers.matchups as MU
+    md = MU.matchup_difficulty(events=events, table=table)
+    return {pid: {"diff": v.get("Difficulty100"), "n": v.get("shots_faced")}
+            for pid, v in md.items() if v.get("Difficulty100") is not None}
+
+
+def impact_map(rapm=None, war=None):
+    """{pid: {'rapm','war','poss'}} — merges the cached engine outputs
+    (rapm.compute_rapm, hoopwar.war_table) into the miner's impact feed. Pure
+    merge, so callers keep their own caching; either input may be None/{}."""
+    out = {}
+    for pid, r in (rapm or {}).items():
+        out[pid] = {"rapm": r.get("RAPM"),
+                    "poss": (r.get("off_poss") or 0) + (r.get("def_poss") or 0)}
+    for pid, w in (war or {}).items():
+        if pid == "_meta":
+            continue
+        d = out.setdefault(pid, {})
+        d["war"] = w.get("WAR")
+        if not d.get("poss"):
+            d["poss"] = (w.get("off_poss") or 0) + (w.get("def_poss") or 0)
+        if d.get("rapm") is None:
+            d["rapm"] = w.get("rapm")
+    return out
+
+
 def situational_edges(events):
     """{pid: {'label','ppp_here','ppp_overall','poss','delta'}} — each player's most
     notable quarter-based scoring swing (4th-quarter clutch vs their overall). Reads
@@ -461,13 +749,35 @@ def situational_edges(events):
     return SIT.player_situational_edges(events)
 
 
-def build_feed(table, events, *, top=3):
+def build_feed(table, events, *, top=3, impact=None):
     """One-call insight feed: precomputes the event-derived splits (guarded-cliff,
     Q4, signature play_type, situational) and runs the miner. ``{pid: [insight,...]}``.
+    ``impact`` = a precomputed ``impact_map`` (RAPM/WAR need gender+season the
+    events alone don't carry, so the caller fetches those through its own cache).
     Wrap heavy calls in a cache at the page level."""
-    guarded = q4 = pt = ps = sit = None
+    guarded = q4 = pt = ps = sit = mu = tt = ff = pr = sp = None
     try:
         guarded = guarded_cliffs(events)
+    except Exception:
+        pass
+    try:
+        mu = matchup_edges(events, table)
+    except Exception:
+        pass
+    try:
+        tt = turnover_type_edges(events)
+    except Exception:
+        pass
+    try:
+        ff = foul_ft_edges(events)
+    except Exception:
+        pass
+    try:
+        pr = pnr_role_edges(events)
+    except Exception:
+        pass
+    try:
+        sp = spacing_edges(events)
     except Exception:
         pass
     try:
@@ -487,4 +797,6 @@ def build_feed(table, events, *, top=3):
     except Exception:
         pass
     return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
-                           playstyles=ps, situational=sit, top=top)
+                           playstyles=ps, situational=sit, impact=impact,
+                           matchup=mu, totypes=tt, foulft=ff, pnr=pr,
+                           spacing=sp, top=top)

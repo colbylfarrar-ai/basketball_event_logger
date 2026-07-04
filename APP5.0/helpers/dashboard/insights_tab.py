@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 
-import pandas as pd
 import streamlit as st
 
 import helpers.player_ratings as PR
@@ -23,6 +22,7 @@ import helpers.insights as IN
 import helpers.insights_team as INT
 import helpers.playtypes as PT
 import helpers.wpa as WPA
+from helpers.cards import dense_table
 
 
 def _b(t):
@@ -42,7 +42,16 @@ def _league(gender, season="Current", season_gp=None):
         gender=gender, min_games=1,
         game_ids=(set(gids) if season_gp is not None else None))
     ev = S.fetch_events(gids) if gids else []
-    feed = IN.build_feed(table, ev, top=3) if table else {}
+    # on-floor impact feed (RAPM + HoopWAR) for the stats-vs-substance generator —
+    # reuses the player-card caches so the ridge solves at most once per gender
+    imp = None
+    try:
+        from helpers.dashboard.player_card import _rapm as _rapm_pc, _war as _war_pc
+        imp = IN.impact_map(rapm=_rapm_pc(gender, season_gp),
+                            war=_war_pc(gender, season, season_gp))
+    except Exception:
+        pass
+    feed = IN.build_feed(table, ev, top=3, impact=imp) if table else {}
     roles = PT.player_role_splits(events=ev) if ev else {}
     cliffs = IN.guarded_cliffs(ev) if ev else {}
     try:
@@ -50,6 +59,25 @@ def _league(gender, season="Current", season_gp=None):
     except Exception:
         impact = {}
     return table, feed, roles, impact, cliffs
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _team_feed(gender, season="Current", team_id=None, tids=None):
+    """League-wide team insight feed (z-scored vs the tracked field) — the tab
+    shows only the selected team's lines. The per-team extras (lineup / matchup
+    / chemistry feeds) are built for the VIEWED team only, scoped to its own
+    visible game ids, so nothing beyond the pools reads other teams' depth."""
+    import helpers.team_insights as TIN
+    try:
+        extras = None
+        if team_id is not None:
+            _ex = TIN.team_extras(team_id,
+                                  game_ids=(list(tids) if tids else None))
+            extras = {team_id: _ex} if _ex else None
+        return TIN.team_insight_feed(gender=gender, season=season,
+                                     extras=extras)
+    except Exception:
+        return {}
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -126,6 +154,23 @@ def render(ctx):
                "player's biggest deviation from the league, gated by sample size "
                "so a hot night never headlines. Scored vs the whole league.")
 
+    # ── team auto-scout — the TEAM's own most surprising reads ────────────────
+    _tlines = _team_feed(
+        ctx.gender, getattr(ctx, "season", "Current"),
+        getattr(ctx, "team_id", None),
+        tuple(getattr(ctx, "tracked_ids", None) or ()) or None,
+    ).get(getattr(ctx, "team_id", None), [])
+    if _tlines:
+        st.markdown("<div class='lab-hdr'>Auto-scout — team read</div>",
+                    unsafe_allow_html=True)
+        _tbody = "".join(
+            f"<div style='margin-top:4px'><span class='badge accent'>"
+            f"{ln['metric']}</span> <span style='color:var(--subtext);"
+            f"font-size:10px'>n={ln['n']}</span> {_b(ln['text'])}</div>"
+            for ln in _tlines)
+        st.markdown(f"<div class='gloss-card'>{_tbody}</div>",
+                    unsafe_allow_html=True)
+
     # ── per-player auto-scout (the team-by-team feed) ─────────────────────────
     st.markdown("<div class='lab-hdr'>Auto-scout — this team</div>",
                 unsafe_allow_html=True)
@@ -159,10 +204,10 @@ def render(ctx):
                    "schedule builds.")
     else:
         _tp, _bt = _ss["top"], _ss["bottom"]
-        st.dataframe(pd.DataFrame(_split_rows(
+        st.markdown(dense_table(_split_rows(
             _tp, _bt, f"vs Top-half ({_ss['top_games']}g)",
             f"vs Bottom-half ({_ss['bottom_games']}g)")),
-            hide_index=True, width="stretch")
+            unsafe_allow_html=True)
         _dp = (_tp["PPP"] or 0) - (_bt["PPP"] or 0)
         if _dp <= -0.12:
             st.caption(f"⚠ Offense drops **{abs(_dp):.2f} PPP** against top-half "
@@ -185,10 +230,10 @@ def render(ctx):
                    "as the record builds.")
     else:
         _w, _l = _wl["win"], _wl["loss"]
-        st.dataframe(pd.DataFrame(_split_rows(
+        st.markdown(dense_table(_split_rows(
             _w, _l, f"In wins ({_wl['win_games']})",
             f"In losses ({_wl['loss_games']})")),
-            hide_index=True, width="stretch")
+            unsafe_allow_html=True)
         # what changes when they lose — the biggest metric swing tells the story
         _cands = [("3-point volume", "3PA_rate"), ("rim pressure", "rim_rate"),
                   ("ball movement", "ast_rate"), ("open looks", "open_rate")]
@@ -225,11 +270,11 @@ def render(ctx):
             st.caption(f"Balanced left/right (Left {_pct(_lft)} · Right {_pct(_rgt)})"
                        " — no strong side to force.")
         _zz = sorted(_te["zones"], key=lambda z: -z["poss"])
-        st.dataframe(pd.DataFrame([{
+        st.markdown(dense_table([{
             "Zone": z["label"], "Shots": z["poss"], "Share": _pct(z["share"]),
             "FG%": _pct(z["FG%"]),
             "PPP": (f"{z['PPP']:.2f}" if z["PPP"] is not None else "—")}
-            for z in _zz]), hide_index=True, width="stretch")
+            for z in _zz]), unsafe_allow_html=True)
         st.caption(f"Shot diet: rim {_pct(_te['rim_rate'])} · mid "
                    f"{_pct(_te['mid_rate'])} · three {_pct(_te['three_rate'])}. "
                    "Take away their best zone, live with the worst. (Play-call "
@@ -247,16 +292,13 @@ def render(ctx):
                    "**Finish Δ** = actual − expected: a big minus means the looks "
                    "were there but the shooters missed — a *good pass to a poor "
                    "shooter*, not a bad passer.")
-        st.dataframe(pd.DataFrame([{
+        st.markdown(dense_table([{
             "Passer": table[pid]["name"], "Feeds": v["feeds"],
-            "Look quality (xPPS)": round(v["xPPS_created"], 2),
-            "Result (PPS)": round(v["PPS"], 2),
-            "Finish Δ": round(v["finish_delta"], 2),
-            "Assist FG%": round(v["FG%"] * 100),
-        } for pid, v in _prows]), hide_index=True, width="stretch",
-            column_config={
-                "Finish Δ": st.column_config.NumberColumn(format="%+.2f"),
-                "Assist FG%": st.column_config.NumberColumn(format="%d%%")})
+            "Look quality (xPPS)": f"{v['xPPS_created']:.2f}",
+            "Result (PPS)": f"{v['PPS']:.2f}",
+            "Finish Δ": f"{v['finish_delta']:+.2f}",
+            "Assist FG%": f"{v['FG%'] * 100:.0f}%",
+        } for pid, v in _prows]), unsafe_allow_html=True)
         _best = _prows[0]
         st.caption(f"Top look-creator: **{table[_best[0]]['name']}** "
                    f"({_best[1]['xPPS_created']:.2f} xPPS created on "
@@ -322,16 +364,12 @@ def render(ctx):
                    "from noise.")
     else:
         irows.sort(key=lambda r: -(r.get("def_wpa") or 0))
-        st.dataframe(pd.DataFrame([{
+        st.markdown(dense_table([{
             "Player": r["name"], "GP": r.get("games"),
-            "Def WPA": round(r.get("def_wpa") or 0, 2),
-            "Off WPA": round(r.get("off_wpa") or 0, 2),
-            "Clutch": round(r.get("clutch_wpa") or 0, 2),
-        } for r in irows]), hide_index=True, width="stretch",
-            column_config={
-                "Def WPA": st.column_config.NumberColumn(format="%+.2f"),
-                "Off WPA": st.column_config.NumberColumn(format="%+.2f"),
-                "Clutch": st.column_config.NumberColumn(format="%+.2f")})
+            "Def WPA": f"{r.get('def_wpa') or 0:+.2f}",
+            "Off WPA": f"{r.get('off_wpa') or 0:+.2f}",
+            "Clutch": f"{r.get('clutch_wpa') or 0:+.2f}",
+        } for r in irows]), unsafe_allow_html=True)
 
     # ── pick-&-roll role split (lights up with play_type tags) ────────────────
     rrows = []
@@ -343,13 +381,13 @@ def render(ctx):
         if (h.get("poss", 0) + ro.get("poss", 0)) < 1:
             continue
         rrows.append({"Player": table[pid]["name"],
-                      "Handler PPP": round(h.get("PPP") or 0, 2),
+                      "Handler PPP": f"{h.get('PPP') or 0:.2f}",
                       "Handler FGA": h.get("poss", 0),
-                      "Roller PPP": round(ro.get("PPP") or 0, 2),
+                      "Roller PPP": f"{ro.get('PPP') or 0:.2f}",
                       "Roller FGA": ro.get("poss", 0)})
     if rrows:
         st.markdown("<div class='lab-hdr'>Pick-&-roll role split</div>",
                     unsafe_allow_html=True)
         st.caption("Ball-handler (used the screen) vs roll man (set it & finished). "
                    "Lights up as games are tagged with play type.")
-        st.dataframe(pd.DataFrame(rrows), hide_index=True, width="stretch")
+        st.markdown(dense_table(rrows), unsafe_allow_html=True)

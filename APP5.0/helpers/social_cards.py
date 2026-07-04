@@ -799,9 +799,12 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
                 "FG%": 100 * tot["FGM"] / tot["FGA"] if tot["FGA"] else 0,
                 "3P%": 100 * tot["3PM"] / tot["3PA"] if tot["3PA"] else 0,
                 "FT%": 100 * tot["FTM"] / tot["FTA"] if tot["FTA"] else 0}
-        sub = (f"Career · {len(season_lines)} season(s) · {gp} games · "
-               f"{tot['PTS']} pts · {tot['TRB']} reb · {tot['AST']} ast")
+        _ns = len(season_lines)
+        sub = f"Career · {_ns} season{'s' if _ns != 1 else ''} · {gp} games"
         panel_hdr = "SEASON BY SEASON"
+        panel_rows.append((
+            "Career totals",
+            f"{tot['PTS']} pts · {tot['TRB']} reb · {tot['AST']} ast"))
         for h, ln in season_lines:
             szn = h.get("season") or "Current"
             panel_rows.append((
@@ -820,19 +823,26 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
         gp = 1
         line = {"gp": 1, "PPG": b.get("PTS", 0), "RPG": b.get("TRB", 0),
                 "APG": b.get("AST", 0), "SPG": b.get("STL", 0),
-                "BPG": b.get("BLK", 0),
+                "BPG": b.get("BLK", 0), "TOV": b.get("TOV", 0),
                 "FG%": 100 * b.get("FGM", 0) / b["FGA"] if b.get("FGA") else 0,
                 "3P%": 100 * b.get("3PM", 0) / b["3PA"] if b.get("3PA") else 0,
                 "FT%": 100 * b.get("FTM", 0) / b["FTA"] if b.get("FTA") else 0}
         big_lbl = "PTS"
         sub = f"{row['date']} vs {_fit(row['opp'], 24)}"
         panel_hdr = "THE LINE"
+
+        def _shootrow(lbl, m, a):
+            pct = f" · {100 * m / a:.0f}%" if a else ""
+            return (lbl, f"{m}-{a}{pct}")
         panel_rows = [
-            (f"{b.get('FGM', 0)}-{b.get('FGA', 0)} FG · "
-             f"{b.get('3PM', 0)}-{b.get('3PA', 0)} 3P · "
-             f"{b.get('FTM', 0)}-{b.get('FTA', 0)} FT",
-             f"{b.get('ORB', 0)} orb · {b.get('TOV', 0)} to · "
-             f"{b.get('PF', 0)} pf")]
+            _shootrow("Field goals", b.get("FGM", 0), b.get("FGA", 0)),
+            _shootrow("Three-pointers", b.get("3PM", 0), b.get("3PA", 0)),
+            _shootrow("Free throws", b.get("FTM", 0), b.get("FTA", 0)),
+            ("Rebounds", f"{b.get('TRB', 0)}  ({b.get('ORB', 0)} off · "
+                         f"{b.get('DRB', 0)} def)"),
+            ("Stocks", f"{b.get('STL', 0)} stl · {b.get('BLK', 0)} blk"),
+            ("Turnovers · fouls", f"{b.get('TOV', 0)} · {b.get('PF', 0)}"),
+        ]
     else:                                   # season / stretch
         if mode == "stretch":
             sel = grows[-int(n):]
@@ -872,48 +882,81 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
                 f"{b.get('PTS', 0)} pts · {b.get('TRB', 0)} reb · "
                 f"{b.get('AST', 0)} ast"))
 
-    # ── draw ─────────────────────────────────────────────────────────────────
+    # ── draw — the player-profile banner grammar, card-sized ─────────────────
+    from matplotlib.patches import FancyBboxPatch
     fig, ax = _fig(_BG)
     _brand(ax, "player spotlight", bg=_BG, grey=GREY)
-    _hn, _hfs = _team_label(p["name"], 27, 26)
-    ax.text(50, 86.5, _hn, color=FG, fontsize=_hfs, fontweight="bold",
-            ha="center", va="center")
-    ax.text(50, 81.5,
-            f"#{p['number']} · {_fit(p['team'], 28)} · Class {p['klass'] or '—'}",
-            color=GREY, fontsize=14, ha="center", va="center")
-    ax.text(50, 77.3, sub, color=GOLD, fontsize=13, fontweight="bold",
-            ha="center", va="center")
 
-    ax.text(28, 66, f"{line['PPG']:.0f}" if big_lbl == "PTS"
-            else f"{line['PPG']:.1f}",
-            color=GOLD, fontsize=56, fontweight="bold", ha="center", va="center")
-    ax.text(28, 58, big_lbl, color=GREY, fontsize=12.5, ha="center", va="center")
-
+    # HERO BANNER: number chip · name + identity · headline stat (profile look)
+    _panel(ax, 4, 68.5, 92, 20.5, panel=PANEL, edge=_mix(GOLD, _BG, 0.45))
+    # ghost jersey number behind the banner content (the profile watermark)
+    ax.text(62, 78.5, f"#{p['number']}", color=FG, alpha=0.05, fontsize=80,
+            fontweight="bold", ha="center", va="center", zorder=1)
+    # number chip
+    ax.add_patch(FancyBboxPatch(
+        (7.5, 71.5), 12.5, 14.5, boxstyle="round,pad=0,rounding_size=1.2",
+        facecolor=_mix(GOLD, _BG, 0.88), edgecolor=_mix(GOLD, _BG, 0.45),
+        lw=1.6, zorder=2))
+    ax.text(13.75, 83.2, "NO.", color=GREY, fontsize=10.5, ha="center",
+            va="center", zorder=3)
+    _numfs = 34 if len(str(p["number"])) <= 2 else 26
+    ax.text(13.75, 77.2, f"{p['number']}", color=GOLD, fontsize=_numfs,
+            fontweight="bold", ha="center", va="center", zorder=3)
+    # name + identity + scope (left-aligned beside the chip)
+    _hn, _hfs = _team_label(p["name"], 26, 22)
+    ax.text(23, 83.3, _hn, color=FG, fontsize=_hfs, fontweight="bold",
+            ha="left", va="center", zorder=3)
+    ax.text(23, 78.2, f"{_fit(p['team'], 26)} · Class {p['klass'] or '—'}",
+            color=GREY, fontsize=13.5, ha="left", va="center", zorder=3)
+    ax.text(23, 73.6, sub.upper(), color=GOLD, fontsize=12,
+            fontweight="bold", ha="left", va="center", zorder=3)
+    # headline stat, big on the right (the profile's OVERALL slot)
     _one = big_lbl == "PTS"
+    ax.text(87, 80.6, f"{line['PPG']:.0f}" if _one else f"{line['PPG']:.1f}",
+            color=GOLD, fontsize=46, fontweight="bold", ha="center",
+            va="center", zorder=3)
+    ax.text(87, 74.2, big_lbl, color=GREY, fontsize=12, ha="center",
+            va="center", zorder=3)
+
+    # STAT STRIP — 8 tiles across the full width (two rows of four)
     for i, (lbl, val) in enumerate((
             ("REB", f"{line['RPG']:.0f}" if _one else f"{line['RPG']:.1f}"),
             ("AST", f"{line['APG']:.0f}" if _one else f"{line['APG']:.1f}"),
             ("STL", f"{line['SPG']:.0f}" if _one else f"{line['SPG']:.1f}"),
             ("BLK", f"{line['BPG']:.0f}" if _one else f"{line['BPG']:.1f}"))):
-        _tile(ax, 51 + i * 13, 66.5, lbl, val)
+        _tile(ax, 15.5 + i * 23, 62, lbl, val, color=FG, vsize=30)
+    # last tile: GP for multi-game scopes, turnovers for a single game
+    _last = (("TO", f"{line.get('TOV', 0):.0f}") if _one else ("GP", f"{gp}"))
     for i, (lbl, val) in enumerate((
             ("FG%", f"{line['FG%']:.0f}"), ("3P%", f"{line['3P%']:.0f}"),
-            ("FT%", f"{line['FT%']:.0f}"), ("GP", f"{gp}"))):
-        _tile(ax, 51 + i * 13, 57.5, lbl, val)
+            ("FT%", f"{line['FT%']:.0f}"), _last)):
+        _tile(ax, 15.5 + i * 23, 52.5, lbl, val, color=FG, vsize=30)
 
+    # BOTTOM PANEL — rows sized to FILL the box (no dead space on short lists)
     if panel_rows:
-        _panel(ax, 8, 7, 84, 43, panel=PANEL, edge=EDGE)
-        ax.text(12, 46, panel_hdr, color=GOLD, fontsize=12.5,
+        _panel(ax, 4, 7, 92, 39.5, panel=PANEL, edge=EDGE)
+        ax.text(8, 43, panel_hdr, color=GOLD, fontsize=13,
                 fontweight="bold", ha="left", va="center", zorder=2)
-        y = 40.6
-        for left, right in panel_rows[:7]:
-            ax.text(12, y, left, color=FG, fontsize=13, fontweight="bold",
+        ax.plot([8, 92], [41.2, 41.2], color=EDGE, lw=1.0, zorder=2)
+        rows = panel_rows[:7]
+        top, bottom = 38.6, 10.5
+        # spacing grows on short lists but stays capped; the row block is
+        # vertically centered so the panel never reads half-empty
+        step = (min(8.0, (top - bottom) / max(len(rows) - 1, 1))
+                if len(rows) > 1 else 0)
+        band = step * (len(rows) - 1)
+        y = top - ((top - bottom) - band) / 2
+        # few rows → bigger type, so the box always reads full
+        _lfs = 16.5 if len(rows) <= 4 else 14 if len(rows) <= 6 else 13
+        _rfs = _lfs - 1
+        for left, right in rows:
+            ax.text(8, y, left, color=FG, fontsize=_lfs, fontweight="bold",
                     ha="left", va="center", zorder=2)
-            ax.text(88, y, right, color=GREY, fontsize=12, ha="right",
+            ax.text(92, y, right, color=GREY, fontsize=_rfs, ha="right",
                     va="center", zorder=2)
-            y -= 4.9
+            y -= step
         if len(panel_rows) > 7:
-            ax.text(88, y, f"+{len(panel_rows) - 7} more", color=GREY,
+            ax.text(92, 8.6, f"+{len(panel_rows) - 7} more", color=GREY,
                     fontsize=11, ha="right", va="center", zorder=2)
     _foot(ax, grey=GREY, edge=EDGE)
     return _png(fig)

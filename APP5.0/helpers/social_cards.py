@@ -752,12 +752,15 @@ def _sum_boxes(boxes):
     return out
 
 
-def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
+def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None,
+                         game_ids=None):
     """Player spotlight card. Modes:
       'season'  — this player row's season line (tracked + entered boxes)
       'career'  — the person's identity chain: season-by-season + totals
       'game'    — one tracked game (game_id, default the newest)
       'stretch' — the last `n` tracked games
+      'picked'  — the coach's own selection (`game_ids`, any of the player's
+                  tracked games — a tournament run, the district slate, …)
     Box-stat assembly only (PTS/REB/AST/STL/BLK + shooting) — real numbers,
     no ratings, so it renders for free-tier data too. None when no games."""
     import helpers.identity as ID
@@ -843,9 +846,13 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
             ("Stocks", f"{b.get('STL', 0)} stl · {b.get('BLK', 0)} blk"),
             ("Turnovers · fouls", f"{b.get('TOV', 0)} · {b.get('PF', 0)}"),
         ]
-    else:                                   # season / stretch
-        if mode == "stretch":
-            sel = grows[-int(n):]
+    else:                                   # season / stretch / picked
+        if mode in ("stretch", "picked"):
+            if mode == "picked":
+                want = set(game_ids or ())
+                sel = [r for r in grows if r["game_id"] in want]
+            else:
+                sel = grows[-int(n):]
             if not sel:
                 return None
             tot = _sum_boxes([r["box"] for r in sel])
@@ -860,7 +867,8 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
                             if tot.get("3PA") else 0),
                     "FT%": (100 * tot.get("FTM", 0) / tot["FTA"]
                             if tot.get("FTA") else 0)}
-            sub = f"Last {gp} games"
+            sub = (f"Last {gp} games" if mode == "stretch"
+                   else f"{gp} selected game{'s' if gp != 1 else ''}")
             show = sel
         else:
             line = MB.combined_player_line(player_id)
@@ -874,7 +882,8 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
                 sub += (f" · {line['tracked_gp']} tracked + "
                         f"{line['manual_gp']} entered")
             show = grows[-5:]
-        panel_hdr = "RECENT GAMES" if mode == "season" else "THE RUN"
+        panel_hdr = ("RECENT GAMES" if mode == "season" else
+                     "THE GAMES" if mode == "picked" else "THE RUN")
         for r in reversed(show):
             b = r["box"]
             panel_rows.append((

@@ -68,9 +68,9 @@ def _games(team_id, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_spotlight(pid, mode, n, game_id, bg):
+def _card_spotlight(pid, mode, n, game_id, bg, game_ids=None):
     return SCARD.player_spotlight_png(pid, mode=mode, n=n, game_id=game_id,
-                                      bg=bg)
+                                      bg=bg, game_ids=game_ids)
 
 
 def _dl(png, fname, key):
@@ -255,29 +255,39 @@ def render(ctx):
                                  if r["id"] == i),
                              key="share_spot_pid")
         _mode_lbl = pc2.radio("Scope", ["Season", "Career", "One game",
-                                        "Last N games"],
+                                        "Last N games", "Pick games"],
                               horizontal=True, key="share_spot_mode")
         _mode = {"Season": "season", "Career": "career", "One game": "game",
-                 "Last N games": "stretch"}[_mode_lbl]
-        _n, _gid = 5, None
+                 "Last N games": "stretch", "Pick games": "picked"}[_mode_lbl]
+        _n, _gid, _gids = 5, None, None
         if _mode == "stretch":
             _n = st.slider("Games", 2, 15, 5, key="share_spot_n")
-        elif _mode == "game":
+        elif _mode in ("game", "picked"):
             _pg = SCARD._pid_game_rows(_pid)
             if not _pg:
-                st.info("No tracked games for this player yet — the one-game "
-                        "card needs play-by-play.")
+                st.info("No tracked games for this player yet — this card "
+                        "needs play-by-play.")
                 return
-            _gid = st.selectbox(
-                "Game", [r["game_id"] for r in reversed(_pg)],
-                format_func=lambda g: next(
-                    f"{r['date']} vs {r['opp']}" for r in _pg
-                    if r["game_id"] == g),
-                key="share_spot_gid")
+            _gfmt = {r["game_id"]: f"{r['date']} vs {r['opp']}" for r in _pg}
+            if _mode == "game":
+                _gid = st.selectbox(
+                    "Game", [r["game_id"] for r in reversed(_pg)],
+                    format_func=lambda g: _gfmt[g], key="share_spot_gid")
+            else:
+                _sel = st.multiselect(
+                    "Games", [r["game_id"] for r in reversed(_pg)],
+                    format_func=lambda g: _gfmt[g], key="share_spot_gids",
+                    help="Any set — a tournament run, the district slate, "
+                         "the games a college coach asked about.")
+                if not _sel:
+                    st.info("Pick at least one game — the card averages "
+                            "whatever you select and lists the games on it.")
+                    return
+                _gids = tuple(_sel)
         _sbg = st.color_picker("Background", _team_color(ctx.team_id),
                                key="share_spot_bg",
                                help="Defaults to your team colour.")
-        png = _card_spotlight(_pid, _mode, _n, _gid, _sbg)
+        png = _card_spotlight(_pid, _mode, _n, _gid, _sbg, _gids)
         if not png:
             st.info("No games for this player in that scope yet — the card "
                     "needs at least one tracked or entered box.")

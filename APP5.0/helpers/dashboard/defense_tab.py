@@ -364,6 +364,10 @@ def render(ctx):
             "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
             "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
             "Rim%": f"{p['rim_rate'] * 100:.0f}%",
+            "Rim FG%": (f"{p['rim_FG%'] * 100:.0f}%"
+                        if p.get("rim_FG%") is not None else "—"),
+            "3P%": (f"{p['3P%'] * 100:.0f}%"
+                    if p.get("3P%") is not None else "—"),
             "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
             "Open%": f"{p['open_rate'] * 100:.0f}%",
             "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
@@ -373,8 +377,9 @@ def render(ctx):
             unsafe_allow_html=True)
         st.caption("3PA% / Rim% = shot-type share " +
                    ("allowed" if not _off else "you get") +
-                   " · Assisted% = off a pass · Open% = uncontested · Where = the "
-                   "zone shots most come from · Avg s = possession length.")
+                   " · Rim FG% / 3P% = finishing at the rim / from three vs that "
+                   "scheme · Assisted% = off a pass · Open% = uncontested · Where "
+                   "= the zone shots most come from · Avg s = possession length.")
 
     # ── §E2 — FOUR FACTORS per scheme (gated ~100 poss) ──────────────────────
     if getattr(ctx, "factors", None):

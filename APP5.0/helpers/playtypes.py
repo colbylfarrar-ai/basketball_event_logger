@@ -622,7 +622,8 @@ _PROFILE_ZONES = ("LC", "LW", "C", "RW", "RC")
 
 def _blank_profile():
     return {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0,
-            "three": 0, "rim": 0, "mid": 0, "ast": 0, "open": 0, "guard_n": 0,
+            "three": 0, "rim": 0, "rimM": 0, "mid": 0, "ast": 0, "open": 0,
+            "guard_n": 0,
             "zones": {z: 0 for z in _PROFILE_ZONES}, "secs": 0.0, "secs_n": 0}
 
 
@@ -643,6 +644,8 @@ def _profile_add(p, e):
         p["PTS"] += 3 if is3 else 2
         if is3:
             p["FG3M"] += 1
+        elif e.get("zone") == "C":
+            p["rimM"] += 1
     if e.get("pass_from_id") is not None:
         p["ast"] += 1
     # guarded_by_id present == contested; absent == an open look (matches the
@@ -668,6 +671,10 @@ def _profile_fin(p, key=None, label=None):
         "eFG": _safe(p["FGM"] + 0.5 * p["FG3M"], fga),
         "SCE": _safe(p["PTS"], (fga - p["FG3A"]) * 2 + p["FG3A"] * 3),
         "3PA_rate": _safe(p["FG3A"], fga),
+        # finishing splits INSIDE the cell — FG% at the rim / from three vs this
+        # scheme or set (None when that shot type never happened here).
+        "rim_FG%": (_safe(p["rimM"], p["rim"]) if p["rim"] else None),
+        "3P%": (_safe(p["FG3M"], p["FG3A"]) if p["FG3A"] else None),
         "rim_rate": _safe(p["rim"], fga), "mid_rate": _safe(p["mid"], fga),
         "ast_rate": _safe(p["ast"], fga), "open_rate": _safe(p["open"], fga),
         "zones": dict(p["zones"]), "top_zone": (max(p["zones"], key=p["zones"].get)

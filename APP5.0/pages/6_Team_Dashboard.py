@@ -734,7 +734,7 @@ def _war_tbl(g, box_prior=False, season="Current"):
     try:
         _gids = None if season in (None, "Current") else list(_gender_tracked_ids(g, season))
         return HW.war_table(g, rapm=_rapm(g, box_prior=box_prior, season=season),
-                            game_ids=_gids)
+                            game_ids=_gids, season=season)
     except Exception:
         return {}
 
@@ -945,29 +945,36 @@ st.markdown(f"""
 
 
 @st.cache_data(ttl=600, show_spinner="Computing league shot tables…")
-def _pp_zone_tables():
-    """Per-player zone + guarded/open + hand-side splits over the whole tracked sample."""
-    ev = S.fetch_events()
+def _pp_zone_tables(game_ids=None):
+    """Per-player zone + guarded/open + hand-side splits over the tracked sample.
+    `game_ids` scopes to a season (the profile passes the season pool); None =
+    current, via fetch_events' default."""
+    ev = S.fetch_events(list(game_ids)) if game_ids is not None else S.fetch_events()
     return (S.player_zone_splits(events=ev), S.player_zone_guarded(events=ev),
             S.player_hand_splits(events=ev))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _pp_located(pid):
-    """This player's tap-captured (x,y) shots — feeds the profile shot map."""
-    return S.located_shots(player_id=pid)
+def _pp_located(pid, game_ids=None):
+    """This player's tap-captured (x,y) shots — feeds the profile shot map.
+    `game_ids` scopes to a season (None = current-season default)."""
+    return S.located_shots(
+        player_id=pid, game_ids=(list(game_ids) if game_ids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _pp_foulft():
+def _pp_foulft(game_ids=None):
     """Foul / free-throw detail per player (cached) — feeds the profile fouls block."""
-    return FL.player_foul_ft()
+    return FL.player_foul_ft(
+        game_ids=(list(game_ids) if game_ids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _pgb():
-    """Every player's per-game boxes over all tracked games (keyed by pid → gid)."""
-    return S.player_game_boxes()
+def _pgb(game_ids=None):
+    """Every player's per-game boxes over tracked games (keyed by pid → gid).
+    `game_ids` scopes to a season (None = current)."""
+    return S.player_game_boxes(
+        game_ids=(list(game_ids) if game_ids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -4506,15 +4513,22 @@ if _tdview == "Glossary":
 def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
     from types import SimpleNamespace
     from helpers.dashboard.player_card import render_card
+    # _season_gp (module global): None for the current season → the fetchers keep
+    # their current-season default (byte-identical); a PAST season's gender tracked
+    # ids so the whole card (shot map, game log, play-type mix, spacing, on/off)
+    # reads that season instead of the empty current one.
+    _gp = _season_gp
     render_card(SimpleNamespace(
         P=P, pid=pid, rows=rows, paid=True, accent=ACCENT,
         zsplits=zsplits, zguard=zguard, hsplits=hsplits,
-        badges=_badges(gender).get(pid, []),
-        archetype=_archetypes(gender).get(pid),
-        pgb=_pgb(), located=_pp_located(pid), foulft=_pp_foulft().get(pid),
-        named_sets=_named_sets_all(gender).get(pid),
-        role_splits=_role_splits_all(gender).get(pid),
-        set_profiles=_set_profiles_all(gender).get(pid),
+        badges=_badges(gender, _gp).get(pid, []),
+        archetype=_archetypes(gender, _gp).get(pid),
+        pgb=_pgb(_gp), located=_pp_located(pid, _gp),
+        foulft=_pp_foulft(_gp).get(pid),
+        named_sets=_named_sets_all(gender, _gp).get(pid),
+        role_splits=_role_splits_all(gender, _gp).get(pid),
+        set_profiles=_set_profiles_all(gender, _gp).get(pid),
+        season=season_pick, season_gp=_gp,
     ))
 
 
@@ -4523,7 +4537,7 @@ def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
 _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
                             has_tracked=has_tracked,
                             ptable_full=_LGBIND(_ptable_full),
-                            pp_zone_tables=_pp_zone_tables,
+                            pp_zone_tables=_LGBIND(_pp_zone_tables),
                             render_profile=_render_profile, season=season_pick)
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — ROSTER  (Players roster scan + Player Profile drill, merged)

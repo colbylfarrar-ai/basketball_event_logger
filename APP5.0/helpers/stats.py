@@ -1376,19 +1376,22 @@ def individual_defensive_rating_all(game_ids=None, events=None):
 #  games convention (see pages/1_Input_Hub.py): team1_id = home (home_score),
 #  team2_id = away (away_score).
 
-def team_games(team_id, outcome=None, tracked_only=True):
+def team_games(team_id, outcome=None, tracked_only=True, season="Current"):
     """
     Game rows involving team_id, from that team's point of view. `outcome` filters
     to 'W' or 'L' (None = all). Each row: id, team_pts, opp_pts, margin, win, tracked.
-    Only games with both scores recorded are returned.
+    Only games with both scores recorded are returned. `season` scopes to the active
+    season by default; pass a label to read an archive (None = all seasons).
     """
+    clause = "AND season=?" if season is not None else ""
+    params = (team_id, team_id) + ((season,) if season is not None else ())
     rows = query(
-        """SELECT id, team1_id, team2_id, home_score, away_score, tracked
+        f"""SELECT id, team1_id, team2_id, home_score, away_score, tracked
            FROM games
            WHERE (team1_id=? OR team2_id=?)
              AND home_score IS NOT NULL AND away_score IS NOT NULL
-             AND season='Current'""",
-        (team_id, team_id),
+             {clause}""",
+        params,
     )
     out = []
     for r in rows:
@@ -1414,16 +1417,18 @@ def team_game_ids(team_id, outcome=None, tracked_only=True):
     return [g["id"] for g in team_games(team_id, outcome, tracked_only)]
 
 
-def team_summary(team_id, opp_id=None, outcome=None, game_ids=None):
+def team_summary(team_id, opp_id=None, outcome=None, game_ids=None, season="Current"):
     """
     Win/loss record, Margin of Victory, points for/against per game, possessions
     per game, and ORtg/DRtg/Net over the selected (optionally W- or L-only) games.
 
     `game_ids` is the entitlement read-filter: None = all of the team's games;
     a set restricts every aggregation (record, possession ratings) to those games
-    so a co-op scout never sees a team's non-pooled tracked depth here.
+    so a co-op scout never sees a team's non-pooled tracked depth here. `season`
+    scopes the base game set (default = active season); an archive view passes its
+    label so the possession ratings aren't pre-filtered away to the current season.
     """
-    games = team_games(team_id, outcome)
+    games = team_games(team_id, outcome, season=season)
     if game_ids is not None:
         _allow = set(game_ids)
         games = [g for g in games if g["id"] in _allow]

@@ -51,14 +51,17 @@ from helpers.league_analytics import PYTHAG_EXP
 REPLACEMENT_PTS100 = -3.0
 
 
-def league_ppg(gender=None):
-    """Average points per TEAM per game over finished Current-season games
-    (both scores present). None when no finished games exist."""
+def league_ppg(gender=None, season="Current"):
+    """Average points per TEAM per game over finished games of `season` (both
+    scores present). None when no finished games exist. `season` defaults to the
+    active season; an archive view passes its label so HoopWAR's points-per-win
+    scale isn't computed off an empty current season."""
     sql = ("SELECT AVG((g.home_score + g.away_score) / 2.0) p FROM games g "
            "JOIN teams t ON t.id = g.team1_id "
-           "WHERE g.season='Current' AND g.home_score IS NOT NULL "
+           "WHERE g.season=? AND g.home_score IS NOT NULL "
            "AND g.away_score IS NOT NULL")
-    rows = query(sql + " AND t.gender=?", (gender,)) if gender else query(sql)
+    rows = query(sql + " AND t.gender=?", (season, gender)) if gender \
+        else query(sql, (season,))
     p = rows[0]["p"] if rows else None
     return float(p) if p else None
 
@@ -72,14 +75,16 @@ def wins_per_point(ppg, exp=PYTHAG_EXP):
     return exp / (4.0 * ppg)
 
 
-def war_table(gender=None, rapm=None, game_ids=None):
+def war_table(gender=None, rapm=None, game_ids=None, season="Current"):
     """HoopWAR for every player the RAPM pool can rate.
 
     `rapm` — pass a cached compute_rapm() result to skip re-solving the ridge
     (the UI path); default None solves box-prior RAPM over the gender's tracked
     games. Returns {player_id: {"WAR","pts_added","rapm","off_poss","def_poss",
     "name","team"}} plus a "_meta" key {"ppg","wins_per_pt","replacement","exp"};
-    {} when RAPM can't solve or no finished scores exist.
+    {} when RAPM can't solve or no finished scores exist. `season` scopes the
+    points-per-win league baseline (so an archive still computes when the current
+    season is empty).
     """
     if rapm is None:
         import helpers.rapm as RP
@@ -96,7 +101,7 @@ def war_table(gender=None, rapm=None, game_ids=None):
     if not rapm:
         return {}
 
-    ppg = league_ppg(gender)
+    ppg = league_ppg(gender, season)
     wpp = wins_per_point(ppg)
     if not wpp:
         return {}

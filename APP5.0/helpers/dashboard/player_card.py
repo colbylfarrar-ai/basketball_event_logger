@@ -161,21 +161,25 @@ def _dev(pid, gender):
     return DV.player_development(pid, gender=gender, curve=_class_curve(gender))
 
 
+# `game_ids`/`season` on these fetchers scope the card to a season (an archive
+# view passes the season's gender tracked pool); None/'Current' keeps the current-
+# season default, so the card is byte-identical for the live season.
 @st.cache_data(ttl=600, show_spinner=False)
-def _spacing(gender):
+def _spacing(gender, game_ids=None):
     """League floor-spacing index per player {pid: {index, components, n}} —
     cached per gender (one league scan). {} when the pool is too thin."""
     import helpers.spacing as SP
-    return SP.league_player_spacing(gender)
+    return SP.league_player_spacing(
+        gender, game_ids=(list(game_ids) if game_ids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _rapm(gender):
+def _rapm(gender, game_ids=None):
     """Two-way RAPM per player {pid: {ORAPM,DRAPM,RAPM,...}} — cached per gender.
     Uses the box-impact prior so stars on a ~15-game book don't collapse to 0.
     {} when there isn't enough possession data to solve."""
     import helpers.rapm as RP
-    gids = PT._tracked_game_ids(gender)
+    gids = list(game_ids) if game_ids is not None else PT._tracked_game_ids(gender)
     if not gids:
         return {}
     try:
@@ -186,35 +190,39 @@ def _rapm(gender):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _defended_located(pid):
+def _defended_located(pid, game_ids=None):
     """Tap-located shots this player contested or blocked — the defended-shot
     map. Restricted to events naming the player, so it only ever reads their
     own games."""
     try:
-        return S.located_shots(defender_id=pid)
+        return S.located_shots(
+            defender_id=pid,
+            game_ids=(list(game_ids) if game_ids is not None else None))
     except Exception:
         return []
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _war(gender):
+def _war(gender, season="Current", game_ids=None):
     """HoopWAR per player {pid: {WAR, pts_added, ...}} — chains the cached RAPM
     solve through helpers/hoopwar.py. {} when RAPM or finished scores are absent."""
     import helpers.hoopwar as HW
     try:
-        return HW.war_table(gender, rapm=_rapm(gender))
+        return HW.war_table(gender, rapm=_rapm(gender, game_ids),
+                            game_ids=(list(game_ids) if game_ids is not None else None),
+                            season=season)
     except Exception:
         return {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _wpa(gender):
+def _wpa(gender, season="Current"):
     """Season WPA per player in both modes {scoring:{pid:...}, possession:{...}}.
     scoring → wpa + clutch_wpa; possession → off_wpa (OWA) + def_wpa (DWA)."""
     import helpers.wpa as WP
     try:
-        return {"scoring": WP.season_wpa(gender, mode="scoring"),
-                "possession": WP.season_wpa(gender, mode="possession")}
+        return {"scoring": WP.season_wpa(gender, mode="scoring", season=season),
+                "possession": WP.season_wpa(gender, mode="possession", season=season)}
     except Exception:
         return {"scoring": {}, "possession": {}}
 
@@ -229,6 +237,11 @@ def render_card(ctx):
     pgb = ctx.pgb
     located = ctx.located
     foulft = ctx.foulft
+    # Season scope for the card's own league fetchers (spacing / RAPM / WPA / WAR /
+    # defended shots): None/'Current' = live season (byte-identical); an archive
+    # view passes its gender tracked pool so those sections read that season too.
+    _szn = getattr(ctx, "season", "Current")
+    _gp = getattr(ctx, "season_gp", None)
     _hand = (hsplits or {}).get(pid, {})
     _hand_dom = _hand.get("dominant", {}).get("all") if _hand else None
     _hand_weak = _hand.get("weak", {}).get("all") if _hand else None
@@ -349,14 +362,14 @@ def render_card(ctx):
     if paid:
         _conf = SH.rating_confidence(P.get("GP") or 0)
         _twrel = PR.team_relative(P, rows)
-        _space = _spacing(getattr(ctx, "gender", None)).get(pid, {}).get("index")
+        _space = _spacing(getattr(ctx, "gender", None), _gp).get(pid, {}).get("index")
         _cclr = {"high": "#3fb950", "medium": "#f0a500",
                  "low": "#e74c3c", "very_low": "#e74c3c"}[_conf["tier"]]
         # verdict strip (OOTP summary box): season value in wins + the two
         # archetype lenses side by side — agreement is the scouting note
         _gnd = getattr(ctx, "gender", None)
-        _gwar = _war(_gnd).get(pid, {}).get("WAR")
-        _gwpa = ((_wpa(_gnd).get("scoring") or {}).get(pid, {}) or {}).get("wpa")
+        _gwar = _war(_gnd, _szn, _gp).get(pid, {}).get("WAR")
+        _gwpa = ((_wpa(_gnd, _szn).get("scoring") or {}).get(pid, {}) or {}).get("wpa")
         _barch = BG.badge_archetype(lab_badges or [])["archetype"] \
             if lab_badges is not None else None
         _verdict_bits = []
@@ -568,8 +581,8 @@ def render_card(ctx):
     # ── Impact — RAPM · WPA (directional on a short book) → Paid ──────────────
     if paid:
         _g = getattr(ctx, "gender", None)
-        _rp = _rapm(_g).get(pid, {})
-        _wpm = _wpa(_g)
+        _rp = _rapm(_g, _gp).get(pid, {})
+        _wpm = _wpa(_g, _szn)
         _ws = (_wpm.get("scoring") or {}).get(pid, {})
         _wq = (_wpm.get("possession") or {}).get(pid, {})
 
@@ -577,7 +590,7 @@ def render_card(ctx):
             v = d.get(k)
             return fmt.format(v) if v is not None else "—"
 
-        _wr = _war(_g).get(pid, {})
+        _wr = _war(_g, _szn, _gp).get(pid, {})
         _imp = [
             ("HoopWAR", _sv(_wr, "WAR", "{:+.2f}"), "wins vs replacement"),
             ("ORAPM", _sv(_rp, "ORAPM"), "off pts/100"),
@@ -704,7 +717,7 @@ def render_card(ctx):
             # defended-shot map — the scouting read, deliberately BELOW the
             # fold (founder call): where opponents shot when this player was
             # the contester/blocker, with the guarded/open split.
-            _dshots = _defended_located(pid)
+            _dshots = _defended_located(pid, _gp)
             if _dshots:
                 dfig, _dn = _shot_map(
                     _dshots, f"Shots defended · {len(_dshots)} located")
@@ -1304,8 +1317,10 @@ def render_card(ctx):
                    "possessions better with this player on the floor? Covers every "
                    "game the team played; small samples are directional.")
 
-        ro = S.player_rebound_onoff(pid, P["team_id"])
-        pm = S.player_playmaking_onoff(pid, P["team_id"])
+        ro = S.player_rebound_onoff(pid, P["team_id"],
+                                    game_ids=(list(_gp) if _gp is not None else None))
+        pm = S.player_playmaking_onoff(pid, P["team_id"],
+                                       game_ids=(list(_gp) if _gp is not None else None))
 
         if ro and ro.get("on_oreb_opps", 0) >= 5:
             st.markdown("**Team rebounding**")

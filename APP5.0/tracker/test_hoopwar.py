@@ -30,7 +30,7 @@ def test_war_table_math():
             "off_poss": 200, "def_poss": 200, "name": "Avg", "team": "T"},
     }
     orig = HW.league_ppg
-    HW.league_ppg = lambda gender=None: 50.0
+    HW.league_ppg = lambda gender=None, season="Current": 50.0
     try:
         out = HW.war_table("F", rapm=rapm)
     finally:
@@ -54,7 +54,7 @@ def test_war_table_guards():
     from helpers import hoopwar as HW
     assert HW.war_table("F", rapm={}) == {}
     orig = HW.league_ppg
-    HW.league_ppg = lambda gender=None: None   # no finished scores
+    HW.league_ppg = lambda gender=None, season="Current": None   # no finished scores
     try:
         assert HW.war_table("F", rapm={1: {"ORAPM": 1, "DRAPM": 1,
                                            "off_poss": 10, "def_poss": 10}}) == {}

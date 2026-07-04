@@ -229,6 +229,7 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
     ddr = S.individual_defensive_rating_all(game_ids, events=events)  # DRtg (lower=better)
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
+    wtov = S.playmaking_weighted_tov(events=events)  # type-weighted TOs (playmaking)
     rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
     import helpers.fouls as FL
     ftp = FL.player_foul_ft(events=events)       # clutch FT + and-1 detail
@@ -254,6 +255,19 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             ast_tov = float(b["AST"])
         else:
             ast_tov = None
+
+        # Playmaking-weighted variants: TOs weighted by what their type says
+        # about the player (bad pass > drive > shot-clock=0; untagged = 1.0, so
+        # with no type tags these equal the raw AST/TOV + TOV% exactly).
+        wt = wtov.get(pid)
+        if wt is None:
+            wt = float(b["TOV"])
+        if wt:
+            ast_wtov = b["AST"] / wt
+        elif b["AST"]:
+            ast_wtov = float(b["AST"])
+        else:
+            ast_wtov = None
 
         profiles[pid] = {
             **m,
@@ -304,6 +318,11 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             "TOV/G": per_g(b["TOV"]),
             "TOV%":  S.tov_pct(b) if (FGA or b["TOV"]) else None,
             "AST/TOV": ast_tov,
+            # type-weighted twins (PLAYMAKING leaves; == raw when untagged)
+            "pmTOV": wt,
+            "AST/pmTOV": ast_wtov,
+            "pmTOV%": (100 * _safe(wt, FGA + b["TOV"])
+                       if (FGA or b["TOV"]) else None),
             # xPPS of the looks this player's passes create (make-independent shot-
             # quality); None for non-passers / < min feeds so it drops from the mean.
             "SCPassQ": plq.get(pid),
@@ -342,8 +361,13 @@ _DEFENSE   = [("DSHOT%", 1.25, True), ("DRtg", 1.0, True), ("STL/G", 1.0, False)
               # weight — DSHOT% already carries the overall contest signal;
               # these split it into rim protection and perimeter containment.
               ("RimProt", 0.75, False), ("PerimD", 0.75, False)]
-_PLAYMAKING = [("AST/G", 1.0, False), ("AST/TOV", 1.0, False), ("SC/G", 0.75, False),
-               ("SCPass/G", 0.75, False), ("TOV%", 0.75, True),
+_PLAYMAKING = [("AST/G", 1.0, False),
+               # AST/TOV + TOV% enter through their TYPE-WEIGHTED twins: a bad
+               # pass counts 1.3, a lost drive 0.9, a shot-clock violation 0
+               # (team turnover). Identical to the raw leaves until TOs are
+               # tagged, so legacy pools reproduce the old numbers exactly.
+               ("AST/pmTOV", 1.0, False), ("SC/G", 0.75, False),
+               ("SCPass/G", 0.75, False), ("pmTOV%", 0.75, True),
                # look QUALITY a passer's feeds create (xPPS), not just volume —
                # rewards creating good shots even when poor shooters miss them.
                ("SCPassQ", 0.75, False)]

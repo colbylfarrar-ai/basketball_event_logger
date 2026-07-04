@@ -571,6 +571,40 @@ def tov_pct(b):
     return 100 * _safe(b["TOV"], player_possessions(b))
 
 
+# ── Playmaking-weighted turnovers (the turnover_type layer, founder-weighted) ────
+# What a turnover says about the PLAYER'S playmaking depends on its kind: a bad
+# pass is the purest playmaking failure; a shot-clock violation is a TEAM
+# turnover and shouldn't ding the individual at all. Untagged turnovers weigh
+# 1.0, so a data set with no type tags reproduces raw TOV exactly (back-compat:
+# the weighted leaves equal the raw ones until coaches tag).
+PLAYMAKING_TOV_WEIGHTS = {
+    "pass": 1.3,        # bad pass — worst on a strictly-playmaking read
+    "drive": 0.9,       # lost on a drive — a creation attempt gone wrong
+    "travel": 1.0,      # dead-ball baseline
+    "held": 1.0,        # held ball == travel (founder rule)
+    "other": 1.0,       # kept as-is
+    "shot_clock": 0.0,  # team turnover — no individual playmaking penalty
+}
+
+
+def playmaking_weighted_tov(game_ids=None, events=None):
+    """{player_id: weighted turnover count} over the tracked events — each TO
+    weighted by PLAYMAKING_TOV_WEIGHTS on its turnover_type (unknown/legacy
+    types fold to 1.0). Feeds the PLAYMAKING rating's AST/pmTOV + pmTOV% leaves."""
+    if events is None:
+        events = fetch_events(game_ids)
+    out = {}
+    for e in events:
+        if e["event_type"] != "turnover":
+            continue
+        pid = e.get("primary_player_id")
+        if pid is None:
+            continue
+        w = PLAYMAKING_TOV_WEIGHTS.get(e.get("turnover_type") or "", 1.0)
+        out[pid] = out.get(pid, 0.0) + w
+    return out
+
+
 # ── Shots-Created composition (how a player earns their SC) ──────────────────────
 
 def sc_composition(b):

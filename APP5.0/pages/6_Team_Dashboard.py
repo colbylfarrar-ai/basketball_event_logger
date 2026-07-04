@@ -4030,16 +4030,36 @@ if _tdview == "Lab":
             # ── observed lineup units ────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>Lineups — observed 5-man units"
                         "</div>", unsafe_allow_html=True)
-            st.caption("Net rating for each exact five that shared the floor for "
-                       "enough possessions (observed, not simulated).")
+            st.caption("Each exact five that shared the floor for enough "
+                       "possessions (observed, not simulated). **Adj Net** "
+                       "corrects every possession for the quality of the "
+                       "opposing FIVE on the floor — not just the opponent's "
+                       "record — so beating up on a good team's bench unit "
+                       "doesn't inflate a lineup. **±95%** is the confidence "
+                       "band on that net from the per-possession scoring "
+                       "variance; **≈games** is the sample in full team-games "
+                       "of floor time. Small samples carry wide bands — trust "
+                       "the sign before the size.")
             units = _units(team_id, tuple(tids))
             if units:
+                _adj_on = any(u.get("adjusted") for u in units)
                 st.dataframe(pd.DataFrame([{
                     "Lineup": " · ".join(u["names"]),
-                    "ORtg": u["ORtg"], "DRtg": u["DRtg"], "Net": u["Net"],
-                    "Off poss": u["off_poss"], "Def poss": u["def_poss"],
+                    "Adj Net": u["AdjNet"], "±95%": u["ci95"],
+                    "Net (raw)": u["Net"],
+                    "ORtg": u["AdjORtg"], "DRtg": u["AdjDRtg"],
+                    "Poss": u["poss"], "≈games": u["games_eq"],
                 } for u in units]), hide_index=True, width="stretch",
-                    height=min(460, 60 + 32 * len(units)))
+                    height=min(460, 60 + 32 * len(units)),
+                    column_config={
+                        "Adj Net": st.column_config.NumberColumn(format="%+.1f"),
+                        "±95%": st.column_config.NumberColumn(format="±%.0f"),
+                        "Net (raw)": st.column_config.NumberColumn(format="%+.1f"),
+                    })
+                if not _adj_on:
+                    st.caption("⚠ Not enough rated-opponent possessions to fit "
+                               "the adjustment yet — Adj Net currently equals "
+                               "the raw net.")
             else:
                 st.caption("No 5-man unit cleared the minimum possessions yet.")
 

@@ -362,6 +362,10 @@ def lineup_extra(team_id, game_ids=None, min_poss=25):
         return {}
     if not units:
         return {}
+    # read the OPPONENT-ADJUSTED net when the engine could fit it — the
+    # generator's copy keeps the NetAdj key so its text stays one code path
+    units = [dict(u, NetAdj=(u["AdjNetAdj"] if u.get("adjusted")
+                             else u["NetAdj"])) for u in units]
     return {"lineup": {
         "best": max(units, key=lambda u: u["NetAdj"]),
         "most_used": max(units, key=lambda u: u["poss"]),

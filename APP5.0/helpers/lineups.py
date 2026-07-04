@@ -45,23 +45,68 @@ def _event_floor(game_ids=None):
             for eid, teams in tmp.items()}
 
 
-def unit_ratings(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS):
-    """
-    Observed 5-man unit ratings for one team.
+def player_quality(gender=None):
+    """{pid: OVERALL rating} for the opponent adjustment (50 = league mean,
+    +10 per SD). Unrated players are simply absent (treated as unknown)."""
+    import helpers.player_ratings as PR
+    try:
+        table = PR.player_stat_table(gender=gender, min_games=1)
+    except Exception:
+        return {}
+    return {pid: r["OVERALL"] for pid, r in table.items()
+            if r.get("OVERALL") is not None}
 
-    Returns a list of dicts (sorted by Net desc), one per distinct five that
-    cleared `min_poss` total possessions:
-        players (sorted pid tuple), names, off_poss, def_poss, poss,
-        ORtg, DRtg, Net  (per 100 possessions), pts_for, pts_against
-    Off/def possessions are counted separately (a unit is on the floor for both
-    ends), so ORtg uses offensive possessions and DRtg uses defensive ones.
+
+def _five_q(five, quality):
+    """Mean rating of an on-court five (None when nobody in it is rated)."""
+    vals = [quality[p] for p in five if p in quality]
+    return sum(vals) / len(vals) if vals else None
+
+
+_MIN_REG_POSS = 200      # possessions needed before the fitted slopes are trusted
+
+
+def unit_ratings(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS,
+                 quality=None, floor=None):
+    """
+    Observed 5-man unit ratings for one team, OPPONENT-ADJUSTED.
+
+    Raw side (unchanged): ORtg / DRtg / Net per 100 possessions + the
+    credibility-weighted NetAdj.
+
+    Adjusted side: every possession's points are corrected for WHO WAS ON THE
+    FLOOR for the opponent — the mean OVERALL rating of the opposing five —
+    via slopes fit on THIS sample (points ~ offense-five quality +
+    defense-five quality over every possession in the games, both teams). So
+    a unit that fattened up on weak fives gives that edge back even when the
+    weak five belonged to a good team, and holding serve against a strong
+    five earns credit. Per row this adds:
+        AdjORtg / AdjDRtg / AdjNet   opponent-adjusted per-100 ratings
+        AdjNetAdj                    credibility-weighted adjusted net (sort key)
+        ci95                         ±95% band on the adjusted net from the
+                                     per-possession scoring variance — shrinks
+                                     as possessions accumulate
+        games_eq                     the unit's floor time in full team-games
+                                     of possessions (sample size, coach units)
+        adjusted                     False when the slopes couldn't be fit
+                                     (thin sample / no rated opponents); the
+                                     Adj* numbers then equal the raw ones.
+
+    `quality` = {pid: 0-100 rating} (auto-fetched league-wide when omitted);
+    `floor` = a precomputed _event_floor map (testability / reuse).
     """
     if events is None:
         events = S.fetch_events(game_ids)
-    floor = _event_floor(game_ids)
+    if floor is None:
+        floor = _event_floor(game_ids)
+    if quality is None:
+        quality = player_quality()
 
-    units = defaultdict(lambda: {"off_poss": 0, "off_pts": 0,
-                                 "def_poss": 0, "def_pts": 0})
+    # ── possession pass: per-unit (pts, opposing-five quality) + regression ──
+    units = defaultdict(lambda: {"off": [], "def": []})
+    reg = []                                  # (pts, q_off_five, q_def_five)
+    n_games = set()
+    total_poss = 0
     for e in events:
         if e["event_type"] not in ("shot", "turnover"):
             continue
@@ -73,45 +118,107 @@ def unit_ratings(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS)
             continue
         pts = ((3 if e["shot_type"] == 3 else 2)
                if (e["event_type"] == "shot" and e["shot_result"] == "make") else 0)
-        if off_team == team_id:
-            five = sets.get(team_id)
-            if five and len(five) == 5:
-                u = units[five]
-                u["off_poss"] += 1
-                u["off_pts"] += pts
-        else:
-            # team_id is on defense this possession; its five is the non-offense set
-            five = sets.get(team_id)
-            if five and len(five) == 5:
-                u = units[five]
-                u["def_poss"] += 1
-                u["def_pts"] += pts
+        n_games.add(e["game_id"])
+        total_poss += 1
+        off_five = sets.get(off_team)
+        def_five = next((f for t, f in sets.items() if t != off_team), None)
+        q_off = (_five_q(off_five, quality)
+                 if off_five and len(off_five) == 5 else None)
+        q_def = (_five_q(def_five, quality)
+                 if def_five and len(def_five) == 5 else None)
+        if q_off is not None and q_def is not None:
+            reg.append((pts, q_off, q_def))
+        five = sets.get(team_id)
+        if five and len(five) == 5:
+            if off_team == team_id:
+                units[five]["off"].append((pts, q_def))
+            else:
+                units[five]["def"].append((pts, q_off))
+
+    # ── fit the opponent slopes on this sample (2-var OLS, centered) ─────────
+    b_off = b_def = 0.0
+    qbar = 50.0
+    adjusted = False
+    if len(reg) >= _MIN_REG_POSS:
+        n = len(reg)
+        my = sum(r[0] for r in reg) / n
+        m1 = sum(r[1] for r in reg) / n
+        m2 = sum(r[2] for r in reg) / n
+        s11 = s22 = s12 = s1y = s2y = 0.0
+        for pts, q1, q2 in reg:
+            x1, x2, y = q1 - m1, q2 - m2, pts - my
+            s11 += x1 * x1
+            s22 += x2 * x2
+            s12 += x1 * x2
+            s1y += x1 * y
+            s2y += x2 * y
+        det = s11 * s22 - s12 * s12
+        if det > 1e-9:
+            b_off = (s22 * s1y - s12 * s2y) / det
+            b_def = (s11 * s2y - s12 * s1y) / det
+            qbar = (m1 + m2) / 2.0
+            adjusted = True
 
     name_of = {r["id"]: r["name"]
                for r in query("SELECT id, name FROM players WHERE team_id=?",
                               (team_id,))}
+    # one full team-game of floor time, in possessions (both ends) — games_eq
+    side_pg = total_poss / (2 * len(n_games)) if n_games else 0.0
+
+    def _adj(rows, slope):
+        """Per-possession points with the opposing-five quality term removed."""
+        return [pts - slope * ((q if q is not None else qbar) - qbar)
+                for pts, q in rows]
+
+    def _var(vals):
+        if len(vals) < 2:
+            return None
+        m = sum(vals) / len(vals)
+        return sum((v - m) ** 2 for v in vals) / len(vals)
+
     out = []
     for five, u in units.items():
-        poss = u["off_poss"] + u["def_poss"]
+        n_off, n_def = len(u["off"]), len(u["def"])
+        poss = n_off + n_def
         if poss < min_poss:
             continue
-        ortg = 100 * _safe(u["off_pts"], u["off_poss"])
-        drtg = 100 * _safe(u["def_pts"], u["def_poss"])
+        off_pts = sum(p for p, _ in u["off"])
+        def_pts = sum(p for p, _ in u["def"])
+        ortg = 100 * _safe(off_pts, n_off)
+        drtg = 100 * _safe(def_pts, n_def)
         net = ortg - drtg
+        # opponent-adjusted: facing a better DEFENSIVE five earns offense
+        # credit (b_def < 0), facing a better OFFENSIVE five earns defense
+        # credit (b_off > 0)
+        off_adj = _adj(u["off"], b_def)
+        def_adj = _adj(u["def"], b_off)
+        a_ortg = 100 * _safe(sum(off_adj), n_off)
+        a_drtg = 100 * _safe(sum(def_adj), n_def)
+        a_net = a_ortg - a_drtg
+        vo, vd = _var(off_adj), _var(def_adj)
+        ci = None
+        if vo is not None and vd is not None:
+            ci = 1.96 * 100 * (vo / n_off + vd / n_def) ** 0.5
         # Credibility-weight Net toward 0 by sample size: a 12-possession unit
         # that posts +40 is mostly noise, so it regresses hard; a 100-possession
-        # unit keeps almost all of its edge. NetAdj is what to sort/trust on.
+        # unit keeps almost all of its edge.
         cred = poss / (poss + _NET_PRIOR_POSS)
         out.append({
             "players": tuple(sorted(five)),
             "names": [name_of.get(p, str(p)) for p in sorted(five)],
-            "off_poss": u["off_poss"], "def_poss": u["def_poss"], "poss": poss,
-            "pts_for": u["off_pts"], "pts_against": u["def_pts"],
+            "off_poss": n_off, "def_poss": n_def, "poss": poss,
+            "pts_for": off_pts, "pts_against": def_pts,
             "ORtg": round(ortg, 1), "DRtg": round(drtg, 1),
             "Net": round(net, 1),
             "NetAdj": round(net * cred, 1), "cred": round(cred, 2),
+            "AdjORtg": round(a_ortg, 1), "AdjDRtg": round(a_drtg, 1),
+            "AdjNet": round(a_net, 1),
+            "AdjNetAdj": round(a_net * cred, 1),
+            "ci95": round(ci, 1) if ci is not None else None,
+            "games_eq": round(poss / (2 * side_pg), 1) if side_pg else None,
+            "adjusted": adjusted,
         })
-    out.sort(key=lambda d: -d["NetAdj"])
+    out.sort(key=lambda d: -d["AdjNetAdj"])
     return out
 
 

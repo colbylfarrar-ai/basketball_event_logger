@@ -1222,27 +1222,41 @@ def _fx_track():
                                file_name=f"tracked_ratings_{gender}.csv",
                                mime="text/csv", key="dl_tracked")
 
-            # ── full team stat table — every tracked-team stat in one grid ────
+            # ── full team stat table — every tracked-team stat in one grid.
+            #    LAZY: built only when the toggle is on (it recomputes the
+            #    adjusted-shooting ridge + the run detection — no reason to pay
+            #    that on every Tracked-view rerun).
             st.markdown("<div class='section-hdr'>Full team stat table</div>",
                         unsafe_allow_html=True)
-            full_rows = _team_stat_rows(gender, tracked, pack, form_stats, _VISK,
-                                        season_pick)
-            _keep = {r["name"] for r in rows}          # same Class / min-games filter
-            full = pd.DataFrame([fr for fr in full_rows if fr["Team"] in _keep])
-            if full.empty:
-                st.info("No tracked teams match the current Class / games filter.")
+            if not st.toggle("Load the full stat table (every team stat, "
+                             "sortable + filterable)", key="trk_full_on"):
+                st.caption("70+ columns: power, efficiency, shooting both ends "
+                           "(incl. opponent-adjusted), rebounding, playmaking, "
+                           "defense, scoring runs, composites and schedule. "
+                           "Team column stays pinned while you scroll.")
             else:
-                _grid(full, "trk_full", height=560)
-                st.download_button(
-                    "Full team stats (CSV)", full.to_csv(index=False),
-                    file_name=f"team_stats_{gender}.csv", mime="text/csv",
-                    key="dl_team_full")
-                st.caption(
-                    "Every team stat in one grid — sort or filter any column. "
-                    "Efficiency, shooting and rate columns (0-100 scale) come from "
-                    "**tracked games only** (Trk GP); record, MOV and the composites "
-                    "(Dominance / Clutch / Luck …) are **full-season results**. "
-                    "Pool-scoped to you.")
+                full_rows = _team_stat_rows(gender, tracked, pack, form_stats,
+                                            _VISK, season_pick)
+                _keep = {r["name"] for r in rows}      # same Class / min-games filter
+                full = pd.DataFrame([fr for fr in full_rows if fr["Team"] in _keep])
+                if full.empty:
+                    st.info("No tracked teams match the current Class / games "
+                            "filter.")
+                else:
+                    _grid(full, "trk_full", height=560)
+                    st.download_button(
+                        "Full team stats (CSV)", full.to_csv(index=False),
+                        file_name=f"team_stats_{gender}.csv", mime="text/csv",
+                        key="dl_team_full")
+                    st.caption(
+                        "Every team stat in one grid — sort or filter any column; "
+                        "the Team column stays pinned. Efficiency, shooting and "
+                        "rate columns (0-100 scale) come from **tracked games "
+                        "only** (Trk GP); record, MOV and the composites "
+                        "(Dominance / Clutch / Luck …) are **full-season "
+                        "results**; Adj eFG% / Adj Opp eFG% are opponent-"
+                        "adjusted; 10-0 runs from the run engine (garbage time "
+                        "excluded). Pool-scoped to you.")
 
         st.markdown("<div class='section-hdr'>Tracked schedule & box scores</div>",
                     unsafe_allow_html=True)

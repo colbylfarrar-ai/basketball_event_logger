@@ -547,6 +547,15 @@ _TEAM_STAT_SPEC = [
     ("SOS",       "trk",    "SOS",         2),
     ("SOR",       "trk",    "SOR",         2),
     ("ClassAdj",  "trk",    "ClassAdj",    2),
+    # opponent-adjusted shooting (adj_efficiency) + forced TOs + scoring runs
+    # (runs.py) — the "ext" source is built inside team_stat_table off the
+    # same pool, so these stay entitlement- and season-scoped.
+    ("Adj eFG%",       "ext", "AdjeFG",       1, 100),
+    ("Adj Opp eFG%",   "ext", "AdjoeFG",      1, 100),
+    ("Forced TOV%",    "ext", "forced_tov",   1, 100),
+    ("10-0 runs/G",    "ext", "runs_made",    2),
+    ("10-0 allowed/G", "ext", "runs_allowed", 2),
+    ("Biggest run",    "ext", "biggest_run",  None),
 ]
 
 
@@ -594,7 +603,43 @@ def team_stat_table(gender=None, tracked=None, pack=None, form=None,
 
     ts = pack.get("ts", {})
     teams = pack.get("teams", sorted(tracked, key=lambda t: tracked[t]["Rank"]))
-    sources = {"trk": tracked, "ts": ts, "form": form}
+
+    # "ext" columns: opponent-adjusted shooting + forced-TO rate + scoring
+    # runs, built off the same pool/season so the read-filter holds. Each
+    # sub-build fails soft — a missing engine leaves its columns None.
+    ext = {t: {} for t in teams}
+    try:
+        import helpers.adj_efficiency as AE
+        adj = AE.adjusted_shooting(gender=gender, game_ids=game_ids,
+                                   season=season)
+        for t in teams:
+            a = adj.get(t)
+            if a:
+                ext[t]["AdjeFG"] = a.get("AdjeFG")
+                ext[t]["AdjoeFG"] = a.get("AdjoeFG")
+    except Exception:
+        pass
+    for t in teams:
+        ob = pack.get("opp", {}).get(t) or {}
+        opos = (ob.get("FGA") or 0) + (ob.get("TOV") or 0)
+        ext[t]["forced_tov"] = (ob.get("TOV") or 0) / opos if opos else None
+    try:
+        import helpers.runs as RN
+        import helpers.seasons as SEAS
+        _rgids = (list(game_ids) if game_ids is not None
+                  else SEAS.game_pool(season=season, gender=gender,
+                                      tracked_only=True, finished_only=False))
+        rt = RN.league_run_table(events=S.fetch_events(_rgids)) if _rgids else {}
+        for t in teams:
+            r = rt.get(t)
+            if r:
+                ext[t]["runs_made"] = r["made_pg"]
+                ext[t]["runs_allowed"] = r["allowed_pg"]
+                ext[t]["biggest_run"] = r["biggest"] or None
+    except Exception:
+        pass
+
+    sources = {"trk": tracked, "ts": ts, "form": form, "ext": ext}
 
     rows = []
     for t in teams:

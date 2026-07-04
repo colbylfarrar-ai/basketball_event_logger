@@ -151,19 +151,26 @@ def team_glance(gender, team_id, n=6, season="Current"):
 
 
 def _team_game_opponents(team_id, game_ids=None):
-    """{game_id: opponent_team_id} for the team's tracked, current-season games
-    (optionally limited to game_ids)."""
-    rows = query(
-        "SELECT id, team1_id, team2_id FROM games "
-        "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current'",
-        (team_id, team_id))
-    allow = set(game_ids) if game_ids is not None else None
-    out = {}
-    for r in rows:
-        if allow is not None and r["id"] not in allow:
-            continue
-        out[r["id"]] = r["team2_id"] if r["team1_id"] == team_id else r["team1_id"]
-    return out
+    """{game_id: opponent_team_id} for the team's tracked games. With no
+    `game_ids` this defaults to the CURRENT season; a passed set is trusted as
+    already season-scoped (the dashboard hands the bundle's season ids), so an
+    archive view isn't filtered down to nothing by the Current clause."""
+    if game_ids is not None:
+        allow = set(game_ids)
+        if not allow:
+            return {}
+        ph = ",".join("?" * len(allow))
+        rows = query(
+            f"SELECT id, team1_id, team2_id FROM games "
+            f"WHERE id IN ({ph}) AND (team1_id=? OR team2_id=?) AND tracked=1",
+            tuple(allow) + (team_id, team_id))
+    else:
+        rows = query(
+            "SELECT id, team1_id, team2_id FROM games "
+            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current'",
+            (team_id, team_id))
+    return {r["id"]: (r["team2_id"] if r["team1_id"] == team_id else r["team1_id"])
+            for r in rows}
 
 
 def passer_quality(gender=None, game_ids=None, events=None, rates=None, min_feeds=8):
@@ -287,16 +294,26 @@ def winloss_splits(team_id, gender=None, game_ids=None, events=None):
     """The team's own-offense profile split by RESULT — how it plays in WINS vs
     LOSSES (what makes it go, what shows up when it loses). Same profile fields as
     strength_splits. `available` False until both sides clear MIN_SPLIT_SHOTS."""
-    rows = query(
-        "SELECT id, team1_id, home_score, away_score FROM games "
-        "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current' "
-        "AND home_score IS NOT NULL AND away_score IS NOT NULL",
-        (team_id, team_id))
-    allow = set(game_ids) if game_ids is not None else None
+    # A passed game_ids set is trusted as season-scoped (archive views); only the
+    # no-args default pins to the current season.
+    if game_ids is not None:
+        allow = set(game_ids)
+        if not allow:
+            return {"available": False}
+        ph = ",".join("?" * len(allow))
+        rows = query(
+            f"SELECT id, team1_id, home_score, away_score FROM games "
+            f"WHERE id IN ({ph}) AND (team1_id=? OR team2_id=?) AND tracked=1 "
+            f"AND home_score IS NOT NULL AND away_score IS NOT NULL",
+            tuple(allow) + (team_id, team_id))
+    else:
+        rows = query(
+            "SELECT id, team1_id, home_score, away_score FROM games "
+            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current' "
+            "AND home_score IS NOT NULL AND away_score IS NOT NULL",
+            (team_id, team_id))
     result = {}                       # game_id -> 'win' | 'loss'
     for r in rows:
-        if allow is not None and r["id"] not in allow:
-            continue
         is_home = r["team1_id"] == team_id            # team1 = home in this app
         my = r["home_score"] if is_home else r["away_score"]
         opp = r["away_score"] if is_home else r["home_score"]
@@ -318,7 +335,8 @@ def winloss_splits(team_id, gender=None, game_ids=None, events=None):
     }
 
 
-def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=None):
+def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=None,
+                    season="Current"):
     """The team's own-offense profile split by OPPONENT STRENGTH (top vs bottom
     half of the league by Power rank).
 
@@ -327,7 +345,7 @@ def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=Non
     3PA_rate/rim_rate/ast_rate/open_rate/top_zone/poss). `available` is False until
     both sides clear MIN_SPLIT_SHOTS. Also carries the opponent list per side."""
     if scored is None:
-        scored = TR.score_ratings(gender=gender)
+        scored = TR.score_ratings(gender=gender, season=season)
     opps = _team_game_opponents(team_id, game_ids)
     if not opps or not scored:
         return {"available": False}

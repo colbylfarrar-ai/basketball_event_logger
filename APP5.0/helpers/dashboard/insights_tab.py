@@ -81,11 +81,12 @@ def _team_feed(gender, season="Current", team_id=None, tids=None):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _strength(gender, team_id, tids):
+def _strength(gender, team_id, tids, season="Current"):
     """Opponent-strength offense split for this team (top vs bottom half of the
-    league), cached per (gender, team, visible games)."""
+    league), cached per (gender, team, visible games, season)."""
     return INT.strength_splits(team_id, gender=gender,
-                               game_ids=list(tids) if tids else None)
+                               game_ids=list(tids) if tids else None,
+                               season=season)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -103,9 +104,12 @@ def _tendencies(gender, team_id, tids):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _passers(gender):
-    """Per-passer shot-creation quality (pass-from look quality vs finish)."""
-    return INT.passer_quality(gender=gender)
+def _passers(gender, season_gp=None):
+    """Per-passer shot-creation quality (pass-from look quality vs finish).
+    `season_gp` (a tuple of game ids) scopes an archive season; None = current."""
+    return INT.passer_quality(
+        gender=gender,
+        game_ids=(list(season_gp) if season_gp is not None else None))
 
 
 def _pct(v):
@@ -194,8 +198,9 @@ def render(ctx):
 
     # ── deep dive: offense vs TOP-half vs BOTTOM-half opponents ────────────────
     _tids = getattr(ctx, "tracked_ids", None)
-    _ss = _strength(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id", None) \
-        else {"available": False}
+    _ss = _strength(ctx.gender, ctx.team_id, _tids,
+                    getattr(ctx, "season", "Current")) \
+        if getattr(ctx, "team_id", None) else {"available": False}
     st.markdown("<div class='lab-hdr'>Deep dive — vs top teams vs bottom teams</div>",
                 unsafe_allow_html=True)
     if not _ss.get("available"):
@@ -281,7 +286,7 @@ def render(ctx):
                    "predictability + over-used sets live on the Scout tab.)")
 
     # ── passer quality — look created vs finish (the pass-from FG% nuance) ────
-    _pq = _passers(ctx.gender)
+    _pq = _passers(ctx.gender, getattr(ctx, "season_gp", None))
     _prows = sorted(((pid, _pq[pid]) for pid in pids if pid in _pq),
                     key=lambda t: -t[1]["xPPS_created"])
     if _prows:

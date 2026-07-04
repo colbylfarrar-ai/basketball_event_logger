@@ -1317,9 +1317,15 @@ def render_card(ctx):
                    "possessions better with this player on the floor? Covers every "
                    "game the team played; small samples are directional.")
 
-        ro = S.player_rebound_onoff(pid, P["team_id"],
+        # Team for the split: on a PAST-season pool, resolve from the lineup
+        # snapshots — players.team_id is the CURRENT roster, so a transferred
+        # player (Vinita → Adair) would otherwise get the NEW team's on/off
+        # over a season they played somewhere else.
+        _oot = ((S.player_lineup_team(pid, list(_gp)) if _gp is not None
+                 else None) or P["team_id"])
+        ro = S.player_rebound_onoff(pid, _oot,
                                     game_ids=(list(_gp) if _gp is not None else None))
-        pm = S.player_playmaking_onoff(pid, P["team_id"],
+        pm = S.player_playmaking_onoff(pid, _oot,
                                        game_ids=(list(_gp) if _gp is not None else None))
 
         if ro and ro.get("on_oreb_opps", 0) >= 5:

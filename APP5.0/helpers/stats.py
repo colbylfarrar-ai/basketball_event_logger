@@ -1519,6 +1519,28 @@ def _player_oncourt_event_ids(player_id, game_ids):
     return {r["eid"] for r in rows}
 
 
+def player_lineup_team(player_id, game_ids=None):
+    """The team a player was SNAPSHOTTED with over `game_ids` (majority when a
+    midseason move spans two teams; None when never on the floor).
+
+    Transfer-proof team resolution: players.team_id is the CURRENT roster —
+    after a transfer it's the wrong team for any PAST season's on/off splits,
+    so past-season callers must resolve the team from the lineup rows the
+    events actually recorded."""
+    clause, params = "", [player_id]
+    if game_ids:
+        marks = ",".join("?" * len(game_ids))
+        clause = f" AND ge.game_id IN ({marks})"
+        params += list(game_ids)
+    rows = query(
+        f"""SELECT gel.team_id tid, COUNT(*) n
+            FROM game_event_lineup gel
+            JOIN game_events ge ON ge.id = gel.event_id
+            WHERE gel.player_id = ?{clause}
+            GROUP BY gel.team_id ORDER BY n DESC""", tuple(params))
+    return rows[0]["tid"] if rows else None
+
+
 def player_rebound_onoff(player_id, team_id, game_ids=None):
     """
     Team rebounding with the player ON vs OFF the floor.
@@ -1534,9 +1556,17 @@ def player_rebound_onoff(player_id, team_id, game_ids=None):
     events = fetch_events(gids)
     on_ids = _player_oncourt_event_ids(player_id, gids)
 
+    # Allowed-side gate: `game_ids` may be a LEAGUE-wide pool (archive views
+    # pass the season's gender ids) — only the team's OWN games count, or every
+    # other team's rebounds land in the "off" bucket (the 1190-opps bug).
+    own_games = {e["game_id"] for e in events
+                 if e["shooter_team_id"] == team_id}
+
     agg = {s: {"oreb_made": 0, "oreb_opps": 0, "dreb_made": 0, "dreb_opps": 0}
            for s in ("on", "off")}
     for e in events:
+        if e["game_id"] not in own_games:
+            continue
         reb = e["rebound_by_id"]
         shooter_team = e["shooter_team_id"]
         if reb is None or shooter_team is None:
@@ -1580,6 +1610,10 @@ def player_playmaking_onoff(player_id, team_id, game_ids=None):
     events = fetch_events(gids)
     on_ids = _player_oncourt_event_ids(player_id, gids)
 
+    # Same allowed-side note as player_rebound_onoff: a league-wide pool would
+    # put the team's whole season into "off" for a player who wasn't there —
+    # the shooter_team filter below already scopes to the team's own offense,
+    # which is the own-games gate for this metric.
     agg = {s: {"fgm": 0, "ast": 0, "fga": 0, "tov": 0}
            for s in ("on", "off")}
     for e in events:

@@ -20,6 +20,7 @@ import streamlit as st
 
 import helpers.social_cards as SCARD
 import helpers.settings_utils as SU
+import helpers.seasons as SEAS
 
 
 def _team_color(tid):
@@ -231,10 +232,21 @@ def render(ctx):
         # One player's numbers — a season line, the whole career (identity
         # chain), one game, or a hot stretch. Box stats only (real numbers).
         from database.db import query as _q
-        _roster = _q("SELECT id, name, number FROM players WHERE team_id=? "
-                     "AND archived=0 ORDER BY number", (ctx.team_id,))
+        # Season-aware roster: an archive view lists THAT season's (archived)
+        # roster rows, not the current one — a rollover gives players new ids,
+        # so the current roster has no games in a past season.
+        if SEAS.is_current(_szn):
+            _roster = _q("SELECT id, name, number FROM players WHERE team_id=? "
+                         "AND archived=0 ORDER BY number", (ctx.team_id,))
+        else:
+            _roster = _q("SELECT id, name, number FROM players WHERE team_id=? "
+                         "AND archived=1 AND season=? ORDER BY number",
+                         (ctx.team_id, _szn))
         if not _roster:
-            st.info("No players on the roster yet — add them in the Input Hub.")
+            st.info("No players on this roster for that season — pick another "
+                    "season, or add players in the Input Hub." if not
+                    SEAS.is_current(_szn) else
+                    "No players on the roster yet — add them in the Input Hub.")
             return
         pc1, pc2 = st.columns([2, 2])
         _pid = pc1.selectbox("Player", [r["id"] for r in _roster],

@@ -4099,7 +4099,8 @@ if _tdview == "Insights":
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Share":
     DSHARE.render(SimpleNamespace(team_id=team_id, gender=gender,
-                                  team_name=team["name"], vis_key=_vis_key))
+                                  team_name=team["name"], vis_key=_vis_key,
+                                  season=season_pick))
 
 
 @st.fragment

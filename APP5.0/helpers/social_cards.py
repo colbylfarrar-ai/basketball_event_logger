@@ -24,6 +24,7 @@ from database.db import query
 import helpers.stats as S
 import helpers.team_ratings as TR
 import helpers.player_ratings as PR
+import helpers.seasons as SEAS
 
 # App palette (mirrors the dashboard dark theme + brand gold).
 BG = "#0d1117"
@@ -349,7 +350,7 @@ def _top_performers(game_ids, team_id, limit=3):
 # ── card 1: game result — symmetric head-to-head ─────────────────────────────
 def game_result_png(game_id, team_id, color_a=None, color_b=None,
                     show_quarters=False, gender=None, title=None, bg=None,
-                    logo_a=None, logo_b=None):
+                    logo_a=None, logo_b=None, season="Current"):
     """Head-to-head final-score card: two team-colour panels (same treatment for
     both), the score, each team's Power/record/class-rank line, an optional
     coach headline (`title`, e.g. "Region Championship") and an optional
@@ -362,7 +363,7 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
     T = _theme(bg or BG)
     _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
                                         T["panel"], T["edge"], T["accent"])
-    scored = TR.score_ratings(gender=gender) if gender else {}
+    scored = TR.score_ratings(gender=gender, season=season) if gender else {}
     g = query(
         """SELECT g.*, t1.name n1, t2.name n2
            FROM games g JOIN teams t1 ON t1.id=g.team1_id
@@ -479,18 +480,20 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
 
 
 # ── card 2: season record ────────────────────────────────────────────────────
-def season_record_png(team_id, gender, bg=None):
+def season_record_png(team_id, gender, bg=None, season="Current"):
     """Season-to-date card: record, power + class rank, streak, margin, the
     marquee wins and the top-3 players. `bg` sets the card background (defaults
-    to the team's colour, resolved by the caller)."""
+    to the team's colour, resolved by the caller). `season` scopes the whole
+    card — record, ranks, wins and player table — to one season (archive views
+    make a past-season card, e.g. a program's history post)."""
     T = _theme(bg or default_team_color(team_id))
     _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
                                         T["panel"], T["edge"], T["accent"])
-    scored = TR.score_ratings(gender=gender)
+    scored = TR.score_ratings(gender=gender, season=season)
     s = scored.get(team_id)
     if not s:
         return None
-    games = _team_games(team_id)
+    games = _team_games(team_id, season=season)
     crank, cn = class_rank(scored, team_id)
 
     # current streak off the game list (real results, newest backwards)
@@ -510,7 +513,9 @@ def season_record_png(team_id, gender, bg=None):
     _hn, _hfs = _team_label(s["name"], 28, 30)
     ax.text(50, 86.5, _hn, color=FG, fontsize=_hfs, fontweight="bold",
             ha="center", va="center")
-    ax.text(50, 81.5, f"Class {s.get('class', 'N/A')} · Season to date",
+    _szn_lbl = ("Season to date" if SEAS.is_current(season)
+                else f"{season} season")
+    ax.text(50, 81.5, f"Class {s.get('class', 'N/A')} · {_szn_lbl}",
             color=GREY, fontsize=14, ha="center", va="center")
 
     # record — big, but leave room below for two stacked panels
@@ -544,7 +549,10 @@ def season_record_png(team_id, gender, bg=None):
         key=lambda gm: gm["_opp_rank"])[:3]
 
     # ── top 3 players — OVERALL (fallback: scoring) ──────────────────────────
-    table = PR.player_stat_table(gender=gender, min_games=1)
+    # the player table reads the season's tracked pool (None = current default)
+    _pgids = (None if SEAS.is_current(season)
+              else set(SEAS.game_pool(season, gender=gender, tracked_only=True)))
+    table = PR.player_stat_table(gender=gender, min_games=1, game_ids=_pgids)
     mine = [r for r in table.values() if r.get("team_id") == team_id]
     rated = [r for r in mine if r.get("OVERALL") is not None]
     if rated:
@@ -598,7 +606,8 @@ def season_record_png(team_id, gender, bg=None):
 
 
 # ── card 3: a selected group of games ────────────────────────────────────────
-def games_png(team_id, gender, game_ids=None, n=5, title=None, bg=None):
+def games_png(team_id, gender, game_ids=None, n=5, title=None, bg=None,
+              season="Current"):
     """Record + margin over a chosen set of games, the full results strip (every
     selected game shown) and the player of the run (top scorer over the TRACKED
     games in the set). `game_ids` = an explicit selection (schedule multiselect);
@@ -607,7 +616,7 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None, bg=None):
     T = _theme(bg or default_team_color(team_id))
     _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
                                         T["panel"], T["edge"], T["accent"])
-    games = _team_games(team_id)
+    games = _team_games(team_id, season=season)
     if not games:
         return None
     if game_ids:
@@ -624,7 +633,7 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None, bg=None):
     margin = sum(gm["pf"] - gm["pa"] for gm in chosen) / len(chosen)
     name = query("SELECT name FROM teams WHERE id=?", (team_id,))
     tname = name[0]["name"] if name else f"#{team_id}"
-    scored = TR.score_ratings(gender=gender) if gender else {}
+    scored = TR.score_ratings(gender=gender, season=season) if gender else {}
     chips = rank_line(scored, team_id, record=False)   # Power + class rank
 
     fig, ax = _fig(_BG)

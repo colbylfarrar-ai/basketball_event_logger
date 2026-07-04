@@ -103,6 +103,45 @@ def resolve_new_game_season(date_str, override=None) -> str:
     return lbl
 
 
+def game_pool(season=ACTIVE, gender=None, tracked_only=False,
+              finished_only=True) -> list[int]:
+    """THE canonical per-season game-id pool — one call that answers "which games
+    belong to this season" so every engine/page scopes the same way and data can
+    never bleed across seasons.
+
+    FOUNDER RULE (the whole season model in one line): the ONLY difference between
+    the current season and a past one is WHO may look — the current season is the
+    paid, entitlement-gated live edge; every past season is an open archive anyone
+    can read at full depth. The DATA path is identical: stamp `games.season`, scope
+    every aggregate with this pool (or an engine's `season=` param), and the
+    entitlement layer (helpers/entitlement._is_past_season) handles the who.
+
+    This also makes the archive LIVING: back-date a game (Input Hub "Season for
+    new games: Auto", PWA retro tracking) and season_for_date stamps it into its
+    real historical season — '2015-2016' works exactly like last year. New labels
+    appear in season_options()/archived_labels() automatically; nothing to migrate.
+
+    Args: `season` — 'Current' (default) or an archive label; None = all seasons.
+    `gender` filters via the home team. `tracked_only` → play-by-play games only
+    (the possession/analytics pool). `finished_only` → both scores present
+    (default; pass False to include scheduled games)."""
+    clause, params = [], []
+    if season is not None:
+        clause.append("g.season = ?")
+        params.append(ACTIVE if is_current(season) else str(season).strip())
+    if tracked_only:
+        clause.append("g.tracked = 1")
+    if finished_only:
+        clause.append("g.home_score IS NOT NULL AND g.away_score IS NOT NULL")
+    if gender:
+        clause.append("t.gender = ?")
+        params.append(gender)
+    where = ("WHERE " + " AND ".join(clause)) if clause else ""
+    return [r["id"] for r in query(
+        f"SELECT g.id FROM games g JOIN teams t ON t.id = g.team1_id {where}",
+        tuple(params))]
+
+
 def game_season(game_id) -> str:
     """The season a game is stamped with ('Current' or a label). 'Current' if the
     game is missing (safe default for roster/scope lookups)."""

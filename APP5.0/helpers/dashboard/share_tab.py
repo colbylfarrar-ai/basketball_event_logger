@@ -26,29 +26,32 @@ def _team_color(tid):
     return SU.get_setting(f"team_color:{tid}", SCARD.default_team_color(tid))
 
 
+# `season` on each wrapper scopes the card to the dashboard's selected season
+# ('Current' = live default, byte-identical) — an archive view builds cards from
+# that season's games, ranks and player table (program-history posts).
 @st.cache_data(ttl=600, show_spinner=False)
 def _card_game(game_id, team_id, ca, cb, quarters, gender, title, bg,
-               logo_a, logo_b):
+               logo_a, logo_b, season="Current"):
     return SCARD.game_result_png(game_id, team_id, color_a=ca, color_b=cb,
                                  show_quarters=quarters, gender=gender,
                                  title=title or None, bg=bg,
-                                 logo_a=logo_a, logo_b=logo_b)
+                                 logo_a=logo_a, logo_b=logo_b, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_season(team_id, gender, bg):
-    return SCARD.season_record_png(team_id, gender, bg=bg)
+def _card_season(team_id, gender, bg, season="Current"):
+    return SCARD.season_record_png(team_id, gender, bg=bg, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_games(team_id, gender, game_ids, title, bg):
+def _card_games(team_id, gender, game_ids, title, bg, season="Current"):
     return SCARD.games_png(team_id, gender, game_ids=list(game_ids),
-                           title=title or None, bg=bg)
+                           title=title or None, bg=bg, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _games(team_id):
-    return SCARD._team_games(team_id)
+def _games(team_id, season="Current"):
+    return SCARD._team_games(team_id, season=season)
 
 
 def _dl(png, fname, key):
@@ -74,7 +77,8 @@ def render(ctx):
                 "team's dashboard to generate them.")
         return
 
-    games = _games(ctx.team_id)
+    _szn = getattr(ctx, "season", "Current")
+    games = _games(ctx.team_id, _szn)
     if not games:
         st.info("No finished games yet — share cards need at least one final "
                 "score.")
@@ -126,7 +130,7 @@ def render(ctx):
             SU.set_setting(f"team_color:{opp_id}", cb)
 
         png = _card_game(pick, ctx.team_id, ca, cb, quarters, ctx.gender,
-                         gtitle.strip(), gbg, logo_a, logo_b)
+                         gtitle.strip(), gbg, logo_a, logo_b, _szn)
         if png and quarters and not gm["tracked"]:
             st.caption("This game isn't tracked play-by-play — the quarter line "
                        "will be empty. Track it in the Game Tracker for the split.")
@@ -140,7 +144,7 @@ def render(ctx):
         sbg = st.color_picker("Background", _team_color(ctx.team_id),
                               key="share_season_bg",
                               help="Defaults to your team colour.")
-        png = _card_season(ctx.team_id, ctx.gender, sbg)
+        png = _card_season(ctx.team_id, ctx.gender, sbg, _szn)
         if not png:
             st.info("Not enough data for this card yet.")
             return
@@ -165,7 +169,7 @@ def render(ctx):
             st.info("Select at least one game.")
             return
         png = _card_games(ctx.team_id, ctx.gender, tuple(sorted(sel)),
-                          title.strip(), gbg2)
+                          title.strip(), gbg2, _szn)
         if not png:
             st.info("Not enough data for this card yet.")
             return

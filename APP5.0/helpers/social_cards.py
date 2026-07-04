@@ -350,7 +350,7 @@ def _top_performers(game_ids, team_id, limit=3):
 # ── card 1: game result — symmetric head-to-head ─────────────────────────────
 def game_result_png(game_id, team_id, color_a=None, color_b=None,
                     show_quarters=False, gender=None, title=None, bg=None,
-                    logo_a=None, logo_b=None, season="Current"):
+                    logo_a=None, logo_b=None, season="Current", manual=None):
     """Head-to-head final-score card: two team-colour panels (same treatment for
     both), the score, each team's Power/record/class-rank line, an optional
     coach headline (`title`, e.g. "Region Championship") and an optional
@@ -358,37 +358,54 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
     `color_a`/`color_b` are its / the opponent's panel colours (defaults derived
     from team id); `bg` sets the card background (default dark). `logo_a`/`logo_b`
     are optional in-memory image bytes drawn on each panel (never persisted).
-    None if game not finished."""
+    None if game not finished.
+
+    `manual` — build the card from coach-typed values instead of a DB game:
+    {"b_id", "a_pts", "b_pts", "date", "location"(opt)} with `team_id` = team A
+    (top panel). No quarter line (there are no events), rank chips still come
+    from the season's ratings. game_id is ignored (pass 0)."""
     from matplotlib.patches import FancyBboxPatch
     T = _theme(bg or BG)
     _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
                                         T["panel"], T["edge"], T["accent"])
     scored = TR.score_ratings(gender=gender, season=season) if gender else {}
-    g = query(
-        """SELECT g.*, t1.name n1, t2.name n2
-           FROM games g JOIN teams t1 ON t1.id=g.team1_id
-                        JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""",
-        (game_id,))
-    if not g:
-        return None
-    g = g[0]
-    if g["home_score"] is None or g["away_score"] is None:
-        return None
-    home = g["team1_id"] == team_id
-    a_id = team_id
-    b_id = g["team2_id"] if home else g["team1_id"]
-    a_name = g["n1"] if home else g["n2"]
-    b_name = g["n2"] if home else g["n1"]
-    a_pts = g["home_score"] if home else g["away_score"]
-    b_pts = g["away_score"] if home else g["home_score"]
+    if manual is not None:
+        show_quarters = False                       # no events behind the score
+        a_id, b_id = team_id, manual["b_id"]
+        _nm = {r["id"]: r["name"] for r in query(
+            "SELECT id, name FROM teams WHERE id IN (?,?)", (a_id, b_id))}
+        a_name = _nm.get(a_id, f"#{a_id}")
+        b_name = _nm.get(b_id, f"#{b_id}")
+        a_pts, b_pts = int(manual["a_pts"]), int(manual["b_pts"])
+        sub = str(manual.get("date") or "")
+        if manual.get("location"):
+            sub = f"{sub} · {manual['location']}" if sub else manual["location"]
+    else:
+        g = query(
+            """SELECT g.*, t1.name n1, t2.name n2
+               FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                            JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""",
+            (game_id,))
+        if not g:
+            return None
+        g = g[0]
+        if g["home_score"] is None or g["away_score"] is None:
+            return None
+        home = g["team1_id"] == team_id
+        a_id = team_id
+        b_id = g["team2_id"] if home else g["team1_id"]
+        a_name = g["n1"] if home else g["n2"]
+        b_name = g["n2"] if home else g["n1"]
+        a_pts = g["home_score"] if home else g["away_score"]
+        b_pts = g["away_score"] if home else g["home_score"]
+        sub = g["date"] or ""
+        if g.get("location"):
+            sub = f"{sub} · {g['location']}" if sub else g["location"]
     ca = _norm_hex(color_a, default_team_color(a_id))
     cb = _norm_hex(color_b, default_team_color(b_id))
 
     fig, ax = _fig(_BG)
     _brand(ax, "final score", bg=_BG, grey=GREY)
-    sub = g["date"] or ""
-    if g.get("location"):
-        sub = f"{sub} · {g['location']}" if sub else g["location"]
     # coach headline (optional) rides above the date; both centred at the top
     title = (title or "").strip()
     if title:

@@ -27,20 +27,27 @@ from database.db import query
 
 # ── low-level loaders ───────────────────────────────────────────────────────
 
-def _games(gender=None, allow=None):
+def _games(gender=None, allow=None, season="Current"):
     """Tracked games with scores, optionally limited to one gender (team1's).
 
     `allow` is the entitlement read-filter (a set/iterable of game ids the viewer
     may aggregate) or None = unrestricted. A solo-paid coach passes their OWN
     tracked games (refs/foul depth scoped to their own games); a league-wide coach
     passes the pooled set; admin passes None.
+
+    `season` — 'Current' (default), an archive label, or None = ALL seasons.
+    Officials are career-long (same person, same official_id, ~15-year careers,
+    never archived at rollover), so the Officials page aggregates across seasons
+    by default (season=None) and offers a per-season view.
     """
+    clause = "AND g.season = ?" if season is not None else ""
+    params = (season,) if season is not None else ()
     rows = query(
-        """SELECT g.id, g.team1_id, g.team2_id, g.date,
+        f"""SELECT g.id, g.team1_id, g.team2_id, g.date,
                   g.home_score, g.away_score, t1.gender AS gender
            FROM games g
            JOIN teams t1 ON t1.id = g.team1_id
-           WHERE g.tracked = 1 AND g.season = 'Current'"""
+           WHERE g.tracked = 1 {clause}""", params
     )
     if gender:
         rows = [r for r in rows if r["gender"] == gender]
@@ -107,7 +114,7 @@ from helpers.stats import _safe   # shared definition lives in helpers.stats
 
 # ── main entry point ─────────────────────────────────────────────────────────
 
-def official_overview(gender=None, game_ids=None):
+def official_overview(gender=None, game_ids=None, season="Current"):
     """
     Returns {"officials": [row, ...], "teams": {team_id: name}}.
 
@@ -130,7 +137,7 @@ def official_overview(gender=None, game_ids=None):
       game_fouls       total fouls called by ANYONE in their games
       foul_share       fouls / game_fouls  (share of calls this ref made)
     """
-    games = _games(gender, allow=game_ids)
+    games = _games(gender, allow=game_ids, season=season)
     game_ids = list(games.keys())
     offs = _officials()
     worked = _worked(game_ids)
@@ -223,7 +230,7 @@ def official_overview(gender=None, game_ids=None):
     return {"officials": rows, "teams": teams}
 
 
-def official_game_log(off_pk, gender=None, game_ids=None):
+def official_game_log(off_pk, gender=None, game_ids=None, season="Current"):
     """
     Per-game detail for one official, newest first. Each row:
       game_id, date, matchup, home, away, home_score, away_score,
@@ -231,7 +238,7 @@ def official_game_log(off_pk, gender=None, game_ids=None):
 
     `game_ids` is the entitlement read-filter (see _games): None = unrestricted.
     """
-    games = _games(gender, allow=game_ids)
+    games = _games(gender, allow=game_ids, season=season)
     game_ids = list(games.keys())
     worked = _worked(game_ids).get(off_pk, set())
     if not worked:

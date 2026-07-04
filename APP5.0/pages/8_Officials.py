@@ -38,6 +38,8 @@ from helpers.glossary import glossary_tab
 import helpers.officials as OFF
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.seasons as SEAS
+from database.db import query
 
 _cfg, ACCENT = page_chrome("Officials")
 HOME = ACCENT
@@ -126,20 +128,38 @@ def _quadrant(rows, xk, yk, xlab, ylab, xfmt, yfmt, color="#bc8cff", qmin=1):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _official_overview(g, gids=None):
+def _official_overview(g, gids=None, season=None):
     # gids = read-filter (hashable tuple of game ids) or None = unrestricted.
-    return OFF.official_overview(gender=g, game_ids=(set(gids) if gids else None))
+    # season None = ALL seasons (career view — refs keep the same official_id
+    # for ~15-year careers and are never archived at rollover).
+    return OFF.official_overview(gender=g, game_ids=(set(gids) if gids else None),
+                                 season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _official_game_log(off_pk, g, gids=None):
+def _official_game_log(off_pk, g, gids=None, season=None):
     return OFF.official_game_log(off_pk, gender=g,
-                                 game_ids=(set(gids) if gids else None))
+                                 game_ids=(set(gids) if gids else None),
+                                 season=season)
 
 
 hc1, hc2 = st.columns([3, 1])
 gender = gender_radio(hc2, default=None, key="off_league", include_all=True)
 gender_lbl = "All" if gender is None else gender_label(gender)
+
+# Season scope — officials are CAREER-long (same person, same ID, season after
+# season), so the default view aggregates every season they've worked; the picker
+# narrows to one season when you want "how did they call it last year". Shown
+# only once an archive exists; with a single season the career view IS that season.
+_szn_opts = [("__all__", "All seasons (career)")] + SEAS.season_options()
+if len(_szn_opts) > 2:
+    _slbl = hc2.selectbox("Season", [l for _v, l in _szn_opts], key="off_season")
+    _off_season = next(v for v, l in _szn_opts if l == _slbl)
+else:
+    _off_season = "__all__"
+# engine contract: None = all seasons, else the label / 'Current'
+_off_season = None if _off_season == "__all__" else _off_season
+_is_cur_off = _off_season is not None and SEAS.is_current(_off_season)
 
 # Tier gate: the entire officials hub is built from foul EVENTS attributed to a
 # named ref (who called what, when, vs which team) — event-derived analytics, no
@@ -160,9 +180,22 @@ if not ENT.has_paid_plan(AUTH.current_user()):
 # games this viewer may aggregate — a Solo-paid coach sees refs/foul depth over
 # their OWN tracked games only; a league-wide coach sees the pooled set; admin sees
 # all. (Free is already blocked above — no box-only officials view exists.)
+# Season composition: PAST seasons are an open archive, so the career (all-seasons)
+# view = the viewer's CURRENT visible set ∪ every past season's tracked games; a
+# single past season is fully open (no filter); the current season keeps the
+# per-viewer set.
 _off_vis = ENT.visible_tracked_game_ids(AUTH.current_user())
-_off_gids = tuple(sorted(_off_vis)) if _off_vis is not None else None
-data = _official_overview(gender, _off_gids)
+if _off_vis is None:                       # admin — unrestricted at every scope
+    _off_gids = None
+elif _off_season is None:                  # career: own current ∪ open past
+    _past = {r["id"] for r in query(
+        "SELECT id FROM games WHERE tracked=1 AND season != 'Current'")}
+    _off_gids = tuple(sorted(set(_off_vis) | _past))
+elif _is_cur_off:                          # current season: per-viewer set
+    _off_gids = tuple(sorted(_off_vis))
+else:                                      # one past season: open archive
+    _off_gids = None
+data = _official_overview(gender, _off_gids, _off_season)
 rows = data["officials"]
 team_names = data["teams"]
 
@@ -598,7 +631,7 @@ def _fx_individual():
         else:
             st.caption("No home/away-attributable fouls.")
 
-    log = _official_game_log(r["off_pk"], gender, _off_gids)
+    log = _official_game_log(r["off_pk"], gender, _off_gids, _off_season)
 
     # ── Foul-rate trend over time ─────────────────────────────────────────────
     if len(log) >= 2:

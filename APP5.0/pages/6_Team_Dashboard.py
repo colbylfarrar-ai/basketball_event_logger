@@ -4514,11 +4514,12 @@ if _tdview == "Glossary":
 def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
     from types import SimpleNamespace
     from helpers.dashboard.player_card import render_card
-    # _season_gp (module global): None for the current season → the fetchers keep
+    # _prof_gp (module global): None for a live current season → the fetchers keep
     # their current-season default (byte-identical); a PAST season's gender tracked
-    # ids so the whole card (shot map, game log, play-type mix, spacing, on/off)
-    # reads that season instead of the empty current one.
-    _gp = _season_gp
+    # ids — either the picked archive, or the last-season FALLBACK when the current
+    # season has no tracked games yet — so the whole card (shot map, game log,
+    # play-type mix, spacing, on/off) reads that season's pool.
+    _gp = _prof_gp
     render_card(SimpleNamespace(
         P=P, pid=pid, rows=rows, paid=True, accent=ACCENT,
         zsplits=zsplits, zguard=zguard, hsplits=hsplits,
@@ -4529,17 +4530,47 @@ def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
         named_sets=_named_sets_all(gender, _gp).get(pid),
         role_splits=_role_splits_all(gender, _gp).get(pid),
         set_profiles=_set_profiles_all(gender, _gp).get(pid),
-        season=season_pick, season_gp=_gp,
+        season=_prof_season, season_gp=_gp,
     ))
 
 
 # The Player Profile tab lives in helpers/dashboard/profile_tab.py; the heavy
 # renderer (_render_profile) and zone tables stay here and ride in as callables.
+#
+# LAST-SEASON FALLBACK: a brand-new (empty) current season has no tracked games,
+# so the profile would dead-end right when a coach wants to scout their RETURNING
+# players. When the current season has no tracked data but an archive exists, the
+# profile reads the newest archived season's pool instead — clearly labeled — and
+# hands back to the live season as soon as games are tracked. (An explicitly
+# picked archive season keeps its own pool; this only fires on current+empty.)
+_prof_season, _prof_note = season_pick, None
+if _is_cur_season and not _raw_tracked:
+    _arch_lbls = SEAS.archived_labels()
+    if _arch_lbls:
+        _prof_season = _arch_lbls[0]                     # newest first
+        _prof_note = (f"No tracked games this season yet — showing "
+                      f"**{_prof_season}** (last season) so returning players "
+                      "still have a card. This switches back automatically once "
+                      "you track this season's games.")
+_prof_gp = (None if SEAS.is_current(_prof_season)
+            else tuple(_gender_tracked_ids(gender, _prof_season)))
+if _prof_note and not _prof_gp:
+    _prof_note = None                                    # archive is untracked too
+    _prof_season, _prof_gp = season_pick, _season_gp
+# profile visibility: the real gate (has_tracked), or the labeled fallback
+_prof_open = has_tracked or bool(_prof_note)
+
+
+def _prof_bind(fn):
+    return fn if _prof_gp is None else _partial(fn, game_ids=_prof_gp)
+
+
 _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
-                            has_tracked=has_tracked,
-                            ptable_full=_LGBIND(_ptable_full),
-                            pp_zone_tables=_LGBIND(_pp_zone_tables),
-                            render_profile=_render_profile, season=season_pick)
+                            has_tracked=_prof_open, tracked_lock=_tracked_lock,
+                            fallback_note=_prof_note,
+                            ptable_full=_prof_bind(_ptable_full),
+                            pp_zone_tables=_prof_bind(_pp_zone_tables),
+                            render_profile=_render_profile, season=_prof_season)
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — ROSTER  (Players roster scan + Player Profile drill, merged)
 # ══════════════════════════════════════════════════════════════════════════════

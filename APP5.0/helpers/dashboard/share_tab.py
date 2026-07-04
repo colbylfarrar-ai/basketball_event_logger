@@ -39,6 +39,18 @@ def _card_game(game_id, team_id, ca, cb, quarters, gender, title, bg,
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _card_game_manual(team_id, b_id, a_pts, b_pts, date, location, ca, cb,
+                      gender, title, bg, logo_a, logo_b, season="Current"):
+    """Coach-typed final-score card — no DB game behind it (a scrimmage, a game
+    from before tracking, a jamboree). Same template as the real game card."""
+    return SCARD.game_result_png(
+        0, team_id, color_a=ca, color_b=cb, gender=gender,
+        title=title or None, bg=bg, logo_a=logo_a, logo_b=logo_b, season=season,
+        manual={"b_id": b_id, "a_pts": a_pts, "b_pts": b_pts,
+                "date": date, "location": location})
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _card_season(team_id, gender, bg, season="Current"):
     return SCARD.season_record_png(team_id, gender, bg=bg, season=season)
 
@@ -79,18 +91,77 @@ def render(ctx):
 
     _szn = getattr(ctx, "season", "Current")
     games = _games(ctx.team_id, _szn)
-    if not games:
-        st.info("No finished games yet — share cards need at least one final "
-                "score.")
-        return
 
     _slug = "".join(c if c.isalnum() else "_" for c in str(ctx.team_name))
     _lbl = {gm["id"]: f"{gm['date']} — {'W' if gm['won'] else 'L'} "
                       f"{gm['pf']}–{gm['pa']} vs {gm['opp']}" for gm in games}
-    kind = st.radio("Card", ["Game result", "Season record", "Selected games"],
+    kind = st.radio("Card", ["Game result", "Custom game", "Season record",
+                             "Selected games"],
                     horizontal=True, key="share_kind")
 
-    if kind == "Game result":
+    # Custom game needs no DB game — everything else reads the season's results.
+    if kind != "Custom game" and not games:
+        st.info("No finished games yet — these cards need at least one final "
+                "score. (The **Custom game** card works without one: type the "
+                "matchup and score yourself.)")
+        return
+
+    if kind == "Custom game":
+        # Coach-typed final score — a scrimmage, a jamboree, a game from before
+        # tracking. Same branded template as the real game card; nothing is saved
+        # to the games table (want it in the stats too? enter it in the Input Hub).
+        st.caption("Type the matchup and score yourself — for scrimmages, "
+                   "jamborees or games that aren't in the app. The card uses the "
+                   "same template; nothing is added to your schedule or stats.")
+        from database.db import query as _q
+        _opps = {r["id"]: r["name"] for r in _q(
+            "SELECT id, name FROM teams WHERE id != ? AND gender = "
+            "(SELECT gender FROM teams WHERE id=?) ORDER BY name",
+            (ctx.team_id, ctx.team_id))}
+        if not _opps:
+            st.info("Add at least one other team (Input Hub → Teams) to pick an "
+                    "opponent.")
+            return
+        mc1, mc2, mc3 = st.columns([2, 1, 1])
+        _opp = mc1.selectbox("Opponent", list(_opps),
+                             format_func=lambda t: _opps[t], key="share_cust_opp")
+        _apts = mc2.number_input(f"{ctx.team_name} score", 0, 200, 60, 1,
+                                 key="share_cust_a")
+        _bpts = mc3.number_input(f"{_opps[_opp]} score", 0, 200, 50, 1,
+                                 key="share_cust_b")
+        dc1, dc2 = st.columns([1, 2])
+        _cdate = dc1.date_input("Date", key="share_cust_date")
+        _cloc = dc2.text_input("Location (optional)", value="", max_chars=40,
+                               key="share_cust_loc")
+        _ctitle = st.text_input(
+            "Card headline (optional)", value="", max_chars=60,
+            key="share_cust_title",
+            placeholder="e.g. Preseason Jamboree · Alumni Night")
+        cc1, cc2, cc3 = st.columns(3)
+        _cca = cc1.color_picker(f"{ctx.team_name} colour",
+                                _team_color(ctx.team_id), key="share_cust_ca")
+        _ccb = cc2.color_picker(f"{_opps[_opp]} colour", _team_color(_opp),
+                                key="share_cust_cb")
+        _cbg = cc3.color_picker("Background", SCARD.BG, key="share_cust_bg")
+        lc1, lc2 = st.columns(2)
+        _cup_a = lc1.file_uploader(f"{ctx.team_name} logo (optional)",
+                                   type=["png", "jpg", "jpeg", "webp"],
+                                   key="share_cust_logo_a")
+        _cup_b = lc2.file_uploader(f"{_opps[_opp]} logo (optional)",
+                                   type=["png", "jpg", "jpeg", "webp"],
+                                   key="share_cust_logo_b")
+        png = _card_game_manual(
+            ctx.team_id, _opp, int(_apts), int(_bpts),
+            _cdate.strftime("%Y-%m-%d") if _cdate else "",
+            _cloc.strip(), _cca, _ccb, ctx.gender, _ctitle.strip(), _cbg,
+            _cup_a.getvalue() if _cup_a else None,
+            _cup_b.getvalue() if _cup_b else None, _szn)
+        if not png:
+            st.info("Could not build the card — check the inputs.")
+            return
+        _dl(png, f"{_slug}_custom_final.png", "share_dl_custom")
+
+    elif kind == "Game result":
         newest = list(reversed(games))
         pick = st.selectbox("Game", [g["id"] for g in newest],
                             format_func=lambda gid: _lbl.get(gid, str(gid)),

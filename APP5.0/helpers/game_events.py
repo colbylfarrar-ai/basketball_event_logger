@@ -80,7 +80,9 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
       free_throw: primary_player_id, shot_result, rebound_by_id
       foul:       primary_player_id (fouled), secondary_player_id (fouler),
                   official_id, play_type, defense
-      turnover:   primary_player_id, stolen_by_id, play_type, defense
+      turnover:   primary_player_id, stolen_by_id, play_type, defense,
+                  turnover_type (pass/drive/held/shot_clock/travel — the KIND
+                  of giveaway; nullable, taxonomy in helpers/turnovers)
 
     play_type on a foul/turnover = the set call the OFFENSE was running when it
     happened (the sticky tag in the trackers), so per-set outcomes cover
@@ -149,11 +151,12 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
     else:  # turnover
         eid = execute("""INSERT INTO game_events
             (game_id,event_type,quarter,time,possession_secs,
-             primary_player_id,stolen_by_id,play_type,defense,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+             primary_player_id,stolen_by_id,play_type,defense,turnover_type,
+             client_uuid)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (game_id, "turnover", q, t, poss,
              g("primary_player_id"), g("stolen_by_id"), g("play_type"),
-             g("defense"), client_uuid))
+             g("defense"), g("turnover_type"), client_uuid))
         pts = 0
 
     scoring_tid = None

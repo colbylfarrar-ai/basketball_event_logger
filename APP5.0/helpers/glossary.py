@@ -316,6 +316,12 @@ STAT_DEFS = [
      "The four things that win games, weighted by importance. Defense = the "
      "opponent's four factors against you.",
      "Win the factors, win the game.", False),
+    ("TO kind", "Turnover Kind", "Team & League",
+     "one-tap tag on a turnover: bad pass / drive / held ball / shot clock / travel",
+     "What KIND of giveaway it was — orthogonal to the Play type tag (which set "
+     "the offense was running when it lost the ball). Optional; hidden in the "
+     "phone tracker's quick mode.",
+     "Bad-pass-heavy = pressure it; drive-heavy = build a wall.", True),
     ("4F-PPP", "Four-Factor Expected PPP", "Team & League",
      "(1−TOV%) · (2·eFG% + FTr) / (1 − (1−eFG%)·ORB%)",
      "Points per possession the four factors alone predict: turnovers score "

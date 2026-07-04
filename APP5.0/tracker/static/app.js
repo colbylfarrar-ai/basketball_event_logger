@@ -1016,7 +1016,7 @@ function resetFlow(mode) {
     shooter: null,
     details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
     fouled: null, fouler: null, official: null,
-    player: null, stolen: null
+    player: null, stolen: null, tovKind: null
   };
   if (window.Court) Court.clearMarker();
   const cap = $('shot-caption');
@@ -1123,6 +1123,14 @@ const PLAY_TYPES = [
 const PLAY_TYPE_KEYS = PLAY_TYPES.map(function (p) { return p[0]; });
 const PLAY_TYPE_LABEL = PLAY_TYPES.reduce(function (m, p) { m[p[0]] = p[1]; return m; }, {});
 function ptLabel(k) { return PLAY_TYPE_LABEL[k] || k; }
+
+// Turnover KIND (optional; detailed mode + editor only — hidden in quick mode).
+// Keep in lockstep with helpers/turnovers.TURNOVER_TYPES (server folds unknown
+// -> 'other'). Orthogonal to play_type — the set call stays the extra layer.
+const TOV_TYPES = [
+  ['pass', 'Bad pass'], ['drive', 'Drive'], ['held', 'Held ball'],
+  ['shot_clock', 'Shot clock'], ['travel', 'Travel']
+];
 
 // Sticky "current defense" the opponent is in. Unlike play_type (per-shot), a
 // defense holds for stretches, so this is set ONCE on the always-visible bar and
@@ -1347,9 +1355,21 @@ function renderFlow() {
   } else if (f.mode === 'tov') {
     wrap.appendChild(chipRow('Player', players, f.player, function (id) { f.player = id; renderFlow(); }));
     if (f.player != null) {
-      wrap.appendChild(chipRow('Stolen by',
-        players.filter(function (id) { return id !== f.player; }),
-        f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
+      if (!quickModeOn() || f.expand) {
+        wrap.appendChild(chipRow('Stolen by',
+          players.filter(function (id) { return id !== f.player; }),
+          f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
+        wrap.appendChild(optRow('TO kind',
+          TOV_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
+          f.tovKind, function (v) { f.tovKind = v; renderFlow(); }));
+      } else {
+        // quick mode: steal chips stay one tap away, TO kind hides behind it too
+        wrap.appendChild(chipRow('Stolen by',
+          players.filter(function (id) { return id !== f.player; }),
+          f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
+        wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
+          function () { f.expand = true; renderFlow(); }));
+      }
       wrap.appendChild(flowBtn('LOG TURNOVER', 'btn primary big', logTov));
     }
   }
@@ -1447,6 +1467,7 @@ async function logTov() {
   const ev = baseEvent('turnover');
   ev.primary_player_id = f.player;
   ev.stolen_by_id = f.stolen;
+  ev.turnover_type = f.tovKind;
   await queueEvent(ev);
   toast('Turnover — ' + pLabel(f.player));
   resetFlow('tov');
@@ -1631,7 +1652,8 @@ function formFromEvent(ev) {
     official_id: ev.official_id != null ? ev.official_id : null,
     stolen_by_id: ev.stolen_by_id != null ? ev.stolen_by_id : null,
     play_type: ev.play_type || null,
-    defense: ev.defense || null
+    defense: ev.defense || null,
+    turnover_type: ev.turnover_type || null
   };
 }
 
@@ -1773,6 +1795,8 @@ function buildEditForm(ev) {
   } else if (f.event_type === 'turnover') {
     box.appendChild(pickRow('Player', 'primary_player_id', roster));
     box.appendChild(pickRow('Stolen by', 'stolen_by_id', roster));
+    box.appendChild(optRow('TO kind', TOV_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
+      f.turnover_type, function (v) { f.turnover_type = v; rerender(); }));
     box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
       f.play_type, function (v) { f.play_type = v; rerender(); }));
     box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
@@ -1834,7 +1858,8 @@ async function saveEdit(eid) {
     official_id: f.official_id,
     stolen_by_id: f.stolen_by_id,
     play_type: f.play_type,
-    defense: f.defense
+    defense: f.defense,
+    turnover_type: f.turnover_type
   };
   try {
     const res = await api('/api/games/' + S.gameId + '/events/' + eid, {

@@ -84,6 +84,13 @@ def_opts = ["—"] + [lbl for _k, lbl, _f in DEF.DEFENSES]
 key2def = {k: lbl for k, lbl, _f in DEF.DEFENSES}
 def2key = {lbl: k for k, lbl, _f in DEF.DEFENSES}
 
+# Turnover-kind labels (pass / drive / held / shot clock / travel) — same set
+# as the trackers (helpers/turnovers.TURNOVER_TYPES). Back-fill old TOs here.
+import helpers.turnovers as TOV
+tov_opts = ["—"] + [lbl for _k, lbl in TOV.TURNOVER_TYPES]
+key2tov = {k: lbl for k, lbl in TOV.TURNOVER_TYPES}
+tov2key = {lbl: k for k, lbl in TOV.TURNOVER_TYPES}
+
 # ── score drift indicator ────────────────────────────────────────────────────
 from database.db import query as _q
 
@@ -200,6 +207,7 @@ def _disp(ev):
         "Blocked": pid2label.get(ev["blocked_by_id"], "—"),
         "Fouler": pid2label.get(ev["secondary_player_id"], "—"),
         "Stolen": pid2label.get(ev["stolen_by_id"], "—"),
+        "TOkind": key2tov.get(ev["turnover_type"], "—"),
         "Official": oid2name.get(ev["official_id"], "—"),
         "Delete?": False,
     }
@@ -248,6 +256,11 @@ edited = st.data_editor(
         "Blocked": st.column_config.SelectboxColumn("Blocked by", options=player_opts),
         "Fouler": st.column_config.SelectboxColumn("Fouler", options=player_opts),
         "Stolen": st.column_config.SelectboxColumn("Stolen by", options=player_opts),
+        "TOkind": st.column_config.SelectboxColumn("TO kind", options=tov_opts,
+                                                   width="small",
+                                                   help="Kind of giveaway on a "
+                                                        "turnover — bad pass, "
+                                                        "drive, held ball …"),
         "Official": st.column_config.SelectboxColumn("Official", options=official_opts),
         "Delete?": st.column_config.CheckboxColumn("Delete?", width="small"),
     })
@@ -281,6 +294,7 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
             "blocked_by_id": label2pid.get(r["Blocked"]),
             "secondary_player_id": label2pid.get(r["Fouler"]),
             "stolen_by_id": label2pid.get(r["Stolen"]),
+            "turnover_type": tov2key.get(r["TOkind"]),
             "official_id": name2oid.get(r["Official"]),
         }
         # Tap-captured shots: the stored x/y is the source of truth for WHERE,

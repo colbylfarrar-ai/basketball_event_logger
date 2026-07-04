@@ -244,6 +244,13 @@ def initialize_database():
             # lights up only as coaches tag. The offense/defense companion to
             # play_type, and the cross-tab partner (play_type × defense).
             "ALTER TABLE game_events     ADD COLUMN defense      TEXT",
+            # Optional turnover KIND on a turnover event (pass / drive / held /
+            # shot_clock / travel — taxonomy in helpers/turnovers.TURNOVER_TYPES).
+            # Nullable: hidden in the PWA's quick mode, offered in detailed mode
+            # and both editors, so every existing row stays NULL and the
+            # breakdown engine lights up only as coaches tag. Orthogonal to
+            # play_type — the set call stays the "extra layer" on turnovers.
+            "ALTER TABLE game_events     ADD COLUMN turnover_type TEXT",
             # "Assistant scorer" guest links (the link IS the token; log-only,
             # resolves to the owner coach). Separate from app_users.tracker_token
             # so revoking an assistant never touches the coach's own credential.

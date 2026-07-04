@@ -102,6 +102,41 @@ def _profile_howline(pr):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+def _render_turnovers(tv, off):
+    """Giveaway-kind breakdown from the explicit ``turnover_type`` tag
+    (helpers/turnovers). ``off`` mirrors the tab's side toggle: True = the
+    team's own giveaways, False = the takeaways it forces."""
+    import helpers.turnovers as TOV
+    st.markdown("<div class='pl-hdr'>Turnover profile — "
+                f"{'giveaways' if off else 'takeaways forced'}</div>",
+                unsafe_allow_html=True)
+    tv = tv or {}
+    rows = tv.get("rows", [])
+    if not rows:
+        st.caption(
+            "No turnover-kind tags yet — tag the **Type** on turnovers (bad "
+            "pass, drive, held ball, shot clock, travel) in the Game Tracker "
+            "or the phone tracker's detailed mode and this breakdown fills in. "
+            f"({tv.get('total', 0)} untagged turnover(s) so far.)")
+        return
+    df = pd.DataFrame([{
+        "Kind": r["label"], "TOs": r["n"],
+        "Share": f"{r['share'] * 100:.0f}%", "Stolen": r["stolen"],
+        "Top set calls": " · ".join(
+            f"{_PTL.get(k, k)} ×{n}" for k, n in list(r["sets"].items())[:3])
+        or "—",
+    } for r in rows])
+    st.dataframe(df, hide_index=True, width="stretch",
+                 key=f"ps_tov_{'o' if off else 'd'}")
+    st.caption(
+        f"{tv.get('total_tagged', 0)} tagged · {tv.get('untagged', 0)} untagged "
+        f"{'giveaways' if off else 'forced turnovers'}. **Stolen** = live-ball "
+        "takeaway credited to a defender. **Top set calls** = the play_type "
+        "extra layer — which sets the ball was lost in (a cut-TO is tagged as "
+        "the set, the kind says how it was lost).")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 def _render_factors(ff, unit):
     """Gated four-factors table (eFG% · OREB% · TOV% · FT-rate) per set/scheme.
     `ff` = helpers.breakdown.play_type_factors / defense_factors output."""
@@ -176,6 +211,10 @@ def render(ctx):
     # ── §A2 — FOUR FACTORS per set (gated ~100 poss) ─────────────────────────
     if getattr(ctx, "factors", None):
         _render_factors(ctx.factors(g, tid, _off), "play type")
+
+    # ── §A3 — TURNOVER PROFILE (explicit turnover-type tag) ─────────────────
+    if getattr(ctx, "turnover_types", None):
+        _render_turnovers(ctx.turnover_types(g, tid, _off), _off)
 
     # ══ §B — SHOT CHART BY PLAY STYLE (headline) ═════════════════════════════
     st.markdown("<div class='pl-hdr'>Shot chart by play style</div>",

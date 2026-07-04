@@ -27,6 +27,7 @@ import helpers.playtypes as PT
 import helpers.fouls as FOULS
 import helpers.game_events as GE
 import helpers.seasons as SEAS
+import helpers.turnovers as TOV
 from PIL import Image
 
 try:
@@ -690,6 +691,8 @@ def _render_command_center():
             if ev["official_id"]: desc += f" · ref {on_(ev['official_id'])}"
         elif et == "turnover":
             desc = f"Turnover {pn(ev['primary_player_id']) or '—'}"
+            if ev.get("turnover_type"):
+                desc += f" ({TOV.label(ev['turnover_type']).lower()})"
             if ev["stolen_by_id"]: desc += f" · steal {pn(ev['stolen_by_id'])}"
         else:
             desc = et
@@ -979,9 +982,14 @@ else:
                         official = c3.selectbox("Official", off_opts)
 
                     elif event_type == "Turnover":
-                        c1, c2 = st.columns(2)
+                        c1, c2, c3 = st.columns([2, 2, 1])
                         tov_p  = c1.selectbox("Turnover By", all_opts[1:])
                         stolen = c2.selectbox("Stolen By", all_opts)
+                        tov_kind = c3.selectbox(
+                            "Type", ["—"] + [lbl for k, lbl in TOV.TURNOVER_TYPES
+                                             if k != "other"],
+                            help="Kind of giveaway — optional; feeds the "
+                                 "turnover-profile breakdowns.")
 
                     submitted = st.form_submit_button("Log Event", type="primary", width="stretch")
 
@@ -1045,9 +1053,11 @@ else:
                                            if official and official != "—" else None))
 
                 elif event_type == "Turnover":
+                    _tov_key = {lbl: k for k, lbl in TOV.TURNOVER_TYPES}
                     ev.update(event_type="turnover",
                               primary_player_id=plookup(tov_p, all_id),
-                              stolen_by_id=plookup(stolen, all_id))
+                              stolen_by_id=plookup(stolen, all_id),
+                              turnover_type=_tov_key.get(tov_kind))
 
                 # Every event type needs its primary actor; without it the row
                 # logs a NULL primary_player_id and is silently dropped from the

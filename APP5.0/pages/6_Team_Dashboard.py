@@ -1005,6 +1005,14 @@ def _def_factors(g, tid, offense, game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _tov_types_view(g, tid, offense, game_ids=None):
+    """Turnovers by the explicit turnover_type tag (giveaways / forced)."""
+    import helpers.turnovers as TOVX
+    return TOVX.team_turnover_types(tid, gender=g, offense=offense,
+                                    game_ids=game_ids)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _named_sets_all(g, game_ids=None):
     """Per-player explicit set-call PPP, ranked vs the league pool (card ctx)."""
     return PT.player_named_playtype_percentiles(gender=g, game_ids=game_ids)
@@ -1333,7 +1341,9 @@ if _tdview == "Charts":
             shot_model=_LGBIND(_shot_model),
             named_sets_all=_LGBIND(_named_sets_all),
             set_profiles_all=_LGBIND(_set_profiles_all),
-            factors=_LGBIND(_pt_factors), is_current=_is_cur_season)
+            factors=_LGBIND(_pt_factors),
+            turnover_types=_LGBIND(_tov_types_view),
+            is_current=_is_cur_season)
         DPLAYSTYLE.render(_ps_ctx)
 
     # ── Situational super-tab (play_type/defense by quarter/score/run) ──────

@@ -45,12 +45,36 @@ def _event_floor(game_ids=None):
             for eid, teams in tmp.items()}
 
 
-def player_quality(gender=None):
+def player_quality(gender=None, game_ids=None):
     """{pid: OVERALL rating} for the opponent adjustment (50 = league mean,
-    +10 per SD). Unrated players are simply absent (treated as unknown)."""
+    +10 per SD). Unrated players are simply absent (treated as unknown).
+
+    `game_ids` anchors the rating pool to the SEASON those games belong to
+    (resolved to that season's full league tracked pool, so ratings stay
+    league-relative): without this an archived season's players are simply
+    unrated and the adjustment silently never fits. Current-season callers
+    are unchanged — the resolved pool is the same league-wide default."""
     import helpers.player_ratings as PR
+    pool = None
+    if game_ids is not None:
+        ids = list(game_ids)
+        if ids:
+            try:
+                ph = ",".join("?" * len(ids))
+                seasons = {r["season"] for r in query(
+                    f"SELECT DISTINCT season FROM games WHERE id IN ({ph})",
+                    tuple(ids))}
+                if len(seasons) == 1:
+                    import helpers.seasons as SEAS
+                    pool = set(SEAS.game_pool(season=seasons.pop(), gender=gender,
+                                              tracked_only=True,
+                                              finished_only=False)) or set(ids)
+                else:
+                    pool = set(ids)
+            except Exception:
+                pool = set(ids)
     try:
-        table = PR.player_stat_table(gender=gender, min_games=1)
+        table = PR.player_stat_table(gender=gender, min_games=1, game_ids=pool)
     except Exception:
         return {}
     return {pid: r["OVERALL"] for pid, r in table.items()
@@ -64,6 +88,59 @@ def _five_q(five, quality):
 
 
 _MIN_REG_POSS = 200      # possessions needed before the fitted slopes are trusted
+
+
+def fit_opponent_slopes(events, floor, quality):
+    """Fit the possession-level quality slopes on a sample: points ~ offense-
+    five quality + defense-five quality (centered 2-var OLS over every
+    possession of BOTH teams). Returns (b_off, b_def, qbar, adjusted) —
+    the shared machinery behind unit_ratings and the chemistry network.
+    adjusted=False (slopes 0) below _MIN_REG_POSS or on a degenerate sample."""
+    reg = []
+    for e in events:
+        if e["event_type"] not in ("shot", "turnover"):
+            continue
+        off_team = e["shooter_team_id"]
+        if off_team is None:
+            continue
+        sets = floor.get(e["id"])
+        if not sets:
+            continue
+        pts = ((3 if e["shot_type"] == 3 else 2)
+               if (e["event_type"] == "shot" and e["shot_result"] == "make")
+               else 0)
+        off_five = sets.get(off_team)
+        def_five = next((f for t, f in sets.items() if t != off_team), None)
+        q_off = (_five_q(off_five, quality)
+                 if off_five and len(off_five) == 5 else None)
+        q_def = (_five_q(def_five, quality)
+                 if def_five and len(def_five) == 5 else None)
+        if q_off is not None and q_def is not None:
+            reg.append((pts, q_off, q_def))
+
+    b_off = b_def = 0.0
+    qbar = 50.0
+    adjusted = False
+    if len(reg) >= _MIN_REG_POSS:
+        n = len(reg)
+        my = sum(r[0] for r in reg) / n
+        m1 = sum(r[1] for r in reg) / n
+        m2 = sum(r[2] for r in reg) / n
+        s11 = s22 = s12 = s1y = s2y = 0.0
+        for pts, q1, q2 in reg:
+            x1, x2, y = q1 - m1, q2 - m2, pts - my
+            s11 += x1 * x1
+            s22 += x2 * x2
+            s12 += x1 * x2
+            s1y += x1 * y
+            s2y += x2 * y
+        det = s11 * s22 - s12 * s12
+        if det > 1e-9:
+            b_off = (s22 * s1y - s12 * s2y) / det
+            b_def = (s11 * s2y - s12 * s1y) / det
+            qbar = (m1 + m2) / 2.0
+            adjusted = True
+    return b_off, b_def, qbar, adjusted
 
 
 def unit_ratings(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS,
@@ -100,7 +177,7 @@ def unit_ratings(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS,
     if floor is None:
         floor = _event_floor(game_ids)
     if quality is None:
-        quality = player_quality()
+        quality = player_quality(game_ids=game_ids)
 
     # ── possession pass: per-unit (pts, opposing-five quality) + regression ──
     units = defaultdict(lambda: {"off": [], "def": []})

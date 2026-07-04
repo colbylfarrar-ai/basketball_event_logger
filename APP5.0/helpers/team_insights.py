@@ -388,11 +388,14 @@ def chemistry_extra(team_id, game_ids=None, min_poss=40):
     if not edges:
         return {}
     best = worst = None
+    # prefer the context-adjusted nets (opponent + teammate strength removed);
+    # older callers / thin fits fall back to the raw net transparently.
+    _n = lambda r: r.get("adj_net", r["net"])
     for e in edges:
         sa, sb = nodes.get(e["a"]), nodes.get(e["b"])
         if not sa or not sb:
             continue
-        rec = {**e, "syn": e["net"] - (sa["net"] + sb["net"]) / 2}
+        rec = {**e, "net": _n(e), "syn": _n(e) - (_n(sa) + _n(sb)) / 2}
         if best is None or rec["syn"] > best["syn"]:
             best = rec
         if worst is None or rec["syn"] < worst["syn"]:

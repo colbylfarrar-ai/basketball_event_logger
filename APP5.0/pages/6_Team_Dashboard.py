@@ -3952,12 +3952,19 @@ if _tdview == "Lab":
             else:
                 st.caption("No win-probability plays recorded for this team yet.")
 
-            # ── chemistry (pair net) ─────────────────────────────────────────
+            # ── chemistry (pair net, context-adjusted) ───────────────────────
             st.markdown("<div class='lab-hdr'>Chemistry — pair net rating</div>",
                         unsafe_allow_html=True)
-            st.caption("Team net points / 100 while a pair of players share the "
-                       "floor. Positive = the duo outscores opponents together.")
             chem = _chemistry(team_id, tuple(tids))
+            _chem_adj = bool(chem.get("totals", {}).get("adjusted"))
+            _ek = "adj_net" if _chem_adj else "net"
+            st.caption("Team net points / 100 while a pair of players share the "
+                       "floor. Positive = the duo outscores opponents together."
+                       + (" **Adjusted** for opponent strength and for who else "
+                          "was on the floor with them — a duo riding the star "
+                          "gives that credit back." if _chem_adj else
+                          " ⚠ Not enough rated-lineup possessions to fit the "
+                          "context adjustment yet — raw nets shown."))
             edges = chem.get("edges", [])
             if len(edges) >= 1:
                 cn1, cn2 = st.columns([3, 2])
@@ -3972,21 +3979,22 @@ if _tdview == "Lab":
                                      math.sin(2*math.pi*k/nn - math.pi/2))
                                for k, pid in enumerate(node_ids)}
                         net = go.Figure()
-                        emax = max((abs(e["net"]) for e in edges), default=1) or 1
+                        emax = max((abs(e[_ek]) for e in edges), default=1) or 1
                         for e in edges:
                             a, b = e["a"], e["b"]
                             if a not in pos or b not in pos:
                                 continue
                             x0, y0 = pos[a]
                             x1, y1 = pos[b]
-                            clr = GOOD if e["net"] >= 0 else BAD
+                            clr = GOOD if e[_ek] >= 0 else BAD
                             net.add_trace(go.Scatter(
                                 x=[x0, x1], y=[y0, y1], mode="lines",
-                                line=dict(width=1 + 4 * abs(e["net"]) / emax,
+                                line=dict(width=1 + 4 * abs(e[_ek]) / emax,
                                           color=clr),
                                 hoverinfo="text",
                                 hovertext=f"{e['names'][0]} + {e['names'][1]}: "
-                                          f"net {e['net']:+.1f} ({e['poss']} poss)",
+                                          f"adj net {e[_ek]:+.1f} · raw "
+                                          f"{e['net']:+.1f} ({e['poss']} poss)",
                                 opacity=0.55, showlegend=False))
                         # pair-net NUMBER on each edge (not just hover) so the
                         # graph reads at a glance
@@ -3997,7 +4005,7 @@ if _tdview == "Lab":
                                 continue
                             _lx.append((pos[a][0] + pos[b][0]) / 2)
                             _ly.append((pos[a][1] + pos[b][1]) / 2)
-                            _lt.append(f"{e['net']:+.0f}")
+                            _lt.append(f"{e[_ek]:+.0f}")
                         net.add_trace(go.Scatter(
                             x=_lx, y=_ly, mode="text", text=_lt,
                             textfont=dict(size=10, color="#e6edf3"),
@@ -4009,7 +4017,8 @@ if _tdview == "Lab":
                                 size=[18 + 26 * (nodes[i]["poss"]
                                       / max(nodes[n]["poss"] for n in node_ids))
                                       for i in node_ids],
-                                color=[nodes[i]["net"] for i in node_ids],
+                                color=[nodes[i].get(_ek, nodes[i]["net"])
+                                       for i in node_ids],
                                 colorscale=DIVERGE, cmid=0, showscale=True,
                                 colorbar=dict(title="Solo net"),
                                 line=dict(width=2, color="#0d1117")),
@@ -4017,7 +4026,7 @@ if _tdview == "Lab":
                             textposition="middle center",
                             textfont=dict(size=9, color="#f0f6fc"),
                             hovertext=[f"{name_by.get(i,'?')}<br>"
-                                       f"net {nodes[i]['net']:+.1f} · "
+                                       f"net {nodes[i].get(_ek, nodes[i]['net']):+.1f} · "
                                        f"{nodes[i]['poss']} poss" for i in node_ids],
                             hovertemplate="%{hovertext}<extra></extra>",
                             showlegend=False))
@@ -4032,11 +4041,12 @@ if _tdview == "Lab":
                                    "together; red = get outscored. Line thickness = "
                                    "size of the effect.")
                 with cn2:
-                    top_pairs = sorted(edges, key=lambda e: e["net"],
+                    top_pairs = sorted(edges, key=lambda e: e[_ek],
                                        reverse=True)
                     st.dataframe(pd.DataFrame([{
                         "Pair": f"{e['names'][0]} + {e['names'][1]}",
-                        "Pair Net": round(e["net"], 1), "Poss": e["poss"],
+                        "Adj Net": round(e.get("adj_net", e["net"]), 1),
+                        "Net (raw)": round(e["net"], 1), "Poss": e["poss"],
                     } for e in top_pairs]), hide_index=True, width="stretch",
                         height=min(420, 60 + 32 * len(top_pairs)))
             else:

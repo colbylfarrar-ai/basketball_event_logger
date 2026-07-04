@@ -27,7 +27,8 @@ from itertools import combinations
 
 from database.db import query
 import helpers.stats as S
-from helpers.lineups import _event_floor
+from helpers.lineups import (_event_floor, _five_q, fit_opponent_slopes,
+                             player_quality)
 
 
 DEFAULT_MIN_POSS = 20   # a pair needs this many shared possessions to be drawn
@@ -37,29 +38,44 @@ _safe = S._safe   # shared definition lives in helpers.stats
 
 
 def chemistry_network(team_id, game_ids=None, events=None,
-                      min_poss=DEFAULT_MIN_POSS):
+                      min_poss=DEFAULT_MIN_POSS, quality=None):
     """
-    Pairwise teammate chemistry for one team.
+    Pairwise teammate chemistry for one team, CONTEXT-ADJUSTED.
 
-    Returns a dict:
-      nodes  [{pid, name, off_poss, def_poss, poss, pts_for, pts_against, net}]
-             one per player, `net` = team net/100 while that player is on
+    Raw side (unchanged keys): per-100 net while a player / pair is on the
+    floor. Adjusted side — the founder's "who ACTUALLY lifts whom" read —
+    corrects every possession for the two things a raw pair net conflates:
+      • OPPONENT strength: the mean OVERALL of the opposing on-floor five
+        (the unit_ratings v2 correction, same self-fit slopes).
+      • TEAMMATE strength: the mean OVERALL of the OTHER teammates sharing
+        the floor (the other 3 for a pair, other 4 for a solo) — a duo that
+        only looks good next to the star gives that credit back.
+    Slopes come from lineups.fit_opponent_slopes on this sample; when the
+    sample can't support the fit (adjusted=False) the Adj* values equal the
+    raw ones, so thin data never breaks a caller.
+
+    Returns {nodes, edges, totals}:
+      nodes  [{pid, name, off_poss, def_poss, poss, pts_for, pts_against,
+               net, adj_net}]
       edges  [{a, b, names, off_poss, def_poss, poss, pts_for, pts_against,
-               ORtg, DRtg, net}] one per teammate pair clearing `min_poss`,
-             sorted by net desc
-      totals {pairs, drawn, min_poss}
-
-    `net`/ORtg/DRtg are per-100-possession points; positive net = the team
-    outscores opponents with that player (or pair) on the floor.
+               ORtg, DRtg, net, AdjORtg, AdjDRtg, adj_net}] pairs clearing
+             `min_poss`, sorted by adj_net desc
+      totals {pairs, drawn, min_poss, adjusted}
     """
     if events is None:
         events = S.fetch_events(game_ids)
     floor = _event_floor(game_ids)
+    if quality is None:
+        quality = player_quality(game_ids=game_ids)
+    b_off, b_def, qbar, adjusted = fit_opponent_slopes(events, floor, quality)
 
-    solo = defaultdict(lambda: {"off_poss": 0, "off_pts": 0,
-                                "def_poss": 0, "def_pts": 0})
-    pair = defaultdict(lambda: {"off_poss": 0, "off_pts": 0,
-                                "def_poss": 0, "def_pts": 0})
+    # per-possession rows: (pts, q_opponent_five, q_other_teammates)
+    solo = defaultdict(lambda: {"off": [], "def": []})
+    pair = defaultdict(lambda: {"off": [], "def": []})
+
+    def _others_q(five, exclude):
+        vals = [quality[p] for p in five if p not in exclude and p in quality]
+        return sum(vals) / len(vals) if vals else None
 
     for e in events:
         if e["event_type"] not in ("shot", "turnover"):
@@ -73,50 +89,74 @@ def chemistry_network(team_id, game_ids=None, events=None,
         five = sets.get(team_id)
         if not five or len(five) != 5:
             continue
+        opp_five = next((f for t, f in sets.items() if t != team_id), None)
+        q_opp = (_five_q(opp_five, quality)
+                 if opp_five and len(opp_five) == 5 else None)
         pts = ((3 if e["shot_type"] == 3 else 2)
                if (e["event_type"] == "shot" and e["shot_result"] == "make") else 0)
         side = "off" if off_team == team_id else "def"
         for p in five:
-            solo[p][f"{side}_poss"] += 1
-            solo[p][f"{side}_pts"] += pts
+            solo[p][side].append((pts, q_opp, _others_q(five, (p,))))
         for a, b in combinations(sorted(five), 2):
-            pr = pair[(a, b)]
-            pr[f"{side}_poss"] += 1
-            pr[f"{side}_pts"] += pts
+            pair[(a, b)][side].append((pts, q_opp, _others_q(five, (a, b))))
+
+    # remove the context terms from each possession's points. On offense a
+    # better opposing (defensive) five suppresses points (b_def < 0) and
+    # better teammates inflate them (b_off > 0); on defense the roles flip.
+    def _adj_sum(rows, opp_slope, own_slope):
+        tot = 0.0
+        for pts, q_opp, q_own in rows:
+            tot += (pts
+                    - opp_slope * ((q_opp if q_opp is not None else qbar) - qbar)
+                    - own_slope * ((q_own if q_own is not None else qbar) - qbar))
+        return tot
 
     name_of = {r["id"]: r["name"]
                for r in query("SELECT id, name FROM players WHERE team_id=?",
                               (team_id,))}
 
+    def _rates(rows):
+        n_off, n_def = len(rows["off"]), len(rows["def"])
+        off_pts = sum(p for p, _q, _o in rows["off"])
+        def_pts = sum(p for p, _q, _o in rows["def"])
+        ortg = 100 * _safe(off_pts, n_off)
+        drtg = 100 * _safe(def_pts, n_def)
+        if adjusted:
+            a_ortg = 100 * _safe(_adj_sum(rows["off"], b_def, b_off), n_off)
+            a_drtg = 100 * _safe(_adj_sum(rows["def"], b_off, b_def), n_def)
+        else:
+            a_ortg, a_drtg = ortg, drtg
+        return n_off, n_def, off_pts, def_pts, ortg, drtg, a_ortg, a_drtg
+
     nodes = []
-    for p, s in solo.items():
-        poss = s["off_poss"] + s["def_poss"]
-        net = 100 * (_safe(s["off_pts"], s["off_poss"])
-                     - _safe(s["def_pts"], s["def_poss"]))
+    for p, rows in solo.items():
+        n_off, n_def, off_pts, def_pts, ortg, drtg, a_o, a_d = _rates(rows)
         nodes.append({
             "pid": p, "name": name_of.get(p, str(p)),
-            "off_poss": s["off_poss"], "def_poss": s["def_poss"], "poss": poss,
-            "pts_for": s["off_pts"], "pts_against": s["def_pts"],
-            "net": round(net, 1),
+            "off_poss": n_off, "def_poss": n_def, "poss": n_off + n_def,
+            "pts_for": off_pts, "pts_against": def_pts,
+            "net": round(ortg - drtg, 1),
+            "adj_net": round(a_o - a_d, 1),
         })
     nodes.sort(key=lambda d: -d["poss"])
 
     edges = []
-    for (a, b), pr in pair.items():
-        poss = pr["off_poss"] + pr["def_poss"]
+    for (a, b), rows in pair.items():
+        n_off, n_def, off_pts, def_pts, ortg, drtg, a_o, a_d = _rates(rows)
+        poss = n_off + n_def
         if poss < min_poss:
             continue
-        ortg = 100 * _safe(pr["off_pts"], pr["off_poss"])
-        drtg = 100 * _safe(pr["def_pts"], pr["def_poss"])
         edges.append({
             "a": a, "b": b,
             "names": [name_of.get(a, str(a)), name_of.get(b, str(b))],
-            "off_poss": pr["off_poss"], "def_poss": pr["def_poss"], "poss": poss,
-            "pts_for": pr["off_pts"], "pts_against": pr["def_pts"],
+            "off_poss": n_off, "def_poss": n_def, "poss": poss,
+            "pts_for": off_pts, "pts_against": def_pts,
             "ORtg": round(ortg, 1), "DRtg": round(drtg, 1),
             "net": round(ortg - drtg, 1),
+            "AdjORtg": round(a_o, 1), "AdjDRtg": round(a_d, 1),
+            "adj_net": round(a_o - a_d, 1),
         })
-    edges.sort(key=lambda d: -d["net"])
+    edges.sort(key=lambda d: -d["adj_net"])
     return {"nodes": nodes, "edges": edges,
             "totals": {"pairs": len(pair), "drawn": len(edges),
-                       "min_poss": min_poss}}
+                       "min_poss": min_poss, "adjusted": adjusted}}

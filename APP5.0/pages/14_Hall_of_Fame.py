@@ -51,8 +51,13 @@ def _player_sums(g):
                   t.name AS team
            FROM players p JOIN teams t ON t.id=p.team_id WHERE t.gender=?""",
         (g,))}
+    # ALL seasons' tracked games — the bare default is season='Current' only,
+    # which would silently drop every archived season's tracked stats from the
+    # career sums (manual boxes below already span all seasons)
+    _tgids = [r["id"] for r in query("SELECT id FROM games WHERE tracked=1")]
+    _boxes = S.player_game_boxes(game_ids=_tgids) if _tgids else {}
     sums = {}
-    for pid, per in S.player_game_boxes().items():
+    for pid, per in _boxes.items():
         if pid not in meta:
             continue
         s = sums.setdefault(pid, {"gp": 0, "PTS": 0, "TRB": 0, "AST": 0})

@@ -122,7 +122,8 @@ def _dashboard(gender, vis=None):
                                            game_ids=_gids))
         d["players"] = len(table)
         if table:
-            gbox = S.player_game_boxes()
+            # sparkline series honour the same read-filter as the table
+            gbox = S.player_game_boxes(game_ids=_gids)
             gdates = {r["id"]: r["date"] for r in query(
                 "SELECT id, date FROM games WHERE tracked=1 AND season='Current'")}
             top_sc = sorted(table.values(),

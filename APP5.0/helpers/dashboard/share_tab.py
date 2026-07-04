@@ -66,6 +66,12 @@ def _games(team_id, season="Current"):
     return SCARD._team_games(team_id, season=season)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _card_spotlight(pid, mode, n, game_id, bg):
+    return SCARD.player_spotlight_png(pid, mode=mode, n=n, game_id=game_id,
+                                      bg=bg)
+
+
 def _dl(png, fname, key):
     c1, c2 = st.columns([2, 1])
     with c1:
@@ -96,11 +102,11 @@ def render(ctx):
     _lbl = {gm["id"]: f"{gm['date']} — {'W' if gm['won'] else 'L'} "
                       f"{gm['pf']}–{gm['pa']} vs {gm['opp']}" for gm in games}
     kind = st.radio("Card", ["Game result", "Custom game", "Season record",
-                             "Selected games"],
+                             "Selected games", "Player spotlight"],
                     horizontal=True, key="share_kind")
 
     # Custom game needs no DB game — everything else reads the season's results.
-    if kind != "Custom game" and not games:
+    if kind not in ("Custom game", "Player spotlight") and not games:
         st.info("No finished games yet — these cards need at least one final "
                 "score. (The **Custom game** card works without one: type the "
                 "matchup and score yourself.)")
@@ -220,6 +226,51 @@ def render(ctx):
             st.info("Not enough data for this card yet.")
             return
         _dl(png, f"{_slug}_season.png", "share_dl_season")
+
+    elif kind == "Player spotlight":
+        # One player's numbers — a season line, the whole career (identity
+        # chain), one game, or a hot stretch. Box stats only (real numbers).
+        from database.db import query as _q
+        _roster = _q("SELECT id, name, number FROM players WHERE team_id=? "
+                     "AND archived=0 ORDER BY number", (ctx.team_id,))
+        if not _roster:
+            st.info("No players on the roster yet — add them in the Input Hub.")
+            return
+        pc1, pc2 = st.columns([2, 2])
+        _pid = pc1.selectbox("Player", [r["id"] for r in _roster],
+                             format_func=lambda i: next(
+                                 f"#{r['number']} {r['name']}" for r in _roster
+                                 if r["id"] == i),
+                             key="share_spot_pid")
+        _mode_lbl = pc2.radio("Scope", ["Season", "Career", "One game",
+                                        "Last N games"],
+                              horizontal=True, key="share_spot_mode")
+        _mode = {"Season": "season", "Career": "career", "One game": "game",
+                 "Last N games": "stretch"}[_mode_lbl]
+        _n, _gid = 5, None
+        if _mode == "stretch":
+            _n = st.slider("Games", 2, 15, 5, key="share_spot_n")
+        elif _mode == "game":
+            _pg = SCARD._pid_game_rows(_pid)
+            if not _pg:
+                st.info("No tracked games for this player yet — the one-game "
+                        "card needs play-by-play.")
+                return
+            _gid = st.selectbox(
+                "Game", [r["game_id"] for r in reversed(_pg)],
+                format_func=lambda g: next(
+                    f"{r['date']} vs {r['opp']}" for r in _pg
+                    if r["game_id"] == g),
+                key="share_spot_gid")
+        _sbg = st.color_picker("Background", _team_color(ctx.team_id),
+                               key="share_spot_bg",
+                               help="Defaults to your team colour.")
+        png = _card_spotlight(_pid, _mode, _n, _gid, _sbg)
+        if not png:
+            st.info("No games for this player in that scope yet — the card "
+                    "needs at least one tracked or entered box.")
+            return
+        _dl(png, f"{_slug}_spotlight_{_pid}_{_mode}.png", "share_dl_spot")
 
     else:   # Selected games — pick any set from the schedule
         st.caption("Pick the games to feature — every one you select lands on the "

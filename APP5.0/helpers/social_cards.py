@@ -706,3 +706,208 @@ def games_png(team_id, gender, game_ids=None, n=5, title=None, bg=None,
                 fontsize=11, ha="right", va="center", zorder=2)
     _foot(ax, grey=GREY, edge=EDGE)
     return _png(fig)
+
+
+# ── card 4: player spotlight (career / season / game / stretch) ──────────────
+def _pid_game_rows(pid):
+    """[{game_id,date,opp,box}] — a player row's TRACKED games, oldest first.
+    One players.id = one season (rollover archives rows), so this is naturally
+    season-scoped."""
+    boxes = S.player_game_boxes().get(pid, {})
+    if not boxes:
+        return []
+    gids = list(boxes)
+    ph = ",".join("?" * len(gids))
+    gmeta = {r["id"]: r for r in query(
+        f"""SELECT g.id, g.date, g.team1_id, g.team2_id, t1.name n1, t2.name n2
+            FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                         JOIN teams t2 ON t2.id=g.team2_id
+            WHERE g.id IN ({ph})""", tuple(gids))}
+    prow = query("SELECT team_id FROM players WHERE id=?", (pid,))
+    tid = prow[0]["team_id"] if prow else None
+    rows = []
+    for gid, b in boxes.items():
+        m = gmeta.get(gid)
+        if not m:
+            continue
+        rows.append({"game_id": gid, "date": m["date"],
+                     "opp": m["n2"] if m["team1_id"] == tid else m["n1"],
+                     "box": b})
+    rows.sort(key=lambda r: (r["date"] or "", r["game_id"]))
+    return rows
+
+
+def _sum_boxes(boxes):
+    out = {}
+    for b in boxes:
+        for k, v in b.items():
+            if isinstance(v, (int, float)):
+                out[k] = out.get(k, 0) + v
+    return out
+
+
+def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None):
+    """Player spotlight card. Modes:
+      'season'  — this player row's season line (tracked + entered boxes)
+      'career'  — the person's identity chain: season-by-season + totals
+      'game'    — one tracked game (game_id, default the newest)
+      'stretch' — the last `n` tracked games
+    Box-stat assembly only (PTS/REB/AST/STL/BLK + shooting) — real numbers,
+    no ratings, so it renders for free-tier data too. None when no games."""
+    import helpers.identity as ID
+    import helpers.manual_box as MB
+    p = query("""SELECT p.id, p.name, p.number, p.team_id, p.season,
+                        p.identity_id, t.name AS team, t.class AS klass
+                 FROM players p JOIN teams t ON t.id=p.team_id
+                 WHERE p.id=?""", (player_id,))
+    if not p:
+        return None
+    p = p[0]
+    T = _theme(bg or default_team_color(p["team_id"]))
+    _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
+                                        T["panel"], T["edge"], T["accent"])
+    grows = _pid_game_rows(player_id)
+
+    # ── assemble the headline line + the panel rows per mode ────────────────
+    panel_hdr, panel_rows = "", []          # [(left, right)] strings
+    big_lbl = "PPG"
+    if mode == "career":
+        pk = p["identity_id"] or p["id"]
+        hist = ID.identity_history(pk) or [dict(p, archived=0)]
+        tnames = {r["id"]: r["name"] for r in query("SELECT id, name FROM teams")}
+        season_lines = []
+        for h in hist:
+            ln = MB.combined_player_line(h["id"])
+            if ln:
+                season_lines.append((h, ln))
+        if not season_lines:
+            return None
+        gp = sum(ln["gp"] for _, ln in season_lines)
+        tot = {k: sum(ln.get(k, 0) for _, ln in season_lines)
+               for k in ("PTS", "TRB", "AST", "STL", "BLK",
+                         "FGM", "FGA", "3PM", "3PA", "FTM", "FTA")}
+        line = {"gp": gp,
+                "PPG": tot["PTS"] / gp, "RPG": tot["TRB"] / gp,
+                "APG": tot["AST"] / gp, "SPG": tot["STL"] / gp,
+                "BPG": tot["BLK"] / gp,
+                "FG%": 100 * tot["FGM"] / tot["FGA"] if tot["FGA"] else 0,
+                "3P%": 100 * tot["3PM"] / tot["3PA"] if tot["3PA"] else 0,
+                "FT%": 100 * tot["FTM"] / tot["FTA"] if tot["FTA"] else 0}
+        sub = (f"Career · {len(season_lines)} season(s) · {gp} games · "
+               f"{tot['PTS']} pts · {tot['TRB']} reb · {tot['AST']} ast")
+        panel_hdr = "SEASON BY SEASON"
+        for h, ln in season_lines:
+            szn = h.get("season") or "Current"
+            panel_rows.append((
+                f"{szn} · {_fit(tnames.get(h['team_id'], ''), 20)}",
+                f"{ln['gp']} GP · {ln['PPG']:.1f} / {ln['RPG']:.1f} / "
+                f"{ln['APG']:.1f}"))
+    elif mode == "game":
+        row = None
+        if game_id is not None:
+            row = next((r for r in grows if r["game_id"] == game_id), None)
+        elif grows:
+            row = grows[-1]
+        if not row:
+            return None
+        b = row["box"]
+        gp = 1
+        line = {"gp": 1, "PPG": b.get("PTS", 0), "RPG": b.get("TRB", 0),
+                "APG": b.get("AST", 0), "SPG": b.get("STL", 0),
+                "BPG": b.get("BLK", 0),
+                "FG%": 100 * b.get("FGM", 0) / b["FGA"] if b.get("FGA") else 0,
+                "3P%": 100 * b.get("3PM", 0) / b["3PA"] if b.get("3PA") else 0,
+                "FT%": 100 * b.get("FTM", 0) / b["FTA"] if b.get("FTA") else 0}
+        big_lbl = "PTS"
+        sub = f"{row['date']} vs {_fit(row['opp'], 24)}"
+        panel_hdr = "THE LINE"
+        panel_rows = [
+            (f"{b.get('FGM', 0)}-{b.get('FGA', 0)} FG · "
+             f"{b.get('3PM', 0)}-{b.get('3PA', 0)} 3P · "
+             f"{b.get('FTM', 0)}-{b.get('FTA', 0)} FT",
+             f"{b.get('ORB', 0)} orb · {b.get('TOV', 0)} to · "
+             f"{b.get('PF', 0)} pf")]
+    else:                                   # season / stretch
+        if mode == "stretch":
+            sel = grows[-int(n):]
+            if not sel:
+                return None
+            tot = _sum_boxes([r["box"] for r in sel])
+            gp = len(sel)
+            line = {"gp": gp,
+                    "PPG": tot.get("PTS", 0) / gp, "RPG": tot.get("TRB", 0) / gp,
+                    "APG": tot.get("AST", 0) / gp, "SPG": tot.get("STL", 0) / gp,
+                    "BPG": tot.get("BLK", 0) / gp,
+                    "FG%": (100 * tot.get("FGM", 0) / tot["FGA"]
+                            if tot.get("FGA") else 0),
+                    "3P%": (100 * tot.get("3PM", 0) / tot["3PA"]
+                            if tot.get("3PA") else 0),
+                    "FT%": (100 * tot.get("FTM", 0) / tot["FTA"]
+                            if tot.get("FTA") else 0)}
+            sub = f"Last {gp} games"
+            show = sel
+        else:
+            line = MB.combined_player_line(player_id)
+            if not line:
+                return None
+            gp = line["gp"]
+            _szn = p["season"]
+            sub = (f"{_szn} season" if _szn and not SEAS.is_current(_szn)
+                   else "Season to date")
+            if line.get("manual_gp"):
+                sub += (f" · {line['tracked_gp']} tracked + "
+                        f"{line['manual_gp']} entered")
+            show = grows[-5:]
+        panel_hdr = "RECENT GAMES" if mode == "season" else "THE RUN"
+        for r in reversed(show):
+            b = r["box"]
+            panel_rows.append((
+                f"{r['date']}  vs {_fit(r['opp'], 22)}",
+                f"{b.get('PTS', 0)} pts · {b.get('TRB', 0)} reb · "
+                f"{b.get('AST', 0)} ast"))
+
+    # ── draw ─────────────────────────────────────────────────────────────────
+    fig, ax = _fig(_BG)
+    _brand(ax, "player spotlight", bg=_BG, grey=GREY)
+    _hn, _hfs = _team_label(p["name"], 27, 26)
+    ax.text(50, 86.5, _hn, color=FG, fontsize=_hfs, fontweight="bold",
+            ha="center", va="center")
+    ax.text(50, 81.5,
+            f"#{p['number']} · {_fit(p['team'], 28)} · Class {p['klass'] or '—'}",
+            color=GREY, fontsize=14, ha="center", va="center")
+    ax.text(50, 77.3, sub, color=GOLD, fontsize=13, fontweight="bold",
+            ha="center", va="center")
+
+    ax.text(28, 66, f"{line['PPG']:.0f}" if big_lbl == "PTS"
+            else f"{line['PPG']:.1f}",
+            color=GOLD, fontsize=56, fontweight="bold", ha="center", va="center")
+    ax.text(28, 58, big_lbl, color=GREY, fontsize=12.5, ha="center", va="center")
+
+    _one = big_lbl == "PTS"
+    for i, (lbl, val) in enumerate((
+            ("REB", f"{line['RPG']:.0f}" if _one else f"{line['RPG']:.1f}"),
+            ("AST", f"{line['APG']:.0f}" if _one else f"{line['APG']:.1f}"),
+            ("STL", f"{line['SPG']:.0f}" if _one else f"{line['SPG']:.1f}"),
+            ("BLK", f"{line['BPG']:.0f}" if _one else f"{line['BPG']:.1f}"))):
+        _tile(ax, 51 + i * 13, 66.5, lbl, val)
+    for i, (lbl, val) in enumerate((
+            ("FG%", f"{line['FG%']:.0f}"), ("3P%", f"{line['3P%']:.0f}"),
+            ("FT%", f"{line['FT%']:.0f}"), ("GP", f"{gp}"))):
+        _tile(ax, 51 + i * 13, 57.5, lbl, val)
+
+    if panel_rows:
+        _panel(ax, 8, 7, 84, 43, panel=PANEL, edge=EDGE)
+        ax.text(12, 46, panel_hdr, color=GOLD, fontsize=12.5,
+                fontweight="bold", ha="left", va="center", zorder=2)
+        y = 40.6
+        for left, right in panel_rows[:7]:
+            ax.text(12, y, left, color=FG, fontsize=13, fontweight="bold",
+                    ha="left", va="center", zorder=2)
+            ax.text(88, y, right, color=GREY, fontsize=12, ha="right",
+                    va="center", zorder=2)
+            y -= 4.9
+        if len(panel_rows) > 7:
+            ax.text(88, y, f"+{len(panel_rows) - 7} more", color=GREY,
+                    fontsize=11, ha="right", va="center", zorder=2)
+    _foot(ax, grey=GREY, edge=EDGE)
+    return _png(fig)

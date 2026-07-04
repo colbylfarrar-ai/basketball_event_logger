@@ -753,14 +753,16 @@ def _sum_boxes(boxes):
 
 
 def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None,
-                         game_ids=None):
+                         game_ids=None, label=None):
     """Player spotlight card. Modes:
       'season'  — this player row's season line (tracked + entered boxes)
       'career'  — the person's identity chain: season-by-season + totals
       'game'    — one tracked game (game_id, default the newest)
       'stretch' — the last `n` tracked games
       'picked'  — the coach's own selection (`game_ids`, any of the player's
-                  tracked games — a tournament run, the district slate, …)
+                  tracked games — a tournament run, the district slate, …);
+                  `label` replaces the default "N selected games" scope line
+                  (e.g. "District Tournament Run")
     Box-stat assembly only (PTS/REB/AST/STL/BLK + shooting) — real numbers,
     no ratings, so it renders for free-tier data too. None when no games."""
     import helpers.identity as ID
@@ -868,7 +870,8 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None,
                     "FT%": (100 * tot.get("FTM", 0) / tot["FTA"]
                             if tot.get("FTA") else 0)}
             sub = (f"Last {gp} games" if mode == "stretch"
-                   else f"{gp} selected game{'s' if gp != 1 else ''}")
+                   else (str(label).strip() if label and str(label).strip()
+                         else f"{gp} selected game{'s' if gp != 1 else ''}"))
             show = sel
         else:
             line = MB.combined_player_line(player_id)

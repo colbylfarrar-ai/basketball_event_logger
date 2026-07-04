@@ -68,9 +68,9 @@ def _games(team_id, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_spotlight(pid, mode, n, game_id, bg, game_ids=None):
+def _card_spotlight(pid, mode, n, game_id, bg, game_ids=None, label=None):
     return SCARD.player_spotlight_png(pid, mode=mode, n=n, game_id=game_id,
-                                      bg=bg, game_ids=game_ids)
+                                      bg=bg, game_ids=game_ids, label=label)
 
 
 def _dl(png, fname, key):
@@ -284,10 +284,18 @@ def render(ctx):
                             "whatever you select and lists the games on it.")
                     return
                 _gids = tuple(_sel)
+        _slabel = None
+        if _mode == "picked":
+            _slabel = st.text_input(
+                "Card label (optional)", value="", max_chars=40,
+                key="share_spot_label",
+                placeholder="e.g. District Tournament Run",
+                help="Shown on the card instead of "
+                     "“N selected games”.").strip() or None
         _sbg = st.color_picker("Background", _team_color(ctx.team_id),
                                key="share_spot_bg",
                                help="Defaults to your team colour.")
-        png = _card_spotlight(_pid, _mode, _n, _gid, _sbg, _gids)
+        png = _card_spotlight(_pid, _mode, _n, _gid, _sbg, _gids, _slabel)
         if not png:
             st.info("No games for this player in that scope yet — the card "
                     "needs at least one tracked or entered box.")

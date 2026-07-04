@@ -99,14 +99,17 @@ def team_zone_by_type(game_ids, team_pids, events=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_scout(team_id, gender, scored, tracked, pack, table,
-                personnel_limit=7, exclude_pids=None, visible_game_ids=None):
+                personnel_limit=7, exclude_pids=None, visible_game_ids=None,
+                season="Current"):
     """Assemble every piece of the scouting report for one team.
 
     personnel_limit=None shows the WHOLE roster (self-scout); exclude_pids drops
     players (e.g. injured/suspended) from the personnel list. `visible_game_ids`
     is the entitlement read-filter for the hot-zone / shot-creation views: None =
     unrestricted (own team / admin), a set restricts them to those games (a
-    League-wide scout passes the team's pooled games)."""
+    League-wide scout passes the team's pooled games). `season` partitions the
+    event-based sections ('Current' or an archive label) — the caller must pass
+    season-matched scored/tracked/pack/table alongside it."""
     s = scored.get(team_id, {})
     ts = pack.get("ts", {})
     me = ts.get(team_id)
@@ -223,7 +226,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     # the same game set or they come back empty.
     gids = [r["id"] for r in query(
         "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
-        "AND season='Current'", (team_id, team_id))]
+        "AND season=?", (team_id, team_id, season))]
     if visible_game_ids is not None:
         _vis = set(visible_game_ids)
         gids = [g for g in gids if g in _vis]

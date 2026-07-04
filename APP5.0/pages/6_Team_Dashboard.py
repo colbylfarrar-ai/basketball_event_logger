@@ -624,9 +624,10 @@ def _zone_player_shooting(tid, _ids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _pack(g, _trk):
-    # _trk (dict) is underscore-prefixed so Streamlit skips hashing it; keyed on g.
-    return LA.team_tracked_pack(gender=g, tracked=_trk)
+def _pack(g, _trk, season="Current"):
+    # _trk (dict) is underscore-prefixed so Streamlit skips hashing it; keyed on
+    # (g, season) so an archive view builds its own season's pack.
+    return LA.team_tracked_pack(gender=g, tracked=_trk, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -788,14 +789,17 @@ def _units(tid, _tids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _scout(tid, g, limit=7, excl=(), vis=None):
+def _scout(tid, g, limit=7, excl=(), vis=None, season="Current", season_gp=None):
     # `vis` (tuple of game ids, or None) scopes the hot-zone / shot-creation views
-    # to what the viewer may see (None = own team / admin = full depth).
-    trk = _tracked_ratings(g)
-    return SC.build_scout(tid, g, _score_ratings(g), trk,
-                          _pack(g, trk), _ptable_full(g),
+    # to what the viewer may see (None = own team / admin = full depth). `season`
+    # + `season_gp` (the gender's season tracked ids) scope every piece to one
+    # season so an archive scout reads that season's games, not 'Current'.
+    trk = _tracked_ratings(g, season)
+    return SC.build_scout(tid, g, _score_ratings(g, season), trk,
+                          _pack(g, trk, season), _ptable_full(g, season_gp),
                           personnel_limit=limit, exclude_pids=set(excl),
-                          visible_game_ids=(set(vis) if vis is not None else None))
+                          visible_game_ids=(set(vis) if vis is not None else None),
+                          season=season)
 
 
 # Entitlement read-filter (AXIS-2 teeth): which of this team's tracked games may
@@ -4079,17 +4083,20 @@ if _tdview == "Lab":
 # The entitlement read-filter is recomputed for the opponent (League-wide coach →
 # their pooled games only; cold opponent → record/rank + your hand-entered intel).
 def _opp_scout_ctx(opp_tid):
-    _ov = ENT.team_visible_tracked_ids(AUTH.current_user(), opp_tid)
+    _ov = ENT.team_visible_tracked_ids(AUTH.current_user(), opp_tid,
+                                       season=season_pick)
     _ovk = None if _ov is None else tuple(sorted(_ov))
-    ob = _team_bundle(opp_tid, gender, _ovk)
+    ob = _team_bundle(opp_tid, gender, _ovk, season=season_pick)
     _oraw = any(g["tracked"] for g in ob["game_log"])
-    o_has, _olock = ENT.tracked_gate(AUTH.current_user(), opp_tid, _oraw)
+    o_has, _olock = ENT.tracked_gate(AUTH.current_user(), opp_tid, _oraw,
+                                     season=season_pick)
     return SimpleNamespace(
         bundle=ob, players=ob["players"], team_id=opp_tid, gender=gender,
         has_tracked=o_has, summ=ob["summary"], soff=ob["scoring_off"],
         brk=ob["breakeven"], ff=ob["four_factors"], tb=ob["team_box"],
         GOOD=GOOD, BAD=BAD, ACCENT=ACCENT, BLUE=BLUE, style=_style, pctf=_pctf,
-        scout=lambda _t, _g, _lim, _ex: _scout(_t, _g, _lim, _ex, _ovk),
+        scout=lambda _t, _g, _lim, _ex: _scout(_t, _g, _lim, _ex, _ovk,
+                                               season_pick, _season_gp),
         archetypes=_archetypes, located_team=_located_team,
         zone_pair_bars=_zone_pair_bars)
 
@@ -4105,7 +4112,8 @@ _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                              # scout always targets the selected team → reuse its
                              # visible-game key (the AXIS-2 read-filter).
                              scout=lambda _t, _g, _lim, _ex: _scout(
-                                 _t, _g, _lim, _ex, _vis_key),
+                                 _t, _g, _lim, _ex, _vis_key,
+                                 season_pick, _season_gp),
                              archetypes=_archetypes, located_team=_located_team,
                              zone_pair_bars=_zone_pair_bars,
                              # opponent scout: pick & scout any team, keep yours

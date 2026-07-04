@@ -74,6 +74,8 @@ _NAV = {
                 icon=":material/groups:"),
         st.Page("pages/7_Players.py", title="Players",
                 icon=":material/person:"),
+        st.Page("pages/14_Hall_of_Fame.py", title="Hall of Fame",
+                icon=":material/emoji_events:"),
     ],
     "Build": [
         st.Page("pages/1_Input_Hub.py", title="Input Hub",

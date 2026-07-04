@@ -371,6 +371,34 @@ def ts(b):
     return _safe(b["PTS"], 2 * (b["FGA"] + 0.44 * b["FTA"]))
 
 
+def four_factor_ppp(efg_pct, tov_pct, orb_pct, ftr):
+    """4F-PPP — expected points per possession from the four factors ALONE.
+
+    Possession model: TOV% of possessions end scoreless; the rest are shooting
+    possessions. Each FGA is worth 2·eFG% FG points plus FTR (=FTM/FGA) FT
+    points, and a missed shot is recovered by the offense ORB% of the time,
+    re-entering the shot state — a geometric chain, so expected FGAs per
+    shooting possession = 1 / (1 − miss·ORB%). Miss chance is approximated by
+    (1 − eFG%): the four factors don't carry raw FG%, and eFG% overweights made
+    threes, so the extra-possession count runs slightly low for heavy-3 teams
+    (documented tradeoff). All inputs are fractions (FTR is a rate; may sit
+    above 1 in foul-fests). Returns expected PPP; the gap between ACTUAL PPP
+    and 4F-PPP is shot-making/sequencing the factor averages can't see.
+    """
+    e = min(max(efg_pct or 0.0, 0.0), 1.0)
+    t = min(max(tov_pct or 0.0, 0.0), 1.0)
+    o = min(max(orb_pct or 0.0, 0.0), 1.0)
+    f = max(ftr or 0.0, 0.0)
+    chain = 1.0 - (1.0 - e) * o
+    attempts = 1.0 / chain if chain > 0 else 1.0
+    # FT-trip deflator: actual PPP divides by estimate_possessions, which counts
+    # 0.44·FTA as possessions. FTA isn't a four factor; FTA ≈ 1.4·FTM puts
+    # ≈0.6·FTR·A extra possessions behind each live one — divide them back out
+    # so 4F-PPP sits on the same possession scale as ORtg/100.
+    ft_poss = 0.6 * f * attempts * (1.0 - t)
+    return (1.0 - t) * attempts * (2.0 * e + f) / (1.0 + ft_poss)
+
+
 def scoring_efficiency(b):
     """ScEff — FG points captured vs the shot-value ceiling if every attempt fell:
     (2·2PM + 3·3PM) / (2·2PA + 3·3PA). A point-weighted make rate that rewards

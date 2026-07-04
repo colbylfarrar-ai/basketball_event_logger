@@ -1397,6 +1397,24 @@ def render_box_score(game_id: int):
         e1.metric(f"{t1name} factor edges", h_edges)
         e2.metric(f"{t2name} factor edges", a_edges)
 
+        # 4F-PPP: what the factors alone say each offense should have scored
+        # per possession — vs what actually happened. Gap = shot-making /
+        # sequencing the factor averages can't see.
+        _h_exp = S.four_factor_ppp(ff_h["eFG"], ff_h["TOV"], ff_h["ORB"], ff_h["FTR"])
+        _a_exp = S.four_factor_ppp(ff_a["eFG"], ff_a["TOV"], ff_a["ORB"], ff_a["FTR"])
+        _h_act = S._safe(tb_ta["PTS"], tb_ta["FGA"] + tb_ta["TOV"])
+        _a_act = S._safe(ob_ta["PTS"], ob_ta["FGA"] + ob_ta["TOV"])
+        glossary_key("4F-PPP")
+        f1, f2 = st.columns(2)
+        f1.metric(f"{t1name} 4F-PPP (expected)", f"{_h_exp:.2f}",
+                  delta=f"{_h_act - _h_exp:+.2f} vs actual {_h_act:.2f}")
+        f2.metric(f"{t2name} 4F-PPP (expected)", f"{_a_exp:.2f}",
+                  delta=f"{_a_act - _a_exp:+.2f} vs actual {_a_act:.2f}")
+        st.caption("4F-PPP = expected points per possession from the four factors "
+                   "alone (turnovers score nothing; offensive rebounds re-enter the "
+                   "shot chain). The delta vs actual PPP is shot-making beyond the "
+                   "factors.")
+
     with tabs[6]:
         _tab_factors()
 

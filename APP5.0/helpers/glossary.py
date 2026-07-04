@@ -316,6 +316,13 @@ STAT_DEFS = [
      "The four things that win games, weighted by importance. Defense = the "
      "opponent's four factors against you.",
      "Win the factors, win the game.", False),
+    ("4F-PPP", "Four-Factor Expected PPP", "Team & League",
+     "(1−TOV%) · (2·eFG% + FTr) / (1 − (1−eFG%)·ORB%)",
+     "Points per possession the four factors alone predict: turnovers score "
+     "nothing, every shot carries the team's eFG% and FT rate, and offensive "
+     "rebounds re-enter the shot chain (a geometric series of extra tries).",
+     "Actual PPP above 4F-PPP = shot-making the factors can't see; below = "
+     "leaving points on the floor.", True),
     ("Pythag","Pythagorean Wins", "Team & League", "PF^14 / (PF^14 + PA^14)",
      "Expected win % from points scored vs allowed (exponent 14).",
      "Compare to actual record to find lucky/unlucky teams.", False),

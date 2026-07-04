@@ -226,6 +226,28 @@ def render(ctx):
         _ff_card(_d[2], "DREB%", "dreb", "opp_orb", True, "{:.1f}%")
         _ff_card(_d[3], "Opp FT rate", "opp_ftr", "ftr", False, "{:.3f}", scale=1.0)
 
+        # 4F-PPP — what the factor profile alone predicts per possession, vs the
+        # actual rating. Gap = shot-making the factor averages can't see.
+        if all(me.get(k) is not None for k in ("efg", "tov", "orb", "ftr")):
+            import helpers.stats as _S
+            _xo = _S.four_factor_ppp(me["efg"], me["tov"], me["orb"], me["ftr"])
+            _parts = [f"off expected <b>{_xo:.2f}</b>"]
+            if me.get("ortg") is not None:
+                _parts.append(f"actual {me['ortg']/100:.2f} "
+                              f"({me['ortg']/100 - _xo:+.2f} shot-making)")
+            if all(me.get(k) is not None
+                   for k in ("oefg", "opp_tov", "opp_orb", "opp_ftr")):
+                _xd = _S.four_factor_ppp(me["oefg"], me["opp_tov"],
+                                         me["opp_orb"], me["opp_ftr"])
+                _parts.append(f"· def expected <b>{_xd:.2f}</b>")
+                if me.get("drtg") is not None:
+                    _parts.append(f"actual {me['drtg']/100:.2f}")
+            st.markdown(
+                "<div style='font-size:12px;color:#8b949e;margin:6px 0 2px'>"
+                "<b style='color:#f0a500'>4F-PPP</b> — points/possession the four "
+                "factors alone predict: " + " ".join(_parts) + "</div>",
+                unsafe_allow_html=True)
+
         # Key stats DEMOTED into an expander — ORtg/DRtg restate the metric row,
         # the shooting splits restate the four-factor eFG card. Collapsed by default.
         with st.expander("Key stats — vs league"):

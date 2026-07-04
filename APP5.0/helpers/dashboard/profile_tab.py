@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import streamlit as st
 
+from database.db import query
+import helpers.seasons as SEAS
+
 
 @st.fragment
 def render(ctx):
@@ -40,16 +43,39 @@ def render(ctx):
         st.info(f"🗄️ {_note}")
     _ppool = ctx.ptable_full(ctx.gender)
     _prows = sorted(_ppool.values(), key=lambda r: (r["Rank"] or 1e9))
-    _tpids = [k for k in _ppool if _ppool[k]["team_id"] == ctx.team_id]
-    if not _tpids:
-        st.info(f"No rated players for **{ctx.team['name']}** yet — track a game in "
-                "the Game Tracker.")
+    # Selector list: for the live season (and the last-season fallback) it is the
+    # CURRENT roster — every active player, rated or not — so new kids show up
+    # before their first tracked game. An explicitly picked archive keeps the
+    # season pool (graduated players must stay pickable there).
+    _cur_view = (SEAS.is_current(getattr(ctx, "season", None))
+                 or bool(getattr(ctx, "fallback_note", None)))
+    if _cur_view:
+        _roster = query("SELECT id, name, number FROM players WHERE team_id=? "
+                        "AND archived=0 ORDER BY number", (ctx.team_id,))
+        _rated = sorted([p["id"] for p in _roster if p["id"] in _ppool],
+                        key=lambda k: (_ppool[k]["Rank"] or 1e9))
+        _unrated = [p for p in _roster if p["id"] not in _ppool]
+        _porder = _rated + [p["id"] for p in _unrated]
+        _plabels = ([f"#{_ppool[k]['Rank']}  {_ppool[k]['name']}"
+                     f"  ·  {_ppool[k]['class']}" for k in _rated]
+                    + [f"#{p['number']}  {p['name']}  ·  no tracked data yet"
+                       for p in _unrated])
     else:
+        _tpids = [k for k in _ppool if _ppool[k]["team_id"] == ctx.team_id]
         _porder = sorted(_tpids, key=lambda k: (_ppool[k]["Rank"] or 1e9))
         _plabels = [f"#{_ppool[k]['Rank']}  {_ppool[k]['name']}"
                     f"  ·  {_ppool[k]['class']}" for k in _porder]
+    if not _porder:
+        st.info(f"No players for **{ctx.team['name']}** yet — add them in the "
+                "Input Hub, then track a game in the Game Tracker.")
+    else:
         _ppick = st.selectbox("Player", range(len(_porder)),
                               format_func=lambda i: _plabels[i], key="td_prof_pick")
         _ppid = _porder[_ppick]
-        _zs, _zg, _hs = ctx.pp_zone_tables()
-        ctx.render_profile(_ppool[_ppid], _ppid, _prows, _zs, _zg, _hs)
+        if _ppid not in _ppool:
+            st.info("No tracked data for this player yet — their full card "
+                    "(ratings, shot chart, signature metrics) lights up once "
+                    "they appear in a tracked game.")
+        else:
+            _zs, _zg, _hs = ctx.pp_zone_tables()
+            ctx.render_profile(_ppool[_ppid], _ppid, _prows, _zs, _zg, _hs)

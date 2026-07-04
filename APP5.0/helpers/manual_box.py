@@ -203,6 +203,35 @@ def parse_maxpreps_csv(df, team_names, rosters):
     return rows_by_team, problems
 
 
+def maxpreps_df(game_id, team_names):
+    """Entered box → a MaxPreps-format DataFrame (the same column shape
+    box_score.py exports and parse_maxpreps_csv reads back — a full round
+    trip). team_names = {team_id: display name}; teams ordered as given.
+    Returns None when the game has no entered box."""
+    box = load_manual_box(game_id)
+    rows = []
+    for tid, nm in team_names.items():
+        for r in box.get(tid, []):
+            rows.append({
+                "Team": nm, "#": r["number"], "Player": r["name"],
+                "MIN": r["min"], "PTS": _pts(r),
+                "FG": f"{r['fgm']}-{r['fga']}",
+                "FG%": round(100 * _safe(r["fgm"], r["fga"]), 1),
+                "3P": f"{r['tpm']}-{r['tpa']}",
+                "3P%": round(100 * _safe(r["tpm"], r["tpa"]), 1),
+                "FT": f"{r['ftm']}-{r['fta']}",
+                "FT%": round(100 * _safe(r["ftm"], r["fta"]), 1),
+                "ORB": r["oreb"], "DRB": r["dreb"],
+                "REB": r["oreb"] + r["dreb"],
+                "AST": r["ast"], "STL": r["stl"], "BLK": r["blk"],
+                "TOV": r["tov"], "PF": r["pf"]})
+    if not rows:
+        return None
+    cols = ["Team", "#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%",
+            "FT", "FT%", "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF"]
+    return pd.DataFrame(rows, columns=cols)
+
+
 # ── aggregation ──────────────────────────────────────────────────────────────
 def _pts(d):
     return 2 * d["fgm"] + d["tpm"] + d["ftm"]

@@ -316,3 +316,12 @@ with t_box:
         if MB.has_manual(gsel["id"]):
             st.divider()
             MB.render_manual_box(gsel["id"], accent=ACCENT)
+            _mp_df = MB.maxpreps_df(gsel["id"], {gsel["team1_id"]: gsel["n1"],
+                                                 gsel["team2_id"]: gsel["n2"]})
+            if _mp_df is not None:
+                st.download_button(
+                    "⬇ MaxPreps box — both teams (CSV)",
+                    _mp_df.to_csv(index=False),
+                    file_name=(f"maxpreps_box_{gsel['id']}_{gsel['n1']}"
+                               f"_vs_{gsel['n2']}.csv"),
+                    mime="text/csv", key=f"mb_dl_mp_{gsel['id']}")

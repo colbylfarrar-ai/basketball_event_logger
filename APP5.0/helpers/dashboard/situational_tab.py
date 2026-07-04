@@ -81,6 +81,47 @@ def render(ctx):
                    "type on the Roster & District page.")
         st.divider()
 
+    # ── Runs — momentum swings (scoring-only, lights up without any tags) ─────
+    _rv = ctx.runs(g, tid) if getattr(ctx, "runs", None) else None
+    if _rv and _rv.get("profile"):
+        import helpers.runs as RN
+        _p = _rv["profile"]
+        st.markdown("<div class='pl-hdr'>Runs — the momentum game</div>",
+                    unsafe_allow_html=True)
+        st.caption(
+            f"A run = **{RN.BIG_RUN}-0** or better (unanswered). Garbage-time "
+            "runs (started in the 4th up/down 20+) are detected but excluded "
+            "from every number here.")
+        rm = st.columns(5)
+        rm[0].metric("10-0 runs / game", f"{_p['made_pg']:.2f}")
+        rm[1].metric("Given up / game", f"{_p['allowed_pg']:.2f}")
+        rm[2].metric("Biggest run", f"{_p['biggest']}-0" if _p["biggest"] else "—")
+        rm[3].metric("Avg run length",
+                     f"{_p['avg_secs']:.0f}s" if _p["avg_secs"] is not None
+                     else "—",
+                     help="Game-clock seconds first-to-last basket. A long run "
+                          "is a string of defensive stops — the killer kind; a "
+                          "25-second flurry can be answered right back.")
+        rm[4].metric("After the run",
+                     (f"{_p['avg_momentum']:+.1f} pts"
+                      if _p["avg_momentum"] is not None else "—"),
+                     help="Net points in the 2 minutes of game clock after the "
+                          "run ends — does the surge carry, or does the "
+                          "opponent answer?")
+        _bc = _p["by_count"]
+        _fmtwl = lambda wl: f"{wl[0]}-{wl[1]}"
+        st.markdown(dense_table([{
+            "10-0 runs in the game": k if k != "3+" else "3 or more",
+            "Record": _fmtwl(_bc[k]),
+            "Win%": (f"{100 * _bc[k][0] / (_bc[k][0] + _bc[k][1]):.0f}%"
+                     if (_bc[k][0] + _bc[k][1]) else "—"),
+        } for k in (0, 1, 2, "3+")]), unsafe_allow_html=True)
+        st.caption(
+            f"Record by how many 10-0 runs THIS team landed in the game"
+            + (f" · {_p['garbage']} garbage-time run(s) excluded."
+               if _p.get("garbage") else "."))
+        st.divider()
+
     data = ctx.situational(g, tid) if getattr(ctx, "situational", None) else None
     if not data or len(data.get("situations", [])) <= 1:
         st.info("Not enough tracked possessions yet — the situational breakdown fills "

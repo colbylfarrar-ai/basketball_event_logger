@@ -372,6 +372,19 @@ def _win_net(g, _scored, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _runs_table(g, vis=None, season="Current"):
+    """League scoring-run profiles (helpers/runs.py) over the viewer's tracked
+    pool — 10-0 runs made / allowed per game, records by run count."""
+    import helpers.runs as RN
+    gids = (list(vis) if vis is not None
+            else SEAS.game_pool(season=season, gender=g, tracked_only=True,
+                                finished_only=False))
+    if not gids:
+        return {}
+    return RN.league_run_table(events=S.fetch_events(gids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _team_stat_rows(g, _tracked, _pack, _form, vis=None, season="Current"):
     # Every-team-stat table (the Tracked tab's full stat grid). `_tracked/_pack/
     # _form` are passed-in caches (underscore = not hashed); the key is
@@ -1801,10 +1814,54 @@ def _fx_evr():
     sv = list(scored.values())
 
     (lab_land, lab_tier, lab_pyth, lab_mo, lab_net, lab_pl, lab_pt, lab_def,
-     lab_exc, lab_gt) = st.tabs(
+     lab_exc, lab_gt, lab_runs) = st.tabs(
         ["Landscape", "Power tiers", "Pythagoras & luck",
          "Momentum", "Win network", "Player edge", "Play types", "Defense",
-         "Excitement", "By game type"])
+         "Excitement", "By game type", "Runs"])
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  RUNS — 10-0 runs made / given up, and whether run games get won
+    # ──────────────────────────────────────────────────────────────────────
+    with lab_runs:
+        st.caption(
+            "Scoring runs across the tracked field: a run = **10-0** or better "
+            "(unanswered points). Garbage-time runs (started in the 4th up/down "
+            "20+) are excluded. Length matters — a 4-minute run is a string of "
+            "defensive stops; a 30-second flurry is answerable.")
+        _rt = _runs_table(gender, _VISK, season_pick)
+        if not _rt:
+            st.info("No tracked games in the pool yet — runs read from "
+                    "play-by-play.")
+        else:
+            def _bc_rec(bc, keys):
+                w = sum(bc[k][0] for k in keys)
+                l = sum(bc[k][1] for k in keys)
+                return f"{w}-{l}"
+            _rrows = _filter_rows([{
+                "Team": name_of.get(t, f"#{t}"), "class": class_of.get(t),
+                "GP": p["gp"],
+                "10-0 / g": round(p["made_pg"], 2),
+                "Given up / g": round(p["allowed_pg"], 2),
+                "6-0 / g": round(p["made6_pg"], 2),
+                "Biggest": p["biggest"] or None,
+                "Avg len (s)": (round(p["avg_secs"]) if p["avg_secs"] is not None
+                                else None),
+                "After run (±2m)": (round(p["avg_momentum"], 1)
+                                    if p["avg_momentum"] is not None else None),
+                "W-L w/ run": _bc_rec(p["by_count"], (1, 2, "3+")),
+                "W-L no run": _bc_rec(p["by_count"], (0,)),
+            } for t, p in _rt.items()])
+            _rrows.sort(key=lambda r: -(r["10-0 / g"] or 0))
+            if _rrows:
+                st.dataframe(pd.DataFrame(_rrows).drop(columns=["class"]),
+                             hide_index=True, width="stretch", key="lab_runs_df")
+                st.caption(f"{len(_rrows)} team(s) · 'W-L w/ run' = record in "
+                           "games with at least one 10-0 run of their own · "
+                           "'After run' = avg net points in the 2 minutes after "
+                           "their runs end (does the surge carry?). Scoped by "
+                           "the Class / min-games filter above.")
+            else:
+                st.info("No teams match the current Class / min-games filter.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  BY GAME TYPE — power / record / efficiency scoped to one game_type

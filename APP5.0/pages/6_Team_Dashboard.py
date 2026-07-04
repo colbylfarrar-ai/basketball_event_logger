@@ -1149,6 +1149,17 @@ def _situational_view(g, tid, game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _runs_view(g, tid, game_ids=None):
+    """Scoring-run profile + raw run list for one team's tracked games
+    (helpers/runs.py). `game_ids` scopes an archive season; None = current."""
+    import helpers.runs as RN
+    gids = list(game_ids) if game_ids is not None else S._team_game_ids(tid)
+    if not gids:
+        return None
+    return RN.team_runs(tid, S.fetch_events(gids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _by_game_type(g, tid, season="Current"):
     """How the team plays by GAME TYPE (Regular/District/Playoff/…) — record +
     margin from every game, efficiency + shot mix from the tracked ones."""
@@ -1360,6 +1371,7 @@ if _tdview == "Charts":
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
             PURPLE=PURPLE, PINK=PINK,
             situational=_TMBIND(_situational_view),
+            runs=_TMBIND(_runs_view),
             by_game_type=(_by_game_type if _is_cur_season
                           else _partial(_by_game_type, season=season_pick)),
             is_current=_is_cur_season)

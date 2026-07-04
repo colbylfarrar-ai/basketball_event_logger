@@ -52,8 +52,9 @@ def _card_game_manual(team_id, b_id, a_pts, b_pts, date, location, ca, cb,
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_season(team_id, gender, bg, season="Current"):
-    return SCARD.season_record_png(team_id, gender, bg=bg, season=season)
+def _card_season(team_id, gender, bg, season="Current", accolades=()):
+    return SCARD.season_record_png(team_id, gender, bg=bg, season=season,
+                                   accolades=list(accolades))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -222,7 +223,19 @@ def render(ctx):
         sbg = st.color_picker("Background", _team_color(ctx.team_id),
                               key="share_season_bg",
                               help="Defaults to your team colour.")
-        png = _card_season(ctx.team_id, ctx.gender, sbg, _szn)
+        _acc_raw = st.text_area(
+            "Season accolades (optional)", key="share_season_acc",
+            placeholder=("3A State Champion, Frank Bertha Teague Tournament "
+                         "Champion, Regional Champion, District Champion…"),
+            help="One per line or comma-separated — up to 8 fit on the card. "
+                 "When filled, they replace the Signature Wins section (a "
+                 "title beats a scoreline).")
+        _acc = [a.strip() for chunk in _acc_raw.splitlines()
+                for a in chunk.split(",") if a.strip()][:8]
+        if len(_acc) > 4:
+            st.caption("5-8 accolades render as two columns (each trimmed to "
+                       "~34 characters); 4 or fewer get full-width rows.")
+        png = _card_season(ctx.team_id, ctx.gender, sbg, _szn, tuple(_acc))
         if not png:
             st.info("Not enough data for this card yet.")
             return

@@ -497,12 +497,18 @@ def game_result_png(game_id, team_id, color_a=None, color_b=None,
 
 
 # ── card 2: season record ────────────────────────────────────────────────────
-def season_record_png(team_id, gender, bg=None, season="Current"):
+def season_record_png(team_id, gender, bg=None, season="Current",
+                      accolades=None):
     """Season-to-date card: record, power + class rank, streak, margin, the
     marquee wins and the top-3 players. `bg` sets the card background (defaults
     to the team's colour, resolved by the caller). `season` scopes the whole
     card — record, ranks, wins and player table — to one season (archive views
-    make a past-season card, e.g. a program's history post)."""
+    make a past-season card, e.g. a program's history post).
+
+    `accolades` = coach-typed honors (list of strings — "3A State Champion",
+    "District Champion", …). When given they REPLACE the Signature Wins half
+    of the lower panel (a title beats a scoreline); up to 8 fit — 4 as full
+    rows, 5-8 flow into two columns."""
     T = _theme(bg or default_team_color(team_id))
     _BG, FG, GREY, PANEL, EDGE, GOLD = (T["bg"], T["fg"], T["grey"],
                                         T["panel"], T["edge"], T["accent"])
@@ -580,9 +586,31 @@ def season_record_png(team_id, gender, bg=None, season="Current"):
     # ── one panel holds both sections (Signature Wins over Top Players), so the
     #    boxes never collide and clear the stat block above. Top edge sits below
     #    the MARGIN/PPG label; a thin rule splits the two halves.
-    if ranked_wins or top:
+    # coach-typed honors take the upper half over the signature wins
+    _acc = [str(a).strip() for a in (accolades or []) if str(a).strip()][:8]
+    if _acc or ranked_wins or top:
         _panel(ax, 8, 7, 84, 43, panel=PANEL, edge=EDGE)   # 7 → 50
-        if ranked_wins:
+        if _acc:
+            ax.text(12, 46, "SEASON ACCOLADES", color=GOLD, fontsize=12.5,
+                    fontweight="bold", ha="left", va="center", zorder=2)
+            if len(_acc) <= 4:
+                y = 40.6
+                for a in _acc:
+                    ax.text(12, y, "★", color=GOLD, fontsize=12,
+                            ha="left", va="center", zorder=2)
+                    ax.text(15.5, y, a[:52], color=FG, fontsize=13.5,
+                            fontweight="bold", ha="left", va="center", zorder=2)
+                    y -= 4.9
+            else:                       # 5-8 flow into two columns
+                for i, a in enumerate(_acc):
+                    xx = 12 if i < 4 else 51
+                    yy = 42.4 - (i % 4) * 4.3
+                    _txt = a if len(a) <= 34 else a[:33] + "…"
+                    ax.text(xx, yy, "★", color=GOLD, fontsize=9.5,
+                            ha="left", va="center", zorder=2)
+                    ax.text(xx + 2.7, yy, _txt, color=FG, fontsize=10.5,
+                            fontweight="bold", ha="left", va="center", zorder=2)
+        elif ranked_wins:
             ax.text(12, 46, "SIGNATURE WINS", color=GOLD, fontsize=12.5,
                     fontweight="bold", ha="left", va="center", zorder=2)
             y = 40.6
@@ -600,7 +628,7 @@ def season_record_png(team_id, gender, bg=None, season="Current"):
                 ax.text(88, y, meta, color=GREY, fontsize=12, ha="right",
                         va="center", zorder=2)
                 y -= 4.9
-        if ranked_wins and top:
+        if (_acc or ranked_wins) and top:
             ax.plot([12, 88], [27.6, 27.6], color=EDGE, lw=1, zorder=2)
         if top:
             ax.text(12, 23.5, "TOP PLAYERS", color=GOLD, fontsize=12.5,

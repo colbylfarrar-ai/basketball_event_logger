@@ -262,9 +262,9 @@ def render(ctx):
         _n, _gid, _gids = 5, None, None
         if _mode == "stretch":
             _n = st.slider("Games", 2, 15, 5, key="share_spot_n")
-        elif _mode in ("game", "picked"):
+        elif _mode in ("game", "picked", "season"):
             _pg = SCARD._pid_game_rows(_pid)
-            if not _pg:
+            if not _pg and _mode != "season":
                 st.info("No tracked games for this player yet — this card "
                         "needs play-by-play.")
                 return
@@ -273,7 +273,7 @@ def render(ctx):
                 _gid = st.selectbox(
                     "Game", [r["game_id"] for r in reversed(_pg)],
                     format_func=lambda g: _gfmt[g], key="share_spot_gid")
-            else:
+            elif _mode == "picked":
                 _sel = st.multiselect(
                     "Games", [r["game_id"] for r in reversed(_pg)],
                     format_func=lambda g: _gfmt[g], key="share_spot_gids",
@@ -284,6 +284,16 @@ def render(ctx):
                             "whatever you select and lists the games on it.")
                     return
                 _gids = tuple(_sel)
+            elif _pg:               # season — optional featured-games pick
+                _sel = st.multiselect(
+                    "Featured games (optional)",
+                    [r["game_id"] for r in reversed(_pg)],
+                    format_func=lambda g: _gfmt[g], key="share_spot_feat",
+                    help="The games listed on the card. Season stats stay "
+                         "the full season line; leave empty for the most "
+                         "recent five.")
+                if _sel:
+                    _gids = tuple(_sel)
         _slabel = None
         if _mode == "picked":
             _slabel = st.text_input(

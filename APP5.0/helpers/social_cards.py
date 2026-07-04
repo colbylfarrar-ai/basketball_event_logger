@@ -755,7 +755,9 @@ def _sum_boxes(boxes):
 def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None,
                          game_ids=None, label=None):
     """Player spotlight card. Modes:
-      'season'  — this player row's season line (tracked + entered boxes)
+      'season'  — this player row's season line (tracked + entered boxes);
+                  optional `game_ids` picks the FEATURED games listed on the
+                  card (default: the most recent five)
       'career'  — the person's identity chain: season-by-season + totals
       'game'    — one tracked game (game_id, default the newest)
       'stretch' — the last `n` tracked games
@@ -884,9 +886,16 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None,
             if line.get("manual_gp"):
                 sub += (f" · {line['tracked_gp']} tracked + "
                         f"{line['manual_gp']} entered")
-            show = grows[-5:]
-        panel_hdr = ("RECENT GAMES" if mode == "season" else
-                     "THE GAMES" if mode == "picked" else "THE RUN")
+            # coach-picked featured games for the panel (season stats stay
+            # the FULL season line); default = the most recent five
+            if game_ids:
+                _want = set(game_ids)
+                show = [r for r in grows if r["game_id"] in _want]
+            else:
+                show = grows[-5:]
+        panel_hdr = ("THE GAMES" if mode == "picked" else
+                     "THE RUN" if mode == "stretch" else
+                     "FEATURED GAMES" if game_ids else "RECENT GAMES")
         for r in reversed(show):
             b = r["box"]
             panel_rows.append((

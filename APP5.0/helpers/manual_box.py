@@ -76,6 +76,133 @@ def save_manual_box(game_id, team_id, rows):
             (game_id, int(team_id), int(pid)) + tuple(vals[k] for k in STAT_COLS))
 
 
+# ── CSV import (round-trips the MaxPreps export from box_score.py) ──────────
+def _split_made_att(val):
+    """'5-11' → (5, 11). Tolerates blanks, plain numbers and floats."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return 0, 0
+    s = str(val).strip()
+    if not s or s.lower() == "nan":
+        return 0, 0
+    if "-" in s:
+        a, b = s.split("-", 1)
+        try:
+            return int(float(a)), int(float(b))
+        except ValueError:
+            return 0, 0
+    try:
+        return int(float(s)), 0
+    except ValueError:
+        return 0, 0
+
+
+def parse_maxpreps_csv(df, team_names, rosters):
+    """Parse a box CSV in the app's MaxPreps export shape (Team, #, Player,
+    MIN, PTS, FG, 3P, FT, ORB, DRB, AST, STL, BLK, TOV, PF) into
+    save_manual_box row dicts.
+
+    team_names: {team_id: display name} for the game's two teams.
+    rosters:    {team_id: [{id, number, name}, …]}.
+
+    Returns ({team_id: [ {player_id, **STAT_COLS} ]}, problems). Players match
+    by jersey number first, then exact name. Percent and derived columns
+    (PTS, REB, FG% …) are ignored, except PTS which is cross-checked against
+    the FG/3P/FT math. Rows that can't be matched or fail makes ≤ attempts are
+    skipped with a problem string; a REB-only CSV imports REB as DRB.
+    """
+    cols = {str(c).strip().lower(): c for c in df.columns}
+
+    def col(*names):
+        for n in names:
+            if n.lower() in cols:
+                return cols[n.lower()]
+        return None
+
+    problems, rows_by_team = [], {}
+    c_team = col("Team")
+    c_num, c_name = col("#", "No", "Number"), col("Player", "Name")
+    if c_team is None or (c_num is None and c_name is None):
+        return {}, ["CSV needs a Team column plus a # or Player column."]
+
+    have_split = col("ORB") is not None and col("DRB") is not None
+    if not have_split and col("REB") is not None:
+        problems.append("No ORB/DRB columns — total REB imported as DRB "
+                        "(OREB% in the four factors will read low).")
+
+    name_to_tid = {str(n).strip().casefold(): tid for tid, n in team_names.items()}
+    unmatched_teams = set()
+
+    for _, r in df.iterrows():
+        pname = ("" if c_name is None or pd.isna(r[c_name])
+                 else str(r[c_name]).strip())
+        if pname.upper() == "TOTAL":
+            continue
+        tid = name_to_tid.get(str(r[c_team]).strip().casefold())
+        if tid is None:
+            unmatched_teams.add(str(r[c_team]).strip())
+            continue
+
+        num = None
+        if c_num is not None and not pd.isna(r[c_num]):
+            try:
+                num = int(float(r[c_num]))
+            except (TypeError, ValueError):
+                num = None
+        pid = next((p["id"] for p in rosters.get(tid, [])
+                    if num is not None and p["number"] == num), None)
+        if pid is None and pname:
+            pid = next((p["id"] for p in rosters.get(tid, [])
+                        if str(p["name"]).strip().casefold() == pname.casefold()),
+                       None)
+        label = f"#{num if num is not None else '?'} {pname or '?'}"
+        if pid is None:
+            problems.append(f"{team_names[tid]}: no roster match for {label} — "
+                            "row skipped.")
+            continue
+
+        def _i(name):
+            c = col(name)
+            if c is None or pd.isna(r[c]):
+                return 0
+            try:
+                return int(float(r[c]))
+            except (TypeError, ValueError):
+                return 0
+
+        fgm, fga = _split_made_att(r[col("FG")]) if col("FG") else (0, 0)
+        tpm, tpa = _split_made_att(r[col("3P")]) if col("3P") else (0, 0)
+        ftm, fta = _split_made_att(r[col("FT")]) if col("FT") else (0, 0)
+        if fgm > fga or tpm > tpa or ftm > fta or tpm > fgm or tpa > fga:
+            problems.append(f"{team_names[tid]} {label}: makes exceed attempts "
+                            "(or 3P exceed FG) — row skipped.")
+            continue
+
+        c_min = col("MIN")
+        try:
+            mins = 0.0 if c_min is None or pd.isna(r[c_min]) else float(r[c_min])
+        except (TypeError, ValueError):
+            mins = 0.0
+        row = {"player_id": pid, "min": mins,
+               "fgm": fgm, "fga": fga, "tpm": tpm, "tpa": tpa,
+               "ftm": ftm, "fta": fta,
+               "oreb": _i("ORB") if have_split else 0,
+               "dreb": _i("DRB") if have_split else _i("REB"),
+               "ast": _i("AST"), "stl": _i("STL"), "blk": _i("BLK"),
+               "tov": _i("TOV"), "pf": _i("PF")}
+        csv_pts = _i("PTS")
+        if csv_pts and csv_pts != _pts(row):
+            problems.append(f"{team_names[tid]} {label}: CSV PTS {csv_pts} ≠ "
+                            f"FG/3P/FT math {_pts(row)} — imported anyway; "
+                            "check the shooting columns.")
+        rows_by_team.setdefault(tid, []).append(row)
+
+    for t in sorted(unmatched_teams):
+        problems.append(f"Team '{t}' in the CSV doesn't match either team in "
+                        f"this game ({' / '.join(team_names.values())}) — rows "
+                        "skipped.")
+    return rows_by_team, problems
+
+
 # ── aggregation ──────────────────────────────────────────────────────────────
 def _pts(d):
     return 2 * d["fgm"] + d["tpm"] + d["ftm"]

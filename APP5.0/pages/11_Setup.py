@@ -211,6 +211,55 @@ with t_box:
         existing = MB.load_manual_box(gsel["id"])
         _UP = [c.upper() for c in MB.STAT_COLS]
 
+        with st.expander("⬆ Import box from CSV (MaxPreps export format)"):
+            st.caption("Upload a CSV in the same shape the Box Score tab's "
+                       "MaxPreps export produces (Team, #, Player, MIN, PTS, "
+                       "FG, 3P, FT, ORB, DRB, AST, STL, BLK, TOV, PF). Players "
+                       "match by jersey number, then name; percent / derived "
+                       "columns are ignored. Importing overwrites any entered "
+                       "stats for the matched players.")
+            _up = st.file_uploader("Box CSV", type="csv",
+                                   key=f"mb_csv_{gsel['id']}")
+            if _up is not None:
+                try:
+                    _csv = pd.read_csv(_up)
+                except Exception as e:
+                    _csv = None
+                    st.error(f"Couldn't read CSV: {e}")
+                if _csv is not None:
+                    _tn = {gsel["team1_id"]: gsel["n1"],
+                           gsel["team2_id"]: gsel["n2"]}
+                    _ros = {tid: query(
+                        "SELECT id, number, name FROM players WHERE team_id=? "
+                        "AND archived=0", (tid,)) for tid in _tn}
+                    _rows_by_team, _probs = MB.parse_maxpreps_csv(_csv, _tn, _ros)
+                    for _p in _probs:
+                        st.warning(_p)
+                    _n = sum(len(v) for v in _rows_by_team.values())
+                    if not _n:
+                        st.error("Nothing importable — no rows matched this "
+                                 "game's rosters.")
+                    else:
+                        st.caption(" · ".join(
+                            f"{_tn[t]}: {len(v)} player(s)"
+                            for t, v in _rows_by_team.items()))
+                        if st.button(f"Import {_n} row(s)",
+                                     key=f"mb_csv_go_{gsel['id']}"):
+                            for _tid2, _rows in _rows_by_team.items():
+                                MB.save_manual_box(gsel["id"], _tid2, _rows)
+                            box = MB.load_manual_box(gsel["id"])
+                            if (gsel["team1_id"] in box
+                                    and gsel["team2_id"] in box):
+                                _hp = MB.team_totals(box[gsel["team1_id"]])["PTS"]
+                                _ap = MB.team_totals(box[gsel["team2_id"]])["PTS"]
+                                execute("UPDATE games SET home_score=?, "
+                                        "away_score=? WHERE id=?",
+                                        (_hp, _ap, gsel["id"]))
+                            st.cache_data.clear()   # box feeds records / rankings
+                            st.success("Box imported — review in the editors "
+                                       "below.")
+                            st.rerun()
+
         for _tid, _tnm in ((gsel["team1_id"], gsel["n1"]),
                            (gsel["team2_id"], gsel["n2"])):
             st.markdown(f"**{_tnm}**")

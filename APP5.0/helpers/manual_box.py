@@ -10,7 +10,9 @@ anything needing the event stream.
 
 Storage = manual_player_box (one row per player per game). These games are NEVER
 marked games.tracked = 1, so the event-based engines ignore them; this module is
-the parallel, clearly-labelled surface for entered boxes. Records & power
+the parallel, clearly-labelled surface for entered boxes. TRACKED WINS: if a game
+is play-by-play tracked after a box was entered, its manual rows are ignored by
+every aggregate here (g.tracked=0 filters) — the event stream is the truth. Records & power
 rankings already count any game with a final score, so entering a box adds the
 detail on top.
 
@@ -262,8 +264,13 @@ def manual_team_profile(team_id):
     teams' boxes are entered contribute to the opponent/defense side.
     Returns None if the team has no entered games.
     """
+    # tracked=0 guard: a game tracked AFTER its box was entered leaves stale
+    # manual rows behind — the tracked event stream wins, so those games are
+    # excluded here (and in combined_player_line) or they'd count twice.
     gids = [r["game_id"] for r in query(
-        "SELECT DISTINCT game_id FROM manual_player_box WHERE team_id=?", (team_id,))]
+        """SELECT DISTINCT m.game_id FROM manual_player_box m
+           JOIN games g ON g.id=m.game_id
+           WHERE m.team_id=? AND g.tracked=0""", (team_id,))]
     if not gids:
         return None
     own = {k: 0 for k in ("PTS", "POSS", "fga", "fgm", "tpm", "fta", "oreb",
@@ -323,7 +330,9 @@ def combined_player_line(player_id, tracked_boxes=None):
     for b in tb.values():
         for f in F:
             tot[f] += b.get(f, 0) or 0
-    mrows = query("SELECT * FROM manual_player_box WHERE player_id=?", (player_id,))
+    mrows = query(
+        """SELECT m.* FROM manual_player_box m JOIN games g ON g.id=m.game_id
+           WHERE m.player_id=? AND g.tracked=0""", (player_id,))
     mgp = len(mrows)
     for r in mrows:
         tot["FGM"] += r["fgm"]; tot["FGA"] += r["fga"]

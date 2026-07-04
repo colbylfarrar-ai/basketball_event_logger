@@ -38,15 +38,17 @@ def _rank(table, stat, gate_stat, gate_min, higher=True, cols=None):
     return out
 
 
-def edge_boards(gender=None):
+def edge_boards(gender=None, game_ids=None, season="Current"):
     """The full set of player-edge leaderboards for a gender.
 
     Returns a list of board dicts: {key, title, caption, rows, signed, pct} where
     `rows` is table-ready (list of {col: val}), `signed` = columns to render with a
     +/- sign, `pct` = columns that are already 0-100 percentages. Boards with no
     qualifying players are still returned (empty rows) so the renderer can show a
-    graceful 'not enough sample' note in place."""
-    table = PR.player_stat_table(gender=gender, min_games=1)
+    graceful 'not enough sample' note in place. `game_ids`/`season` scope the
+    boards to an archived season's pool (None/'Current' = live default)."""
+    table = PR.player_stat_table(gender=gender, min_games=1,
+                                 game_ids=(set(game_ids) if game_ids else None))
 
     # ── tracked-edge trio (shot-making over expected · hand split · def WPA) ──
     poe = sorted(
@@ -67,7 +69,7 @@ def edge_boards(gender=None):
         key=lambda d: -d["Gap"])[:TOP_N]
 
     try:
-        sw = WPA.season_wpa(gender, mode="possession")
+        sw = WPA.season_wpa(gender, mode="possession", season=season)
     except Exception:
         sw = {}
     dwpa = sorted(

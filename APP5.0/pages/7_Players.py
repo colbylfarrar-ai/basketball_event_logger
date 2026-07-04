@@ -57,6 +57,7 @@ import helpers.reports as RP
 import helpers.manual_box as MB
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.seasons as SEAS
 
 _cfg, ACCENT = page_chrome("Players")
 # The Players page is a whole-league (multi-team) pool, so every tracked surface
@@ -300,6 +301,22 @@ min_games = c2.slider("Minimum games played", 1, 16, 2, 1,
                            "values cut small-sample noise but shrink the field. "
                            "Ratings are recomputed against whoever qualifies.")
 
+# Season picker — view a past/archived season's player pool. Only appears once a
+# season has been rolled over; the active season is the default so the page is
+# byte-identical with no archive. A PAST season is an OPEN archive (full tracked
+# depth to everyone, no Paid/Co-op gate) scoped to that season's game pool.
+_season_opts = SEAS.season_options()
+if len(_season_opts) > 1:
+    _slbl = c1.selectbox(
+        "Season", [l for _v, l in _season_opts], key="pl_season",
+        help="View a past season's players. Past seasons are an open archive — "
+             "free, full depth, to everyone; every stat and rating is computed "
+             "vs that season's pool only.")
+    season_pick = next(v for v, l in _season_opts if l == _slbl)
+else:
+    season_pick = SEAS.ACTIVE
+_is_cur_season = SEAS.is_current(season_pick)
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _stat_table(g, mg, vis=None):
     # vis = tuple of visible tracked game ids (the AXIS-2 read-filter); None =
@@ -362,39 +379,66 @@ def _agg_zone(pids, zsplits):
             for k, v in agg.items()}
 
 
-table = _stat_table(gender, min_games)
-if not table:
-    empty_state("No eligible players yet",
-                "No players clear this league / games filter yet. Track some "
-                "games in the Game Tracker and they'll show up here.",
-                cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
-    st.stop()
+# ── PAST season = self-contained OPEN archive ────────────────────────────────
+# The whole page reuses the existing `vis` (visible-game-ids) plumbing: the
+# archive's game pool (seasons.game_pool) becomes the read-filter, so every
+# stat / rating / chart is computed over exactly that season, ranked vs that
+# season's field — and the Paid/Co-op gate opens (founder rule: anyone may read
+# a past season at full depth; only the CURRENT season is the paid edge).
+if not _is_cur_season:
+    _arch_pool = SEAS.game_pool(season_pick, gender=gender, tracked_only=True)
+    if not _arch_pool:
+        empty_state(f"No tracked games in {season_pick} for this league",
+                    "This archived season has no play-by-play games — retro-track "
+                    "one in the Game Tracker (pick the season in its picker) and "
+                    "its players will show up here.")
+        st.stop()
+    _PAID = True                                   # open archive, full depth
+    _vis_key = tuple(sorted(_arch_pool))
+    table = _stat_table(gender, min_games, _vis_key)
+    if not table:
+        empty_state(f"No players clear the games filter in {season_pick}",
+                    "Lower the minimum-games slider — the archive pool is small.")
+        st.stop()
+else:
+    table = _stat_table(gender, min_games)
+    if not table:
+        empty_state("No eligible players yet",
+                    "No players clear this league / games filter yet. Track some "
+                    "games in the Game Tracker and they'll show up here.",
+                    cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
+        st.stop()
 
-# AXIS-2 read-filter: a Paid + League-wide (Co-op) viewer may aggregate ONLY the
-# tracked games they're entitled to (own ∪ pooled). A non-pooled Solo team's
-# tracked depth must never surface on this whole-league page. Mirrors
-# pages/10_Data_Explorer.py. `_vis_key` (None = admin/unrestricted, else a tuple)
-# is threaded into every cross-team builder below.
-_vis_key = None
-if _PAID:
-    _vis = ENT.visible_tracked_game_ids(_ident)        # None = admin (unrestricted)
-    if _vis is not None:
-        if _vis:                                       # non-empty visible set → scope
-            _vis_key = tuple(sorted(_vis))
-            _ftab = _stat_table(gender, min_games, _vis_key)
-            if _ftab:
-                table = _ftab                          # tracked depth → visible set only
+    # AXIS-2 read-filter: a Paid + League-wide (Co-op) viewer may aggregate ONLY the
+    # tracked games they're entitled to (own ∪ pooled). A non-pooled Solo team's
+    # tracked depth must never surface on this whole-league page. Mirrors
+    # pages/10_Data_Explorer.py. `_vis_key` (None = admin/unrestricted, else a tuple)
+    # is threaded into every cross-team builder below.
+    _vis_key = None
+    if _PAID:
+        _vis = ENT.visible_tracked_game_ids(_ident)    # None = admin (unrestricted)
+        if _vis is not None:
+            if _vis:                                   # non-empty visible set → scope
+                _vis_key = tuple(sorted(_vis))
+                _ftab = _stat_table(gender, min_games, _vis_key)
+                if _ftab:
+                    table = _ftab                      # tracked depth → visible set only
+                else:
+                    _PAID = False                      # league-wide but nothing matched →
+                    _vis_key = None                    # box-only display
             else:
-                _PAID = False                          # league-wide but nothing matched →
-                _vis_key = None                        # box-only display
-        else:
-            # league-wide but ZERO visible tracked games → box-only. CRITICAL: never
-            # pass an empty filter to _stat_table — _game_filter treats empty as the
-            # whole sample, which would re-leak the full corpus.
-            _PAID = False
-            _vis_key = None
-# Free / Solo-paid keep the unfiltered table — box columns are public league-wide;
-# their tracked columns are gated off at display by _PAID, so _vis_key stays None.
+                # league-wide but ZERO visible tracked games → box-only. CRITICAL: never
+                # pass an empty filter to _stat_table — _game_filter treats empty as the
+                # whole sample, which would re-leak the full corpus.
+                _PAID = False
+                _vis_key = None
+    # Free / Solo-paid keep the unfiltered table — box columns are public league-wide;
+    # their tracked columns are gated off at display by _PAID, so _vis_key stays None.
+
+# Archive key for the fetchers that were historically UNSCOPED (full-sample) on
+# the current season — game logs, located shots, fouls, edge boards. None on the
+# current season keeps them byte-identical; a past season passes its pool.
+_arch_key = None if _is_cur_season else _vis_key
 
 rows = sorted(table.values(), key=lambda r: (r["Rank"] or 1e9))
 by_pid = table
@@ -430,22 +474,24 @@ def _table_full(g, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _pgb():
-    """Every player's per-game boxes over all tracked games (keyed by pid → gid)."""
-    return S.player_game_boxes()
+def _pgb(vis=None):
+    """Every player's per-game boxes over tracked games (keyed by pid → gid).
+    `vis` scopes to a season's pool (archive views); None = current default."""
+    return S.player_game_boxes(game_ids=(list(vis) if vis else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _player_located(pid):
+def _player_located(pid, vis=None):
     """Tap-captured shot locations for one player (cached so re-selecting / other
-    widgets don't recompute)."""
-    return S.located_shots(player_id=pid)
+    widgets don't recompute). `vis` scopes to a season's pool (archive views)."""
+    return S.located_shots(player_id=pid,
+                           game_ids=(list(vis) if vis else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _foulft():
-    """Foul & free-throw detail per player over all tracked games."""
-    return FL.player_foul_ft()
+def _foulft(vis=None):
+    """Foul & free-throw detail per player. `vis` scopes to a season's pool."""
+    return FL.player_foul_ft(game_ids=(list(vis) if vis else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -456,7 +502,9 @@ def _player_card(pid, g, vis=None):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _combined(pid):
-    """Combined counting line over tracked + entered games (None if no entered)."""
+    """Combined counting line over tracked + entered games (None if no entered).
+    Current-season only — hand-entered boxes aren't season-stamped, so an archive
+    view skips this merge (the caller gates on _is_cur_season)."""
     return MB.combined_player_line(pid, tracked_boxes=_pgb())
 
 
@@ -471,9 +519,11 @@ def _lab_clusters(g, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _lab_edge(g):
-    """League-wide player-edge leaderboards (shared with the Rankings League Lab)."""
-    return PE.edge_boards(gender=g)
+def _lab_edge(g, vis=None, season="Current"):
+    """League-wide player-edge leaderboards (shared with the Rankings League Lab).
+    `vis`/`season` scope the boards to an archived season's pool."""
+    return PE.edge_boards(gender=g, game_ids=(list(vis) if vis else None),
+                          season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -975,7 +1025,7 @@ def _fx_shot():
     pl_pid = next(k for k, v in by_pid.items() if v is PL)
     pl_zone = zsplits.get(pl_pid, {})
 
-    pl_shots = _player_located(pl_pid)
+    pl_shots = _player_located(pl_pid, _arch_key)
     ec1, ec2 = st.columns([3, 2])
     with ec1:
         # Unified shot surface: dots / points-over-expected heat / zone fallback.
@@ -1177,7 +1227,7 @@ def _fx_cmp():
             shc = st.columns(2)
             for col, P, sfx in ((shc[0], A, "a"), (shc[1], B, "b")):
                 p_pid = next(k for k, v in by_pid.items() if v is P)
-                p_shots = _player_located(p_pid)
+                p_shots = _player_located(p_pid, _arch_key)
                 with col:
                     # Shared shot surface: dots / points-over-expected heat /
                     # zone fallback — same POE "Heat vs xPts" toggle the single-
@@ -1296,7 +1346,9 @@ def _fx_prof():
         st.caption("🔒 Download the full player card (ratings, usage, shot chart) — "
                    "a **Paid** feature. Upgrade to unlock.")
 
-    _comb = _combined(pid)
+    # combined (tracked + hand-entered) is current-season only — entered boxes
+    # aren't season-stamped, so an archive view skips the merge.
+    _comb = _combined(pid) if _is_cur_season else None
     if _comb and _comb["manual_gp"]:
         st.markdown("<div class='pl-hdr'>Combined — incl. entered games</div>",
                     unsafe_allow_html=True)
@@ -1320,10 +1372,12 @@ def _fx_prof():
         zsplits=zsplits, zguard=zguard, hsplits=hsplits,
         badges=_lab_badges(gender, _vis_key).get(pid, []),
         archetype=_lab_clusters(gender, _vis_key)["players"].get(pid, {}).get("archetype"),
-        pgb=_pgb(), located=_player_located(pid), foulft=_foulft().get(pid),
+        pgb=_pgb(_arch_key), located=_player_located(pid, _arch_key),
+        foulft=_foulft(_arch_key).get(pid),
         named_sets=_named_sets(gender, _vis_key).get(pid),
         role_splits=_role_splits(gender, _vis_key).get(pid),
         set_profiles=_set_profiles(gender, _vis_key).get(pid),
+        season=season_pick, season_gp=_arch_key,
     ))
 
 
@@ -1686,7 +1740,8 @@ def _fx_plab():
                        "win value, clutch, self-creation, efficiency, disruption and "
                        "rim finishing. Same boards as Rankings → League Lab; each "
                        "gated by sample.")
-            _render_edge(_lab_edge(gender), key_prefix="plab_edge")
+            _render_edge(_lab_edge(gender, _arch_key, season_pick),
+                         key_prefix="plab_edge")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

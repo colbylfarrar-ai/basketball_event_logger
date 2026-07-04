@@ -39,6 +39,7 @@ import helpers.team_analytics as TA
 import helpers.spacing as SPACE
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.seasons as SEAS
 from database.db import query
 
 _cfg, ACCENT = page_chrome("War Room")
@@ -60,45 +61,77 @@ n = cc[1].select_slider(
     format_func=lambda v: f"{v // 1000}k sims",
     help="More sims = smoother odds, slightly slower. 20k is plenty for HS fields.")
 
+# Season picker — run the War Room on a past/archived season (its ratings, its
+# schedule, its players). Only appears once a season has been rolled over; the
+# active season is the default so the page is byte-identical with no archive.
+# A PAST season is an OPEN archive: the Paid / Co-op gates below open (founder
+# rule — anyone may read past data at full depth), and every sim/projection is
+# computed from that season's pool only.
+_season_opts = SEAS.season_options()
+if len(_season_opts) > 1:
+    _slbl = cc[0].selectbox(
+        "Season", [l for _v, l in _season_opts], key="wr_season",
+        help="Simulate with a past season's ratings and rosters — 'what were our "
+             "title odds last year'. Past seasons are open to everyone.")
+    season_pick = next(v for v, l in _season_opts if l == _slbl)
+else:
+    season_pick = SEAS.ACTIVE
+_is_cur_season = SEAS.is_current(season_pick)
+
+# Entitlement wrappers: identical to ENT on the current season; a PAST season is
+# an open archive, so the per-team / per-game tracked checks answer True.
+if _is_cur_season:
+    _can_team = ENT.can_see_team_tracked
+    _can_game = ENT.can_see_game_tracked
+else:
+    _can_team = lambda *_a, **_k: True
+    _can_game = lambda *_a, **_k: True
+
 
 # ── cached ratings + sims (keyed by hashable args only — never the dict) ────────
+# `season` on each fetcher scopes to the page's selected season ('Current' =
+# live default, byte-identical when no archive is picked).
 @st.cache_data(ttl=600, show_spinner=False)
-def _scored(g):
-    return TR.score_ratings(gender=g)
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def _tracked(g):
-    return TR.tracked_ratings(gender=g)
+def _scored(g, season="Current"):
+    return TR.score_ratings(gender=g, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _war_map(g):
+def _tracked(g, season="Current"):
+    return TR.tracked_ratings(gender=g, season=season)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _war_map(g, season="Current"):
     """HoopWAR per player (wins vs replacement) — the lineup creator's value
     column. {} when RAPM/scores can't support it."""
     import helpers.hoopwar as HW
     try:
-        return HW.war_table(g)
+        _gids = (None if season in (None, "Current")
+                 else SEAS.game_pool(season, gender=g, tracked_only=True))
+        return HW.war_table(g, game_ids=_gids, season=season)
     except Exception:
         return {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_game(g, a, b, home, n):
-    return SIM.simulate_game(_scored(g), a, b, home=home, n=n)
+def _sim_game(g, a, b, home, n, season="Current"):
+    return SIM.simulate_game(_scored(g, season), a, b, home=home, n=n)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_season(g, n):
-    return SIM.simulate_season(_scored(g), SIM.schedule_from_results(g), n=n)
+def _sim_season(g, n, season="Current"):
+    return SIM.simulate_season(_scored(g, season),
+                               SIM.schedule_from_results(g, season=season), n=n)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_bracket(g, field, n, reseed=True, size=None):
+def _sim_bracket(g, field, n, reseed=True, size=None, season="Current"):
     # bracket_tree returns BOTH the per-team odds (same shape simulate_tournament
     # gave) AND the render-ready probabilistic tree — one sim pass for both.
     # reseed=False → `field` is an explicit seed order (None = a bye slot).
-    return SIM.bracket_tree(_scored(g), list(field), n=n, reseed=reseed, size=size)
+    return SIM.bracket_tree(_scored(g, season), list(field), n=n, reseed=reseed,
+                            size=size)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -113,13 +146,13 @@ def _game_plan(g, a, b, avis=None, bvis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _scheme_proj(g, a, b, avis=None, bvis=None):
+def _scheme_proj(g, a, b, avis=None, bvis=None, season="Current"):
     """Scheme-based (play_type-share) matchup projection — VERY experimental,
     gated to 150 tagged set calls per team. Possessions from the two teams'
     tracked pace when available. `avis`/`bvis` read-filter each team's leg. Cached
-    on (gender, a, b, avis, bvis)."""
+    on (gender, a, b, avis, bvis, season)."""
     import helpers.exploit as EX
-    tr = _tracked(g)
+    tr = _tracked(g, season)
     pa, pb = tr.get(a, {}).get("Pace"), tr.get(b, {}).get("Pace")
     poss = (pa + pb) / 2.0 if pa and pb else 68.0
     return EX.scheme_projection(a, b, gender=g, poss=poss,
@@ -128,17 +161,24 @@ def _scheme_proj(g, a, b, avis=None, bvis=None):
 
 def _vis_tuple(ident, team_id):
     """AXIS-2 read-filter for one team as a hashable cache key: None = own/admin
-    (unrestricted), else the sorted tuple of that team's pooled (visible) games."""
+    (unrestricted), else the sorted tuple of that team's pooled (visible) games.
+    A PAST season returns that team's tracked games of the season instead — the
+    open archive's exact pool, so a projection never mixes in current games."""
+    if not _is_cur_season:
+        return tuple(sorted(r["id"] for r in query(
+            "SELECT id FROM games WHERE tracked=1 AND season=? "
+            "AND (team1_id=? OR team2_id=?)", (season_pick, team_id, team_id))))
     _v = ENT.team_visible_tracked_ids(ident, team_id)
     return None if _v is None else tuple(sorted(_v))
 
 
-scored = _scored(gender)
-tracked = _tracked(gender)
+scored = _scored(gender, season_pick)
+tracked = _tracked(gender, season_pick)
 
 if not scored:
     empty_state(
-        "No rated teams yet",
+        "No rated teams yet" if _is_cur_season
+        else f"No finished games in {season_pick} for this league",
         "Enter game results in the Input Hub and track a few games — the War Room "
         "simulates straight from the league ratings.",
         cta="Start in the Input Hub")
@@ -147,8 +187,9 @@ if not scored:
 # Tier gate: the War Room is a premium planning tool — Monte-Carlo matchups,
 # season/bracket sims and the lineup creator. Plan-level entry (has_paid_plan);
 # inside, the tracked-possession projection and lineup chemistry add per-team /
-# pool checks (see below).
-if not ENT.has_paid_plan(AUTH.current_user()):
+# pool checks (see below). A PAST season bypasses it — open archive, so anyone
+# can replay history ("what were our title odds last year").
+if _is_cur_season and not ENT.has_paid_plan(AUTH.current_user()):
     empty_state(
         "The War Room is a Paid feature",
         "Monte-Carlo matchups, season and bracket simulations, and the lineup "
@@ -219,14 +260,18 @@ def _bracket_tree_html(res, short):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _league_pool():
+def _league_pool(season="Current"):
     """Every rated player league-wide for the cross-team lineup picker:
-    pid, name, team(+id), class, gender, district + 0-100 ratings & per-game."""
+    pid, name, team(+id), class, gender, district + 0-100 ratings & per-game.
+    `season` scopes each gender's pool (archive = that season's players)."""
     dist = {r["id"]: (r["district"] or "")
             for r in query("SELECT id, district FROM teams")}
     rows = []
     for _g in ("F", "M"):
-        for pid, r in PR.player_stat_table(gender=_g, min_games=1).items():
+        _gids = (None if season in (None, "Current")
+                 else set(SEAS.game_pool(season, gender=_g, tracked_only=True)))
+        for pid, r in PR.player_stat_table(gender=_g, min_games=1,
+                                           game_ids=_gids).items():
             rows.append({
                 "pid": pid, "name": r["name"], "team": r["team"],
                 "team_id": r["team_id"], "class": r.get("class"), "gender": _g,
@@ -239,29 +284,39 @@ def _league_pool():
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _wl_table(g):
-    return PR.player_stat_table(gender=g, min_games=1)
+def _wl_table(g, season="Current"):
+    _gids = (None if season in (None, "Current")
+             else set(SEAS.game_pool(season, gender=g, tracked_only=True)))
+    return PR.player_stat_table(gender=g, min_games=1, game_ids=_gids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _wl_ctx(g):
-    return TA.lineup_engine_context(g)
+def _wl_ctx(g, season="Current"):
+    # current season keeps the engine's own defaults (byte-identical); an archive
+    # passes the season-scoped ratings + table so the calibration is that year's.
+    if season in (None, "Current"):
+        return TA.lineup_engine_context(g)
+    return TA.lineup_engine_context(g, tracked_ratings=_tracked(g, season),
+                                    table=_wl_table(g, season))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _wl_player_spacing(g):
+def _wl_player_spacing(g, season="Current"):
     """League per-player floor-spacing map for the 'Floor spacing' preset lens
     (empty until located-shot coverage is real)."""
-    return SPACE.league_player_spacing(g)
+    _gids = (None if season in (None, "Current")
+             else SEAS.game_pool(season, gender=g, tracked_only=True))
+    return SPACE.league_player_spacing(g, game_ids=_gids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _lineup_net(g, team_id, lineup):
+def _lineup_net(g, team_id, lineup, season="Current"):
     """NetRtg for one candidate five, cached on (gender, team, lineup tuple) —
     the bench-swap search tries ~50 lineups and must not recompute each rerun."""
-    tbl = _wl_table(g)
+    tbl = _wl_table(g, season)
     rows = [dict(r, _pid=pid) for pid, r in tbl.items() if r["team_id"] == team_id]
-    return TA.lineup_prediction(rows, list(lineup), _wl_ctx(g), team_id)["NetRtg"]
+    return TA.lineup_prediction(rows, list(lineup), _wl_ctx(g, season),
+                                team_id)["NetRtg"]
 
 
 def _lineup_statline(pred, ctx, table):
@@ -299,7 +354,7 @@ def _lineup_statline(pred, ctx, table):
             "SC/G": _s("SC/G"), "DEF z": c["def_z"],
             # season value context (measured, not projected): wins vs
             # replacement + the measurables rating when recorded
-            "WAR": (_war_map(gender).get(c["pid"], {}) or {}).get("WAR"),
+            "WAR": (_war_map(gender, season_pick).get(c["pid"], {}) or {}).get("WAR"),
             "PHY": fr.get("PHYSICAL"),
         })
     return rows
@@ -334,7 +389,8 @@ def _render_proj_statline(pred, ctx, table, key):
 # matchup projection and the season/bracket sims (league-wide) — is Co-op only.
 # Lineup + Glossary stay open to any paid coach; the other three gate on league-wide.
 _wr_ident = AUTH.current_user()
-_wr_league_wide = ENT.viewer_is_league_wide(_wr_ident)
+# a PAST season is an open archive → the co-op (league-wide) gate opens too
+_wr_league_wide = True if not _is_cur_season else ENT.viewer_is_league_wide(_wr_ident)
 _WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
 
 # View switcher — seg + if-dispatch (the lazy-load contract): only the chosen
@@ -415,11 +471,11 @@ def _render_matchup():
             tt1, tt2 = st.columns(2)
             tt1.markdown(
                 TC.render_mini(ta, gender, scored, tracked,
-                               show_tracked=ENT.can_see_team_tracked(_tt_user, ta)),
+                               show_tracked=_can_team(_tt_user, ta)),
                 unsafe_allow_html=True)
             tt2.markdown(
                 TC.render_mini(tb, gender, scored, tracked,
-                               show_tracked=ENT.can_see_team_tracked(_tt_user, tb)),
+                               show_tracked=_can_team(_tt_user, tb)),
                 unsafe_allow_html=True)
 
             # ── scheduled-game extras: rest edge + crew outlook — only when
@@ -463,7 +519,7 @@ def _render_matchup():
             with _eng("Simulating matchup…",
                       [f"{n:,} Monte-Carlo games", "Sampling possession outcomes",
                        "Aggregating margins & win share"]):
-                sim = _sim_game(gender, ta, tb, home_arg, n)
+                sim = _sim_game(gender, ta, tb, home_arg, n, season_pick)
             margins = np.asarray(sim["margins"])
             edges = np.linspace(float(margins.min()), float(margins.max()), 41)
             centers = (edges[:-1] + edges[1:]) / 2
@@ -496,7 +552,7 @@ def _render_matchup():
                                "Detail": c["note"]} for c in pred["components"]]),
                 hide_index=True, width="stretch")
 
-            if pred["tracked"] and ENT.can_see_game_tracked(
+            if pred["tracked"] and _can_game(
                     AUTH.current_user(), ta, tb):
                 tk = pred["tracked"]
                 st.markdown("**Tracked possession projection** — both teams have "
@@ -529,7 +585,7 @@ def _render_matchup():
             # opponent. Tag-driven, so it lights up as play_type / defense get
             # tagged; gated by the same co-op read rule as the tracked projection.
             _gp_user = AUTH.current_user()
-            if ENT.can_see_game_tracked(_gp_user, ta, tb):
+            if _can_game(_gp_user, ta, tb):
                 gp = _game_plan(gender, ta, tb,
                                 _vis_tuple(_gp_user, ta), _vis_tuple(_gp_user, tb))
                 off, dfn = gp["offense"], gp["defense"]
@@ -567,7 +623,8 @@ def _render_matchup():
 
                 # ── EXPERIMENTAL: scheme-based projection (gated 150 set calls) ──
                 sp = _scheme_proj(gender, ta, tb,
-                                  _vis_tuple(_gp_user, ta), _vis_tuple(_gp_user, tb))
+                                  _vis_tuple(_gp_user, ta),
+                                  _vis_tuple(_gp_user, tb), season=season_pick)
                 with st.expander("🧪 Experimental — scheme-based projection",
                                  expanded=False):
                     if sp is None:
@@ -624,7 +681,7 @@ def _render_season():
     with _eng("Simulating season…",
               [f"{n:,} season replays", "Re-playing every scheduled game",
                "Tallying wins, seeds & finish odds"]):
-        sea = _sim_season(gender, n)
+        sea = _sim_season(gender, n, season_pick)
     if not sea:
         empty_state("No finished games to simulate",
                     "Enter at least one final score in the Input Hub and the season "
@@ -765,7 +822,7 @@ def _render_bracket():
         with _eng("Simulating bracket…",
                   [f"{n:,} tournament runs", "Advancing winners round by round",
                    "Computing each team's title odds"]):
-            res = _sim_bracket(gender, tuple(seed_list), n, reseed, size)
+            res = _sim_bracket(gender, tuple(seed_list), n, reseed, size, season_pick)
         if not res:
             empty_state("Not enough rated teams in the field",
                         "Add more rated teams to simulate the bracket.")
@@ -850,13 +907,13 @@ if _wrview == "Lineup":
         _t = st.selectbox("Team", _team_opts,
                           format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
                           key="wl1_team")
-        _tbl = _wl_table(gender)
+        _tbl = _wl_table(gender, season_pick)
         _rows = [dict(r, _pid=pid) for pid, r in _tbl.items() if r["team_id"] == _t]
         if not _rows:
             empty_state("No rated players on this team yet",
                         "Track a game for them first.")
         else:
-            _ctxd = _wl_ctx(gender)
+            _ctxd = _wl_ctx(gender, season_pick)
             _lab = {}
             for r in _rows:
                 _b = f"#{r['number']} {r['name']}"
@@ -870,13 +927,13 @@ if _wrview == "Lineup":
             # ⚡ engine-built preset fives — top 5 by each lens, auto-rated. Gated
             # like the projection itself (own team on any Paid plan; another team
             # is Co-op only), so it never leaks another team's depth.
-            if ENT.can_see_team_tracked(AUTH.current_user(), _t):
+            if _can_team(AUTH.current_user(), _t):
                 def _use_preset(pids):
                     st.session_state["wl1_pick"] = list(pids)
                 with st.expander("⚡ Preset lineups — the best five for each lens"):
                     _presets = TA.preset_lineups(
-                        _rows, _wl_ctx(gender), _t,
-                        spacing_map=_wl_player_spacing(gender))
+                        _rows, _wl_ctx(gender, season_pick), _t,
+                        spacing_map=_wl_player_spacing(gender, season_pick))
                     if not _presets:
                         st.caption("Need at least 5 rated players to build presets.")
                     for _i, _pz in enumerate(_presets):
@@ -907,7 +964,7 @@ if _wrview == "Lineup":
                                    "through the same projection as the manual pick. "
                                    "Sorted by projected Net; identical fives merge "
                                    "their labels. Tap **Use** to load one above.")
-            if _chosen and not ENT.can_see_team_tracked(AUTH.current_user(), _t):
+            if _chosen and not _can_team(AUTH.current_user(), _t):
                 st.info("🔒 Lineup projections & observed-together ratings for "
                         "another team are a **Coaches' Co-op** feature — your own "
                         "team works on any Paid plan. Go **League-wide** in Settings "
@@ -978,7 +1035,7 @@ if _wrview == "Lineup":
                     for _out in _chosen:
                         for _bp in _bench:
                             _nw = [_bp["_pid"] if x == _out else x for x in _chosen]
-                            _nn = _lineup_net(gender, _t, tuple(_nw))
+                            _nn = _lineup_net(gender, _t, tuple(_nw), season_pick)
                             if _nn is not None:
                                 _swaps.append((_nn - _base, _out, _bp))
                     # +0.3 Net floor: below that a swap is inside projection noise
@@ -1005,7 +1062,7 @@ if _wrview == "Lineup":
             "ratings and per-game production. If all five are from one team, their "
             "observed on-court net from tracked games is shown too.")
 
-        _pool = _league_pool()
+        _pool = _league_pool(season_pick)
         _fc = st.columns(4)
         _gsel = _fc[0].multiselect(
             "Gender", ["F", "M"], format_func=gender_label, key="wl_g")
@@ -1086,10 +1143,10 @@ if _wrview == "Lineup":
             _genders = {r["gender"] for r in _sel}
             if len(_genders) == 1:
                 _g1 = next(iter(_genders))
-                _ft = _wl_table(_g1)
+                _ft = _wl_table(_g1, season_pick)
                 _prows = [dict(_ft[p], _pid=p) for p in _pick if p in _ft]
                 if _prows:
-                    _pred = TA.lineup_prediction(_prows, _pick, _wl_ctx(_g1),
+                    _pred = TA.lineup_prediction(_prows, _pick, _wl_ctx(_g1, season_pick),
                                                  team_id=None)
                     st.markdown("**Projected unit — vs an average team**")
                     _pm = st.columns(5)
@@ -1103,7 +1160,7 @@ if _wrview == "Lineup":
                     _pm[4].metric("League rank",
                                   f"#{_pred['league']['rank']} / "
                                   f"{_pred['league']['of']}")
-                    _render_proj_statline(_pred, _wl_ctx(_g1), _ft, "wl_proj_tbl")
+                    _render_proj_statline(_pred, _wl_ctx(_g1, season_pick), _ft, "wl_proj_tbl")
                     for _f in _pred.get("flags", []):
                         st.caption(_f)
             else:
@@ -1115,7 +1172,7 @@ if _wrview == "Lineup":
             # own team (any Paid) or another team only via the league pool.
             _one_tid = next(iter(_teams)) if len(_teams) == 1 else None
             if (_one_tid is not None and len(_sel) >= 2
-                    and ENT.can_see_team_tracked(AUTH.current_user(), _one_tid)):
+                    and _can_team(AUTH.current_user(), _one_tid)):
                 _tid = _one_tid
                 _gids = [g["id"] for g in query(
                     "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
@@ -1164,7 +1221,7 @@ def _render_planner():
                "game plan picks the calls → assignments here → **Lineup** picks "
                "the five.")
 
-    tbl = _wl_table(gender)
+    tbl = _wl_table(gender, season_pick)
     _id = AUTH.current_user()
     _my_ids = [t for t in (_id.get("team_ids")
                            or ([_id.get("team_id")] if _id.get("team_id") else []))
@@ -1193,7 +1250,7 @@ def _render_planner():
                 for p in my_players}
     my_def = {p["_pid"]: p.get("DEFENSE") for p in my_players}
 
-    can_rate = ENT.can_see_team_tracked(_id, opp)
+    can_rate = _can_team(_id, opp)
     their = []
     if can_rate:
         their = sorted(

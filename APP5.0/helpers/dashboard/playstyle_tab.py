@@ -169,6 +169,91 @@ def _render_factors(ff, unit):
             f"{r['label']} {r['poss']}" for r in thin[:6]))
 
 
+def _render_fingerprint(ctx, g, tid, off, nrows, prof):
+    """Set fingerprint — the headline 'what each set produces' board: one row per
+    set with possession-correct PPP, the four factors (eFG · OREB% · TOV%) + the
+    four-factor expected PPP, plus the shot-mix, and go-to / take-away chips. The
+    richest, highest-quality set table, so it leads the tab (above the plainer
+    four-factors / efficiency / frequency tables that repeat a subset of it).
+
+    PPP here is POSSESSION-CORRECT (shots + tagged turnovers) so it matches the
+    chips and the efficiency table — the set_profiles `PPP` is shot-only and used
+    to disagree (the go-to chip read 0.92 while the table row read 1.11)."""
+    if not prof:
+        return
+    st.markdown("<div class='pl-hdr'>Set fingerprint — what each set produces"
+                "</div>", unsafe_allow_html=True)
+    _byk = {r["key"]: r for r in nrows}
+    # four-factors merge (OREB% + FT-rate → 4F-PPP), possession-correct like chips
+    _fbyk = {}
+    if getattr(ctx, "factors", None):
+        _fbyk = {r["key"]: r
+                 for r in (ctx.factors(g, tid, off) or {}).get("rows", [])}
+
+    # go-to (best ranked) / take-away (worst ranked) chips from the §C ranks
+    ranked = [r for r in nrows if r["pct"] is not None and r["poss"] >= 8]
+    if ranked:
+        best = max(ranked, key=lambda r: r["pct"])
+        worst = min(ranked, key=lambda r: r["pct"])
+        cc = st.columns(2)
+        cc[0].markdown(glass(
+            "Go-to set", best["label"],
+            f"{best['PPP']:.2f} PPP · {best['pct']}th pct · {best['poss']} poss",
+            color=best["color"]), unsafe_allow_html=True)
+        if worst["key"] != best["key"]:
+            cc[1].markdown(glass(
+                "Take away", worst["label"],
+                f"{worst['PPP']:.2f} PPP · {worst['pct']}th pct · "
+                f"{worst['poss']} poss", color=worst["color"]),
+                unsafe_allow_html=True)
+
+    def _pctv(v):
+        return f"{v * 100:.0f}%" if v is not None else None
+
+    def _fourf_ppp(f):
+        if not f:
+            return None
+        v = S.four_factor_ppp(f.get("eFG"), f.get("TOV%"),
+                              f.get("OREB%"), f.get("FTr"))
+        return f"{v:.2f}" if v is not None else None
+
+    rows_out = []
+    for p in sorted(prof.values(),
+                    key=lambda p: -(_byk.get(p["key"], {}).get("poss")
+                                    or p["poss"])):
+        k = p["key"]
+        nb, fb = _byk.get(k, {}), _fbyk.get(k, {})
+        ppp = nb.get("PPP", fb.get("PPP"))          # possession-correct
+        rows_out.append({
+            "Set": p["label"],
+            "Poss": nb.get("poss", p["poss"]),
+            "Share": _pctv(nb.get("share")),
+            "PPP": f"{ppp:.2f}" if ppp is not None else f"{p['PPP']:.2f}",
+            "4FPPP": _fourf_ppp(fb),
+            "TO%": _pctv(nb.get("TO%")),
+            "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
+            "OREB%": _pctv(fb.get("OREB%")),
+            "ScEff": f"{p.get('SCE', 0) * 100:.0f}%",
+            "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
+            "Rim%": f"{p['rim_rate'] * 100:.0f}%",
+            "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
+            "Open%": f"{p['open_rate'] * 100:.0f}%",
+            "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
+            "Avg s": (f"{p['avg_secs']:.1f}"
+                      if p["avg_secs"] is not None else None),
+        })
+    st.markdown(dense_table(rows_out), unsafe_allow_html=True)
+    st.caption(
+        "PPP / Poss / Share / TO% count possessions (shots + tagged turnovers) — "
+        "the possession-correct efficiency, matching the go-to/take-away chips. "
+        "**4FPPP** = expected PPP from the four factors alone (eFG · OREB% · TOV% "
+        "· FT-rate); the gap vs PPP is shot-making/sequencing the averages can't "
+        "see. **OREB%** unlocks with enough missed-shot boards. eFG% weights 3s · "
+        "ScEff = scoring efficiency · 3PA% / Rim% = shot-type share · Assisted% = "
+        "off a pass · Open% = uncontested · Where = the zone the set most lives in "
+        "· Avg s = poss length.")
+
+
 @st.fragment
 def render(ctx):
     """Render the Play Style super-tab. ``ctx`` carries plain values + pre-bound
@@ -202,6 +287,13 @@ def render(ctx):
                 "type** (Pick & roll, Iso, Transition…) on shots in the Game "
                 "Tracker and this whole tab fills in. The inferred tempo/creation "
                 "cross-read below works without tags.")
+
+    # ══ §E (PROMOTED) — SET FINGERPRINT: the richest set table leads the tab, so
+    # the coach sees it before scrolling past the plainer four-factors / efficiency
+    # / frequency tables that repeat a subset of it. `prof` is computed here once
+    # and reused by the per-set drill (§F) further down. ────────────────────────
+    prof = ctx.set_profiles(g, tid, _off) or {}
+    _render_fingerprint(ctx, g, tid, _off, nrows, prof)
 
     # ── §A2 — FOUR FACTORS per set (gated ~100 poss) ─────────────────────────
     if getattr(ctx, "factors", None):
@@ -371,62 +463,8 @@ def render(ctx):
                    "top-left = under-used gem (call it more) · bottom-left = junk. "
                    "Lines = your average share & PPP.")
 
-    # ══ §E — set fingerprint + go-to / take-away chips ═══════════════════════
-    prof = ctx.set_profiles(g, tid, _off) or {}
-    if prof:
-        st.markdown("<div class='pl-hdr'>Set fingerprint — what each set produces"
-                    "</div>", unsafe_allow_html=True)
-        # go-to (best ranked) / take-away (worst ranked) chips from §C ranks
-        ranked = [r for r in nrows if r["pct"] is not None and r["poss"] >= 8]
-        if ranked:
-            best = max(ranked, key=lambda r: r["pct"])
-            worst = min(ranked, key=lambda r: r["pct"])
-            cc = st.columns(2)
-            cc[0].markdown(glass(
-                "Go-to set", best["label"],
-                f"{best['PPP']:.2f} PPP · {best['pct']}th pct · {best['poss']} poss",
-                color=best["color"]), unsafe_allow_html=True)
-            if worst["key"] != best["key"]:
-                cc[1].markdown(glass(
-                    "Take away", worst["label"],
-                    f"{worst['PPP']:.2f} PPP · {worst['pct']}th pct · "
-                    f"{worst['poss']} poss", color=worst["color"]),
-                    unsafe_allow_html=True)
-        # Possession-correct poss / share / TO% come from §C's named view
-        # (FGA + tagged TOV); the shot profile is shot-mix only (FGA), so its
-        # own "poss" undercounts — merge by set key so the fingerprint's Poss
-        # matches the efficiency table above.
-        _byk = {r["key"]: r for r in nrows}
-        st.markdown(dense_table([{
-            "Set": p["label"],
-            "Poss": (_byk[p["key"]]["poss"] if p["key"] in _byk else p["poss"]),
-            "Share": (f"{_byk[p['key']]['share'] * 100:.0f}%"
-                      if p["key"] in _byk else None),
-            "PPP": f"{p['PPP']:.2f}",
-            "TO%": (f"{_byk[p['key']]['TO%'] * 100:.0f}%"
-                    if _byk.get(p["key"], {}).get("TO%") is not None else None),
-            "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
-            "ScEff": f"{p.get('SCE', 0) * 100:.0f}%",
-            "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
-            "Rim%": f"{p['rim_rate'] * 100:.0f}%",
-            "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
-            "Open%": f"{p['open_rate'] * 100:.0f}%",
-            "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
-            "Avg s": (f"{p['avg_secs']:.1f}"
-                      if p["avg_secs"] is not None else None),
-        } for p in sorted(prof.values(),
-                          key=lambda p: -(_byk.get(p["key"], {}).get("poss")
-                                          or p["poss"]))]),
-            unsafe_allow_html=True)
-        st.caption("Poss / Share / TO% count possessions (shots + tagged "
-                   "turnovers, matching the efficiency table); the shot-mix "
-                   "columns are shot-only. eFG% weights 3s · **ScEff** = scoring "
-                   "efficiency (FG points ÷ max possible) · 3PA% / Rim% = "
-                   "shot-type share · Assisted% = off a pass · Open% = "
-                   "uncontested · Where = the zone the set most lives in · Avg s "
-                   "= poss length.")
-
     # ══ §F — per-set shot diet + zone heat + length ══════════════════════════
+    # (§E set fingerprint was promoted above §A2 — `prof` is computed there.)
     if prof and shots:
         st.markdown("<div class='pl-hdr'>Drill into one set</div>",
                     unsafe_allow_html=True)

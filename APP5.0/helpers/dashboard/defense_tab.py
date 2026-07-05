@@ -115,6 +115,95 @@ def _render_factors(ff, unit):
             f"{r['label']} {r['poss']}" for r in thin[:6]))
 
 
+def _render_scheme_fingerprint(ctx, g, tid, off, drows, prof):
+    """Scheme fingerprint — the headline 'what each scheme gives up' board: one row
+    per scheme with possession-correct PPP, the four factors (eFG · OREB% · TOV%)
+    + the four-factor expected PPP, rim/three finishing allowed, and the shot-mix.
+    The richest, highest-quality scheme table, so it leads the tab.
+
+    PPP is POSSESSION-CORRECT (shots + tagged turnovers) so it matches the go-to /
+    take-away chips and the efficiency table — the def_profiles `PPP` is shot-only
+    and used to disagree (chip vs table mismatch)."""
+    if not prof:
+        return
+    from helpers.team_analytics import ZONE_LABELS as _ZL
+    st.markdown("<div class='pl-hdr'>Scheme fingerprint — what each gives up"
+                "</div>", unsafe_allow_html=True)
+    _byk = {r["key"]: r for r in drows}
+    # four-factors merge (OREB% allowed + FT-rate → 4F-PPP), possession-correct
+    _fbyk = {}
+    if getattr(ctx, "factors", None):
+        _fbyk = {r["key"]: r
+                 for r in (ctx.factors(g, tid, off) or {}).get("rows", [])}
+
+    # go-to / take-away chips (best / worst by percentile, possession-correct PPP)
+    ranked = [r for r in drows if r.get("pct") is not None and r["poss"] >= 8]
+    if ranked:
+        best = max(ranked, key=lambda r: r["pct"])
+        worst = min(ranked, key=lambda r: r["pct"])
+        cc = st.columns(2)
+        cc[0].markdown(glass(
+            "Best scheme", best["label"],
+            f"{best['PPP']:.2f} PPP · {best['pct']}th pct · {best['poss']} poss",
+            color=best.get("color", "var(--text)")), unsafe_allow_html=True)
+        if worst["key"] != best["key"]:
+            cc[1].markdown(glass(
+                "Leakiest", worst["label"],
+                f"{worst['PPP']:.2f} PPP · {worst['pct']}th pct · "
+                f"{worst['poss']} poss", color=worst.get("color", "var(--text)")),
+                unsafe_allow_html=True)
+
+    def _pctv(v):
+        return f"{v * 100:.0f}%" if v is not None else None
+
+    def _fourf_ppp(f):
+        if not f:
+            return None
+        v = S.four_factor_ppp(f.get("eFG"), f.get("TOV%"),
+                              f.get("OREB%"), f.get("FTr"))
+        return f"{v:.2f}" if v is not None else None
+
+    rows_out = []
+    for p in sorted(prof.values(),
+                    key=lambda p: -(_byk.get(p["key"], {}).get("poss")
+                                    or p["poss"])):
+        k = p["key"]
+        nb, fb = _byk.get(k, {}), _fbyk.get(k, {})
+        ppp = nb.get("PPP", fb.get("PPP"))          # possession-correct
+        rows_out.append({
+            "Defense": p["label"],
+            "Poss": nb.get("poss", p["poss"]),
+            "Share": _pctv(nb.get("share")),
+            "PPP": f"{ppp:.2f}" if ppp is not None else f"{p['PPP']:.2f}",
+            "4FPPP": _fourf_ppp(fb),
+            "TO%": _pctv(nb.get("TO%")),
+            "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
+            "OREB%": _pctv(fb.get("OREB%")),
+            "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
+            "Rim%": f"{p['rim_rate'] * 100:.0f}%",
+            "Rim FG%": (f"{p['rim_FG%'] * 100:.0f}%"
+                        if p.get("rim_FG%") is not None else "—"),
+            "3P%": (f"{p['3P%'] * 100:.0f}%"
+                    if p.get("3P%") is not None else "—"),
+            "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
+            "Open%": f"{p['open_rate'] * 100:.0f}%",
+            "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
+            "Avg s": (f"{p['avg_secs']:.1f}"
+                      if p["avg_secs"] is not None else None),
+        })
+    st.markdown(dense_table(rows_out), unsafe_allow_html=True)
+    st.caption(
+        "PPP / Poss / Share / TO% count possessions (shots + tagged turnovers) — "
+        "the possession-correct efficiency, matching the chips. **4FPPP** = "
+        "expected PPP from the four factors alone (eFG · OREB% · TOV% · FT-rate); "
+        "the gap vs PPP is shot-making the averages can't see. **OREB%** = "
+        + ("offensive boards the scheme allows" if not off else "our offensive "
+           "boards vs it") + ". 3PA% / Rim% = shot-type share " +
+        ("allowed" if not off else "you get") + " · Rim FG% / 3P% = finishing at "
+        "the rim / from three vs that scheme · Assisted% = off a pass · Open% = "
+        "uncontested · Where = the zone shots most come from · Avg s = poss length.")
+
+
 @st.fragment
 def render(ctx):
     """Render the Defense super-tab. ``ctx`` carries plain values + pre-bound
@@ -242,6 +331,12 @@ def render(ctx):
                 "you tag.")
         return
 
+    # ══ §E (PROMOTED) — SCHEME FINGERPRINT: the richest scheme table leads the
+    # tab, above the plainer family / efficiency / frequency tables that repeat a
+    # subset of it. `prof` is computed once here and reused by §F below. ─────────
+    prof = ctx.def_profiles(g, tid, _off) or {}
+    _render_scheme_fingerprint(ctx, g, tid, _off, drows, prof)
+
     # ══ §B — family rollup (man / zone / press …) ════════════════════════════
     fam = ctx.def_families(g, tid, _off) or {}
     frows = fam.get("rows", [])
@@ -360,48 +455,7 @@ def render(ctx):
              "Top-right = a scheme you face a lot AND score well on — attack it. "
              "Bottom-right = faced often but you stall. Lines = your avg share & PPP."))
 
-    # ══ §E — scheme fingerprint ══════════════════════════════════════════════
-    prof = ctx.def_profiles(g, tid, _off) or {}
-    if prof:
-        st.markdown("<div class='pl-hdr'>Scheme fingerprint — what each gives up"
-                    "</div>", unsafe_allow_html=True)
-        from helpers.team_analytics import ZONE_LABELS as _ZL
-        # possession-correct Poss / Share / TO% come from §C's percentile view
-        # (FGA + tagged TOV); the shot profile is shot-mix only — merge by key
-        # so the fingerprint's Poss matches the efficiency table above (the
-        # 440-vs-1100 mismatch the founder flagged).
-        _byk = {r["key"]: r for r in drows}
-        st.markdown(dense_table([{
-            "Defense": p["label"],
-            "Poss": (_byk[p["key"]]["poss"] if p["key"] in _byk else p["poss"]),
-            "Share": (f"{_byk[p['key']]['share'] * 100:.0f}%"
-                      if p["key"] in _byk else None),
-            "PPP": f"{p['PPP']:.2f}",
-            "TO%": (f"{_byk[p['key']]['TO%'] * 100:.0f}%"
-                    if _byk.get(p["key"], {}).get("TO%") is not None else None),
-            "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
-            "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
-            "Rim%": f"{p['rim_rate'] * 100:.0f}%",
-            "Rim FG%": (f"{p['rim_FG%'] * 100:.0f}%"
-                        if p.get("rim_FG%") is not None else "—"),
-            "3P%": (f"{p['3P%'] * 100:.0f}%"
-                    if p.get("3P%") is not None else "—"),
-            "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
-            "Open%": f"{p['open_rate'] * 100:.0f}%",
-            "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
-            "Avg s": (f"{p['avg_secs']:.1f}"
-                      if p["avg_secs"] is not None else None),
-        } for p in sorted(prof.values(),
-                          key=lambda p: -(_byk.get(p["key"], {}).get("poss")
-                                          or p["poss"]))]),
-            unsafe_allow_html=True)
-        st.caption("Poss / Share / TO% count possessions (shots + tagged "
-                   "turnovers, matching the efficiency table); shot-mix columns "
-                   "are shot-only. 3PA% / Rim% = shot-type share " +
-                   ("allowed" if not _off else "you get") +
-                   " · Rim FG% / 3P% = finishing at the rim / from three vs that "
-                   "scheme · Assisted% = off a pass · Open% = uncontested · Where "
-                   "= the zone shots most come from · Avg s = possession length.")
+    # (§E scheme fingerprint was promoted above §B — `prof` is computed there.)
 
     # ── §E2 — FOUR FACTORS per scheme (gated ~100 poss) ──────────────────────
     if getattr(ctx, "factors", None):

@@ -1306,11 +1306,17 @@ if _tdview == "Lab":
         ["Advanced", "Build", "Impact Lab"])
 
 if _tdview == "Charts":
-    (ch_sc, ch_sh, ch_rb, ch_df, ch_tr, ch_qt, ch_ps, ch_play,
-     ch_dscheme, ch_sit) = st.tabs(
-        ["Scoring", "Shooting", "Rebounding", "Defense", "Trends",
-         "Quarters", "Play Style", "Playmaking", "Defense Scheme",
-         "Situational"])
+    # Order tells the story: offense identity → defense identity → context →
+    # time. Scoring→Shooting→Playmaking→Play Style is the offense block; then
+    # Rebounding→Defense→Defense Scheme mirrors it on D; Situational layers
+    # score/clock context; Trends (season arc) and Quarters (deepest time-slice)
+    # close as the nerd capstones. Tab objects are module globals referenced by
+    # the `with ch_*:` blocks scattered below — only THIS order/label list drives
+    # what the user sees, so reordering here is safe without moving the bodies.
+    (ch_sc, ch_sh, ch_play, ch_ps, ch_rb, ch_df, ch_dscheme, ch_sit,
+     ch_tr, ch_qt) = st.tabs(
+        ["Scoring", "Shooting", "Playmaking", "Play Style", "Rebounding",
+         "Defense", "Defense Scheme", "Situational", "Trends", "Quarters"])
 
     # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
     # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
@@ -1420,63 +1426,43 @@ if _tdview == "Charts":
                             colors=(ACCENT, BLUE, GREY), height=300)
                 st.plotly_chart(dn, width="stretch", key="sc_src")
             with c2:
-                st.markdown("**Scoring by quarter** — points / game")
-                if qs:
-                    pf = [quarter[q]["pf"] / ng for q in qs]
-                    pa = [quarter[q]["pa"] / ng for q in qs]
-                    qf = go.Figure()
-                    qf.add_trace(go.Bar(x=[_q_label(q) for q in qs], y=pf,
-                                        name="Scored", marker_color=ACCENT))
-                    qf.add_trace(go.Bar(x=[_q_label(q) for q in qs], y=pa,
-                                        name="Allowed", marker_color=AWAY))
-                    qf.update_layout(barmode="group")
-                    qf.update_yaxes(title="Points / game")
-                    _style(qf, 300)
-                    st.plotly_chart(qf, width="stretch", key="sc_qpts")
-
-            if qs:
-                st.markdown("<div class='lab-hdr'>Net points by quarter & half"
-                            "</div>", unsafe_allow_html=True)
-                c3, c4 = st.columns(2)
-                with c3:
-                    pf = [quarter[q]["pf"] / ng for q in qs]
-                    pa = [quarter[q]["pa"] / ng for q in qs]
-                    net = [pf[i] - pa[i] for i in range(len(qs))]
-                    nf = go.Figure(go.Bar(
-                        x=[_q_label(q) for q in qs], y=net,
-                        marker_color=[GOOD if n >= 0 else BAD for n in net],
-                        text=[f"{n:+.1f}" for n in net], textposition="auto"))
-                    nf.add_hline(y=0, line=dict(color="#30363d"))
-                    nf.update_yaxes(title="Net points / game")
-                    _style(nf, 300)
-                    st.plotly_chart(nf, width="stretch", key="sc_qnet")
-                with c4:
-                    h1_for = sum(quarter[q]["pf"] for q in qs if q <= 2) / ng
-                    h2_for = sum(quarter[q]["pf"] for q in qs if 3 <= q <= 4) / ng
-                    h1_ag = sum(quarter[q]["pa"] for q in qs if q <= 2) / ng
-                    h2_ag = sum(quarter[q]["pa"] for q in qs if 3 <= q <= 4) / ng
-                    hf = go.Figure()
-                    hf.add_trace(go.Bar(x=["1st half", "2nd half"],
-                                        y=[h1_for, h2_for], name="Scored",
-                                        marker_color=ACCENT))
-                    hf.add_trace(go.Bar(x=["1st half", "2nd half"],
-                                        y=[h1_ag, h2_ag], name="Allowed",
-                                        marker_color=AWAY))
-                    hf.update_layout(barmode="group")
-                    hf.update_yaxes(title="Points / game")
-                    _style(hf, 300)
-                    st.plotly_chart(hf, width="stretch", key="sc_half")
-
-                # Q4 clutch tiles
-                if 4 in quarter:
-                    q4 = quarter[4]
-                    q4f, q4a = q4["pf"] / ng, q4["pa"] / ng
-                    cm = st.columns(4)
-                    cm[0].metric("Q4 PPG", f"{q4f:.1f}")
-                    cm[1].metric("Q4 PA/G", f"{q4a:.1f}")
-                    cm[2].metric("Q4 margin", f"{q4f - q4a:+.1f}")
-                    cm[3].metric("Q4 FG%", _pctf(S._safe(q4["fgm_for"],
-                                                         q4["fga_for"])))
+                # season scoring breakdown (us vs opponents) — moved up beside
+                # the source donut so the Scoring tab reads as a pure season
+                # snapshot. Quarter/half splits now live only in the Quarters
+                # tab (they were byte-identical dups here).
+                st.markdown("**Scoring breakdown — us vs opponents**")
+                _scb = _scoring_buckets(tuple(bundle["tracked_ids"]))
+                _own = _scb.get(team_id, {})
+                _opp = {}
+                for _k, _v in _scb.items():
+                    if _k == team_id:
+                        continue
+                    for _bk, _val in _v.items():
+                        _opp[_bk] = _opp.get(_bk, 0) + _val
+                _bcats = [("Paint", "paint"), ("2nd chance", "second_chance"),
+                          ("Off TO", "off_turnover"), ("Fast break", "fast_break"),
+                          ("Bench", "bench")]
+                _bfig = go.Figure()
+                _bfig.add_trace(go.Bar(
+                    name="Us", x=[c[0] for c in _bcats],
+                    y=[_own.get(c[1], 0) for c in _bcats], marker_color=ACCENT,
+                    marker_line_width=0, text=[_own.get(c[1], 0) for c in _bcats],
+                    textposition="outside"))
+                _bfig.add_trace(go.Bar(
+                    name="Opponents", x=[c[0] for c in _bcats],
+                    y=[_opp.get(c[1], 0) for c in _bcats], marker_color=GREY,
+                    marker_line_width=0, text=[_opp.get(c[1], 0) for c in _bcats],
+                    textposition="outside"))
+                _bfig.update_layout(barmode="group")
+                _bfig.update_yaxes(title="Points (tracked games)")
+                _style(_bfig, 300)
+                st.plotly_chart(_bfig, width="stretch", key="sc_buckets_season")
+            st.caption("Left: points by shot type (2s / 3s / FTs). Right: "
+                       "field-goal points by play type over tracked games · "
+                       "bench = points by inferred non-starters. Points off "
+                       "turnovers / 2nd chance / fast break are scoring you "
+                       "create; opponent bars are what you allow. "
+                       "Quarter & half splits → **Quarters** tab.")
 
             # possession-length splits
             st.markdown("<div class='lab-hdr'>Scoring by possession length"
@@ -1509,40 +1495,6 @@ if _tdview == "Charts":
                            "separately). PPP estimated from the team's "
                            "possessions-per-FGA rate. Transition looks are usually "
                            "the most efficient.")
-
-            # ── season scoring breakdown (us vs opponents) ──────────────────
-            st.markdown("<div class='pl-hdr'>Scoring breakdown — us vs opponents"
-                        "</div>", unsafe_allow_html=True)
-            _scb = _scoring_buckets(tuple(bundle["tracked_ids"]))
-            _own = _scb.get(team_id, {})
-            _opp = {}
-            for _k, _v in _scb.items():
-                if _k == team_id:
-                    continue
-                for _bk, _val in _v.items():
-                    _opp[_bk] = _opp.get(_bk, 0) + _val
-            _bcats = [("Paint", "paint"), ("2nd chance", "second_chance"),
-                      ("Off TO", "off_turnover"), ("Fast break", "fast_break"),
-                      ("Bench", "bench")]
-            _bfig = go.Figure()
-            _bfig.add_trace(go.Bar(
-                name="Us", x=[c[0] for c in _bcats],
-                y=[_own.get(c[1], 0) for c in _bcats], marker_color=ACCENT,
-                marker_line_width=0, text=[_own.get(c[1], 0) for c in _bcats],
-                textposition="outside"))
-            _bfig.add_trace(go.Bar(
-                name="Opponents", x=[c[0] for c in _bcats],
-                y=[_opp.get(c[1], 0) for c in _bcats], marker_color=GREY,
-                marker_line_width=0, text=[_opp.get(c[1], 0) for c in _bcats],
-                textposition="outside"))
-            _bfig.update_layout(barmode="group")
-            _bfig.update_yaxes(title="Points (tracked games)")
-            _style(_bfig, 320)
-            st.plotly_chart(_bfig, width="stretch", key="sc_buckets_season")
-            st.caption("Field-goal points by type over tracked games · bench = all "
-                       "points by inferred non-starters (the opening five). Points "
-                       "off turnovers / 2nd chance / fast break are scoring you "
-                       "create; opponent bars are what you allow.")
 
         # ───────────────────────────────────────────── SHOOTING ─────────────
         with ch_sh:
@@ -2126,56 +2078,8 @@ if _tdview == "Charts":
                           help="Turnover rate forced on the opponent.")
             rc2[3].metric("STL / game", f"{tb['STL'] / ng:.1f}")
 
-            st.markdown("<div class='lab-hdr'>Rebounding by quarter — team vs "
-                        "opponent</div>", unsafe_allow_html=True)
-            qbr = bundle["quarter_boxes"]
-            qsr = sorted(qbr)
-            if qsr:
-                xq = [_q_label(q) for q in qsr]
-
-                def _rpg(q, side, k):
-                    n = qbr[q]["n_games"] or 1
-                    return qbr[q][side][k] / n
-
-                t_or = [_rpg(q, "team", "ORB") for q in qsr]
-                o_or = [_rpg(q, "opp", "ORB") for q in qsr]
-                t_dr = [_rpg(q, "team", "DRB") for q in qsr]
-                o_dr = [_rpg(q, "opp", "DRB") for q in qsr]
-                rqc1, rqc2 = st.columns(2)
-                with rqc1:
-                    f_or = go.Figure()
-                    f_or.add_trace(go.Bar(x=xq, y=t_or, name="Team OREB",
-                                          marker_color=ACCENT))
-                    f_or.add_trace(go.Bar(x=xq, y=o_or, name="Opp OREB",
-                                          marker_color=AWAY))
-                    f_or.update_layout(barmode="group")
-                    f_or.update_yaxes(title="OREB / game")
-                    _style(f_or, 300)
-                    st.plotly_chart(f_or, width="stretch", key="rb_oreb_q")
-                with rqc2:
-                    f_dr = go.Figure()
-                    f_dr.add_trace(go.Bar(x=xq, y=t_dr, name="Team DREB",
-                                          marker_color=BLUE))
-                    f_dr.add_trace(go.Bar(x=xq, y=o_dr, name="Opp DREB",
-                                          marker_color=AWAY))
-                    f_dr.update_layout(barmode="group")
-                    f_dr.update_yaxes(title="DREB / game")
-                    _style(f_dr, 300)
-                    st.plotly_chart(f_dr, width="stretch", key="rb_dreb_q")
-
-                t_tot = [o + d for o, d in zip(t_or, t_dr)]
-                o_tot = [o + d for o, d in zip(o_or, o_dr)]
-                marg = [t - o for t, o in zip(t_tot, o_tot)]
-                mc = [GOOD if v >= 0 else BAD for v in marg]
-                fmg = go.Figure(go.Bar(
-                    x=xq, y=marg, marker_color=mc, marker_line_width=0,
-                    text=[f"{v:+.1f}" for v in marg], textposition="outside"))
-                fmg.add_hline(y=0, line=dict(color="#30363d"))
-                fmg.update_yaxes(title="REB margin / game (team − opp)")
-                _style(fmg, 260)
-                st.plotly_chart(fmg, width="stretch", key="rb_margin_q")
-                st.caption("Who wins the glass each quarter — green = team out-"
-                           "rebounds the opponent, red = gets out-rebounded.")
+            st.caption("Quarter-by-quarter glass battle (OREB / DREB / margin "
+                       "per period) → **Quarters** tab.")
 
             # ── game-by-game rebounding trend ───────────────────────────────
             pgf = bundle["per_game_full"]
@@ -2333,66 +2237,8 @@ if _tdview == "Charts":
                     st.caption("Dean Oliver individual DRtg — directional on this "
                                "sample (inferred rebounds, no minutes).")
 
-            # ── defense by quarter & half (opponent scoring by period) ───────
-            st.markdown("<div class='lab-hdr'>Defense by quarter &amp; half</div>",
-                        unsafe_allow_html=True)
-            qbd = bundle["quarter_boxes"]
-            if qbd:
-                d_avg = summ.get("DRtg", 0) / 100
-
-                def _opp(qsel):
-                    pts = sum(qbd[q]["opp"]["PTS"] for q in qsel if q in qbd)
-                    op = sum(qbd[q]["opp_poss"] for q in qsel if q in qbd)
-                    ng_ = max((qbd[q]["n_games"] for q in qsel if q in qbd),
-                              default=0) or ng
-                    return pts / ng_, (pts / op if op else 0.0)
-
-                dqrows = []
-                for lbl, qsel in [("Q1", [1]), ("Q2", [2]), ("H1", [1, 2]),
-                                  ("Q3", [3]), ("Q4", [4]), ("H2", [3, 4])]:
-                    oppg, oppp = _opp(qsel)
-                    dqrows.append({
-                        "Period": lbl, "Opp PPG": round(oppg, 1),
-                        "Opp PPP": round(oppp, 3),
-                        "vs avg": f"{oppp - d_avg:+.3f}",
-                        "Grade": "✓" if oppp <= d_avg else "✗"})
-                st.dataframe(pd.DataFrame(dqrows), hide_index=True, width="stretch")
-                st.caption(f"'vs avg' compares each period's opponent PPP to the "
-                           f"team's season defensive rate ({d_avg:.3f}); ✓ = "
-                           "better than average, ✗ = worse.")
-
-                ql = ["Q1", "Q2", "Q3", "Q4"]
-                opg = [_opp([q])[0] for q in range(1, 5)]
-                oppp_q = [_opp([q])[1] for q in range(1, 5)]
-                dq1, dq2 = st.columns(2)
-                with dq1:
-                    fpg = go.Figure(go.Bar(
-                        x=ql, y=opg, marker_color=AWAY, marker_line_width=0,
-                        text=[f"{v:.1f}" for v in opg], textposition="outside"))
-                    fpg.update_yaxes(title="Opp PPG")
-                    _style(fpg, 280)
-                    fpg.update_layout(title="Opponent points by quarter")
-                    st.plotly_chart(fpg, width="stretch", key="df_oppg_q")
-                with dq2:
-                    cpp = [BAD if v > d_avg else GOOD for v in oppp_q]
-                    fpp = go.Figure(go.Bar(
-                        x=ql, y=oppp_q, marker_color=cpp, marker_line_width=0,
-                        text=[f"{v:.3f}" for v in oppp_q], textposition="outside"))
-                    fpp.add_hline(y=d_avg, line=dict(color="#f0a500", dash="dot"),
-                                  annotation_text=f"season {d_avg:.3f}",
-                                  annotation_position="top left")
-                    fpp.update_yaxes(title="Opp PPP")
-                    _style(fpp, 280)
-                    fpp.update_layout(title="Opponent PPP by quarter")
-                    st.plotly_chart(fpp, width="stretch", key="df_oppp_q")
-
-                qmap = {q: _opp([q])[1] for q in range(1, 5)}
-                if any(qmap.values()):
-                    worst = max(qmap, key=qmap.get)
-                    best = min(qmap, key=qmap.get)
-                    st.info(f"Toughest defensive quarter: **Q{worst}** "
-                            f"({qmap[worst]:.3f} opp PPP)  ·  Best: **Q{best}** "
-                            f"({qmap[best]:.3f} opp PPP).")
+            st.caption("Opponent scoring by quarter & half (Def Rtg, opp PPP vs "
+                       "season average, per-period grades) → **Quarters** tab.")
 
             # ── who guarded whom — defensive matchup grid ────────────────────
             st.markdown("<div class='lab-hdr'>Matchup grid — who guarded whom</div>",
@@ -2450,21 +2296,14 @@ if _tdview == "Charts":
                 empty_state("No fouls logged yet",
                             "Foul timing needs tracked games.", icon="⚠️")
             else:
-                _fqv = [_tf["by_q"].get(q, 0) for q in range(1, 5)]
                 _fm = st.columns(3)
                 _fm[0].metric("Fouls / game",
                               f"{_tf['total'] / max(_tf['games'], 1):.1f}")
                 _fm[1].metric("Opp FTA drawn", _tf["opp_fta"])
                 _fm[2].metric("Total fouls", _tf["total"])
-                _fqf = go.Figure(go.Bar(
-                    x=["Q1", "Q2", "Q3", "Q4"], y=_fqv, marker_color=BAD,
-                    marker_line_width=0, text=_fqv, textposition="outside"))
-                _fqf.update_yaxes(title="Fouls committed")
-                _style(_fqf, 260)
-                st.plotly_chart(_fqf, width="stretch", key="df_foul_timing")
-                st.caption("When the team fouls (Q4 spikes = late-game trouble / "
-                           "putting opponents in the bonus). Opp FTA = free throws "
-                           "your fouls gave up.")
+                st.caption("Opp FTA = free throws your fouls gave up. When the "
+                           "team fouls by quarter (Q4 spikes = late-game trouble) "
+                           "→ **Quarters** tab.")
 
         # ───────────────────────────────────────────── TRENDS ───────────────
         with ch_tr:
@@ -2621,9 +2460,15 @@ def _fx_chqt():
         st.info("No tracked games yet — quarter splits need play-by-play data "
                 "from the Game Tracker.")
     else:
-        st.caption("Every tracked stat, broken out by quarter and averaged over "
-                   "tracked games. 'For' / 'Allowed' = this team vs opponents. "
-                   "Small samples are directional.")
+        st.caption("The single home for time-split data — every tracked stat "
+                   "broken out by quarter/half and averaged over tracked games "
+                   "('For' / 'Allowed' = this team vs opponents; small samples "
+                   "are directional). The headline below owns which quarter you "
+                   "win; the four sub-tabs go deep: **Scoring & Efficiency** "
+                   "(ratings, PPP, pace), **Shooting** (offense + defense shot "
+                   "profile), **Control · Glass · Discipline** (rebounds, "
+                   "turnovers, fouls, four factors), and **Reference Tables** "
+                   "(full per-quarter grids + by-game splits).")
 
         qsq = sorted(qbx)
         qx = [_q_label(q) for q in qsq]
@@ -2660,559 +2505,567 @@ def _fx_chqt():
             hm[2].metric("1st-half net/g", f"{h1:+.1f}")
             hm[3].metric("2nd-half net/g", f"{h2:+.1f}")
 
-        # ─────────────────────────────────────────── SCORING & EFFICIENCY ───
-        st.markdown("<div class='lab-hdr'>Scoring & efficiency by quarter"
-                    "</div>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Points — scored vs allowed / game**")
-            st.plotly_chart(_q_bars(
-                qsq, [("Scored", _pg("team", "PTS"), ACCENT),
-                      ("Allowed", _pg("opp", "PTS"), AWAY)],
-                "Points / game"), width="stretch", key="q_pts")
-        with c2:
-            st.markdown("**Net points / game**")
-            nf = go.Figure(go.Bar(
-                x=qx, y=net_pg,
-                marker_color=[GOOD if n >= 0 else BAD for n in net_pg],
-                marker_line_width=0, text=[f"{n:+.1f}" for n in net_pg],
-                textposition="auto"))
-            nf.add_hline(y=0, line=dict(color="#30363d"))
-            nf.update_yaxes(title="Net points / game")
-            _style(nf, 300)
-            st.plotly_chart(nf, width="stretch", key="q_net")
+        qt1, qt2, qt3, qt4 = st.tabs(
+            ["Scoring & Efficiency", "Shooting",
+             "Control · Glass · Discipline", "Reference Tables"])
 
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown("**Offensive vs Defensive Rating** (pts / 100 poss)")
-            ortg = _qv(lambda d: 100 * S._safe(d["team"]["PTS"], d["poss"]))
-            drtg = _qv(lambda d: 100 * S._safe(d["opp"]["PTS"], d["opp_poss"]))
-            st.plotly_chart(_q_lines(
-                qsq, [("Off Rtg", ortg, ACCENT), ("Def Rtg", drtg, AWAY)],
-                "Rating"), width="stretch", key="q_rtg")
-        with c4:
-            st.markdown("**Net Rating by quarter**")
-            netr = [ortg[i] - drtg[i] for i in range(len(qsq))]
-            nrf = go.Figure(go.Bar(
-                x=qx, y=netr,
-                marker_color=[GOOD if n >= 0 else BAD for n in netr],
-                marker_line_width=0, text=[f"{n:+.0f}" for n in netr],
-                textposition="auto"))
-            nrf.add_hline(y=0, line=dict(color="#30363d"))
-            nrf.update_yaxes(title="Net rating")
-            _style(nrf, 300)
-            st.plotly_chart(nrf, width="stretch", key="q_netrtg")
-
-        c5, c6 = st.columns(2)
-        with c5:
-            st.markdown("**Points per possession** — for vs allowed")
-            ppp = _qv(lambda d: S._safe(d["team"]["PTS"], d["poss"]))
-            oppp = _qv(lambda d: S._safe(d["opp"]["PTS"], d["opp_poss"]))
-            st.plotly_chart(_q_lines(
-                qsq, [("PPP", ppp, ACCENT), ("Opp PPP", oppp, AWAY)],
-                "Points / possession"), width="stretch", key="q_ppp")
-        with c6:
-            st.markdown("**Pace** — possessions / game")
-            pace = _qv(lambda d: (d["poss"] + d["opp_poss"]) / 2
-                       / max(d["n_games"], 1))
-            st.plotly_chart(_q_bars(
-                qsq, [("Pace", pace, BLUE)], "Possessions / game",
-                text_fmt=lambda v: f"{v:.1f}"),
-                width="stretch", key="q_pace")
-
-        # ─────────────────────────────────────────── SHOOTING (OFFENSE) ─────
-        st.markdown("<div class='lab-hdr'>Shooting — offense, by quarter"
-                    "</div>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**FG% · 2P% · 3P%**")
-            st.plotly_chart(_q_lines(
-                qsq, [("FG%", _rate("team", S.fg_pct), ACCENT),
-                      ("2P%", _rate("team", S.fg2_pct), GOOD),
-                      ("3P%", _rate("team", S.fg3_pct), BLUE)],
-                "%"), width="stretch", key="q_fg")
-        with c2:
-            st.markdown("**eFG% · TS% · Paint FG%**")
-            st.plotly_chart(_q_lines(
-                qsq, [("eFG%", _rate("team", S.efg), ACCENT),
-                      ("TS%", _rate("team", S.ts), PURPLE),
-                      ("Paint FG%", _rate("team", S.paint_fg_pct), GOOD)],
-                "%"), width="stretch", key="q_efg")
-
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown("**FT% by quarter**")
-            st.plotly_chart(_q_bars(
-                qsq, [("FT%", _rate("team", S.ft_pct), "#d29922")], "%",
-                text_fmt=lambda v: f"{v:.0f}"),
-                width="stretch", key="q_ft")
-        with c4:
-            st.markdown("**Shot rates — 3PA rate & FT rate**")
-            st.plotly_chart(_q_lines(
-                qsq, [("3PA rate", _rate("team", S.three_par), BLUE),
-                      ("FT rate", _rate("team", S.ftr), "#d29922")],
-                "%"), width="stretch", key="q_rates")
-
-        c5, c6 = st.columns(2)
-        with c5:
-            st.markdown("**Scoring efficiency** — PPS & ScEff")
-            st.plotly_chart(_q_lines(
-                qsq, [("Pts / shot", _qv(lambda d: S.ppsa(d["team"])), ACCENT),
-                      ("ScEff", _qv(lambda d: S.shot_efficiency(d["team"])), GOOD)],
-                "Value"), width="stretch", key="q_pps")
-        with c6:
-            st.markdown("**Shot volume / game** — FGA · 3PA · FTA")
-            st.plotly_chart(_q_bars(
-                qsq, [("FGA", _pg("team", "FGA"), ACCENT),
-                      ("3PA", _pg("team", "3PA"), BLUE),
-                      ("FTA", _pg("team", "FTA"), "#d29922")],
-                "Attempts / game"), width="stretch", key="q_vol")
-
-        # ─────────────────────────────────────────── SHOOTING (DEFENSE) ─────
-        st.markdown("<div class='lab-hdr'>Shooting allowed — defense (oFG%), "
-                    "by quarter</div>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Opp FG% · 2P% · 3P% allowed**")
-            st.plotly_chart(_q_lines(
-                qsq, [("Opp FG%", _rate("opp", S.fg_pct), AWAY),
-                      ("Opp 2P%", _rate("opp", S.fg2_pct), "#f0a500"),
-                      ("Opp 3P%", _rate("opp", S.fg3_pct), PURPLE)],
-                "% allowed"), width="stretch", key="q_ofg")
-        with c2:
-            st.markdown("**Opp eFG% · TS% · Paint FG% allowed**")
-            st.plotly_chart(_q_lines(
-                qsq, [("Opp eFG%", _rate("opp", S.efg), AWAY),
-                      ("Opp TS%", _rate("opp", S.ts), PURPLE),
-                      ("Opp Paint%", _rate("opp", S.paint_fg_pct), "#f0a500")],
-                "% allowed"), width="stretch", key="q_oefg")
-
-        st.markdown("**Opponent shot volume allowed / game** — FGA · 3PA · FTA")
-        st.plotly_chart(_q_bars(
-            qsq, [("Opp FGA", _pg("opp", "FGA"), AWAY),
-                  ("Opp 3PA", _pg("opp", "3PA"), PURPLE),
-                  ("Opp FTA", _pg("opp", "FTA"), "#f0a500")],
-            "Attempts / game"), width="stretch", key="q_ovol")
-
-        # ─────────────────────────────────────────── REBOUNDING ─────────────
-        st.markdown("<div class='lab-hdr'>Rebounding by quarter</div>",
-                    unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Offensive rebounds / game** — grabbed vs allowed")
-            st.plotly_chart(_q_bars(
-                qsq, [("OREB grabbed", _pg("team", "ORB"), ACCENT),
-                      ("OREB allowed", _pg("opp", "ORB"), AWAY)],
-                "OREB / game"), width="stretch", key="q_oreb")
-        with c2:
-            st.markdown("**Defensive rebounds / game** — grabbed vs allowed")
-            st.plotly_chart(_q_bars(
-                qsq, [("DREB grabbed", _pg("team", "DRB"), ACCENT),
-                      ("DREB allowed", _pg("opp", "DRB"), AWAY)],
-                "DREB / game"), width="stretch", key="q_dreb")
-
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown("**Rebound rates** — OREB% & DREB%")
-            orebp = _qv(lambda d: S._safe(
-                d["team"]["ORB"], d["team"]["ORB"] + d["opp"]["DRB"]) * 100)
-            drebp = _qv(lambda d: S._safe(
-                d["team"]["DRB"], d["team"]["DRB"] + d["opp"]["ORB"]) * 100)
-            st.plotly_chart(_q_lines(
-                qsq, [("OREB%", orebp, ACCENT), ("DREB%", drebp, BLUE)],
-                "%"), width="stretch", key="q_rebpct")
-        with c4:
-            st.markdown("**Total rebounds / game** — for vs against")
-            st.plotly_chart(_q_bars(
-                qsq, [("REB", _pg("team", "TRB"), ACCENT),
-                      ("Opp REB", _pg("opp", "TRB"), AWAY)],
-                "Rebounds / game"), width="stretch", key="q_reb")
-
-        # ─────────────────────────────────────────── BALL CONTROL & D ───────
-        st.markdown("<div class='lab-hdr'>Ball control & defense by quarter"
-                    "</div>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**Turnovers / game** — committed vs forced")
-            st.plotly_chart(_q_bars(
-                qsq, [("Committed", _pg("team", "TOV"), AWAY),
-                      ("Forced", _pg("opp", "TOV"), GOOD)],
-                "Turnovers / game"), width="stretch", key="q_tov")
-        with c2:
-            st.markdown("**Turnover rate** — own vs forced")
-            st.plotly_chart(_q_lines(
-                qsq, [("TOV%", _qv(lambda d: d["four_factors"]["off"]["TOV"]
-                                   * 100), AWAY),
-                      ("Forced TOV%", _qv(lambda d: d["four_factors"]["def"]["TOV"]
-                                          * 100), GOOD)],
-                "%"), width="stretch", key="q_tovpct")
-
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown("**Assists / game** — for vs against")
-            st.plotly_chart(_q_bars(
-                qsq, [("Assists", _pg("team", "AST"), ACCENT),
-                      ("Opp assists", _pg("opp", "AST"), AWAY)],
-                "Assists / game"), width="stretch", key="q_ast")
-        with c4:
-            st.markdown("**Assist-to-turnover ratio** — for vs against")
-            atr = _qv(lambda d: S._safe(d["team"]["AST"], d["team"]["TOV"]))
-            oatr = _qv(lambda d: S._safe(d["opp"]["AST"], d["opp"]["TOV"]))
-            st.plotly_chart(_q_lines(
-                qsq, [("AST/TO", atr, ACCENT), ("Opp AST/TO", oatr, AWAY)],
-                "Ratio"), width="stretch", key="q_atr")
-
-        c5, c6 = st.columns(2)
-        with c5:
-            st.markdown("**Stocks / game** — steals, blocks & total")
-            st.plotly_chart(_q_bars(
-                qsq, [("Steals", _pg("team", "STL"), ACCENT),
-                      ("Blocks", _pg("team", "BLK"), BLUE),
-                      ("Stocks", _pg("team", "stocks"), GOOD)],
-                "Per game"), width="stretch", key="q_stocks")
-        with c6:
-            st.markdown("**Fouls / game** — committed vs drawn")
-            st.plotly_chart(_q_bars(
-                qsq, [("Committed", _pg("team", "PF"), AWAY),
-                      ("Drawn", _pg("opp", "PF"), GOOD)],
-                "Fouls / game"), width="stretch", key="q_pf")
-
-        # ─────────────────────────────────────────── FOUR FACTORS ───────────
-        st.markdown("<div class='lab-hdr'>Four factors by quarter — offense "
-                    "vs defense</div>", unsafe_allow_html=True)
-        st.caption("eFG%, OREB% and FT rate: higher offense is better. TOV%: "
-                   "lower own / higher forced is better.")
-        ff_keys = [("eFG", "eFG%"), ("TOV", "TOV%"), ("ORB", "OREB%"),
-                   ("FTR", "FT rate")]
-        fcols = st.columns(2)
-        for i, (k, lbl) in enumerate(ff_keys):
-            with fcols[i % 2]:
-                st.markdown(f"**{lbl}** — offense vs defense")
-                offv = _qv(lambda d, k=k: d["four_factors"]["off"][k] * 100)
-                defv = _qv(lambda d, k=k: d["four_factors"]["def"][k] * 100)
-                st.plotly_chart(_q_bars(
-                    qsq, [("Offense", offv, ACCENT), ("Allowed", defv, AWAY)],
-                    "%"), width="stretch", key=f"q_ff_{k}")
-
-        # ─────────────────────────────────────────── FULL TABLE ─────────────
-        st.markdown("<div class='lab-hdr'>Per-quarter stat table</div>",
-                    unsafe_allow_html=True)
-        qrows = []
-        for q in qsq:
-            d = qbx[q]
-            tbq, obq, n = d["team"], d["opp"], max(d["n_games"], 1)
-            qrows.append({
-                "Q": _q_label(q), "GP": d["n_games"],
-                "PF/G": round(tbq["PTS"] / n, 1),
-                "PA/G": round(obq["PTS"] / n, 1),
-                "ORtg": round(100 * S._safe(tbq["PTS"], d["poss"]), 1),
-                "DRtg": round(100 * S._safe(obq["PTS"], d["opp_poss"]), 1),
-                "PPP": round(S._safe(tbq["PTS"], d["poss"]), 2),
-                "FG%": _pctf(S.fg_pct(tbq), 0),
-                "3P%": _pctf(S.fg3_pct(tbq), 0),
-                "eFG%": _pctf(S.efg(tbq), 0),
-                "oFG%": _pctf(S.fg_pct(obq), 0),
-                "OREB/G": round(tbq["ORB"] / n, 1),
-                "DREB/G": round(tbq["DRB"] / n, 1),
-                "AST/G": round(tbq["AST"] / n, 1),
-                "TOV/G": round(tbq["TOV"] / n, 1),
-                "STK/G": round(tbq["stocks"] / n, 1),
-            })
-        st.dataframe(pd.DataFrame(qrows), hide_index=True,
-                     width="stretch")
-
-        # ── Shooting by Quarter (ported from APP3.0): the full shooting line
-        #    for each quarter PLUS half (H1/H2) and Full-game summary rows, and a
-        #    grouped FG%/3P%/eFG% bar over the quarters ─────────────────────────
-        st.markdown("<div class='lab-hdr'>Shooting — full table by quarter"
-                    "</div>", unsafe_allow_html=True)
-
-        def _merge_qbox(qs_subset):
-            """Sum the team boxes (+ poss) over a set of quarters into one box.
-            Box dicts are pure additive counts, so S.* rate fns apply to the sum.
-            Returns (merged_box, poss_sum, games) or (None, 0, 0) if none present."""
-            qs_use = [q for q in qs_subset if q in qbx]
-            if not qs_use:
-                return None, 0, 0
-            merged = {}
-            for k, v0 in qbx[qs_use[0]]["team"].items():
-                vals = [qbx[q]["team"][k] for q in qs_use]
-                merged[k] = (sum(vals) if all(_is_num(v) for v in vals) else v0)
-            poss_sum = sum(qbx[q]["poss"] for q in qs_use)
-            games = max(qbx[q]["n_games"] for q in qs_use)
-            return merged, poss_sum, games
-
-        # Renamed from _shot_row — it shadowed the module-level helper of the
-        # same name (line ~206) inside this function.
-        def _q_shot_row(label, b, poss_q, gp):
-            return {
-                "Period": label, "GP": gp,
-                "FGA": b["FGA"], "FGM": b["FGM"], "FG%": _pctf(S.fg_pct(b)),
-                "2PA": b["2PA"], "2P%": _pctf(S.fg2_pct(b)) if b["2PA"] else "—",
-                "3PA": b["3PA"], "3P%": _pctf(S.fg3_pct(b)) if b["3PA"] else "—",
-                "FTA": b["FTA"], "FT%": _pctf(S.ft_pct(b)) if b["FTA"] else "—",
-                "eFG%": _pctf(S.efg(b)), "TS%": _pctf(S.ts(b)),
-                "Paint%": (_pctf(S.paint_fg_pct(b)) if b["paint_FGA"] else "—"),
-                "PPS": f"{S.pps(b):.2f}", "PPP": f"{S._safe(b['PTS'], poss_q):.2f}",
-                "ScEff": f"{S.shot_efficiency(b):.3f}", "PTS": b["PTS"],
-            }
-
-        reg = [q for q in qsq if q <= 4]
-        ot = [q for q in qsq if q > 4]
-        shot_rows = []
-        for q in [x for x in reg if x in (1, 2)]:
-            shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
-                                         qbx[q]["poss"], qbx[q]["n_games"]))
-        h1b, h1p, h1g = _merge_qbox([1, 2])
-        if h1b:
-            shot_rows.append(_q_shot_row("H1", h1b, h1p, h1g))
-        for q in [x for x in reg if x in (3, 4)]:
-            shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
-                                         qbx[q]["poss"], qbx[q]["n_games"]))
-        h2b, h2p, h2g = _merge_qbox([3, 4])
-        if h2b:
-            shot_rows.append(_q_shot_row("H2", h2b, h2p, h2g))
-        for q in ot:   # overtime periods, each on its own line
-            shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
-                                         qbx[q]["poss"], qbx[q]["n_games"]))
-        fb, fp, fg = _merge_qbox(qsq)
-        if fb:
-            shot_rows.append(_q_shot_row("Full", fb, fp, fg))
-        st.dataframe(pd.DataFrame(shot_rows), hide_index=True, width="stretch")
-        st.caption("Full shooting line for every quarter, half (H1/H2) and the "
-                   "whole game (pooled over tracked games). PPP = points per "
-                   "possession that period.")
-
-        # ── Shooting % by Quarter — grouped FG% / 3P% / eFG% bar ─────────────
-        if reg:
-            st.markdown("**Shooting % by Quarter**")
-            fg_v = [S.fg_pct(qbx[q]["team"]) * 100 for q in reg]
-            tp_v = [S.fg3_pct(qbx[q]["team"]) * 100 for q in reg]
-            efg_v = [S.efg(qbx[q]["team"]) * 100 for q in reg]
-            st.plotly_chart(
-                _q_bars(reg,
-                        [("FG%", fg_v, ACCENT), ("3P%", tp_v, BLUE),
-                         ("eFG%", efg_v, GOOD)],
-                        "%", height=320,
-                        text_fmt=lambda v: f"{v:.0f}"),
-                width="stretch", key="q_sh_pct")
-
-        # ── Off-Pass vs Self-Created by Quarter (ported from APP3.0) ─────────
-        cq = bundle.get("creation_quarter") or {}
-        cr_total = sum(cq[q]["ast"]["FGA"] + cq[q]["sc"]["FGA"] for q in cq)
-        if cq and cr_total:
-            st.markdown("<div class='lab-hdr'>Off-Pass vs Self-Created by quarter"
+        with qt1:
+            # ─────────────────────────────────────────── SCORING & EFFICIENCY ───
+            st.markdown("<div class='lab-hdr'>Scoring & efficiency by quarter"
                         "</div>", unsafe_allow_html=True)
-            st.caption("Every team FG attempt split by how it was created — off a "
-                       "teammate's pass (Off-Pass / assisted) vs taken with no pass "
-                       "into the shot (Self-Created) — broken out by quarter.")
-            # Only quarters that actually have creation data — a sparse book (few
-            # tracked games, or an archive) can miss a quarter, and the unguarded
-            # cq[q] series below would KeyError on it.
-            creg = [q for q in qsq if q <= 4 and q in cq]
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Points — scored vs allowed / game**")
+                st.plotly_chart(_q_bars(
+                    qsq, [("Scored", _pg("team", "PTS"), ACCENT),
+                          ("Allowed", _pg("opp", "PTS"), AWAY)],
+                    "Points / game"), width="stretch", key="q_pts")
+            with c2:
+                st.markdown("**Net points / game**")
+                nf = go.Figure(go.Bar(
+                    x=qx, y=net_pg,
+                    marker_color=[GOOD if n >= 0 else BAD for n in net_pg],
+                    marker_line_width=0, text=[f"{n:+.1f}" for n in net_pg],
+                    textposition="auto"))
+                nf.add_hline(y=0, line=dict(color="#30363d"))
+                nf.update_yaxes(title="Net points / game")
+                _style(nf, 300)
+                st.plotly_chart(nf, width="stretch", key="q_net")
 
-            def _cr_merge(lines):
-                """Sum agg_shots lines (FGA/FGM/3PA/3PM) → totals + recomputed rates."""
-                fga = sum(l["FGA"] for l in lines)
-                fgm = sum(l["FGM"] for l in lines)
-                tpa = sum(l["3PA"] for l in lines)
-                tpm = sum(l["3PM"] for l in lines)
-                return {"FGA": fga, "FGM": fgm, "3PA": tpa, "3PM": tpm,
-                        "FG%": S._safe(fgm, fga), "3P%": S._safe(tpm, tpa),
-                        "eFG%": S._safe(fgm + 0.5 * tpm, fga)}
+            c3, c4 = st.columns(2)
+            with c3:
+                st.markdown("**Offensive vs Defensive Rating** (pts / 100 poss)")
+                ortg = _qv(lambda d: 100 * S._safe(d["team"]["PTS"], d["poss"]))
+                drtg = _qv(lambda d: 100 * S._safe(d["opp"]["PTS"], d["opp_poss"]))
+                st.plotly_chart(_q_lines(
+                    qsq, [("Off Rtg", ortg, ACCENT), ("Def Rtg", drtg, AWAY)],
+                    "Rating"), width="stretch", key="q_rtg")
+            with c4:
+                st.markdown("**Net Rating by quarter**")
+                netr = [ortg[i] - drtg[i] for i in range(len(qsq))]
+                nrf = go.Figure(go.Bar(
+                    x=qx, y=netr,
+                    marker_color=[GOOD if n >= 0 else BAD for n in netr],
+                    marker_line_width=0, text=[f"{n:+.0f}" for n in netr],
+                    textposition="auto"))
+                nrf.add_hline(y=0, line=dict(color="#30363d"))
+                nrf.update_yaxes(title="Net rating")
+                _style(nrf, 300)
+                st.plotly_chart(nrf, width="stretch", key="q_netrtg")
 
-            def _cr_row(label, qs):
-                a = _cr_merge([cq[q]["ast"] for q in qs if q in cq])
-                s = _cr_merge([cq[q]["sc"] for q in qs if q in cq])
-                tot = a["FGA"] + s["FGA"]
+            c5, c6 = st.columns(2)
+            with c5:
+                st.markdown("**Points per possession** — for vs allowed")
+                ppp = _qv(lambda d: S._safe(d["team"]["PTS"], d["poss"]))
+                oppp = _qv(lambda d: S._safe(d["opp"]["PTS"], d["opp_poss"]))
+                st.plotly_chart(_q_lines(
+                    qsq, [("PPP", ppp, ACCENT), ("Opp PPP", oppp, AWAY)],
+                    "Points / possession"), width="stretch", key="q_ppp")
+            with c6:
+                st.markdown("**Pace** — possessions / game")
+                pace = _qv(lambda d: (d["poss"] + d["opp_poss"]) / 2
+                           / max(d["n_games"], 1))
+                st.plotly_chart(_q_bars(
+                    qsq, [("Pace", pace, BLUE)], "Possessions / game",
+                    text_fmt=lambda v: f"{v:.1f}"),
+                    width="stretch", key="q_pace")
+
+        with qt2:
+            # ─────────────────────────────────────────── SHOOTING (OFFENSE) ─────
+            st.markdown("<div class='lab-hdr'>Shooting — offense, by quarter"
+                        "</div>", unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**FG% · 2P% · 3P%**")
+                st.plotly_chart(_q_lines(
+                    qsq, [("FG%", _rate("team", S.fg_pct), ACCENT),
+                          ("2P%", _rate("team", S.fg2_pct), GOOD),
+                          ("3P%", _rate("team", S.fg3_pct), BLUE)],
+                    "%"), width="stretch", key="q_fg")
+            with c2:
+                st.markdown("**eFG% · TS% · Paint FG%**")
+                st.plotly_chart(_q_lines(
+                    qsq, [("eFG%", _rate("team", S.efg), ACCENT),
+                          ("TS%", _rate("team", S.ts), PURPLE),
+                          ("Paint FG%", _rate("team", S.paint_fg_pct), GOOD)],
+                    "%"), width="stretch", key="q_efg")
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.markdown("**FT% by quarter**")
+                st.plotly_chart(_q_bars(
+                    qsq, [("FT%", _rate("team", S.ft_pct), "#d29922")], "%",
+                    text_fmt=lambda v: f"{v:.0f}"),
+                    width="stretch", key="q_ft")
+            with c4:
+                st.markdown("**Shot rates — 3PA rate & FT rate**")
+                st.plotly_chart(_q_lines(
+                    qsq, [("3PA rate", _rate("team", S.three_par), BLUE),
+                          ("FT rate", _rate("team", S.ftr), "#d29922")],
+                    "%"), width="stretch", key="q_rates")
+
+            c5, c6 = st.columns(2)
+            with c5:
+                st.markdown("**Scoring efficiency** — PPS & ScEff")
+                st.plotly_chart(_q_lines(
+                    qsq, [("Pts / shot", _qv(lambda d: S.ppsa(d["team"])), ACCENT),
+                          ("ScEff", _qv(lambda d: S.shot_efficiency(d["team"])), GOOD)],
+                    "Value"), width="stretch", key="q_pps")
+            with c6:
+                st.markdown("**Shot volume / game** — FGA · 3PA · FTA")
+                st.plotly_chart(_q_bars(
+                    qsq, [("FGA", _pg("team", "FGA"), ACCENT),
+                          ("3PA", _pg("team", "3PA"), BLUE),
+                          ("FTA", _pg("team", "FTA"), "#d29922")],
+                    "Attempts / game"), width="stretch", key="q_vol")
+
+            # ─────────────────────────────────────────── SHOOTING (DEFENSE) ─────
+            st.markdown("<div class='lab-hdr'>Shooting allowed — defense (oFG%), "
+                        "by quarter</div>", unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Opp FG% · 2P% · 3P% allowed**")
+                st.plotly_chart(_q_lines(
+                    qsq, [("Opp FG%", _rate("opp", S.fg_pct), AWAY),
+                          ("Opp 2P%", _rate("opp", S.fg2_pct), "#f0a500"),
+                          ("Opp 3P%", _rate("opp", S.fg3_pct), PURPLE)],
+                    "% allowed"), width="stretch", key="q_ofg")
+            with c2:
+                st.markdown("**Opp eFG% · TS% · Paint FG% allowed**")
+                st.plotly_chart(_q_lines(
+                    qsq, [("Opp eFG%", _rate("opp", S.efg), AWAY),
+                          ("Opp TS%", _rate("opp", S.ts), PURPLE),
+                          ("Opp Paint%", _rate("opp", S.paint_fg_pct), "#f0a500")],
+                    "% allowed"), width="stretch", key="q_oefg")
+
+            st.markdown("**Opponent shot volume allowed / game** — FGA · 3PA · FTA")
+            st.plotly_chart(_q_bars(
+                qsq, [("Opp FGA", _pg("opp", "FGA"), AWAY),
+                      ("Opp 3PA", _pg("opp", "3PA"), PURPLE),
+                      ("Opp FTA", _pg("opp", "FTA"), "#f0a500")],
+                "Attempts / game"), width="stretch", key="q_ovol")
+
+        with qt3:
+            # ─────────────────────────────────────────── REBOUNDING ─────────────
+            st.markdown("<div class='lab-hdr'>Rebounding by quarter</div>",
+                        unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Offensive rebounds / game** — grabbed vs allowed")
+                st.plotly_chart(_q_bars(
+                    qsq, [("OREB grabbed", _pg("team", "ORB"), ACCENT),
+                          ("OREB allowed", _pg("opp", "ORB"), AWAY)],
+                    "OREB / game"), width="stretch", key="q_oreb")
+            with c2:
+                st.markdown("**Defensive rebounds / game** — grabbed vs allowed")
+                st.plotly_chart(_q_bars(
+                    qsq, [("DREB grabbed", _pg("team", "DRB"), ACCENT),
+                          ("DREB allowed", _pg("opp", "DRB"), AWAY)],
+                    "DREB / game"), width="stretch", key="q_dreb")
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.markdown("**Rebound rates** — OREB% & DREB%")
+                orebp = _qv(lambda d: S._safe(
+                    d["team"]["ORB"], d["team"]["ORB"] + d["opp"]["DRB"]) * 100)
+                drebp = _qv(lambda d: S._safe(
+                    d["team"]["DRB"], d["team"]["DRB"] + d["opp"]["ORB"]) * 100)
+                st.plotly_chart(_q_lines(
+                    qsq, [("OREB%", orebp, ACCENT), ("DREB%", drebp, BLUE)],
+                    "%"), width="stretch", key="q_rebpct")
+            with c4:
+                st.markdown("**Total rebounds / game** — for vs against")
+                st.plotly_chart(_q_bars(
+                    qsq, [("REB", _pg("team", "TRB"), ACCENT),
+                          ("Opp REB", _pg("opp", "TRB"), AWAY)],
+                    "Rebounds / game"), width="stretch", key="q_reb")
+
+            # ─────────────────────────────────────────── BALL CONTROL & D ───────
+            st.markdown("<div class='lab-hdr'>Ball control & defense by quarter"
+                        "</div>", unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Turnovers / game** — committed vs forced")
+                st.plotly_chart(_q_bars(
+                    qsq, [("Committed", _pg("team", "TOV"), AWAY),
+                          ("Forced", _pg("opp", "TOV"), GOOD)],
+                    "Turnovers / game"), width="stretch", key="q_tov")
+            with c2:
+                st.markdown("**Turnover rate** — own vs forced")
+                st.plotly_chart(_q_lines(
+                    qsq, [("TOV%", _qv(lambda d: d["four_factors"]["off"]["TOV"]
+                                       * 100), AWAY),
+                          ("Forced TOV%", _qv(lambda d: d["four_factors"]["def"]["TOV"]
+                                              * 100), GOOD)],
+                    "%"), width="stretch", key="q_tovpct")
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.markdown("**Assists / game** — for vs against")
+                st.plotly_chart(_q_bars(
+                    qsq, [("Assists", _pg("team", "AST"), ACCENT),
+                          ("Opp assists", _pg("opp", "AST"), AWAY)],
+                    "Assists / game"), width="stretch", key="q_ast")
+            with c4:
+                st.markdown("**Assist-to-turnover ratio** — for vs against")
+                atr = _qv(lambda d: S._safe(d["team"]["AST"], d["team"]["TOV"]))
+                oatr = _qv(lambda d: S._safe(d["opp"]["AST"], d["opp"]["TOV"]))
+                st.plotly_chart(_q_lines(
+                    qsq, [("AST/TO", atr, ACCENT), ("Opp AST/TO", oatr, AWAY)],
+                    "Ratio"), width="stretch", key="q_atr")
+
+            c5, c6 = st.columns(2)
+            with c5:
+                st.markdown("**Stocks / game** — steals, blocks & total")
+                st.plotly_chart(_q_bars(
+                    qsq, [("Steals", _pg("team", "STL"), ACCENT),
+                          ("Blocks", _pg("team", "BLK"), BLUE),
+                          ("Stocks", _pg("team", "stocks"), GOOD)],
+                    "Per game"), width="stretch", key="q_stocks")
+            with c6:
+                st.markdown("**Fouls / game** — committed vs drawn")
+                st.plotly_chart(_q_bars(
+                    qsq, [("Committed", _pg("team", "PF"), AWAY),
+                          ("Drawn", _pg("opp", "PF"), GOOD)],
+                    "Fouls / game"), width="stretch", key="q_pf")
+
+            # ─────────────────────────────────────────── FOUR FACTORS ───────────
+            st.markdown("<div class='lab-hdr'>Four factors by quarter — offense "
+                        "vs defense</div>", unsafe_allow_html=True)
+            st.caption("eFG%, OREB% and FT rate: higher offense is better. TOV%: "
+                       "lower own / higher forced is better.")
+            ff_keys = [("eFG", "eFG%"), ("TOV", "TOV%"), ("ORB", "OREB%"),
+                       ("FTR", "FT rate")]
+            fcols = st.columns(2)
+            for i, (k, lbl) in enumerate(ff_keys):
+                with fcols[i % 2]:
+                    st.markdown(f"**{lbl}** — offense vs defense")
+                    offv = _qv(lambda d, k=k: d["four_factors"]["off"][k] * 100)
+                    defv = _qv(lambda d, k=k: d["four_factors"]["def"][k] * 100)
+                    st.plotly_chart(_q_bars(
+                        qsq, [("Offense", offv, ACCENT), ("Allowed", defv, AWAY)],
+                        "%"), width="stretch", key=f"q_ff_{k}")
+
+        with qt4:
+            # ─────────────────────────────────────────── FULL TABLE ─────────────
+            st.markdown("<div class='lab-hdr'>Per-quarter stat table</div>",
+                        unsafe_allow_html=True)
+            qrows = []
+            for q in qsq:
+                d = qbx[q]
+                tbq, obq, n = d["team"], d["opp"], max(d["n_games"], 1)
+                qrows.append({
+                    "Q": _q_label(q), "GP": d["n_games"],
+                    "PF/G": round(tbq["PTS"] / n, 1),
+                    "PA/G": round(obq["PTS"] / n, 1),
+                    "ORtg": round(100 * S._safe(tbq["PTS"], d["poss"]), 1),
+                    "DRtg": round(100 * S._safe(obq["PTS"], d["opp_poss"]), 1),
+                    "PPP": round(S._safe(tbq["PTS"], d["poss"]), 2),
+                    "FG%": _pctf(S.fg_pct(tbq), 0),
+                    "3P%": _pctf(S.fg3_pct(tbq), 0),
+                    "eFG%": _pctf(S.efg(tbq), 0),
+                    "oFG%": _pctf(S.fg_pct(obq), 0),
+                    "OREB/G": round(tbq["ORB"] / n, 1),
+                    "DREB/G": round(tbq["DRB"] / n, 1),
+                    "AST/G": round(tbq["AST"] / n, 1),
+                    "TOV/G": round(tbq["TOV"] / n, 1),
+                    "STK/G": round(tbq["stocks"] / n, 1),
+                })
+            st.dataframe(pd.DataFrame(qrows), hide_index=True,
+                         width="stretch")
+
+            # ── Shooting by Quarter (ported from APP3.0): the full shooting line
+            #    for each quarter PLUS half (H1/H2) and Full-game summary rows, and a
+            #    grouped FG%/3P%/eFG% bar over the quarters ─────────────────────────
+            st.markdown("<div class='lab-hdr'>Shooting — full table by quarter"
+                        "</div>", unsafe_allow_html=True)
+
+            def _merge_qbox(qs_subset):
+                """Sum the team boxes (+ poss) over a set of quarters into one box.
+                Box dicts are pure additive counts, so S.* rate fns apply to the sum.
+                Returns (merged_box, poss_sum, games) or (None, 0, 0) if none present."""
+                qs_use = [q for q in qs_subset if q in qbx]
+                if not qs_use:
+                    return None, 0, 0
+                merged = {}
+                for k, v0 in qbx[qs_use[0]]["team"].items():
+                    vals = [qbx[q]["team"][k] for q in qs_use]
+                    merged[k] = (sum(vals) if all(_is_num(v) for v in vals) else v0)
+                poss_sum = sum(qbx[q]["poss"] for q in qs_use)
+                games = max(qbx[q]["n_games"] for q in qs_use)
+                return merged, poss_sum, games
+
+            # Renamed from _shot_row — it shadowed the module-level helper of the
+            # same name (line ~206) inside this function.
+            def _q_shot_row(label, b, poss_q, gp):
                 return {
-                    "Period": label,
-                    "Ast FGA": a["FGA"], "Ast FGM": a["FGM"],
-                    "Ast FG%": _pctf(a["FG%"]) if a["FGA"] else "—",
-                    "Ast 3PA": a["3PA"],
-                    "Ast 3P%": _pctf(a["3P%"]) if a["3PA"] else "—",
-                    "Ast eFG%": _pctf(a["eFG%"]) if a["FGA"] else "—",
-                    "Ast%": _pctf(S._safe(a["FGA"], tot)) if tot else "—",
-                    "SC FGA": s["FGA"], "SC FGM": s["FGM"],
-                    "SC FG%": _pctf(s["FG%"]) if s["FGA"] else "—",
-                    "SC 3PA": s["3PA"],
-                    "SC 3P%": _pctf(s["3P%"]) if s["3PA"] else "—",
-                    "SC eFG%": _pctf(s["eFG%"]) if s["FGA"] else "—",
-                    "SC%": _pctf(S._safe(s["FGA"], tot)) if tot else "—",
+                    "Period": label, "GP": gp,
+                    "FGA": b["FGA"], "FGM": b["FGM"], "FG%": _pctf(S.fg_pct(b)),
+                    "2PA": b["2PA"], "2P%": _pctf(S.fg2_pct(b)) if b["2PA"] else "—",
+                    "3PA": b["3PA"], "3P%": _pctf(S.fg3_pct(b)) if b["3PA"] else "—",
+                    "FTA": b["FTA"], "FT%": _pctf(S.ft_pct(b)) if b["FTA"] else "—",
+                    "eFG%": _pctf(S.efg(b)), "TS%": _pctf(S.ts(b)),
+                    "Paint%": (_pctf(S.paint_fg_pct(b)) if b["paint_FGA"] else "—"),
+                    "PPS": f"{S.pps(b):.2f}", "PPP": f"{S._safe(b['PTS'], poss_q):.2f}",
+                    "ScEff": f"{S.shot_efficiency(b):.3f}", "PTS": b["PTS"],
                 }
 
-            cr_rows = [_cr_row(_q_label(q), [q]) for q in creg]
-            if any(q in cq for q in (1, 2)):
-                cr_rows.append(_cr_row("H1", [1, 2]))
-            if any(q in cq for q in (3, 4)):
-                cr_rows.append(_cr_row("H2", [3, 4]))
-            cr_rows.append(_cr_row("Full", qsq))
-            st.dataframe(pd.DataFrame(cr_rows), hide_index=True, width="stretch")
+            reg = [q for q in qsq if q <= 4]
+            ot = [q for q in qsq if q > 4]
+            shot_rows = []
+            for q in [x for x in reg if x in (1, 2)]:
+                shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
+                                             qbx[q]["poss"], qbx[q]["n_games"]))
+            h1b, h1p, h1g = _merge_qbox([1, 2])
+            if h1b:
+                shot_rows.append(_q_shot_row("H1", h1b, h1p, h1g))
+            for q in [x for x in reg if x in (3, 4)]:
+                shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
+                                             qbx[q]["poss"], qbx[q]["n_games"]))
+            h2b, h2p, h2g = _merge_qbox([3, 4])
+            if h2b:
+                shot_rows.append(_q_shot_row("H2", h2b, h2p, h2g))
+            for q in ot:   # overtime periods, each on its own line
+                shot_rows.append(_q_shot_row(_q_label(q), qbx[q]["team"],
+                                             qbx[q]["poss"], qbx[q]["n_games"]))
+            fb, fp, fg = _merge_qbox(qsq)
+            if fb:
+                shot_rows.append(_q_shot_row("Full", fb, fp, fg))
+            st.dataframe(pd.DataFrame(shot_rows), hide_index=True, width="stretch")
+            st.caption("Full shooting line for every quarter, half (H1/H2) and the "
+                       "whole game (pooled over tracked games). PPP = points per "
+                       "possession that period.")
 
-            # per-quarter series (Off-Pass = BLUE, Self-Created = BAD/red)
-            af = [cq[q]["ast"]["FGA"] for q in creg]
-            sf = [cq[q]["sc"]["FGA"] for q in creg]
-
-            cc1, cc2 = st.columns(2)
-            with cc1:
-                st.markdown("**FGA volume by quarter**")
+            # ── Shooting % by Quarter — grouped FG% / 3P% / eFG% bar ─────────────
+            if reg:
+                st.markdown("**Shooting % by Quarter**")
+                fg_v = [S.fg_pct(qbx[q]["team"]) * 100 for q in reg]
+                tp_v = [S.fg3_pct(qbx[q]["team"]) * 100 for q in reg]
+                efg_v = [S.efg(qbx[q]["team"]) * 100 for q in reg]
                 st.plotly_chart(
-                    _q_bars(creg, [("Off Pass", af, BLUE),
-                                   ("Self-Created", sf, BAD)],
-                            "FGA", height=300, mode="stack",
+                    _q_bars(reg,
+                            [("FG%", fg_v, ACCENT), ("3P%", tp_v, BLUE),
+                             ("eFG%", efg_v, GOOD)],
+                            "%", height=320,
                             text_fmt=lambda v: f"{v:.0f}"),
-                    width="stretch", key="cr_vol")
-            with cc2:
-                ap = [af[i] / (af[i] + sf[i]) * 100 if (af[i] + sf[i]) else 0
-                      for i in range(len(creg))]
-                spct = [100 - v for v in ap]
-                st.markdown("**Shot creation mix %**")
-                st.plotly_chart(
-                    _q_bars(creg, [("Off Pass %", ap, BLUE), ("SC %", spct, BAD)],
-                            "%", height=300, mode="stack",
-                            text_fmt=lambda v: f"{v:.0f}%"),
-                    width="stretch", key="cr_mix")
+                    width="stretch", key="q_sh_pct")
 
-            cc3, cc4 = st.columns(2)
-            with cc3:
-                aefg = [cq[q]["ast"]["eFG"] * 100 for q in creg]
-                sefg = [cq[q]["sc"]["eFG"] * 100 for q in creg]
-                st.markdown("**eFG% by quarter**")
-                st.plotly_chart(
-                    _q_bars(creg, [("Off Pass eFG%", aefg, BLUE),
-                                   ("SC eFG%", sefg, BAD)],
-                            "%", height=300, text_fmt=lambda v: f"{v:.0f}"),
-                    width="stretch", key="cr_efg")
-            with cc4:
-                afg = [cq[q]["ast"]["FG%"] * 100 for q in creg]
-                sfg = [cq[q]["sc"]["FG%"] * 100 for q in creg]
-                st.markdown("**FG% by quarter**")
-                st.plotly_chart(
-                    _q_bars(creg, [("Off Pass FG%", afg, BLUE),
-                                   ("SC FG%", sfg, BAD)],
-                            "%", height=300, text_fmt=lambda v: f"{v:.0f}"),
-                    width="stretch", key="cr_fg")
+            # ── Off-Pass vs Self-Created by Quarter (ported from APP3.0) ─────────
+            cq = bundle.get("creation_quarter") or {}
+            cr_total = sum(cq[q]["ast"]["FGA"] + cq[q]["sc"]["FGA"] for q in cq)
+            if cq and cr_total:
+                st.markdown("<div class='lab-hdr'>Off-Pass vs Self-Created by quarter"
+                            "</div>", unsafe_allow_html=True)
+                st.caption("Every team FG attempt split by how it was created — off a "
+                           "teammate's pass (Off-Pass / assisted) vs taken with no pass "
+                           "into the shot (Self-Created) — broken out by quarter.")
+                # Only quarters that actually have creation data — a sparse book (few
+                # tracked games, or an archive) can miss a quarter, and the unguarded
+                # cq[q] series below would KeyError on it.
+                creg = [q for q in qsq if q <= 4 and q in cq]
 
-            a3 = [cq[q]["ast"]["3P%"] * 100 for q in creg]
-            s3 = [cq[q]["sc"]["3P%"] * 100 for q in creg]
-            st.markdown("**3P% by quarter**")
-            st.plotly_chart(
-                _q_bars(creg, [("Off Pass 3P%", a3, BLUE), ("SC 3P%", s3, BAD)],
-                        "%", height=300, text_fmt=lambda v: f"{v:.0f}"),
-                width="stretch", key="cr_3p")
+                def _cr_merge(lines):
+                    """Sum agg_shots lines (FGA/FGM/3PA/3PM) → totals + recomputed rates."""
+                    fga = sum(l["FGA"] for l in lines)
+                    fgm = sum(l["FGM"] for l in lines)
+                    tpa = sum(l["3PA"] for l in lines)
+                    tpm = sum(l["3PM"] for l in lines)
+                    return {"FGA": fga, "FGM": fgm, "3PA": tpa, "3PM": tpm,
+                            "FG%": S._safe(fgm, fga), "3P%": S._safe(tpm, tpa),
+                            "eFG%": S._safe(fgm + 0.5 * tpm, fga)}
 
-            fa = _cr_merge([cq[q]["ast"] for q in qsq if q in cq])
-            fs = _cr_merge([cq[q]["sc"] for q in qsq if q in cq])
-            ftot = fa["FGA"] + fs["FGA"]
-            if ftot:
-                st.info(
-                    f"**Season split:** {fa['FGA'] / ftot * 100:.1f}% off-pass "
-                    f"({fa['FGA']} FGA · {fa['eFG%'] * 100:.1f}% eFG%) · "
-                    f"{fs['FGA'] / ftot * 100:.1f}% self-created "
-                    f"({fs['FGA']} FGA · {fs['eFG%'] * 100:.1f}% eFG%)")
+                def _cr_row(label, qs):
+                    a = _cr_merge([cq[q]["ast"] for q in qs if q in cq])
+                    s = _cr_merge([cq[q]["sc"] for q in qs if q in cq])
+                    tot = a["FGA"] + s["FGA"]
+                    return {
+                        "Period": label,
+                        "Ast FGA": a["FGA"], "Ast FGM": a["FGM"],
+                        "Ast FG%": _pctf(a["FG%"]) if a["FGA"] else "—",
+                        "Ast 3PA": a["3PA"],
+                        "Ast 3P%": _pctf(a["3P%"]) if a["3PA"] else "—",
+                        "Ast eFG%": _pctf(a["eFG%"]) if a["FGA"] else "—",
+                        "Ast%": _pctf(S._safe(a["FGA"], tot)) if tot else "—",
+                        "SC FGA": s["FGA"], "SC FGM": s["FGM"],
+                        "SC FG%": _pctf(s["FG%"]) if s["FGA"] else "—",
+                        "SC 3PA": s["3PA"],
+                        "SC 3P%": _pctf(s["3P%"]) if s["3PA"] else "—",
+                        "SC eFG%": _pctf(s["eFG%"]) if s["FGA"] else "—",
+                        "SC%": _pctf(S._safe(s["FGA"], tot)) if tot else "—",
+                    }
 
-        # ── every glossary team stat, by quarter (full grid) ────────────────
-        st.markdown("<div class='lab-hdr'>Every stat by quarter — full grid"
-                    "</div>", unsafe_allow_html=True)
-        QSPEC = [
-            ("Points for / g", lambda d: d["team"]["PTS"] / max(d["n_games"], 1), "f1"),
-            ("Points against / g", lambda d: d["opp"]["PTS"] / max(d["n_games"], 1), "f1"),
-            ("Net / g", lambda d: (d["team"]["PTS"] - d["opp"]["PTS"]) / max(d["n_games"], 1), "f1"),
-            ("Off Rating", lambda d: 100 * S._safe(d["team"]["PTS"], d["poss"]), "f1"),
-            ("Def Rating", lambda d: 100 * S._safe(d["opp"]["PTS"], d["opp_poss"]), "f1"),
-            ("Net Rating", lambda d: 100 * (S._safe(d["team"]["PTS"], d["poss"]) - S._safe(d["opp"]["PTS"], d["opp_poss"])), "f1"),
-            ("Pace / g", lambda d: (d["poss"] + d["opp_poss"]) / 2 / max(d["n_games"], 1), "f1"),
-            ("Points / poss", lambda d: S._safe(d["team"]["PTS"], d["poss"]), "f2"),
-            ("FG%", lambda d: S.fg_pct(d["team"]) * 100, "pct"),
-            ("2P%", lambda d: S.fg2_pct(d["team"]) * 100, "pct"),
-            ("3P%", lambda d: S.fg3_pct(d["team"]) * 100, "pct"),
-            ("FT%", lambda d: S.ft_pct(d["team"]) * 100, "pct"),
-            ("eFG%", lambda d: S.efg(d["team"]) * 100, "pct"),
-            ("TS%", lambda d: S.ts(d["team"]) * 100, "pct"),
-            ("Paint FG%", lambda d: S.paint_fg_pct(d["team"]) * 100, "pct"),
-            ("3PA rate", lambda d: S.three_par(d["team"]) * 100, "pct"),
-            ("FT rate", lambda d: S.ftr(d["team"]) * 100, "pct"),
-            ("FGA / g", lambda d: d["team"]["FGA"] / max(d["n_games"], 1), "f1"),
-            ("3PA / g", lambda d: d["team"]["3PA"] / max(d["n_games"], 1), "f1"),
-            ("FTA / g", lambda d: d["team"]["FTA"] / max(d["n_games"], 1), "f1"),
-            ("OREB / g", lambda d: d["team"]["ORB"] / max(d["n_games"], 1), "f1"),
-            ("DREB / g", lambda d: d["team"]["DRB"] / max(d["n_games"], 1), "f1"),
-            ("REB / g", lambda d: d["team"]["TRB"] / max(d["n_games"], 1), "f1"),
-            ("OREB%", lambda d: d["four_factors"]["off"]["ORB"] * 100, "pct"),
-            ("TOV%", lambda d: d["four_factors"]["off"]["TOV"] * 100, "pct"),
-            ("Assists / g", lambda d: d["team"]["AST"] / max(d["n_games"], 1), "f1"),
-            ("Turnovers / g", lambda d: d["team"]["TOV"] / max(d["n_games"], 1), "f1"),
-            ("AST / TO", lambda d: S._safe(d["team"]["AST"], d["team"]["TOV"]), "f2"),
-            ("Steals / g", lambda d: d["team"]["STL"] / max(d["n_games"], 1), "f1"),
-            ("Blocks / g", lambda d: d["team"]["BLK"] / max(d["n_games"], 1), "f1"),
-            ("Stocks / g", lambda d: d["team"]["stocks"] / max(d["n_games"], 1), "f1"),
-            ("Fouls / g", lambda d: d["team"]["PF"] / max(d["n_games"], 1), "f1"),
-            ("Opp FG%", lambda d: S.fg_pct(d["opp"]) * 100, "pct"),
-            ("Opp 3P%", lambda d: S.fg3_pct(d["opp"]) * 100, "pct"),
-            ("Opp eFG%", lambda d: S.efg(d["opp"]) * 100, "pct"),
-            ("Opp TS%", lambda d: S.ts(d["opp"]) * 100, "pct"),
-            ("Forced TOV%", lambda d: d["four_factors"]["def"]["TOV"] * 100, "pct"),
-        ]
-        # heavy wall (37 charts) — a collapsed expander still renders its body,
-        # so gate it behind a real checkbox (page-load perf)
-        if st.checkbox(f"Load every stat by quarter ({len(QSPEC)} charts)",
-                       value=False, key="qgrid_load"):
-            st.caption("Every team stat the app tracks, each as its own per-quarter "
-                       "bar (pooled / averaged over tracked games).")
-            qcols = st.columns(2)
-            for i, (lbl, fn, kind) in enumerate(QSPEC):
-                vals = [fn(qbx[q]) for q in qsq]
-                tf = ((lambda v: f"{v:.0f}") if kind == "pct"
-                      else (lambda v: f"{v:.2f}") if kind == "f2"
-                      else (lambda v: f"{v:.1f}"))
-                with qcols[i % 2]:
-                    st.markdown(f"**{lbl}**")
+                cr_rows = [_cr_row(_q_label(q), [q]) for q in creg]
+                if any(q in cq for q in (1, 2)):
+                    cr_rows.append(_cr_row("H1", [1, 2]))
+                if any(q in cq for q in (3, 4)):
+                    cr_rows.append(_cr_row("H2", [3, 4]))
+                cr_rows.append(_cr_row("Full", qsq))
+                st.dataframe(pd.DataFrame(cr_rows), hide_index=True, width="stretch")
+
+                # per-quarter series (Off-Pass = BLUE, Self-Created = BAD/red)
+                af = [cq[q]["ast"]["FGA"] for q in creg]
+                sf = [cq[q]["sc"]["FGA"] for q in creg]
+
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    st.markdown("**FGA volume by quarter**")
                     st.plotly_chart(
-                        _q_bars(qsq, [(lbl, vals, ACCENT)], lbl, height=260,
-                                text_fmt=tf),
-                        width="stretch", key=f"qgrid_{i}")
+                        _q_bars(creg, [("Off Pass", af, BLUE),
+                                       ("Self-Created", sf, BAD)],
+                                "FGA", height=300, mode="stack",
+                                text_fmt=lambda v: f"{v:.0f}"),
+                        width="stretch", key="cr_vol")
+                with cc2:
+                    ap = [af[i] / (af[i] + sf[i]) * 100 if (af[i] + sf[i]) else 0
+                          for i in range(len(creg))]
+                    spct = [100 - v for v in ap]
+                    st.markdown("**Shot creation mix %**")
+                    st.plotly_chart(
+                        _q_bars(creg, [("Off Pass %", ap, BLUE), ("SC %", spct, BAD)],
+                                "%", height=300, mode="stack",
+                                text_fmt=lambda v: f"{v:.0f}%"),
+                        width="stretch", key="cr_mix")
 
-        # ── by tracked game: a stat across each game's quarters ─────────────
-        st.markdown("<div class='lab-hdr'>By tracked game — quarter by quarter"
-                    "</div>", unsafe_allow_html=True)
-        qbg = bundle.get("quarter_by_game") or {}
-        if qbg:
-            QBG_STATS = [
-                ("Points for", lambda d: d["team"]["PTS"]),
-                ("Points against", lambda d: d["opp"]["PTS"]),
-                ("Net points", lambda d: d["team"]["PTS"] - d["opp"]["PTS"]),
-                ("Off Rating", lambda d: 100 * S._safe(d["team"]["PTS"], d["poss"])),
-                ("Def Rating", lambda d: 100 * S._safe(d["opp"]["PTS"], d["opp_poss"])),
-                ("FG%", lambda d: S.fg_pct(d["team"]) * 100),
-                ("3P%", lambda d: S.fg3_pct(d["team"]) * 100),
-                ("eFG%", lambda d: S.efg(d["team"]) * 100),
-                ("TS%", lambda d: S.ts(d["team"]) * 100),
-                ("Assists", lambda d: d["team"]["AST"]),
-                ("Turnovers", lambda d: d["team"]["TOV"]),
-                ("Rebounds", lambda d: d["team"]["TRB"]),
-                ("OREB", lambda d: d["team"]["ORB"]),
-                ("Stocks", lambda d: d["team"]["stocks"]),
+                cc3, cc4 = st.columns(2)
+                with cc3:
+                    aefg = [cq[q]["ast"]["eFG"] * 100 for q in creg]
+                    sefg = [cq[q]["sc"]["eFG"] * 100 for q in creg]
+                    st.markdown("**eFG% by quarter**")
+                    st.plotly_chart(
+                        _q_bars(creg, [("Off Pass eFG%", aefg, BLUE),
+                                       ("SC eFG%", sefg, BAD)],
+                                "%", height=300, text_fmt=lambda v: f"{v:.0f}"),
+                        width="stretch", key="cr_efg")
+                with cc4:
+                    afg = [cq[q]["ast"]["FG%"] * 100 for q in creg]
+                    sfg = [cq[q]["sc"]["FG%"] * 100 for q in creg]
+                    st.markdown("**FG% by quarter**")
+                    st.plotly_chart(
+                        _q_bars(creg, [("Off Pass FG%", afg, BLUE),
+                                       ("SC FG%", sfg, BAD)],
+                                "%", height=300, text_fmt=lambda v: f"{v:.0f}"),
+                        width="stretch", key="cr_fg")
+
+                a3 = [cq[q]["ast"]["3P%"] * 100 for q in creg]
+                s3 = [cq[q]["sc"]["3P%"] * 100 for q in creg]
+                st.markdown("**3P% by quarter**")
+                st.plotly_chart(
+                    _q_bars(creg, [("Off Pass 3P%", a3, BLUE), ("SC 3P%", s3, BAD)],
+                            "%", height=300, text_fmt=lambda v: f"{v:.0f}"),
+                    width="stretch", key="cr_3p")
+
+                fa = _cr_merge([cq[q]["ast"] for q in qsq if q in cq])
+                fs = _cr_merge([cq[q]["sc"] for q in qsq if q in cq])
+                ftot = fa["FGA"] + fs["FGA"]
+                if ftot:
+                    st.info(
+                        f"**Season split:** {fa['FGA'] / ftot * 100:.1f}% off-pass "
+                        f"({fa['FGA']} FGA · {fa['eFG%'] * 100:.1f}% eFG%) · "
+                        f"{fs['FGA'] / ftot * 100:.1f}% self-created "
+                        f"({fs['FGA']} FGA · {fs['eFG%'] * 100:.1f}% eFG%)")
+
+            # ── every glossary team stat, by quarter (full grid) ────────────────
+            st.markdown("<div class='lab-hdr'>Every stat by quarter — full grid"
+                        "</div>", unsafe_allow_html=True)
+            QSPEC = [
+                ("Points for / g", lambda d: d["team"]["PTS"] / max(d["n_games"], 1), "f1"),
+                ("Points against / g", lambda d: d["opp"]["PTS"] / max(d["n_games"], 1), "f1"),
+                ("Net / g", lambda d: (d["team"]["PTS"] - d["opp"]["PTS"]) / max(d["n_games"], 1), "f1"),
+                ("Off Rating", lambda d: 100 * S._safe(d["team"]["PTS"], d["poss"]), "f1"),
+                ("Def Rating", lambda d: 100 * S._safe(d["opp"]["PTS"], d["opp_poss"]), "f1"),
+                ("Net Rating", lambda d: 100 * (S._safe(d["team"]["PTS"], d["poss"]) - S._safe(d["opp"]["PTS"], d["opp_poss"])), "f1"),
+                ("Pace / g", lambda d: (d["poss"] + d["opp_poss"]) / 2 / max(d["n_games"], 1), "f1"),
+                ("Points / poss", lambda d: S._safe(d["team"]["PTS"], d["poss"]), "f2"),
+                ("FG%", lambda d: S.fg_pct(d["team"]) * 100, "pct"),
+                ("2P%", lambda d: S.fg2_pct(d["team"]) * 100, "pct"),
+                ("3P%", lambda d: S.fg3_pct(d["team"]) * 100, "pct"),
+                ("FT%", lambda d: S.ft_pct(d["team"]) * 100, "pct"),
+                ("eFG%", lambda d: S.efg(d["team"]) * 100, "pct"),
+                ("TS%", lambda d: S.ts(d["team"]) * 100, "pct"),
+                ("Paint FG%", lambda d: S.paint_fg_pct(d["team"]) * 100, "pct"),
+                ("3PA rate", lambda d: S.three_par(d["team"]) * 100, "pct"),
+                ("FT rate", lambda d: S.ftr(d["team"]) * 100, "pct"),
+                ("FGA / g", lambda d: d["team"]["FGA"] / max(d["n_games"], 1), "f1"),
+                ("3PA / g", lambda d: d["team"]["3PA"] / max(d["n_games"], 1), "f1"),
+                ("FTA / g", lambda d: d["team"]["FTA"] / max(d["n_games"], 1), "f1"),
+                ("OREB / g", lambda d: d["team"]["ORB"] / max(d["n_games"], 1), "f1"),
+                ("DREB / g", lambda d: d["team"]["DRB"] / max(d["n_games"], 1), "f1"),
+                ("REB / g", lambda d: d["team"]["TRB"] / max(d["n_games"], 1), "f1"),
+                ("OREB%", lambda d: d["four_factors"]["off"]["ORB"] * 100, "pct"),
+                ("TOV%", lambda d: d["four_factors"]["off"]["TOV"] * 100, "pct"),
+                ("Assists / g", lambda d: d["team"]["AST"] / max(d["n_games"], 1), "f1"),
+                ("Turnovers / g", lambda d: d["team"]["TOV"] / max(d["n_games"], 1), "f1"),
+                ("AST / TO", lambda d: S._safe(d["team"]["AST"], d["team"]["TOV"]), "f2"),
+                ("Steals / g", lambda d: d["team"]["STL"] / max(d["n_games"], 1), "f1"),
+                ("Blocks / g", lambda d: d["team"]["BLK"] / max(d["n_games"], 1), "f1"),
+                ("Stocks / g", lambda d: d["team"]["stocks"] / max(d["n_games"], 1), "f1"),
+                ("Fouls / g", lambda d: d["team"]["PF"] / max(d["n_games"], 1), "f1"),
+                ("Opp FG%", lambda d: S.fg_pct(d["opp"]) * 100, "pct"),
+                ("Opp 3P%", lambda d: S.fg3_pct(d["opp"]) * 100, "pct"),
+                ("Opp eFG%", lambda d: S.efg(d["opp"]) * 100, "pct"),
+                ("Opp TS%", lambda d: S.ts(d["opp"]) * 100, "pct"),
+                ("Forced TOV%", lambda d: d["four_factors"]["def"]["TOV"] * 100, "pct"),
             ]
-            glabel = {g["game_id"]: f"{g['date'][5:]} {g['site']} {g['opp'][:8]}"
-                      for g in log}
-            stat_name = st.selectbox("Stat", [s[0] for s in QBG_STATS],
-                                     key="q_bg_stat")
-            fn = dict(QBG_STATS)[stat_name]
-            bgf = go.Figure()
-            for j, (gid, qd) in enumerate(sorted(
-                    qbg.items(), key=lambda kv: glabel.get(kv[0], ""))):
-                qs_g = sorted(qd)
-                bgf.add_trace(go.Scatter(
-                    x=[_q_label(q) for q in qs_g], y=[fn(qd[q]) for q in qs_g],
-                    name=glabel.get(gid, str(gid)), mode="lines+markers",
-                    line=dict(color=PALETTE[j % len(PALETTE)], width=2),
-                    marker=dict(size=6)))
-            bgf.update_yaxes(title=stat_name)
-            _style(bgf, 420)
-            st.plotly_chart(bgf, width="stretch", key="q_bg_chart")
-            st.caption(f"{stat_name} by quarter, one line per tracked game — the "
-                       "'by tracked-game quarter' view. Use it to spot games where "
-                       "a quarter went sideways.")
+            # heavy wall (37 charts) — a collapsed expander still renders its body,
+            # so gate it behind a real checkbox (page-load perf)
+            if st.checkbox(f"Load every stat by quarter ({len(QSPEC)} charts)",
+                           value=False, key="qgrid_load"):
+                st.caption("Every team stat the app tracks, each as its own per-quarter "
+                           "bar (pooled / averaged over tracked games).")
+                qcols = st.columns(2)
+                for i, (lbl, fn, kind) in enumerate(QSPEC):
+                    vals = [fn(qbx[q]) for q in qsq]
+                    tf = ((lambda v: f"{v:.0f}") if kind == "pct"
+                          else (lambda v: f"{v:.2f}") if kind == "f2"
+                          else (lambda v: f"{v:.1f}"))
+                    with qcols[i % 2]:
+                        st.markdown(f"**{lbl}**")
+                        st.plotly_chart(
+                            _q_bars(qsq, [(lbl, vals, ACCENT)], lbl, height=260,
+                                    text_fmt=tf),
+                            width="stretch", key=f"qgrid_{i}")
+
+            # ── by tracked game: a stat across each game's quarters ─────────────
+            st.markdown("<div class='lab-hdr'>By tracked game — quarter by quarter"
+                        "</div>", unsafe_allow_html=True)
+            qbg = bundle.get("quarter_by_game") or {}
+            if qbg:
+                QBG_STATS = [
+                    ("Points for", lambda d: d["team"]["PTS"]),
+                    ("Points against", lambda d: d["opp"]["PTS"]),
+                    ("Net points", lambda d: d["team"]["PTS"] - d["opp"]["PTS"]),
+                    ("Off Rating", lambda d: 100 * S._safe(d["team"]["PTS"], d["poss"])),
+                    ("Def Rating", lambda d: 100 * S._safe(d["opp"]["PTS"], d["opp_poss"])),
+                    ("FG%", lambda d: S.fg_pct(d["team"]) * 100),
+                    ("3P%", lambda d: S.fg3_pct(d["team"]) * 100),
+                    ("eFG%", lambda d: S.efg(d["team"]) * 100),
+                    ("TS%", lambda d: S.ts(d["team"]) * 100),
+                    ("Assists", lambda d: d["team"]["AST"]),
+                    ("Turnovers", lambda d: d["team"]["TOV"]),
+                    ("Rebounds", lambda d: d["team"]["TRB"]),
+                    ("OREB", lambda d: d["team"]["ORB"]),
+                    ("Stocks", lambda d: d["team"]["stocks"]),
+                ]
+                glabel = {g["game_id"]: f"{g['date'][5:]} {g['site']} {g['opp'][:8]}"
+                          for g in log}
+                stat_name = st.selectbox("Stat", [s[0] for s in QBG_STATS],
+                                         key="q_bg_stat")
+                fn = dict(QBG_STATS)[stat_name]
+                bgf = go.Figure()
+                for j, (gid, qd) in enumerate(sorted(
+                        qbg.items(), key=lambda kv: glabel.get(kv[0], ""))):
+                    qs_g = sorted(qd)
+                    bgf.add_trace(go.Scatter(
+                        x=[_q_label(q) for q in qs_g], y=[fn(qd[q]) for q in qs_g],
+                        name=glabel.get(gid, str(gid)), mode="lines+markers",
+                        line=dict(color=PALETTE[j % len(PALETTE)], width=2),
+                        marker=dict(size=6)))
+                bgf.update_yaxes(title=stat_name)
+                _style(bgf, 420)
+                st.plotly_chart(bgf, width="stretch", key="q_bg_chart")
+                st.caption(f"{stat_name} by quarter, one line per tracked game — the "
+                           "'by tracked-game quarter' view. Use it to spot games where "
+                           "a quarter went sideways.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

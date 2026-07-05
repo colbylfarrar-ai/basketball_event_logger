@@ -61,13 +61,23 @@ def game_people(game_id):
     """Resolve the two teams' players + officials for a game.
 
     Returns dict with:
-      players   [{id, name, number, team_id, label}]  (archived included so any
-                historical event reference still resolves)
+      players   [{id, name, number, team_id, label}]  (the GAME'S SEASON roster,
+                plus any player its events already reference — so a rolled-over
+                team doesn't show two of everyone)
       officials [{id, name}]
       pid2label, label2pid, oid2name, name2oid, pid2team
     Labels are 'ABBR #num Name', de-duplicated with an [id] suffix if needed.
+
+    SEASON SCOPING: after a New-Season rollover a returning player has BOTH an
+    archived row (stamped with last season's label) AND a fresh Current row —
+    both on the same team_id. An unscoped `team_id IN (?,?)` therefore listed
+    every returner twice (once suffixed [id]). The picker now shows the roster
+    of the GAME'S OWN season (SEAS.roster_clause) — the rows the game's events
+    actually point at — then UNIONs any event-referenced pid outside it (a
+    transfer, a manual cross-season correction) so every reference resolves.
     """
-    g = query("""SELECT g.team1_id, g.team2_id, t1.name n1, t2.name n2
+    import helpers.seasons as SEAS
+    g = query("""SELECT g.team1_id, g.team2_id, g.season, t1.name n1, t2.name n2
                  FROM games g JOIN teams t1 ON t1.id=g.team1_id
                               JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""",
               (game_id,))
@@ -77,9 +87,30 @@ def game_people(game_id):
         return empty
     g = g[0]
     abbr = {g["team1_id"]: _abbr(g["n1"]), g["team2_id"]: _abbr(g["n2"])}
-    rows = query("""SELECT id, name, number, team_id FROM players
-                    WHERE team_id IN (?,?) ORDER BY team_id, number, name""",
-                 (g["team1_id"], g["team2_id"]))
+    # roster for THIS game's season (current → archived=0; a past label → that
+    # season's snapshot rows).
+    _rclause, _rparams = SEAS.roster_clause(g["season"], alias="p")
+    rows = query(f"""SELECT p.id, p.name, p.number, p.team_id FROM players p
+                     WHERE p.team_id IN (?,?) AND {_rclause}
+                     ORDER BY p.team_id, p.number, p.name""",
+                 (g["team1_id"], g["team2_id"], *_rparams))
+    # any pid the game's events already reference but that the season roster
+    # missed (defensive — keeps every historical edit resolvable).
+    _seen = {r["id"] for r in rows}
+    _cols = ("primary_player_id", "secondary_player_id", "rebound_by_id",
+             "pass_from_id", "shot_created_by_id", "blocked_by_id",
+             "guarded_by_id", "stolen_by_id")
+    _refd = set()
+    for c in _cols:
+        for r in query(f"SELECT DISTINCT {c} pid FROM game_events "
+                       f"WHERE game_id=? AND {c} IS NOT NULL", (game_id,)):
+            _refd.add(r["pid"])
+    _extra = _refd - _seen
+    if _extra:
+        ph = ",".join("?" * len(_extra))
+        rows = list(rows) + query(
+            f"SELECT id, name, number, team_id FROM players WHERE id IN ({ph}) "
+            f"ORDER BY team_id, number, name", tuple(_extra))
     pid2label, label2pid, pid2team, players = {}, {}, {}, []
     for r in rows:
         lbl = f"{abbr.get(r['team_id'], '')} #{r['number']} {r['name']}".strip()

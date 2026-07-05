@@ -1767,12 +1767,24 @@ def _type_stat_table(g, game_type, season="Current"):
             if gids else [])
 
 
+# Stakes weights: how much the two teams' QUALITY and an UPSET lift a game's
+# excitement. Tuned to the founder's ordering — a #1-vs-#2 back-and-forth at a
+# 3.7 raw GEI should edge a #450-vs-#415 game at 4.2, and a competitive big
+# upset (#250 over #20) lands between the two. Multiplicative so a blowout's
+# low GEI is never rescued by stakes alone.
+_GEI_QUAL_W = 0.45      # weight on the two teams' mean quality percentile
+_GEI_UPSET_W = 0.60     # weight on the normalized rank gap when the underdog won
+
+
 @st.cache_data(ttl=600, show_spinner=False)
-def _gei_board(g):
-    """Game Excitement Index for every tracked current-season game of gender `g`,
-    ranked most-dramatic first. Rebuilds each game's scoring timeline → win-prob
-    curve → GEI (same pipeline the box score uses). Tracked games only (a curve
-    needs the scoring events); box-only games have no timeline."""
+def _gei_board(g, season="Current", _scored=None):
+    """Game Excitement Index for every tracked game of gender `g` in `season`,
+    ranked most-dramatic first with a STAKES adjustment. Rebuilds each game's
+    scoring timeline → win-prob curve → GEI (same pipeline the box score uses),
+    then multiplies by 1 + quality + upset stakes so a marquee thriller outranks
+    an equally-frantic bottom-of-the-league game and a live upset gets its due.
+    `scored` (team_ratings.score_ratings) supplies the ranks; without it the
+    board falls back to raw GEI (stakes = 0). Tracked games only."""
     import helpers.win_probability as WP
     import helpers.gameflow as GF
     rows = query(
@@ -1780,9 +1792,20 @@ def _gei_board(g):
                   t1.name AS n1, t2.name AS n2
            FROM games g JOIN teams t1 ON t1.id=g.team1_id
                         JOIN teams t2 ON t2.id=g.team2_id
-           WHERE g.tracked=1 AND g.season='Current' AND t1.gender=?""", (g,))
+           WHERE g.tracked=1 AND g.season=? AND t1.gender=?""",
+        (SEAS.ACTIVE if SEAS.is_current(season) else season, g))
     if not rows:
         return []
+    scored = _scored or {}
+    n_teams = len(scored) or 1
+
+    def _q(tid):
+        """A team's quality percentile in [0,1] (1 = best). None if unranked."""
+        rk = (scored.get(tid) or {}).get("Rank")
+        if rk is None or n_teams < 2:
+            return None
+        return 1.0 - (rk - 1) / (n_teams - 1)
+
     ev_by = defaultdict(list)
     for e in S.fetch_events([r["id"] for r in rows]):
         ev_by[e["game_id"]].append(e)
@@ -1809,10 +1832,27 @@ def _gei_board(g):
         if len(curve) < 2:
             continue
         summ = WP.summarize(curve)
+        gei = summ["gei"]
+
+        # ── stakes: mean quality of the two teams + an upset kicker ──────────
+        q1, q2 = _q(r["team1_id"]), _q(r["team2_id"])
+        qual = ((q1 + q2) / 2) if (q1 is not None and q2 is not None) else 0.0
+        upset = 0.0
+        rk1 = (scored.get(r["team1_id"]) or {}).get("Rank")
+        rk2 = (scored.get(r["team2_id"]) or {}).get("Rank")
+        if (rk1 and rk2 and r["home_score"] is not None
+                and r["away_score"] != r["home_score"] and n_teams > 1):
+            win_rk = rk1 if r["home_score"] > r["away_score"] else rk2
+            los_rk = rk2 if r["home_score"] > r["away_score"] else rk1
+            if win_rk > los_rk:                    # worse-seeded team won
+                upset = (win_rk - los_rk) / (n_teams - 1)
+        stakes = _GEI_QUAL_W * qual + _GEI_UPSET_W * upset
         out.append({"date": r["date"], "matchup": f'{r["n1"]} vs {r["n2"]}',
                     "score": f'{r["home_score"]}-{r["away_score"]}',
-                    "gei": summ["gei"], "label": summ["label"]})
-    out.sort(key=lambda d: -d["gei"])
+                    "gei": gei, "adj_gei": gei * (1 + stakes),
+                    "stakes": stakes, "qual": qual, "upset": upset,
+                    "label": summ["label"]})
+    out.sort(key=lambda d: -d["adj_gei"])
     return out
 
 
@@ -1940,28 +1980,42 @@ def _fx_evr():
     #  EXCITEMENT — Game Excitement Index leaderboard (tracked games)
     # ──────────────────────────────────────────────────────────────────────
     with lab_exc:
-        _exc_lock = _archive_note() or _paid_pool_lock()   # current-only tag surface
+        # Excitement is per-game and season-scoped, so it works on archives too
+        # (unlike the league-wide tag surfaces) — only the paid-pool lock gates it.
+        _exc_lock = _paid_pool_lock()
         if _exc_lock:
             st.info(_exc_lock)
         else:
             st.caption(
-                "The most dramatic tracked games by **Game Excitement Index** "
-                "(GEI = total win-probability movement, length-normalized). A "
-                "back-and-forth thriller scores high; a wire-to-wire blowout ≈ 0.")
-            _board = _gei_board(gender)
+                "The most dramatic tracked games by **Adjusted GEI** — the Game "
+                "Excitement Index (total win-probability movement, length-"
+                "normalized) lifted by the **stakes**: how good the two teams are "
+                "and whether it was an upset. A #1-vs-#2 thriller outranks an "
+                "equally-frantic bottom-of-the-league game, and a live upset gets "
+                "its due — but a wire-to-wire blowout still sinks (low GEI).")
+            _board = _gei_board(gender, season_pick, scored)
             if not _board:
                 st.caption("No tracked games with a scoring timeline yet — track a "
                            "game in the Game Tracker and its GEI shows here.")
             else:
                 _bdf = pd.DataFrame([{
                     "Game": d["matchup"], "Score": d["score"], "Date": d["date"],
-                    "GEI": round(d["gei"], 2), "Drama": d["label"],
+                    "Adj GEI": round(d["adj_gei"], 2),
+                    "GEI": round(d["gei"], 2),
+                    "Stakes": (f"+{d['stakes'] * 100:.0f}%"
+                               + ("  ⚡upset" if d["upset"] > 0.05 else "")),
+                    "Drama": d["label"],
                 } for d in _board[:25]])
                 st.dataframe(
                     _bdf, hide_index=True, width="stretch",
-                    column_config={"GEI": st.column_config.ProgressColumn(
-                        "GEI", format="%.2f", min_value=0,
-                        max_value=max(4.0, _board[0]["gei"]))})
+                    column_config={"Adj GEI": st.column_config.ProgressColumn(
+                        "Adj GEI", format="%.2f", min_value=0,
+                        max_value=max(4.0, _board[0]["adj_gei"]))})
+                st.caption("**Adj GEI** = GEI × (1 + stakes); Stakes = "
+                           f"{int(_GEI_QUAL_W * 100)}% × the two teams' mean "
+                           f"quality + {int(_GEI_UPSET_W * 100)}% × the upset "
+                           "margin (⚡ = the worse-seeded team won). Sorted by "
+                           "Adj GEI; raw GEI shown alongside.")
 
     # ──────────────────────────────────────────────────────────────────────
     #  PLAY TYPES — league leaders by one-tap set call (team + player)

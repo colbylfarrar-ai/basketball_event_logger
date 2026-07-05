@@ -272,7 +272,11 @@ def box_prior_from_ratings(gender=None, game_ids=None, scale=PRIOR_SCALE,
 
     Pass the result as compute_rapm(..., prior=box_prior_from_ratings(gender))."""
     import helpers.player_ratings as PRt
-    rt = PRt.player_ratings(game_ids=game_ids, gender=gender)
+    # include_impact=False: the box prior only needs the OFFENSE/DEFENSE composites,
+    # and folding the impact pillar here would trigger a nested pure-RAPM solve just
+    # to build the prior for the box-prior RAPM solve — wasteful, and circular in
+    # spirit. The prior stays a pure box-composite anchor.
+    rt = PRt.player_ratings(game_ids=game_ids, gender=gender, include_impact=False)
     prior = {}
     for pid, r in rt.items():
         off, dfn = r.get("OFFENSE"), r.get("DEFENSE")

@@ -552,11 +552,16 @@ _OFFENSE_PARTS = [("shooting", 1.0), ("finishing", 0.6),
                   ("PPG", 1.0), ("PRF/G", 0.6), ("USG%", 0.6), ("MPG", 0.3),
                   ("PPP", 0.75), ("PPSA", 0.5), ("VPS", 0.5)]
 # OVERALL = the four pillars (offense-leaning) + production anchors + a length
-# nudge + an OPPONENT-QUALITY bonus (oppadj). oppadj rewards genuine production
-# against strong opposition and cancels padding against weak opposition (see
-# _opponent_adjust): good-vs-good boosts, good-vs-bad ~0, weak production 0.
-_OVERALL_PARTS = [("offense", 1.1), ("defense", 1.0), ("playmaking", 1.0),
-                  ("rebounding", 0.8), ("GS/G", 1.0), ("EFF/G", 0.6), ("FIC/G", 0.5),
+# nudge + an OPPONENT-QUALITY bonus (oppadj) + a possession-IMPACT pillar (impact).
+# `impact` is pure RAPM's z (opponent+teammate-adjusted points per 100) — a heavy,
+# genuinely-adjusted signal folded at pillar weight, the "HoopWAR big in there"
+# ask. It rides at 0.9 (just under offense): it measures on/off court value the box
+# leaves can't see, but on a thin book it's noisy, so not the single dominant term.
+# oppadj rewards genuine production against strong opposition (good-vs-good boosts,
+# good-vs-bad ~0, weak production 0).
+_OVERALL_PARTS = [("offense", 1.1), ("impact", 0.9), ("defense", 1.0),
+                  ("playmaking", 1.0), ("rebounding", 0.8),
+                  ("GS/G", 1.0), ("EFF/G", 0.6), ("FIC/G", 0.5),
                   ("physical", 0.25), ("oppadj", 0.6)]
 
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players
@@ -596,6 +601,52 @@ def _restandardize(zmap):
 # player_ratings call (badges/scout/lineups/cards) would tax the hot path. Memo it
 # by (gender, season, results_fingerprint) so it recomputes only when a score moves.
 _OPP_RATINGS_MEMO: dict = {}
+
+# Pure-RAPM memo: the possession-impact leaf solves a ridge regression, far too
+# heavy to redo on every player_ratings call. Memoized single-entry by (gender,
+# game-set, events fingerprint) so it solves once per data-state and every caller
+# in the process (badges/scout/cards/rankings) reuses it — OVERALL stays identical
+# everywhere without paying the solve repeatedly.
+_RAPM_MEMO: dict = {}
+
+
+def _events_fingerprint():
+    """Cheap (count, max id) signature of game_events — changes when any event is
+    added/edited (including tag-only edits a score fingerprint would miss), so the
+    RAPM memo invalidates exactly when the possession data moves. One aggregate."""
+    try:
+        r = query("SELECT COUNT(*) c, COALESCE(MAX(id),0) m FROM game_events")[0]
+        return (r["c"], r["m"])
+    except sqlite3.OperationalError:
+        return None
+
+
+def _pure_rapm_cached(game_ids, gender):
+    """{player_id: RAPM} — pure (prior=None) opponent- and teammate-adjusted
+    plus-minus, per 100 possessions, memoized by (gender, game-set, events fp).
+
+    PURE (no box prior) is deliberate: it carries no re-packaging of the rating's
+    own box leaves, so folding its z into OVERALL adds genuinely new adjusted-impact
+    signal rather than double-counting (the concern that kept box-prior HoopWAR
+    display-only). On a thin book it shrinks stars toward 0, but the z still RANKS
+    them correctly, which is all the leaf needs. Returns {} when RAPM can't solve."""
+    sig = tuple(sorted(game_ids)) if game_ids else None
+    key = (gender, sig, _events_fingerprint())
+    if key in _RAPM_MEMO:
+        return _RAPM_MEMO[key]
+    try:
+        import helpers.rapm as RP
+        solved = RP.compute_rapm(game_ids=game_ids, prior=None)
+        cached = {pid: r["RAPM"] for pid, r in solved.items()
+                  if r.get("RAPM") is not None}
+    except Exception:
+        cached = {}                        # numpy/schema missing or no solve
+    # small bounded cache: hold a few data-states (F/M · None/explicit game sets)
+    # so distinct surfaces don't evict each other and re-pay the ridge solve.
+    if len(_RAPM_MEMO) >= 6:
+        _RAPM_MEMO.pop(next(iter(_RAPM_MEMO)))
+    _RAPM_MEMO[key] = cached
+    return cached
 
 
 def _score_ratings_cached(gender, season):
@@ -679,7 +730,8 @@ def _opponent_strength(profiles, gender, game_ids, season, opp_ratings=None):
 
 def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                    stabilize=True, profiles=None, season="Current",
-                   opp_adjust=True, opp_ratings=None):
+                   opp_adjust=True, opp_ratings=None,
+                   include_impact=True, rapm=None):
     """
     Compute every player's five 0-100 ratings over the eligible pool.
 
@@ -701,7 +753,8 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     map so the engine isn't recomputed twice for one table.
     """
     if profiles is None:
-        profiles = player_profiles(game_ids, gender=gender, min_games=min_games)
+        profiles = player_profiles(game_ids, gender=gender, min_games=min_games,
+                                   season=season)
     if not profiles:
         return {}
 
@@ -784,10 +837,23 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             shrink = eg / (eg + RATING_K_GAMES)
             oppadj_z[p] = max(0.0, oz) * max(0.0, sz) * shrink
 
+    # ── possession-impact pillar (pure RAPM z — "HoopWAR big in there") ──────
+    # Fold opponent+teammate-adjusted plus-minus as an OVERALL leaf. Memoized so
+    # the ridge solves once per data-state and every caller reuses it. Players
+    # below RAPM's min-possession gate get no value → the leaf drops from the mean
+    # (thin samples aren't penalized). include_impact=False / rapm={} disables it.
+    impact_z = {p: None for p in pids}
+    if include_impact:
+        if rapm is None:
+            rapm = _pure_rapm_cached(game_ids, gender)
+        if rapm:
+            impact_z = _zscores({p: rapm.get(p) for p in pids})
+
     overall_z = combine(_OVERALL_PARTS,
-                        {"offense": offense_z, "defense": defense_z,
-                         "playmaking": playmaking_z, "rebounding": rebounding_z,
-                         "physical": physical_z, "oppadj": oppadj_z})
+                        {"offense": offense_z, "impact": impact_z,
+                         "defense": defense_z, "playmaking": playmaking_z,
+                         "rebounding": rebounding_z, "physical": physical_z,
+                         "oppadj": oppadj_z})
 
     def _rate(z, g):
         """0-100 rating from a z-score, regressed toward 50 by EVIDENCE games (a
@@ -817,6 +883,9 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "PerimDef": (_rate(perimdef_z[p], eg) if perimdef_z.get(p) is not None else None),
             "OREBrtg":  (_rate(oreb_z[p], eg) if oreb_z.get(p) is not None else None),
             "DREBrtg":  (_rate(dreb_z[p], eg) if dreb_z.get(p) is not None else None),
+            # possession impact: raw pure-RAPM (pts/100, opp+teammate adjusted) that
+            # feeds the OVERALL impact pillar — None below RAPM's min-possession gate.
+            "Impact": _round((rapm or {}).get(p), 2),
             # measurables rating — None when no height/wingspan recorded
             "PHYSICAL":   (_rate(physical_z[p], eg)
                            if physical_z.get(p) is not None else None),
@@ -1042,6 +1111,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             # split sub-ratings (rim/perimeter defense, off/def rebounding)
             "RimDef": rt.get("RimDef"), "PerimDef": rt.get("PerimDef"),
             "OREBrtg": rt.get("OREBrtg"), "DREBrtg": rt.get("DREBrtg"),
+            "Impact": rt.get("Impact"),
             "PHYSICAL": rt.get("PHYSICAL"),
             "Height": prof.get("height"), "Wingspan": prof.get("wingspan"),
             "Weight": prof.get("weight"),
@@ -1208,8 +1278,8 @@ EVENT_DERIVED_STATS = frozenset({
     # 0-100 ratings (gated wholesale) + the rank that rides on OVERALL
     "OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING",
     "Shooting", "Finishing", "2WAY", "Rank",
-    # split sub-ratings + on-court playmaking rate (all event-derived)
-    "RimDef", "PerimDef", "OREBrtg", "DREBrtg", "AST%",
+    # split sub-ratings + on-court playmaking rate + possession impact (event-derived)
+    "RimDef", "PerimDef", "OREBrtg", "DREBrtg", "AST%", "Impact",
     "PassFG%", "PassxFG%", "PassOpen%",
     # shot-creation / usage / impact (lineups, minutes, possessions, events)
     "SC", "SC/G", "SCShot%", "SCPass%", "SCCreated%", "SelfCr%", "Astd%",

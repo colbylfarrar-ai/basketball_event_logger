@@ -4492,9 +4492,12 @@ _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
 # carries its own player selectbox). Only the chosen branch's @st.fragment runs,
 # so the heavy roster wall and the heavy player card never compute together.
 if _tdview == "Roster":
-    _rv = _seg("View", ["Roster", "Player"], default="Roster",
+    _rv = _seg("View", ["Roster", "Impact & Splits", "Player"], default="Roster",
                key="td_roster_view") or "Roster"
     if _rv == "Roster":
         DPLAY.render(_players_ctx)
+    elif _rv == "Impact & Splits":
+        import helpers.advanced_ratings as ADV
+        ADV.leaderboard(players, has_tracked, key="td")
     else:
         DPROF.render(_prof_ctx)

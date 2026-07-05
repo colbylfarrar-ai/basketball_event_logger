@@ -536,8 +536,9 @@ def _lab_names(g):
     return MX.player_names(gender=g)
 
 
-(tab_lead, tab_rate, tab_shot, tab_cmp, tab_prof, tab_plab, tab_gloss) = st.tabs(
-    ["Leaders", "Ratings", "Shot Lab",
+(tab_lead, tab_rate, tab_impact, tab_shot, tab_cmp, tab_prof, tab_plab,
+ tab_gloss) = st.tabs(
+    ["Leaders", "Ratings", "Impact & Splits", "Shot Lab",
      "Compare", "Player Profile", "Lab", "Glossary"])
 
 
@@ -1136,6 +1137,15 @@ def _fx_shot():
         _hot_zones(pl_zone)
     else:
         st.caption("No zone data for this player.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 3 — IMPACT & SPLITS  (rebuilt-engine dimensions: RAPM impact, defense /
+#  rebounding sub-ratings, playmaking depth, tracked-vs-box confidence)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_impact:
+    import helpers.advanced_ratings as ADV
+    ADV.leaderboard(rows, _PAID, key="pl")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

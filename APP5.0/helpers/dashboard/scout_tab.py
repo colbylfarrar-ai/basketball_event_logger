@@ -50,6 +50,8 @@ SCOUT_SECTIONS = [
     ("player_plays", "Player play-type mix (on personnel cards)", "Personnel"),
     ("custom_notes", "Custom notes (per player + a team note)", "Personnel"),
     ("three_profile", "Per-player 3-point profile", "Personnel"),
+    ("impact_splits", "Impact & rating splits (RAPM · rim/perim · OREB/DREB)",
+     "Personnel"),
     ("pc_offense", "Play calls — how they get their shots", "Offense (play calls)"),
     ("pc_defense", "What they allow — play calls defended", "Offense (play calls)"),
     ("pc_tendencies", "Set tendencies — what each set produces", "Offense (play calls)"),
@@ -660,6 +662,14 @@ def render(ctx):
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"
                    f"{html.escape(bdg)}</span>" if bdg else "")
                 + "</div>", unsafe_allow_html=True)
+
+    # ── impact & rating splits: the rebuilt-engine dimensions for this team's
+    # personnel (possession impact + defense/rebounding sub-ratings + passer) ──
+    if _show("impact_splits") and ctx.has_tracked:
+        import helpers.advanced_ratings as ADV
+        st.markdown("<div class='lab-hdr'>Impact & rating splits</div>",
+                    unsafe_allow_html=True)
+        ADV.leaderboard(ctx.players, ctx.has_tracked, key="scout")
 
     # ── custom notes: a freeform note per player + a custom team note ─────────
     # Both print on the scout sheet; available for self- and opponent-scouts.

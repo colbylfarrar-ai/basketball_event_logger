@@ -622,6 +622,11 @@ def render_card(ctx):
                        "Directional on a short book — read the sign and rough size, "
                        "not the decimals.")
 
+    # ── impact & rating splits (rebuilt engine: possession impact + defense /
+    #    rebounding sub-ratings + passer depth) → Paid ─────────────────────────
+    import helpers.advanced_ratings as ADV
+    ADV.player_panel(P, paid)
+
     # ── signature / invented metrics (glass tiles) ────────────────────────────
     #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.
     st.markdown("<div class='pl-hdr'>Signature metrics</div>",

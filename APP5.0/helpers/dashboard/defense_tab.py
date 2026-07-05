@@ -288,15 +288,22 @@ def render(ctx):
                         unsafe_allow_html=True)
         st.markdown(dense_table([{
             "Defense": r["label"], "Poss": r["poss"],
-            "PPP": f"{r['PPP']:.2f}", "FG%": f"{r['FG%'] * 100:.0f}%",
+            "Share": f"{r['share'] * 100:.0f}%",
+            "PPP": f"{r['PPP']:.2f}",
+            "TO%": (f"{r['TO%'] * 100:.0f}%"
+                    if r.get("TO%") is not None else None),
+            "FG%": f"{r['FG%'] * 100:.0f}%",
             "3P%": f"{r.get('3P%', 0) * 100:.0f}%",
             "eFG%": f"{r.get('eFG', 0) * 100:.0f}%",
-            "SCE": f"{r.get('SCE', 0) * 100:.0f}%",
-            "Share": f"{r['share'] * 100:.0f}%", "Tier": r["tier"],
+            "ScEff": f"{r.get('SCE', 0) * 100:.0f}%",
+            "Tier": r["tier"],
         } for r in drows]), unsafe_allow_html=True)
-        st.caption("PPP = points/possession · eFG% weights 3s · SCE = scoring "
-                   "efficiency · Share = % of tagged possessions. Rank is good-"
-                   "oriented for this side.")
+        st.caption("Poss = shots + tagged turnovers · PPP = points/possession · "
+                   "TO% = " + ("turnovers this scheme forces" if not _off else
+                               "how often you cough it up vs this scheme") +
+                   " · eFG% weights 3s · **ScEff** = scoring efficiency · Share "
+                   "= % of tagged possessions. Rank is good-oriented for this "
+                   "side.")
 
         # go-to / leak chips from the ranked rows
         ranked = [r for r in drows if r["pct"] is not None and r["poss"] >= DEF.MIN_POSS]
@@ -359,8 +366,19 @@ def render(ctx):
         st.markdown("<div class='pl-hdr'>Scheme fingerprint — what each gives up"
                     "</div>", unsafe_allow_html=True)
         from helpers.team_analytics import ZONE_LABELS as _ZL
+        # possession-correct Poss / Share / TO% come from §C's percentile view
+        # (FGA + tagged TOV); the shot profile is shot-mix only — merge by key
+        # so the fingerprint's Poss matches the efficiency table above (the
+        # 440-vs-1100 mismatch the founder flagged).
+        _byk = {r["key"]: r for r in drows}
         st.markdown(dense_table([{
-            "Defense": p["label"], "Poss": p["poss"], "PPP": f"{p['PPP']:.2f}",
+            "Defense": p["label"],
+            "Poss": (_byk[p["key"]]["poss"] if p["key"] in _byk else p["poss"]),
+            "Share": (f"{_byk[p['key']]['share'] * 100:.0f}%"
+                      if p["key"] in _byk else None),
+            "PPP": f"{p['PPP']:.2f}",
+            "TO%": (f"{_byk[p['key']]['TO%'] * 100:.0f}%"
+                    if _byk.get(p["key"], {}).get("TO%") is not None else None),
             "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
             "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
             "Rim%": f"{p['rim_rate'] * 100:.0f}%",
@@ -373,9 +391,13 @@ def render(ctx):
             "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
             "Avg s": (f"{p['avg_secs']:.1f}"
                       if p["avg_secs"] is not None else None),
-        } for p in sorted(prof.values(), key=lambda p: -p["poss"])]),
+        } for p in sorted(prof.values(),
+                          key=lambda p: -(_byk.get(p["key"], {}).get("poss")
+                                          or p["poss"]))]),
             unsafe_allow_html=True)
-        st.caption("3PA% / Rim% = shot-type share " +
+        st.caption("Poss / Share / TO% count possessions (shots + tagged "
+                   "turnovers, matching the efficiency table); shot-mix columns "
+                   "are shot-only. 3PA% / Rim% = shot-type share " +
                    ("allowed" if not _off else "you get") +
                    " · Rim FG% / 3P% = finishing at the rim / from three vs that "
                    "scheme · Assisted% = off a pass · Open% = uncontested · Where "

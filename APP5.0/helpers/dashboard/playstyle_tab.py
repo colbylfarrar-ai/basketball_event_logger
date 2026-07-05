@@ -306,12 +306,12 @@ def render(ctx):
             "FG%": f"{r['FG%'] * 100:.0f}%",
             "3P%": f"{r.get('3P%', 0) * 100:.0f}%",
             "eFG%": f"{r.get('eFG', 0) * 100:.0f}%",
-            "SCE": f"{r.get('SCE', 0) * 100:.0f}%",
+            "ScEff": f"{r.get('SCE', 0) * 100:.0f}%",
             "Tier": r["tier"],
         } for r in nrows]), unsafe_allow_html=True)
         st.caption("PPP = points/possession (turnover possessions included once "
                    "TOs are tagged) · TO% = the set's give-it-away rate · FD = "
-                   "fouls drawn in the set · eFG% weights 3s · **SCE** = scoring "
+                   "fouls drawn in the set · eFG% weights 3s · **ScEff** = scoring "
                    "efficiency (FG points ÷ max possible) · Share = % of tagged "
                    "possessions (shots + turnovers).")
 
@@ -392,10 +392,21 @@ def render(ctx):
                     f"{worst['PPP']:.2f} PPP · {worst['pct']}th pct · "
                     f"{worst['poss']} poss", color=worst["color"]),
                     unsafe_allow_html=True)
+        # Possession-correct poss / share / TO% come from §C's named view
+        # (FGA + tagged TOV); the shot profile is shot-mix only (FGA), so its
+        # own "poss" undercounts — merge by set key so the fingerprint's Poss
+        # matches the efficiency table above.
+        _byk = {r["key"]: r for r in nrows}
         st.markdown(dense_table([{
-            "Set": p["label"], "Poss": p["poss"], "PPP": f"{p['PPP']:.2f}",
+            "Set": p["label"],
+            "Poss": (_byk[p["key"]]["poss"] if p["key"] in _byk else p["poss"]),
+            "Share": (f"{_byk[p['key']]['share'] * 100:.0f}%"
+                      if p["key"] in _byk else None),
+            "PPP": f"{p['PPP']:.2f}",
+            "TO%": (f"{_byk[p['key']]['TO%'] * 100:.0f}%"
+                    if _byk.get(p["key"], {}).get("TO%") is not None else None),
             "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
-            "SCE": f"{p.get('SCE', 0) * 100:.0f}%",
+            "ScEff": f"{p.get('SCE', 0) * 100:.0f}%",
             "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
             "Rim%": f"{p['rim_rate'] * 100:.0f}%",
             "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
@@ -403,11 +414,17 @@ def render(ctx):
             "Where": _ZL.get(p["top_zone"], "—") if p["top_zone"] else "—",
             "Avg s": (f"{p['avg_secs']:.1f}"
                       if p["avg_secs"] is not None else None),
-        } for p in sorted(prof.values(), key=lambda p: -p["poss"])]),
+        } for p in sorted(prof.values(),
+                          key=lambda p: -(_byk.get(p["key"], {}).get("poss")
+                                          or p["poss"]))]),
             unsafe_allow_html=True)
-        st.caption("eFG% weights 3s · SCE = scoring efficiency · 3PA% / Rim% = "
-                   "shot-type share · Assisted% = off a pass · Open% = uncontested "
-                   "· Where = the zone the set most lives in · Avg s = poss length.")
+        st.caption("Poss / Share / TO% count possessions (shots + tagged "
+                   "turnovers, matching the efficiency table); the shot-mix "
+                   "columns are shot-only. eFG% weights 3s · **ScEff** = scoring "
+                   "efficiency (FG points ÷ max possible) · 3PA% / Rim% = "
+                   "shot-type share · Assisted% = off a pass · Open% = "
+                   "uncontested · Where = the zone the set most lives in · Avg s "
+                   "= poss length.")
 
     # ══ §F — per-set shot diet + zone heat + length ══════════════════════════
     if prof and shots:
@@ -613,7 +630,7 @@ def render(ctx):
         if pr_sets:
             for k, c in sorted(pr_sets.items(), key=lambda kv: -kv[1]["poss"]):
                 val = (f"{c['PPP']:.2f} PPP · {c['FG%'] * 100:.0f}% FG · "
-                       f"{c.get('SCE', 0) * 100:.0f}% SCE · {c['poss']} poss")
+                       f"{c.get('SCE', 0) * 100:.0f}% ScEff · {c['poss']} poss")
                 st.markdown(_pctile_or_thin(_PTL.get(k, k), val, c.get("pct")),
                             unsafe_allow_html=True)
                 how = _profile_howline(pr_prof.get(k))

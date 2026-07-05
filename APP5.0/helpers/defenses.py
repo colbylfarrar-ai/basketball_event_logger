@@ -104,21 +104,25 @@ def team_defenses(team_id, gender=None, game_ids=None, events=None, offense=True
                     effective each of its schemes is — PPP allowed).
 
     Self-contained: with no events it does one tracked-game pass for the gender
-    (same scoping as playtypes). A shot ends a possession, so PPP == PPS.
+    (same scoping as playtypes). A possession is a shot OR a tagged turnover, so
+    poss = FGA + tagged TOV and PPP is a true per-possession rate (mirrors
+    playtypes.team_named_playtypes). Shot-mix rates (FG%/eFG/SCE/3P%) stay on
+    the FGA denominator; TO% = TOV / poss.
 
-    Returns {'rows':[{key,label,family,poss,FGM,PPP,FG%,eFG,SCE,3P%,2P%,3PA,share}],
-    'total_tagged','untagged'}. Rows are only the schemes actually present, sorted
-    by possessions (volume) — "which defense do they run most" is the headline.
-    Unknown/legacy labels fold into 'other'."""
+    Returns {'rows':[{key,label,family,poss,FGA,TOV,TO%,FGM,PPP,FG%,eFG,SCE,3P%,
+    2P%,3PA,share}],'total_tagged','untagged'}. Rows are only the schemes
+    actually present, sorted by possessions (volume). Unknown/legacy labels fold
+    into 'other'."""
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
     own = None if offense else TA.event_team_games(team_id, events)
-    agg = {k: {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0}
+    agg = {k: {"FGA": 0, "FGM": 0, "FG3A": 0, "FG3M": 0, "PTS": 0, "TOV": 0}
            for k, *_ in DEFENSES}
     tagged = untagged = 0
     for e in events:
-        if e["event_type"] != "shot" or e["shooter_team_id"] is None:
+        et = e["event_type"]
+        if et not in ("shot", "turnover") or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
             continue
@@ -130,6 +134,9 @@ def team_defenses(team_id, gender=None, game_ids=None, events=None, offense=True
             continue
         tagged += 1
         cell = agg[d]
+        if et == "turnover":
+            cell["TOV"] += 1
+            continue
         cell["FGA"] += 1
         is3 = e["shot_type"] == 3
         if is3:
@@ -139,21 +146,23 @@ def team_defenses(team_id, gender=None, game_ids=None, events=None, offense=True
             cell["PTS"] += 3 if is3 else 2
             if is3:
                 cell["FG3M"] += 1
-    total_fga = sum(c["FGA"] for c in agg.values())
+    total_poss = sum(c["FGA"] + c["TOV"] for c in agg.values())
     rows = []
     for key, lbl, fam in DEFENSES:
         c = agg[key]
-        if c["FGA"] == 0:
+        poss = c["FGA"] + c["TOV"]
+        if poss == 0:
             continue
         _2pa, _2pm = c["FGA"] - c["FG3A"], c["FGM"] - c["FG3M"]
         rows.append({
             "key": key, "label": lbl, "family": fam,
-            "poss": c["FGA"], "FGM": c["FGM"],
-            "PPP": _safe(c["PTS"], c["FGA"]), "FG%": _safe(c["FGM"], c["FGA"]),
+            "poss": poss, "FGA": c["FGA"], "TOV": c["TOV"], "FGM": c["FGM"],
+            "TO%": _safe(c["TOV"], poss),
+            "PPP": _safe(c["PTS"], poss), "FG%": _safe(c["FGM"], c["FGA"]),
             "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
             "SCE": _safe(c["PTS"], _2pa * 2 + c["FG3A"] * 3),
             "3P%": _safe(c["FG3M"], c["FG3A"]), "2P%": _safe(_2pm, _2pa),
-            "3PA": c["FG3A"], "share": _safe(c["FGA"], total_fga),
+            "3PA": c["FG3A"], "share": _safe(poss, total_poss),
         })
     rows.sort(key=lambda r: -r["poss"])
     return {"rows": rows, "total_tagged": tagged, "untagged": untagged}

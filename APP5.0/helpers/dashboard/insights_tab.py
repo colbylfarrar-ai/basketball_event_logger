@@ -129,7 +129,7 @@ def _split_rows(pa, pb, la, lb):
     """The shared 7-metric split table (used by every A-vs-B deep-dive section)."""
     _f2 = lambda v: f"{v:.2f}" if v is not None else "—"
     specs = [("PPP (pts/shot)", "PPP", _f2), ("eFG%", "eFG", _pct),
-             ("Scoring eff (SCE)", "SCE", _pct), ("3PA rate", "3PA_rate", _pct),
+             ("Scoring eff (ScEff)", "SCE", _pct), ("3PA rate", "3PA_rate", _pct),
              ("Rim rate", "rim_rate", _pct), ("Assisted rate", "ast_rate", _pct),
              ("Open rate", "open_rate", _pct)]
     return [{"Metric": lbl, la: fmt(pa.get(k)), lb: fmt(pb.get(k))}

@@ -35,7 +35,7 @@ for _level, _msg in st.session_state.pop("_flash", []):
 
 CLASS_OPTIONS  = ["B2", "B1", "A", "2A", "3A", "4A", "5A", "6A", "N/A"]
 GENDER_OPTIONS = ["M", "F"]
-HA_OPTIONS     = ["Home", "Away"]
+HA_OPTIONS     = ["Home", "Away", "Neutral"]
 # US state codes for the team/official State tag (default OK — Oklahoma app).
 # Oklahoma + its neighbours float to the top; the rest follow alphabetically.
 STATE_OPTIONS  = ["OK", "TX", "KS", "AR", "MO", "NM", "CO", "LA", "NE",
@@ -86,7 +86,8 @@ def load_games_for_team(team_id):
         SELECT g.id,
             CASE WHEN g.team1_id=? THEN t2.name ELSE t1.name END AS opponent,
             g.date,
-            CASE WHEN g.team1_id=? THEN 'Home' ELSE 'Away' END   AS home_away,
+            CASE WHEN g.neutral=1 THEN 'Neutral'
+                 WHEN g.team1_id=? THEN 'Home' ELSE 'Away' END   AS home_away,
             g.location,
             CASE WHEN g.team1_id=? THEN g.home_score ELSE g.away_score END AS team_score,
             CASE WHEN g.team1_id=? THEN g.away_score ELSE g.home_score END AS opp_score,
@@ -114,14 +115,18 @@ def load_games(season=None):
     params = () if season in (None, "__all__") else (season,)
     rows = query(f"""
         SELECT g.id, t1.name AS team1, t2.name AS team2,
-               g.date, g.location, g.home_score, g.away_score, g.tracked, g.video_url
+               g.date, g.location, g.home_score, g.away_score, g.neutral,
+               g.tracked, g.video_url
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
         {where}
     """, params)
     df = pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","team1","team2","date","location","home_score","away_score","tracked","video_url"])
+        columns=["id","team1","team2","date","location","home_score","away_score",
+                 "neutral","tracked","video_url"])
+    if not df.empty:
+        df["neutral"] = df["neutral"].astype(bool)
     if not df.empty:
         df["tracked"] = df["tracked"].astype(bool)
     return sort_by_date(df, ascending=False)
@@ -598,7 +603,8 @@ if _hubview == "Games":
                          ["date", "team1", "team2", "location",
                           "home_score", "away_score"])
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
-            columns=["team1","team2","date","location","home_score","away_score","tracked"])
+            columns=["team1","team2","date","location","home_score","away_score",
+                     "neutral","tracked"])
         # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
         display["date"] = pd.to_datetime(display["date"], errors="coerce").dt.date
 
@@ -614,6 +620,7 @@ if _hubview == "Games":
                 "location":   st.column_config.TextColumn("Location"),
                 "home_score": st.column_config.NumberColumn("Home Score",      min_value=0, step=1),
                 "away_score": st.column_config.NumberColumn("Away Score",      min_value=0, step=1),
+                "neutral":    st.column_config.CheckboxColumn("Neutral", default=False, help="Neutral floor — no home-court. Home/Away Team still label the two sides for scoring; this just flags the venue."),
                 "tracked":    st.column_config.CheckboxColumn("Tracked",       default=False),
                 "video_url":  st.column_config.TextColumn("Film URL", help="Hudl / YouTube / NFHS link. Clickable from the Team Dashboard schedule — opens in a new tab."),
             },
@@ -640,10 +647,12 @@ if _hubview == "Games":
                     _szn = SZ.resolve_new_game_season(
                         _d, None if _szn_pick.startswith("Auto") else _szn_pick)
                     execute(
-                        "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, neutral, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (tm[r["team1"]], tm[r["team2"]], _d,
                          r.get("location") or None, r.get("home_score") or None,
-                         r.get("away_score") or None, int(bool(r.get("tracked", False))),
+                         r.get("away_score") or None,
+                         int(bool(r.get("neutral", False))),
+                         int(bool(r.get("tracked", False))),
                          (r.get("video_url") or "").strip(), _szn)
                     )
             def upd_game(r):
@@ -663,16 +672,19 @@ if _hubview == "Games":
                             "and tracked flag are owned by the Game Tracker, so this "
                             "edit was not saved. Untrack it there to score it by hand.")
                     execute(
-                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, video_url=? WHERE id=?",
+                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, neutral=?, video_url=? WHERE id=?",
                         (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
                          r.get("location") or None,
+                         int(bool(r.get("neutral", False))),
                          (r.get("video_url") or "").strip(), int(r["id"])))
                     return
                 execute(
-                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, tracked=?, video_url=? WHERE id=?",
+                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, neutral=?, tracked=?, video_url=? WHERE id=?",
                     (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
                      r.get("location") or None, r.get("home_score") or None,
-                     r.get("away_score") or None, int(bool(r.get("tracked", False))),
+                     r.get("away_score") or None,
+                     int(bool(r.get("neutral", False))),
+                     int(bool(r.get("tracked", False))),
                      (r.get("video_url") or "").strip(), r["id"])
                 )
             def del_game(r):
@@ -751,14 +763,17 @@ if _hubview == "Team Schedule":
                 t_score = r.get("team_score") or None
                 o_score = r.get("opp_score")  or None
                 tracked = int(bool(r.get("tracked", False)))
-                if ha == "Home":
-                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
-                else:
+                # Away → team in the away slot; Home/Neutral → team in the home
+                # slot (Neutral just flags the venue, scores map the same as Home).
+                if ha == "Away":
                     t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
+                else:
+                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
+                neu = 1 if ha == "Neutral" else 0
                 _d = normalize_date(date)
                 execute(
-                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (t1, t2, _d, r.get("location") or None, h_sc, a_sc, tracked,
+                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, neutral, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (t1, t2, _d, r.get("location") or None, h_sc, a_sc, neu, tracked,
                      (r.get("video_url") or "").strip(),
                      SZ.resolve_new_game_season(_d))
                 )
@@ -773,10 +788,11 @@ if _hubview == "Team Schedule":
                 t_score = r.get("team_score") or None
                 o_score = r.get("opp_score")  or None
                 tracked = int(bool(r.get("tracked", False)))
-                if ha == "Home":
-                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
-                else:
+                if ha == "Away":
                     t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
+                else:                       # Home or Neutral → team in home slot
+                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
+                neu = 1 if ha == "Neutral" else 0
                 live = _live_game(r["id"])
                 if live and live["tracked"]:
                     # Tracked games own their PBP-derived score — keep it.
@@ -788,13 +804,13 @@ if _hubview == "Team Schedule":
                             "and tracked flag are owned by the Game Tracker, so this "
                             "edit was not saved. Untrack it there to score it by hand.")
                     execute(
-                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, video_url=? WHERE id=?",
-                        (t1, t2, normalize_date(date), r.get("location") or None,
+                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, neutral=?, video_url=? WHERE id=?",
+                        (t1, t2, normalize_date(date), r.get("location") or None, neu,
                          (r.get("video_url") or "").strip(), int(r["id"])))
                     return
                 execute(
-                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, tracked=?, video_url=? WHERE id=?",
-                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, tracked,
+                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, neutral=?, tracked=?, video_url=? WHERE id=?",
+                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, neu, tracked,
                      (r.get("video_url") or "").strip(), r["id"])
                 )
 

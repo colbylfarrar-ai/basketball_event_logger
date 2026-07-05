@@ -129,7 +129,7 @@ def team_game_log(team_id, season="Current"):
         extra = " AND g.season = ?"
         params.append(season)
     rows = query(
-        f"""SELECT g.id, g.date, g.location, g.tracked, g.video_url,
+        f"""SELECT g.id, g.date, g.location, g.tracked, g.video_url, g.neutral,
                   g.team1_id, g.team2_id, g.home_score, g.away_score
            FROM games g
            WHERE (g.team1_id = ? OR g.team2_id = ?)
@@ -144,9 +144,11 @@ def team_game_log(team_id, season="Current"):
         pf = g["home_score"] if is_home else g["away_score"]
         pa = g["away_score"] if is_home else g["home_score"]
         opp = g["team2_id"] if is_home else g["team1_id"]
+        # neutral-site games (coach override) are neither home nor away → 'N',
+        # so home_away_splits (which filters site=='vs'/'@') skips them.
         out.append({
             "game_id": g["id"], "date": g["date"], "location": g["location"],
-            "site": "vs" if is_home else "@",
+            "site": "N" if g["neutral"] else ("vs" if is_home else "@"),
             "opp_id": opp,
             "opp": meta.get(opp, {}).get("name", "?"),
             "opp_class": meta.get(opp, {}).get("class", "N/A"),

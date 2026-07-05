@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS games (
     location   TEXT,
     home_score INTEGER,
     away_score INTEGER,
+    neutral    INTEGER NOT NULL DEFAULT 0,
     tracked    INTEGER NOT NULL DEFAULT 0
 );
 

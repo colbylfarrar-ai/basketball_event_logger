@@ -380,6 +380,12 @@ def initialize_database():
             # pool membership (logger's team in_pool flag) and own-vs-others
             # visibility. '' for legacy/app-logged games.
             "ALTER TABLE games ADD COLUMN tracked_by TEXT NOT NULL DEFAULT ''",
+            # Neutral-site flag. team1_id/team2_id still hold the two teams (the
+            # scraper keeps setting home/away as usual), but neutral=1 marks a game
+            # played on a neutral floor — a COACH OVERRIDE from the Input Hub. Read
+            # by team_game_log (site='N', so it's excluded from home/away venue
+            # splits); ratings are already neutral-floor, so they're unaffected.
+            "ALTER TABLE games ADD COLUMN neutral INTEGER NOT NULL DEFAULT 0",
             # Per-coach tracker token (replaces the single shared TRACKER_TOKEN):
             # the mobile API resolves Bearer <token> -> this coach, gating the
             # tracker by plan and stamping games.tracked_by. Issued/rotated from

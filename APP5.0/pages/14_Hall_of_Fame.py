@@ -10,6 +10,12 @@ best single-season HoopWAR and the most exciting games ever tracked (GEI).
 Box-stat assembly + existing engines only (combined tracked + entered boxes,
 score_ratings, war_table, wp_curve). Careers chain players.identity_id across
 season rollovers, so a linked player's seasons stack into one line.
+
+Two tabs: RECORDS (the open, box-stat hall above) and TRACKED RATINGS — the
+deep-engine OVERALL/OFF/DEF/PLAY/REB board that answers "who is the greatest
+ever" from tracked data. Ratings are pool-relative, so each season is rated on
+its own field (like the HoopWAR teaser) and then compared. Paid-gated (the
+rating engine is a Paid surface per the gating taxonomy); Free sees a teaser.
 """
 import sys
 from pathlib import Path
@@ -25,6 +31,8 @@ from helpers.ui import page_chrome, page_header, gender_radio, empty_state
 import helpers.stats as S
 import helpers.seasons as SEAS
 import helpers.team_ratings as TR
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 
 _cfg, ACCENT = page_chrome("Hall of Fame")
 
@@ -35,6 +43,7 @@ page_header("Hall of Fame",
 
 SEASON_MIN_GP = 10        # a season line needs a real season behind it
 CAREER_MIN_GP = 25        # founder gate: a full season+ before a career banner
+TRK_MIN_GP = 5            # a tracked-rating season line needs a real book
 
 g = gender_radio(key="hof_gender")
 _SEASONS = ["Current"] + SEAS.archived_labels()
@@ -127,6 +136,37 @@ def _war_best(g):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _tracked_ratings(g):
+    """Per-(player, season) tracked ratings across every season, each computed
+    within THAT season's pool (ratings are pool-relative, so a season is rated on
+    its own field — same per-season pass as _war_best). Returns
+    [{pid, identity, season, name, number, team, OVERALL, OFFENSE, DEFENSE,
+    PLAYMAKING, REBOUNDING, GP}], one row per player-season with a real book."""
+    import helpers.player_ratings as PR
+    idn = {r["id"]: (r["identity_id"] or r["id"]) for r in query(
+        "SELECT id, identity_id FROM players")}
+    out = []
+    for lbl in _SEASONS:
+        try:
+            gids = SEAS.game_pool(lbl, gender=g, tracked_only=True)
+            if not gids:
+                continue
+            rt = PR.player_ratings(game_ids=set(gids), gender=g)
+        except Exception:
+            continue
+        for pid, r in rt.items():
+            if (r.get("GP") or 0) < TRK_MIN_GP or r.get("OVERALL") is None:
+                continue
+            out.append({
+                "pid": pid, "identity": idn.get(pid, pid), "season": lbl,
+                "name": r["name"], "number": r["number"], "team": r["team"],
+                "OVERALL": r["OVERALL"], "OFFENSE": r["OFFENSE"],
+                "DEFENSE": r["DEFENSE"], "PLAYMAKING": r["PLAYMAKING"],
+                "REBOUNDING": r["REBOUNDING"], "GP": r["GP"]})
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _gei_best(g):
     """Most exciting games ever tracked — GEI over ALL seasons (teaser #2).
     Same scoring-timeline → win-prob pipeline the box score uses."""
@@ -195,116 +235,224 @@ def _board(rows, cols, key):
                  width="stretch", key=key)
 
 
-# ── season bests (per game) ──────────────────────────────────────────────────
-st.markdown(f"### 🏅 Season bests — per game (min {SEASON_MIN_GP} games)")
-_season_rows = [
-    {"pid": pid, **s} for pid, s in sums.items() if s["gp"] >= SEASON_MIN_GP]
-if not _season_rows:
-    st.info(f"No player has {SEASON_MIN_GP}+ games in a season yet.")
-else:
-    c1, c2, c3 = st.columns(3)
-    for col, (lbl, key, per) in zip(
-            (c1, c2, c3),
-            (("PPG", "PTS", True), ("RPG", "TRB", True), ("APG", "AST", True))):
-        top = sorted(_season_rows, key=lambda r: -(r[key] / r["gp"]))[:10]
-        with col:
-            st.markdown(f"**{lbl}**")
-            _board([{
-                "Player": _who(meta[r["pid"]]),
-                "Team": meta[r["pid"]]["team"],
-                "Season": _season_lbl(meta[r["pid"]]),
-                lbl: round(r[key] / r["gp"], 1), "GP": r["gp"],
-            } for r in top], ["Player", "Team", "Season", lbl, "GP"],
-                f"hof_s_{lbl}")
+tab_records, tab_tracked = st.tabs(["Records", "Tracked ratings"])
 
-# ── career leaders (identity chains, totals) ─────────────────────────────────
-st.markdown(f"### 🏛️ Career leaders — totals (min {CAREER_MIN_GP} games)")
-st.caption("Careers stack a player's seasons through the identity link "
-           "(New Season → Returning players). A career shorter than "
-           f"{CAREER_MIN_GP} games doesn't hang a banner yet.")
-_careers = {}
-for pid, s in sums.items():
-    m = meta[pid]
-    key = m["identity_id"] or pid
-    c = _careers.setdefault(key, {"gp": 0, "PTS": 0, "TRB": 0, "AST": 0,
-                                  "seasons": 0, "rep": m})
-    c["gp"] += s["gp"]; c["PTS"] += s["PTS"]
-    c["TRB"] += s["TRB"]; c["AST"] += s["AST"]
-    c["seasons"] += 1
-    # newest season's row fronts the career ('Current' sorts above archives)
-    if SEAS.is_current(m["season"]) or ((m["season"] or "") >
-                                        (c["rep"]["season"] or "")):
-        c["rep"] = m
-_career_rows = [c for c in _careers.values() if c["gp"] >= CAREER_MIN_GP]
-if not _career_rows:
-    st.info(f"No career has reached {CAREER_MIN_GP} games yet — link returning "
-            "players at New Season so their seasons stack.")
-else:
-    c1, c2, c3 = st.columns(3)
-    for col, (lbl, key) in zip((c1, c2, c3),
-                               (("Points", "PTS"), ("Rebounds", "TRB"),
-                                ("Assists", "AST"))):
-        top = sorted(_career_rows, key=lambda c: -c[key])[:10]
-        with col:
-            st.markdown(f"**{lbl}**")
-            _board([{
-                "Player": _who(c["rep"]), "Team": c["rep"]["team"],
-                lbl: c[key], "GP": c["gp"], "Szn": c["seasons"],
-            } for c in top], ["Player", "Team", lbl, "GP", "Szn"],
-                f"hof_c_{lbl}")
 
-# ── team pantheon ────────────────────────────────────────────────────────────
-st.markdown("### 🏆 Team pantheon")
-_teams = _team_seasons(g)
-if not _teams:
-    st.info("No finished team seasons yet.")
-else:
-    t1, t2 = st.columns(2)
-    with t1:
-        st.markdown("**Best seasons — Power rating** (min 10 games)")
-        _pw = sorted([t for t in _teams if t["Power"] is not None
-                      and t["GP"] >= 10], key=lambda t: -t["Power"])[:10]
-        _board([{"Team": t["Team"], "Season": t["Season"],
-                 "Power": round(t["Power"], 1),
-                 "Record": f"{t['W']}–{t['L']}"} for t in _pw],
-               ["Team", "Season", "Power", "Record"], "hof_t_power")
-    with t2:
-        st.markdown("**Best records** (min 15 games)")
-        _rc = sorted([t for t in _teams if t["GP"] >= 15],
-                     key=lambda t: (-t["Win%"], -t["GP"]))[:10]
-        _board([{"Team": t["Team"], "Season": t["Season"],
-                 "Record": f"{t['W']}–{t['L']}",
-                 "Win%": f"{t['Win%'] * 100:.0f}%"} for t in _rc],
-               ["Team", "Season", "Record", "Win%"], "hof_t_rec")
-
-# ── the two teasers ──────────────────────────────────────────────────────────
-st.markdown("### ✨ From the deep engine")
-st.caption("Two dangles from the analytics engine — **HoopWAR** (wins a player "
-           "added over a replacement-level body, from lineup possession data) "
-           "and **GEI** (how exciting a game's win-probability ride was). The "
-           "full versions live in the Team Dashboard and box scores.")
-z1, z2 = st.columns(2)
-with z1:
-    st.markdown("**Best single-season HoopWAR**")
-    _wr = _war_best(g)
-    if not _wr:
-        st.info("Needs tracked lineup data — fills in as seasons are tracked.")
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 1 — RECORDS  (open to everyone; box-stat halls + two engine teasers)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_records:
+    # ── season bests (per game) ──────────────────────────────────────────────
+    st.markdown(f"### 🏅 Season bests — per game (min {SEASON_MIN_GP} games)")
+    _season_rows = [
+        {"pid": pid, **s} for pid, s in sums.items() if s["gp"] >= SEASON_MIN_GP]
+    if not _season_rows:
+        st.info(f"No player has {SEASON_MIN_GP}+ games in a season yet.")
     else:
-        _board([{"Player": r["Player"], "Team": r["Team"],
-                 "Season": r["Season"], "WAR": f"+{r['WAR']:.1f}"}
-                for r in _wr], ["Player", "Team", "Season", "WAR"], "hof_war")
-with z2:
-    st.markdown("**Most exciting games ever tracked**")
-    _ge = _gei_best(g)
-    if not _ge:
-        st.info("Needs tracked games — a win-probability curve can't be built "
-                "from a final score alone.")
-    else:
-        _board([{"Date": r["Date"], "Matchup": r["Matchup"],
-                 "Score": r["Score"], "GEI": round(r["GEI"], 1),
-                 "Feel": r["Feel"]} for r in _ge],
-               ["Date", "Matchup", "Score", "GEI", "Feel"], "hof_gei")
+        c1, c2, c3 = st.columns(3)
+        for col, (lbl, key, per) in zip(
+                (c1, c2, c3),
+                (("PPG", "PTS", True), ("RPG", "TRB", True), ("APG", "AST", True))):
+            top = sorted(_season_rows, key=lambda r: -(r[key] / r["gp"]))[:10]
+            with col:
+                st.markdown(f"**{lbl}**")
+                _board([{
+                    "Player": _who(meta[r["pid"]]),
+                    "Team": meta[r["pid"]]["team"],
+                    "Season": _season_lbl(meta[r["pid"]]),
+                    lbl: round(r[key] / r["gp"], 1), "GP": r["gp"],
+                } for r in top], ["Player", "Team", "Season", lbl, "GP"],
+                    f"hof_s_{lbl}")
 
-st.caption("Open to every account — season bests need "
-           f"{SEASON_MIN_GP}+ games, careers {CAREER_MIN_GP}+. Entered box "
-           "scores count everywhere a tracked game isn't required.")
+    # ── career leaders (identity chains, totals) ─────────────────────────────
+    st.markdown(f"### 🏛️ Career leaders — totals (min {CAREER_MIN_GP} games)")
+    st.caption("Careers stack a player's seasons through the identity link "
+               "(New Season → Returning players). A career shorter than "
+               f"{CAREER_MIN_GP} games doesn't hang a banner yet.")
+    _careers = {}
+    for pid, s in sums.items():
+        m = meta[pid]
+        key = m["identity_id"] or pid
+        c = _careers.setdefault(key, {"gp": 0, "PTS": 0, "TRB": 0, "AST": 0,
+                                      "seasons": 0, "rep": m})
+        c["gp"] += s["gp"]; c["PTS"] += s["PTS"]
+        c["TRB"] += s["TRB"]; c["AST"] += s["AST"]
+        c["seasons"] += 1
+        # newest season's row fronts the career ('Current' sorts above archives)
+        if SEAS.is_current(m["season"]) or ((m["season"] or "") >
+                                            (c["rep"]["season"] or "")):
+            c["rep"] = m
+    _career_rows = [c for c in _careers.values() if c["gp"] >= CAREER_MIN_GP]
+    if not _career_rows:
+        st.info(f"No career has reached {CAREER_MIN_GP} games yet — link returning "
+                "players at New Season so their seasons stack.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        for col, (lbl, key) in zip((c1, c2, c3),
+                                   (("Points", "PTS"), ("Rebounds", "TRB"),
+                                    ("Assists", "AST"))):
+            top = sorted(_career_rows, key=lambda c: -c[key])[:10]
+            with col:
+                st.markdown(f"**{lbl}**")
+                _board([{
+                    "Player": _who(c["rep"]), "Team": c["rep"]["team"],
+                    lbl: c[key], "GP": c["gp"], "Szn": c["seasons"],
+                } for c in top], ["Player", "Team", lbl, "GP", "Szn"],
+                    f"hof_c_{lbl}")
+
+    # ── team pantheon ────────────────────────────────────────────────────────
+    st.markdown("### 🏆 Team pantheon")
+    _teams = _team_seasons(g)
+    if not _teams:
+        st.info("No finished team seasons yet.")
+    else:
+        t1, t2 = st.columns(2)
+        with t1:
+            st.markdown("**Best seasons — Power rating** (min 10 games)")
+            _pw = sorted([t for t in _teams if t["Power"] is not None
+                          and t["GP"] >= 10], key=lambda t: -t["Power"])[:10]
+            _board([{"Team": t["Team"], "Season": t["Season"],
+                     "Power": round(t["Power"], 1),
+                     "Record": f"{t['W']}–{t['L']}"} for t in _pw],
+                   ["Team", "Season", "Power", "Record"], "hof_t_power")
+        with t2:
+            st.markdown("**Best records** (min 15 games)")
+            _rc = sorted([t for t in _teams if t["GP"] >= 15],
+                         key=lambda t: (-t["Win%"], -t["GP"]))[:10]
+            _board([{"Team": t["Team"], "Season": t["Season"],
+                     "Record": f"{t['W']}–{t['L']}",
+                     "Win%": f"{t['Win%'] * 100:.0f}%"} for t in _rc],
+                   ["Team", "Season", "Record", "Win%"], "hof_t_rec")
+
+    # ── the two teasers ──────────────────────────────────────────────────────
+    st.markdown("### ✨ From the deep engine")
+    st.caption("Two dangles from the analytics engine — **HoopWAR** (wins a player "
+               "added over a replacement-level body, from lineup possession data) "
+               "and **GEI** (how exciting a game's win-probability ride was). The "
+               "full versions live in the Team Dashboard and box scores.")
+    z1, z2 = st.columns(2)
+    with z1:
+        st.markdown("**Best single-season HoopWAR**")
+        _wr = _war_best(g)
+        if not _wr:
+            st.info("Needs tracked lineup data — fills in as seasons are tracked.")
+        else:
+            _board([{"Player": r["Player"], "Team": r["Team"],
+                     "Season": r["Season"], "WAR": f"+{r['WAR']:.1f}"}
+                    for r in _wr], ["Player", "Team", "Season", "WAR"], "hof_war")
+    with z2:
+        st.markdown("**Most exciting games ever tracked**")
+        _ge = _gei_best(g)
+        if not _ge:
+            st.info("Needs tracked games — a win-probability curve can't be built "
+                    "from a final score alone.")
+        else:
+            _board([{"Date": r["Date"], "Matchup": r["Matchup"],
+                     "Score": r["Score"], "GEI": round(r["GEI"], 1),
+                     "Feel": r["Feel"]} for r in _ge],
+                   ["Date", "Matchup", "Score", "GEI", "Feel"], "hof_gei")
+
+    st.caption("Open to every account — season bests need "
+               f"{SEASON_MIN_GP}+ games, careers {CAREER_MIN_GP}+. Entered box "
+               "scores count everywhere a tracked game isn't required.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 2 — TRACKED RATINGS  (the deep engine: greatest-ever by OVERALL)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_tracked:
+    st.markdown("### 🐐 Greatest ever — by tracked rating")
+    st.caption("The deep engine's verdict: every player's **OVERALL** and the "
+               "component ratings (Offense / Defense / Playmaking / Rebounding), "
+               "from tracked play-by-play. Each season is rated on its own field "
+               f"(min {TRK_MIN_GP} tracked games); the boards below stack every "
+               "season in the archive to answer who's truly been the best.")
+
+    # Gate: the rating engine is a Paid surface (gating taxonomy — individual
+    # event-derived analytics). Free sees the teaser + upsell, not the board.
+    if not ENT.has_paid_plan(AUTH.current_user()):
+        st.info("🔒 **Tracked ratings are a Paid feature.** The 0–100 OVERALL and "
+                "the Offense / Defense / Playmaking / Rebounding engine come from "
+                "tracked play-by-play. Upgrade to see the all-time rating board — "
+                "who's genuinely been the greatest, not just the highest scorer.")
+    else:
+        _trk = _tracked_ratings(g)
+        if not _trk:
+            st.info(f"No player has {TRK_MIN_GP}+ tracked games in a season yet — "
+                    "the board fills in as seasons are tracked play-by-play.")
+        else:
+            # best single-season OVERALL fronts the GOAT tile
+            _goat = max(_trk, key=lambda r: r["OVERALL"])
+            gg = st.columns(4)
+            gg[0].metric("Best OVERALL season", f"{_goat['OVERALL']:.0f}")
+            gg[0].caption(f"{_who(_goat)} · {_goat['team']} · {_goat['season']}")
+            for col, cat in zip(gg[1:], ("OFFENSE", "DEFENSE", "PLAYMAKING")):
+                _b = max(_trk, key=lambda r: r[cat])
+                col.metric(f"Best {cat.title()}", f"{_b[cat]:.0f}")
+                col.caption(f"{_who(_b)} · {_b['season']}")
+
+            st.markdown("#### 🏅 Best single-season OVERALL")
+            st.caption("Top rated player-seasons of all time. GP is that season's "
+                       "tracked book; the rating is regressed by games, so a short "
+                       "book can't post a phantom 90.")
+            _top = sorted(_trk, key=lambda r: -r["OVERALL"])[:15]
+            _tdf = pd.DataFrame([{
+                "Player": _who(r), "Team": r["team"], "Season": r["season"],
+                "OVR": round(r["OVERALL"], 0), "OFF": round(r["OFFENSE"], 0),
+                "DEF": round(r["DEFENSE"], 0), "PLY": round(r["PLAYMAKING"], 0),
+                "REB": round(r["REBOUNDING"], 0), "GP": r["GP"],
+            } for r in _top])
+            st.dataframe(
+                _tdf, hide_index=True, width="stretch", key="hof_trk_ovr",
+                column_config={"OVR": st.column_config.ProgressColumn(
+                    "OVR", format="%.0f", min_value=0, max_value=100)})
+
+            # ── category single-season leaders ───────────────────────────────
+            st.markdown("#### 🎯 Category leaders — single season")
+            c1, c2, c3, c4 = st.columns(4)
+            for col, (lbl, key) in zip(
+                    (c1, c2, c3, c4),
+                    (("Offense", "OFFENSE"), ("Defense", "DEFENSE"),
+                     ("Playmaking", "PLAYMAKING"), ("Rebounding", "REBOUNDING"))):
+                top = sorted(_trk, key=lambda r: -r[key])[:10]
+                with col:
+                    st.markdown(f"**{lbl}**")
+                    _board([{"Player": _who(r), "Season": r["season"],
+                             lbl[:3].upper(): round(r[key], 0)} for r in top],
+                           ["Player", "Season", lbl[:3].upper()],
+                           f"hof_trk_{key}")
+
+            # ── career: best average OVERALL by identity ─────────────────────
+            st.markdown("#### 🏛️ Career — best average OVERALL")
+            st.caption("Player-seasons stacked through the identity link, ranked "
+                       "by mean OVERALL across a career (min 2 rated seasons). "
+                       "Peak = their single best season.")
+            _car = {}
+            for r in _trk:
+                c = _car.setdefault(r["identity"], {"ovr": [], "gp": 0, "rep": r,
+                                                    "peak": r})
+                c["ovr"].append(r["OVERALL"]); c["gp"] += r["GP"]
+                if r["OVERALL"] > c["peak"]["OVERALL"]:
+                    c["peak"] = r
+                # newest season fronts the name
+                if SEAS.is_current(r["season"]) or (
+                        (r["season"] or "") > (c["rep"]["season"] or "")):
+                    c["rep"] = r
+            _crows = [c for c in _car.values() if len(c["ovr"]) >= 2]
+            if not _crows:
+                st.info("No multi-season tracked career yet — link returning "
+                        "players at New Season so their rated seasons stack.")
+            else:
+                _crows.sort(key=lambda c: -sum(c["ovr"]) / len(c["ovr"]))
+                _board([{
+                    "Player": _who(c["rep"]), "Team": c["rep"]["team"],
+                    "Avg OVR": round(sum(c["ovr"]) / len(c["ovr"]), 1),
+                    "Peak": round(c["peak"]["OVERALL"], 0),
+                    "Szn": len(c["ovr"]), "GP": c["gp"],
+                } for c in _crows[:12]],
+                    ["Player", "Team", "Avg OVR", "Peak", "Szn", "GP"],
+                    "hof_trk_career")
+
+            st.caption("Ratings are pool-relative and regressed by games played — "
+                       "50 is average, ~76+ is elite. Cross-season comparisons "
+                       "rate each season on its own field, then stack.")

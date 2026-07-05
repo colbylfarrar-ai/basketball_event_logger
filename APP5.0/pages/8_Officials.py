@@ -137,6 +137,15 @@ def _official_overview(g, gids=None, season=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _official_environment(g, gids=None, untr=None, season=None):
+    # Projection-facing coverage (tracked ∪ untracked boxed). gids/untr = the
+    # tracked / untracked read-filters (hashable tuples) or None = unrestricted.
+    return OFF.official_environment(
+        gender=g, game_ids=(set(gids) if gids else None),
+        untracked_ids=(set(untr) if untr else None), season=season)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _official_game_log(off_pk, g, gids=None, season=None):
     return OFF.official_game_log(off_pk, gender=g,
                                  game_ids=(set(gids) if gids else None),
@@ -215,6 +224,15 @@ else:                                      # one past season: open archive
 data = _official_overview(gender, _off_gids, _off_season)
 rows = data["officials"]
 team_names = data["teams"]
+
+# Untracked BOXED games (setup-assigned crews) feed the projection layer only —
+# scoped conservatively: unrestricted for admin, else the viewer's own boxed
+# games (never another org's entered box). The Officials Rating + tracked tables
+# above are untouched; env is used only by the crew-outlook projection tool.
+_off_untr = (None if _off_vis is None
+             else tuple(sorted(ENT.visible_untracked_boxed_game_ids(
+                 AUTH.current_user()))))
+_off_env = _official_environment(gender, _off_gids, _off_untr, _off_season)
 
 if not rows:
     empty_state("No officials yet for this league",
@@ -369,10 +387,17 @@ with tab_over:
         _pick = st.multiselect("Officials assigned to your next game",
                                list(_by_name), key="crew_pick")
         if _pick:
-            _out = RT.crew_outlook([_by_name[n] for n in _pick], overview=data)
+            _out = RT.crew_outlook([_by_name[n] for n in _pick], overview=data,
+                                   env=_off_env)
             if _out:
                 st.markdown(" · ".join(f"`{t}`" for t in _out["tags"]))
                 st.info(_out["summary"])
+                if _out.get("env_games"):
+                    st.caption(
+                        f"Scoring / pace / total-foul read spans "
+                        f"{_out['env_games']} game(s) worked, including "
+                        "setup-entered untracked boxes; whistle & home/away lean "
+                        "are tracked-only.")
         else:
             st.caption("Pick the officials assigned to your next game for a "
                        "league-relative whistle / lean / scoring-environment "

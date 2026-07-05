@@ -533,11 +533,72 @@ def _render_matchup():
                 if _refs:
                     try:
                         import helpers.ref_tendencies as RTD
-                        _co = RTD.crew_outlook(_refs, gender=gender)
+                        import helpers.officials as _OFFW
+                        # env folds setup-assigned untracked BOXED games into the
+                        # scoring / pace / total-foul read (projection coverage);
+                        # whistle & lean stay tracked-only.
+                        _uid = AUTH.current_user()
+                        _vt = ENT.visible_tracked_game_ids(_uid, season=season_pick)
+                        _vu = (None if _vt is None
+                               else ENT.visible_untracked_boxed_game_ids(
+                                   _uid, season=season_pick))
+                        _env = _OFFW.official_environment(
+                            gender=gender, game_ids=_vt, untracked_ids=_vu,
+                            season=season_pick)
+                        _co = RTD.crew_outlook(_refs, gender=gender, env=_env)
                         if _co:
                             st.caption(f"**Crew outlook:** {_co['summary']}")
+                            if _co.get("tags"):
+                                st.caption(" · ".join(f"`{t}`"
+                                                      for t in _co["tags"]))
                     except Exception:
                         pass
+
+            # manual crew "projection dropdown" — project ANY officiating crew
+            # for this matchup (scheduled or not). Context only: the crew read is
+            # never folded into the projected spread (real-numbers rule).
+            with st.expander("🔮 Crew impact — project a specific officiating crew"):
+                _allo = {o["name"]: o["id"] for o in query(
+                    "SELECT id, name FROM officials WHERE archived=0 ORDER BY name")}
+                if not _allo:
+                    st.caption("No officials on file yet — add them in the Game "
+                               "Tracker or on the Setup page (untracked games).")
+                else:
+                    _cp = st.multiselect("Officiating crew", list(_allo),
+                                         key=f"wr_crew_{ta}_{tb}")
+                    if _cp:
+                        try:
+                            import helpers.ref_tendencies as _RTM
+                            import helpers.officials as _OFFM
+                            _uidm = AUTH.current_user()
+                            _vtm = ENT.visible_tracked_game_ids(
+                                _uidm, season=season_pick)
+                            _vum = (None if _vtm is None
+                                    else ENT.visible_untracked_boxed_game_ids(
+                                        _uidm, season=season_pick))
+                            _ovm = _OFFM.official_overview(
+                                gender=gender,
+                                game_ids=(set(_vtm) if _vtm else None),
+                                season=season_pick)
+                            _envm = _OFFM.official_environment(
+                                gender=gender, game_ids=_vtm, untracked_ids=_vum,
+                                season=season_pick)
+                            _com = _RTM.crew_outlook([_allo[n] for n in _cp],
+                                                     overview=_ovm, env=_envm)
+                            if _com:
+                                st.markdown(" · ".join(f"`{t}`"
+                                                       for t in _com["tags"]))
+                                st.info(_com["summary"]
+                                        + "  _(context only — not in the spread.)_")
+                            else:
+                                st.caption("No history for that crew yet.")
+                        except Exception:
+                            st.caption("Crew projection unavailable.")
+                    else:
+                        st.caption("Pick the crew to see expected whistle / lean / "
+                                   "scoring / pace / total-foul environment for "
+                                   "this matchup — including setup-entered "
+                                   "untracked boxes. Context only.")
 
             # simulated margin distribution
             with _eng("Simulating matchup…",

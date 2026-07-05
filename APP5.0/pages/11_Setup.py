@@ -325,3 +325,67 @@ with t_box:
                     file_name=(f"maxpreps_box_{gsel['id']}_{gsel['n1']}"
                                f"_vs_{gsel['n2']}.csv"),
                     mime="text/csv", key=f"mb_dl_mp_{gsel['id']}")
+
+        # ── officials who worked this untracked game (feeds projections) ──────
+        st.divider()
+        with st.expander("👕 Officials who worked this game — helps projections"):
+            st.caption(
+                "Add the referees who worked this game. Once a box score is "
+                "entered above, they count as games worked and feed the crew "
+                "outlook / War-Room projection **the same way an untracked game "
+                "does** — scoring, pace and total fouls. It does NOT record which "
+                "ref made which call (that needs the Game Tracker), so the "
+                "Officials **Rating** stays tracked-only. Tracked games always "
+                "take priority.")
+            if not MB.has_manual(gsel["id"]):
+                st.info("Enter a box score above first — officials on an untracked "
+                        "game only count toward projections once it has a box.")
+            else:
+                _offs = query("SELECT id, name, official_id FROM officials "
+                              "WHERE archived=0 ORDER BY name")
+                _oby = {f"{o['name']} (#{o['official_id']})": o["id"] for o in _offs}
+                _cur = {r["official_id"] for r in query(
+                    "SELECT official_id FROM game_lineup_officials WHERE game_id=?",
+                    (gsel["id"],))}
+                _cur_lbls = [lbl for lbl, oid in _oby.items() if oid in _cur]
+                _pick = st.multiselect(
+                    "Assigned officials", list(_oby), default=_cur_lbls,
+                    key=f"off_pick_{gsel['id']}")
+                _oc1, _oc2 = st.columns([2, 1])
+                _newnm = _oc1.text_input("Add a new official", placeholder="ref name",
+                                         key=f"off_new_{gsel['id']}")
+                _newid = _oc2.text_input("ID # (optional)", placeholder="auto",
+                                         key=f"off_newid_{gsel['id']}")
+                if st.button("Save officials", key=f"off_save_{gsel['id']}"):
+                    _pids = [_oby[l] for l in _pick]
+                    if _newnm.strip():
+                        _oid = None
+                        if _newid.strip():
+                            try:
+                                _oid = int(_newid.strip())
+                            except ValueError:
+                                _oid = None
+                        if _oid is None:      # no external ID → synthetic negative,
+                            _oid = query(     # never collides with real ref IDs
+                                "SELECT COALESCE(MIN(official_id),0)-1 AS x "
+                                "FROM officials")[0]["x"]
+                        # create or revive the ref (mirrors the tracker's add path)
+                        execute(
+                            "INSERT INTO officials (name, official_id) VALUES (?,?) "
+                            "ON CONFLICT(official_id) DO UPDATE SET archived=0, "
+                            "name=excluded.name", (_newnm.strip(), int(_oid)))
+                        _row = query("SELECT id FROM officials WHERE official_id=?",
+                                     (int(_oid),))
+                        if _row:
+                            _pids.append(_row[0]["id"])
+                    # replace the crew for this game with the chosen set
+                    execute("DELETE FROM game_lineup_officials WHERE game_id=?",
+                            (gsel["id"],))
+                    _pids = list(dict.fromkeys(_pids))
+                    for _pid in _pids:
+                        execute("INSERT OR IGNORE INTO game_lineup_officials "
+                                "(game_id, official_id) VALUES (?,?)",
+                                (gsel["id"], int(_pid)))
+                    st.cache_data.clear()   # officials env feeds cached projections
+                    st.success(f"Saved {len(_pids)} official(s) for this game.")
+                    st.rerun()

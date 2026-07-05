@@ -112,6 +112,51 @@ def _possessions_by_game(game_ids):
 from helpers.stats import _safe   # shared definition lives in helpers.stats
 
 
+def _untracked_boxed_games(gender=None, allow=None, season="Current"):
+    """UNTRACKED games that have BOTH an entered box AND ≥1 assigned official —
+    the projection-only pool (setup page). Same shape/filters as _games. These
+    add game-level ENVIRONMENT (scoring / pace / total fouls) to the officials
+    who worked them; they never carry per-official foul attribution, so the
+    Officials Rating stays tracked-only (founder rule)."""
+    clause = "AND g.season = ?" if season is not None else ""
+    params = (season,) if season is not None else ()
+    rows = query(
+        f"""SELECT DISTINCT g.id, g.team1_id, g.team2_id, g.date,
+                  g.home_score, g.away_score, t1.gender AS gender
+           FROM games g
+           JOIN teams t1 ON t1.id = g.team1_id
+           JOIN game_lineup_officials glo ON glo.game_id = g.id
+           JOIN manual_player_box m ON m.game_id = g.id
+           WHERE g.tracked = 0 {clause}""", params
+    )
+    if gender:
+        rows = [r for r in rows if r["gender"] == gender]
+    if allow is not None:
+        allow = set(allow)
+        rows = [r for r in rows if r["id"] in allow]
+    return {r["id"]: r for r in rows}
+
+
+def _box_env_by_game(game_ids):
+    """{game_id: {pts, poss, fouls}} from ENTERED boxes (both teams summed).
+    pts = 2·FGM+3PM+FTM, poss = FGA+TOV (the locked possession rule), fouls = PF.
+    The untracked analog of the event-derived score / _possessions_by_game /
+    game-total-fouls a tracked game gives for free."""
+    if not game_ids:
+        return {}
+    gid_set = set(game_ids)
+    rows = query("SELECT game_id, fgm, tpm, ftm, fga, tov, pf FROM manual_player_box")
+    acc = defaultdict(lambda: {"pts": 0, "poss": 0, "fouls": 0})
+    for r in rows:
+        if r["game_id"] not in gid_set:
+            continue
+        a = acc[r["game_id"]]
+        a["pts"] += 2 * r["fgm"] + r["tpm"] + r["ftm"]
+        a["poss"] += r["fga"] + r["tov"]
+        a["fouls"] += r["pf"]
+    return dict(acc)
+
+
 # ── main entry point ─────────────────────────────────────────────────────────
 
 def official_overview(gender=None, game_ids=None, season="Current"):
@@ -280,6 +325,73 @@ def official_game_log(off_pk, gender=None, game_ids=None, season="Current"):
             "ppp": _safe(pts, poss),
         })
     out.sort(key=lambda r: (r["date"] or ""), reverse=True)
+    return out
+
+
+def official_environment(gender=None, game_ids=None, season="Current",
+                         untracked_ids=None):
+    """Per-official GAME-LEVEL coverage over tracked ∪ untracked-boxed games —
+    the projection-facing layer (crew outlook / War Room / the projection
+    dropdown). Untracked games need an entered box AND ≥1 assigned official
+    (setup page); they add games-worked + scoring / pace / total-foul ENVIRONMENT
+    only — never per-official foul attribution (you can't know which ref called
+    an untracked foul), so official_overview / the Officials Rating stay
+    tracked-only (founder rule: "no rating from untracked").
+
+    `game_ids` / `untracked_ids` are the entitlement read-filters for the tracked
+    / untracked pools (None = unrestricted). Returns
+    {off_pk: {name, env_games, tracked_games, box_games, env_pts, env_poss,
+    env_fouls, env_ppp, env_pace, env_ptspg, env_fpg}}."""
+    tracked = _games(gender, allow=game_ids, season=season)
+    untr = _untracked_boxed_games(gender, allow=untracked_ids, season=season)
+    all_ids = list(tracked.keys()) + list(untr.keys())
+    if not all_ids:
+        return {}
+    offs = _officials()
+    worked = _worked(all_ids)
+
+    # per-game environment: tracked from events, untracked from the entered box
+    poss_tr = _possessions_by_game(list(tracked.keys()))
+    gfouls_tr = defaultdict(int)
+    for e in _foul_events(list(tracked.keys())):
+        gfouls_tr[e["game_id"]] += 1
+    box_env = _box_env_by_game(list(untr.keys()))
+
+    env = {}
+    for gid, g in tracked.items():
+        pts = ((g["home_score"] or 0) + (g["away_score"] or 0)
+               if g["home_score"] is not None and g["away_score"] is not None
+               else 0)
+        env[gid] = {"pts": pts, "poss": poss_tr.get(gid, 0),
+                    "fouls": gfouls_tr.get(gid, 0), "tracked": True}
+    for gid, be in box_env.items():
+        env[gid] = {"pts": be["pts"], "poss": be["poss"], "fouls": be["fouls"],
+                    "tracked": False}
+
+    out = {}
+    for opk, gset in worked.items():
+        if opk not in offs:
+            continue
+        e_games = e_pts = e_poss = e_fouls = tg = bg = 0
+        for gid in gset:
+            e = env.get(gid)
+            if e is None:
+                continue
+            e_games += 1
+            e_pts += e["pts"]; e_poss += e["poss"]; e_fouls += e["fouls"]
+            if e["tracked"]:
+                tg += 1
+            else:
+                bg += 1
+        if not e_games:
+            continue
+        out[opk] = {
+            "name": offs[opk]["name"], "env_games": e_games,
+            "tracked_games": tg, "box_games": bg,
+            "env_pts": e_pts, "env_poss": e_poss, "env_fouls": e_fouls,
+            "env_ppp": _safe(e_pts, e_poss), "env_pace": _safe(e_poss, e_games),
+            "env_ptspg": _safe(e_pts, e_games), "env_fpg": _safe(e_fouls, e_games),
+        }
     return out
 
 

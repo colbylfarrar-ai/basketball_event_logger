@@ -221,6 +221,30 @@ def visible_tracked_game_ids(ident: dict | None, season="Current") -> set[int] |
     return GD.representative_game_ids(ids)   # one canonical row per double-tracked game
 
 
+def visible_untracked_boxed_game_ids(ident: dict | None,
+                                     season="Current") -> set[int] | None:
+    """Untracked games WITH an entered box the viewer may aggregate — the
+    officials-environment analog of visible_tracked_game_ids (used only to scope
+    helpers.officials.official_environment). None = UNRESTRICTED (admin / past
+    archive). Otherwise own-team boxed games. Entered boxes aren't pooled
+    cross-org (no in_pool concept for untracked), so League-wide adds nothing —
+    a coach's manually entered box stays their own."""
+    if _is_past_season(season):
+        return None
+    if ident and ident.get("role") == "admin":
+        return None
+    own = _own_teams(ident)
+    if not own:
+        return set()
+    ph = ",".join("?" * len(own))
+    params = (season,) + tuple(own) + tuple(own)
+    return {r["id"] for r in query(
+        f"SELECT DISTINCT g.id FROM games g "
+        f"JOIN manual_player_box m ON m.game_id = g.id "
+        f"WHERE g.tracked=0 AND g.season=? "
+        f"AND (g.team1_id IN ({ph}) OR g.team2_id IN ({ph}))", params)}
+
+
 def team_visible_tracked_ids(ident: dict | None, team_id, season="Current") -> set[int] | None:
     """The tracked game ids of ONE team whose depth this viewer may aggregate.
     None = unrestricted (own team / admin → the team's full tracked depth).

@@ -1128,8 +1128,8 @@ function ptLabel(k) { return PLAY_TYPE_LABEL[k] || k; }
 // Keep in lockstep with helpers/turnovers.TURNOVER_TYPES (server folds unknown
 // -> 'other'). Orthogonal to play_type — the set call stays the extra layer.
 const TOV_TYPES = [
-  ['pass', 'Bad pass'], ['drive', 'Drive'], ['held', 'Held ball'],
-  ['shot_clock', 'Shot clock'], ['travel', 'Travel']
+  ['travel', 'Violation'], ['drive', 'Drive'], ['pass', 'Pass'],
+  ['shot_clock', 'Shot clock'], ['held', 'Held ball']
 ];
 
 // Sticky "current defense" the opponent is in. Unlike play_type (per-shot), a

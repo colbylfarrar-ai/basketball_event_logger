@@ -237,8 +237,14 @@ def shot_tendencies(team_id, gender=None, game_ids=None, events=None):
     if events is None:
         gids = list(_team_game_opponents(team_id, game_ids))
         events = S.fetch_events(gids) if gids else []
-    zc = {z: {"FGA": 0, "FGM": 0, "PTS": 0} for z in _ZONE_LABEL}
-    side = {"Left": 0, "Middle": 0, "Right": 0}
+    # accumulators, split by shot value (2 vs 3) plus a combined total. Each keeps
+    # its own zone counts + Left/Middle/Right side so the tendencies can be read
+    # per shot type instead of one lump (a team can be right-side heavy from three
+    # but rim-balanced, etc).
+    def _blank():
+        return {"zc": {z: {"FGA": 0, "FGM": 0, "PTS": 0} for z in _ZONE_LABEL},
+                "side": {"Left": 0, "Middle": 0, "Right": 0}, "total": 0}
+    allc, two, thr = _blank(), _blank(), _blank()
     rim = mid = three = total = 0
     for e in events:
         if e["event_type"] != "shot" or e["shooter_team_id"] != team_id:
@@ -253,26 +259,40 @@ def shot_tendencies(team_id, gender=None, game_ids=None, events=None):
             rim += 1
         else:
             mid += 1
-        if z in zc:
-            c = zc[z]
-            c["FGA"] += 1
-            if made:
-                c["FGM"] += 1
-                c["PTS"] += 3 if is3 else 2
-            side[_ZONE_SIDE[z]] += 1
+        for bucket in (allc, thr if is3 else two):
+            bucket["total"] += 1
+            if z in bucket["zc"]:
+                c = bucket["zc"][z]
+                c["FGA"] += 1
+                if made:
+                    c["FGM"] += 1
+                    c["PTS"] += 3 if is3 else 2
+                bucket["side"][_ZONE_SIDE[z]] += 1
     if total < MIN_TENDENCY_SHOTS:
         return {"available": False, "total": total}
-    zoned = sum(side.values()) or 1
-    zones = [{"zone": z, "label": _ZONE_LABEL[z], "poss": c["FGA"],
-              "share": c["FGA"] / zoned,
-              "PPP": (c["PTS"] / c["FGA"]) if c["FGA"] else None,
-              "FG%": (c["FGM"] / c["FGA"]) if c["FGA"] else None}
-             for z, c in zc.items()]
+
+    def _zone_rows(bucket):
+        zoned = sum(bucket["side"].values()) or 1
+        return [{"zone": z, "label": _ZONE_LABEL[z], "poss": c["FGA"],
+                 "share": c["FGA"] / zoned,
+                 "PPP": (c["PTS"] / c["FGA"]) if c["FGA"] else None,
+                 "FG%": (c["FGM"] / c["FGA"]) if c["FGA"] else None}
+                for z, c in bucket["zc"].items()]
+
+    def _side_shares(bucket):
+        zoned = sum(bucket["side"].values()) or 1
+        return {k: v / zoned for k, v in bucket["side"].items()}
+
     return {
         "available": True, "total": total,
-        "side": {k: v / zoned for k, v in side.items()},
-        "zones": zones,
+        "side": _side_shares(allc),
+        "zones": _zone_rows(allc),
         "rim_rate": rim / total, "mid_rate": mid / total, "three_rate": three / total,
+        # per shot-value split (2PT vs 3PT) — same zone/side read, one per type
+        "two": {"total": two["total"], "side": _side_shares(two),
+                "zones": _zone_rows(two)},
+        "three": {"total": thr["total"], "side": _side_shares(thr),
+                  "zones": _zone_rows(thr)},
     }
 
 
@@ -452,8 +472,42 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
         out_rows.append({"key": key, "label": label, "win": mw, "loss": ml,
                          "d": d, "fmt": fmt})
     out_rows.sort(key=lambda r: -abs(r["d"]))
+    top_rows = out_rows[:top]
+
+    # ── goals-hit record: per game, how many of the top signature-stat GOALS it
+    # hit, then the W-L record grouped by that count. Each goal's threshold is the
+    # midpoint between the win-avg and loss-avg; "hit" = the game's value is on the
+    # winning side (>= for stats higher in wins, <= for stats higher in losses,
+    # e.g. opponent eFG / turnovers). Answers "when we hit all N targets, we go
+    # X-Y" the way a coach frames it. ──────────────────────────────────────────
+    record = []
+    goals = []
+    if top_rows:
+        thr = []
+        for r in top_rows:
+            t = (r["win"] + r["loss"]) / 2.0
+            win_high = r["d"] > 0
+            thr.append((r["key"], t, win_high))
+            goals.append({"label": r["label"], "target": t, "win_high": win_high,
+                          "fmt": r["fmt"]})
+        rec = {}                                  # n_hit -> [wins, losses]
+        for gid, ln in lines.items():
+            hit = 0
+            for key, t, win_high in thr:
+                v = ln.get(key)
+                if v is None:
+                    continue
+                if (v >= t) if win_high else (v <= t):
+                    hit += 1
+            slot = rec.setdefault(hit, [0, 0])
+            slot[0 if result[gid] == "win" else 1] += 1
+        record = [{"n": k, "wins": rec[k][0], "losses": rec[k][1],
+                   "games": rec[k][0] + rec[k][1]}
+                  for k in sorted(rec, reverse=True)]
+
     return {"available": bool(out_rows), "win_games": n_w, "loss_games": n_l,
-            "rows": out_rows[:top]}
+            "rows": top_rows, "n_goals": len(top_rows),
+            "goals": goals, "record": record}
 
 
 def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=None,

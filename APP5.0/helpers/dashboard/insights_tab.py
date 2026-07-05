@@ -298,6 +298,36 @@ def render(ctx):
         st.caption("▲ = higher in wins · ▼ = higher in losses (for opponent "
                    "stats, lower is the winning direction). d = effect size — "
                    "how many SDs apart the win and loss averages sit.")
+
+        # ── record by how many of the signature goals the team hit ────────────
+        _rec = _wa.get("record") or []
+        _goals = _wa.get("goals") or []
+        if _rec and _goals:
+            _n = len(_goals)
+            # each goal's target, on the winning side (≥ / ≤)
+            _gbits = []
+            for gp in _goals:
+                _t = _wlfmt(gp["target"], gp["fmt"])
+                _gbits.append(f"{gp['label']} {'≥' if gp['win_high'] else '≤'} {_t}")
+            st.markdown("<div class='lab-hdr'>Record by goals hit</div>",
+                        unsafe_allow_html=True)
+            st.caption(
+                f"The **{_n} goals**: " + " · ".join(_gbits) +
+                f". Each game hits 0–{_n} of them; the record shows how the team "
+                "does at each level — the four-factors 'win the stats, win the "
+                "game' read. Target = midpoint between the win and loss averages.")
+            _rrows = []
+            for r in _rec:
+                w, l = r["wins"], r["losses"]
+                _rrows.append({
+                    "Goals hit": f"{r['n']} / {_n}",
+                    "Record": f"{w}–{l}",
+                    "Win%": (f"{100 * w / r['games']:.0f}%" if r["games"] else "—"),
+                    "Games": r["games"],
+                })
+            st.markdown(dense_table(_rrows,
+                        columns=["Goals hit", "Record", "Win%", "Games"]),
+                        unsafe_allow_html=True)
     elif _wl.get("available"):
         st.caption("Signature win/loss stats need ≥2 tracked games on each "
                    "side of the record — fills in as results build.")
@@ -323,16 +353,35 @@ def render(ctx):
         else:
             st.caption(f"Balanced left/right (Left {_pct(_lft)} · Right {_pct(_rgt)})"
                        " — no strong side to force.")
-        _zz = sorted(_te["zones"], key=lambda z: -z["poss"])
-        st.markdown(dense_table([{
-            "Zone": z["label"], "Shots": z["poss"], "Share": _pct(z["share"]),
-            "FG%": _pct(z["FG%"]),
-            "PPP": (f"{z['PPP']:.2f}" if z["PPP"] is not None else "—")}
-            for z in _zz]), unsafe_allow_html=True)
         st.caption(f"Shot diet: rim {_pct(_te['rim_rate'])} · mid "
                    f"{_pct(_te['mid_rate'])} · three {_pct(_te['three_rate'])}. "
                    "Take away their best zone, live with the worst. (Play-call "
                    "predictability + over-used sets live on the Scout tab.)")
+
+        # ── split the zone tendencies by shot value (2PT vs 3PT) — a team can
+        # be right-side heavy from three but rim-balanced, and lumping them hides
+        # it. Two side-by-side tables, each zone-ranked within its shot type. ──
+        def _tend_table(bucket, title):
+            zz = sorted((z for z in bucket["zones"] if z["poss"]),
+                        key=lambda z: -z["poss"])
+            sd = bucket["side"]
+            st.markdown(f"**{title}** · {bucket['total']} shots · "
+                        f"L {_pct(sd['Left'])} / M {_pct(sd['Middle'])} / "
+                        f"R {_pct(sd['Right'])}")
+            if zz:
+                st.markdown(dense_table([{
+                    "Zone": z["label"], "Shots": z["poss"],
+                    "Share": _pct(z["share"]), "FG%": _pct(z["FG%"]),
+                    "PPP": (f"{z['PPP']:.2f}" if z["PPP"] is not None else "—")}
+                    for z in zz]), unsafe_allow_html=True)
+            else:
+                st.caption("— none tracked —")
+
+        _c2, _c3 = st.columns(2)
+        with _c2:
+            _tend_table(_te["two"], "2-point shots")
+        with _c3:
+            _tend_table(_te["three"], "3-point shots")
 
     # ── passer quality — look created vs finish (the pass-from FG% nuance) ────
     _pq = _passers(ctx.gender, getattr(ctx, "season_gp", None))

@@ -171,26 +171,18 @@ def render(ctx):
                     f"width:{pct:.0f}%;height:100%;border-radius:3px'></div></div>")
 
         def _ff_card(col, label, key, opp_key, hib, fmt, scale=100.0):
+            # Renders via the shared cards.factor_tile so the signature four-factor
+            # grid uses the same tile grammar as any other team surface. Engine
+            # logic (percentile / rank) stays here; only the markup is centralized.
             tv = me.get(key, 0.0) * scale
             ov = me.get(opp_key, 0.0) * scale
             lg = _lg_avg(key) * scale
             rk, tot = _lg_rank(key, hib)
-            rc = _rcolor(rk, tot)
-            tcol = ctx.GOOD if ((tv >= ov) if hib else (tv <= ov)) else ctx.BAD
-            rstr = (f"<div style='font-size:10px;font-weight:700;color:{rc};"
-                    f"margin-top:3px'>#{rk}/{tot}</div>") if rk else ""
+            good = (tv >= ov) if hib else (tv <= ov)
             col.markdown(
-                f"<div style='background:{CARD_BG};border:1px solid {GRID};"
-                f"border-radius:10px;padding:12px 10px;text-align:center;"
-                f"margin-bottom:6px'>"
-                f"<div style='font-size:9px;color:{ctx.GREY};text-transform:uppercase;"
-                f"letter-spacing:1px'>{label}</div>"
-                f"<div style='font-size:24px;font-weight:900;color:{tcol};"
-                f"line-height:1.1'>{fmt.format(tv)}</div>"
-                f"<div style='font-size:11px;color:{AWAY};margin-top:1px'>"
-                f"opp {fmt.format(ov)}</div>"
-                f"<div style='font-size:10px;color:#6e7681'>lg {fmt.format(lg)}</div>"
-                f"{rstr}{_pbar(rk, tot)}</div>", unsafe_allow_html=True)
+                CARDS.factor_tile(label, fmt.format(tv), fmt.format(ov),
+                                  fmt.format(lg), rk, tot, value_good=good),
+                unsafe_allow_html=True)
 
         def _stat_card(col, label, key, hib, fmt, scale=1.0, sub=""):
             v = me.get(key)

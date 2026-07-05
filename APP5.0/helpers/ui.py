@@ -163,6 +163,30 @@ def page_header(title: str, sub: str = None, chips: list = None):
             unsafe_allow_html=True)
 
 
+def masthead(title: str, *, kicker: str = "HOOPTRACKS", sub: str = None,
+             icon: str = "🏀", chips: list = None):
+    """Branded page masthead — the HoopTracks identity band (compact ``.lab-hero``
+    grammar: an accent kicker eyebrow over a gradient-text title).
+
+    A drop-in upgrade for ``page_header`` on the flagship pages so they read as one
+    product rather than bare ``st.title`` chrome. The gradient title reskins with
+    the chosen accent (``.masthead-title`` shares ``.lab-hero-name``'s clip), so
+    the brand feel comes from a consistent *treatment*, not a stamped logo."""
+    chip_html = ""
+    if chips:
+        chip_html = "".join(
+            f"<span class='stat-chip'>{html.escape(str(c))}</span>" for c in chips)
+        chip_html = f"<div class='masthead-chips'>{chip_html}</div>"
+    sub_html = (f"<div class='masthead-sub'>{html.escape(str(sub))}</div>"
+                if sub else "")
+    st.markdown(
+        f"<div class='masthead'>"
+        f"<div class='masthead-kicker'>{icon} {html.escape(str(kicker))}</div>"
+        f"<div class='masthead-title lab-hero-name'>{html.escape(str(title))}</div>"
+        f"{sub_html}{chip_html}</div>",
+        unsafe_allow_html=True)
+
+
 # ── Chart primitives ─────────────────────────────────────────────────────────────
 def rgb(hex_color):
     """'#rrggbb' → (r, g, b) ints."""

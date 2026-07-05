@@ -163,8 +163,14 @@ def render_mini(team_id, gender, scored, tracked=None, show_tracked=False):
     return html
 
 
-def render_header(ctx):
-    """The dense team header: banner · glance strip · identity/engine/verdict."""
+def render_banner(ctx):
+    """The slim team-identity banner (name · tier · record · Power).
+
+    Page-level chrome: rendered once above the view switcher on EVERY Team
+    Dashboard view (so the team you're reading is never ambiguous), and again as
+    the top of ``render_header`` for the Overview / Rankings deep dive. Power,
+    record and rank are results-math → Free-safe; the only tracked-gated bit is
+    the data-driven style tag, which drops out when ``has_tracked`` is False."""
     sc = ctx.sc_score or {}
     rec = ctx.rec
     power = sc.get("Power")
@@ -191,9 +197,12 @@ def render_header(ctx):
 
     # ── banner — the player-card banner grammar, team-sized ──────────────────
     st.markdown(
-        f"<div style='background:linear-gradient(135deg,#080c14,#0d1117 55%,#111827);"
+        f"<div class='team-banner' style='background:linear-gradient(135deg,"
+        f"#080c14,#0d1117 55%,#111827);"
         f"border:1px solid {hue}66;border-radius:18px;padding:18px 24px;"
         f"margin-bottom:12px;position:relative;overflow:hidden'>"
+        f"<div style='position:absolute;left:0;top:0;bottom:0;width:4px;"
+        f"background:{hue};box-shadow:0 0 18px {hue}'></div>"
         f"<div style='display:flex;align-items:center;gap:22px'>"
         f"<div style='flex:1'>"
         f"<div style='font-size:28px;font-weight:900;color:#f0f6fc;line-height:1.05'>"
@@ -209,6 +218,15 @@ def render_header(ctx):
         f"<div style='font-size:46px;font-weight:900;color:{hue};line-height:1'>"
         f"{power if power is not None else '—'}</div></div></div></div>",
         unsafe_allow_html=True)
+
+
+def render_header(ctx):
+    """The dense team header: banner · glance strip · identity/engine/verdict."""
+    render_banner(ctx)
+    rec = ctx.rec
+    import helpers.seasons as _SEAS
+    _season = getattr(ctx, "season", "Current")
+    fm = _form(ctx.gender, _season).get(ctx.team_id, {})
 
     # ── glance strip — most-distinctive stats vs the league (tracked only) ───
     if getattr(ctx, "has_tracked", False) and getattr(ctx, "team_id", None):

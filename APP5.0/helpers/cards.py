@@ -249,6 +249,45 @@ def glass(label, value, sub="", color="var(--text)"):
             f"<div class='pl-glass-s'>{html.escape(str(sub))}</div></div>")
 
 
+_AMBER = "#d29922"
+
+
+def factor_tile(label, value_str, opp_str, lg_str, rk, tot, *, value_good=True):
+    """A league-anchored comparison tile (HTML string): this team's value tinted
+    good/bad, the opponent's value, the league average, and league rank with a
+    percentile bar. The reusable form of the Overview four-factor grid — same
+    rounded-card grammar as ``glass`` / the team-card zones, so any team surface
+    (Overview now, Charts/Lab next) draws one consistent tile.
+
+    ``value_good`` colours the headline number (green beats opp / red worse);
+    ``rk``/``tot`` drive the rank chip colour and the percentile bar."""
+    vcol = _GOOD if value_good else _BAD
+    if not rk or tot <= 1:
+        rc, rstr, bar = "#8b949e", "", ""
+    else:
+        p = rk / tot
+        rc = _GOOD if p <= 0.25 else (_AMBER if p <= 0.50 else _BAD)
+        rstr = (f"<div style='font-size:10px;font-weight:700;color:{rc};"
+                f"margin-top:3px'>#{rk}/{tot}</div>")
+        pct = (1 - (rk - 1) / (tot - 1)) * 100
+        bc = _GOOD if pct >= 75 else (_AMBER if pct >= 50 else _BAD)
+        bar = (f"<div style='background:var(--track);border-radius:3px;height:4px;"
+               f"overflow:hidden;margin-top:5px'><div style='background:{bc};"
+               f"width:{pct:.0f}%;height:100%;border-radius:3px'></div></div>")
+    return (
+        f"<div style='background:var(--card-bg);border:1px solid var(--card-border);"
+        f"border-radius:10px;padding:12px 10px;text-align:center;"
+        f"margin-bottom:6px'>"
+        f"<div style='font-size:9px;color:var(--subtext);text-transform:uppercase;"
+        f"letter-spacing:1px'>{html.escape(str(label))}</div>"
+        f"<div style='font-size:24px;font-weight:900;color:{vcol};"
+        f"line-height:1.1'>{html.escape(str(value_str))}</div>"
+        f"<div style='font-size:11px;color:#e74c3c;margin-top:1px'>"
+        f"opp {html.escape(str(opp_str))}</div>"
+        f"<div style='font-size:10px;color:#6e7681'>lg {html.escape(str(lg_str))}"
+        f"</div>{rstr}{bar}</div>")
+
+
 def onoff_html(label, on_v, off_v, on_n, off_n, n_lbl="opps",
                higher_better=True):
     """On-court vs off-court comparison card with a coloured delta (HTML string)."""

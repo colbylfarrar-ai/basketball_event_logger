@@ -248,6 +248,30 @@
 .lab-hero-sub  { font-size: 13px; color: var(--subtext); margin-top: 4px; }
 .lab-hero-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
+/* ── Page masthead — the HoopTracks brand band (ui.masthead) ──────────────────
+   Thin identity strip: accent kicker eyebrow + gradient-text title. Shares the
+   .lab-hero-name gradient so the wordmark reskins with the accent. The brand
+   "feel" is this consistent treatment across flagship pages, not a stamped logo. */
+.masthead {
+    position: relative;
+    padding: 4px 0 8px 16px;
+    margin: 2px 0 14px;
+    border-left: 3px solid var(--accent);
+}
+.masthead::before {
+    content: ""; position: absolute; left: -3px; top: 0; bottom: 0; width: 3px;
+    background: var(--accent);
+    box-shadow: 0 0 16px 1px rgba(var(--accent-rgb), 0.7);
+}
+.masthead-kicker {
+    font-size: 10px; font-weight: 800; letter-spacing: 3px;
+    text-transform: uppercase; color: var(--accent);
+    opacity: 0.9; margin-bottom: 1px;
+}
+.masthead-title { font-size: 30px; font-weight: 900; letter-spacing: -0.5px; line-height: 1.08; }
+.masthead-sub  { font-size: 13px; color: var(--subtext); margin-top: 3px; max-width: 720px; }
+.masthead-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
 /* Glassmorphism tile */
 .glass-tile {
     background: rgba(22,27,34,0.55);

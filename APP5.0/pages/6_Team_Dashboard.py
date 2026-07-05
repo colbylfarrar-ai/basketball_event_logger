@@ -39,7 +39,7 @@ import streamlit.components.v1 as components
 from database.db import query, execute
 from helpers.settings_utils import get_setting
 from helpers.box_score import render_box_score
-from helpers.ui import (page_chrome, page_header, rgb as _rgb,
+from helpers.ui import (page_chrome, page_header, masthead, rgb as _rgb,
                         style_fig as _style, q_label as _q_label, empty_state,
                         gender_radio, gender_label, grid as _grid, seg as _seg,
                         AWAY, CARD_BG, GRID, HEAT, DIVERGE,
@@ -395,7 +395,8 @@ def _poss_sankey(po, accent, height=460):
 #  HEADER + TEAM SELECT
 # ══════════════════════════════════════════════════════════════════════════════
 
-page_header("Team Dashboard")
+masthead("Team Dashboard", sub="Pick a team and read everything about it — "
+         "ratings, record, roster, scout and the analytics wall.")
 _glossary_key("eFG%", "TS%", "USG%", "ORtg", "DRtg", "NetRtg", "PPP", "TOV%",
               "OREB%", "DSHOT%", "PPS", "ScEff", "FTr", "3PAr",
               label="📖 Stat key — what the advanced columns mean")
@@ -1231,7 +1232,26 @@ def _matchup_grid(g, tid, _ids):
 # after _prof_ctx is built).
 _TD_VIEWS = ["Overview", "Scout", "Insights", "Roster",
              "Schedule", "Charts", "Lab", "Share", "Glossary"]
-_tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view") or "Overview"
+# Icons make the top-level nav read as primary navigation, not just another
+# toggle (only the label list drives display; the option values are unchanged so
+# session state / routing below stay identical).
+_TD_VIEW_ICONS = {"Overview": "📊", "Scout": "🔍", "Insights": "💡",
+                  "Roster": "👥", "Schedule": "📅", "Charts": "📈",
+                  "Lab": "🧪", "Share": "📤", "Glossary": "📖"}
+_tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view",
+               format_func=lambda v: f"{_TD_VIEW_ICONS.get(v, '')} {v}") \
+    or "Overview"
+
+# Persistent team-identity chrome: the slim banner (name · tier · record · Power)
+# above the view switcher output on every view EXCEPT Overview, which draws the
+# full header (banner + glance + zones) itself — so the team you're reading is
+# never ambiguous. Results-math fields only → Free-safe; season-scoped via
+# season_pick (never hardcode 'Current' — prod reads the rolled-over season).
+if _tdview != "Overview":
+    import helpers.dashboard.team_card as _TCARD
+    _TCARD.render_banner(SimpleNamespace(
+        sc_score=sc_score, rec=rec, team_id=team_id, gender=gender,
+        scored=scored, has_tracked=has_tracked, season=season_pick))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

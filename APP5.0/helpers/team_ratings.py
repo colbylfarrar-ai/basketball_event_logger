@@ -56,7 +56,7 @@ DEFAULT_ITERS      = 25    # SRS iterations (converges well before this)
 DEFAULT_HCA        = 3.0   # home-court advantage, points (predict_spread only)
 DEFAULT_REG        = 4.0   # phantom average-games per team (shrinkage strength)
 _SOR_MARGIN_CAP    = 20    # margin credited to a result is clamped to ±this
-DEFAULT_SOS_WEIGHT = 0.4   # slight schedule-strength nudge, in RATING POINTS PER
+DEFAULT_SOS_WEIGHT = 0.8   # slight schedule-strength nudge, in RATING POINTS PER
                            # STANDARD DEVIATION of SOS. The SRS opponent-adjustment
                            # already accounts for who you played, but its shrinkage
                            # (DEFAULT_REG phantom games) and the sparsely-connected
@@ -66,7 +66,14 @@ DEFAULT_SOS_WEIGHT = 0.4   # slight schedule-strength nudge, in RATING POINTS PE
                            # team gets ~0, the bump is independent of the league's
                            # SOS scale, and the extreme tails are bounded at ~±2.5
                            # SD (~±0.9 pts here). A team one SD tougher than average
-                           # gains 0.4 pts. Set 0 for pure AdjNet+Class.
+                           # gains 0.8 pts. Set 0 for pure AdjNet+Class.
+                           # Retuned 2026-07-05 from 0.4 after a full season of OK
+                           # data (1433 teams, median 24 GP) showed SOS is now a
+                           # dense, reliable signal (SD~10.6) that 0.4 barely used
+                           # (bump SD only 0.4, max ±1.8pts). 0.8 was chosen over
+                           # 1.0+ because at 1.0 the reshuffle among real, classed,
+                           # deep-GP (15+) teams was too big (23% moved >10 ranks
+                           # vs 12.5% at 0.8) relative to a "slight nudge".
 
 
 _safe = S._safe   # shared definition lives in helpers.stats

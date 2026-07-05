@@ -58,12 +58,13 @@ def leaderboard(rows, paid, key="adv"):
         return
 
     st.caption(
-        "**Beyond the five ratings.** **Impact** is pure RAPM — points per 100 "
-        "possessions a player adds vs an average player, holding teammates AND "
-        "opponents constant. **RimDef/PerimDef** and **OREB/DREB** split the "
-        "Defense and Rebounding ratings; **AST%** and **Pass FG%/Open%** read "
-        "playmaking depth. **Conf** flags how much game evidence backs the number "
-        "— *(box)* means mostly hand-entered box scores, not tracked film.")
+        "**Every rating in one board**, sortable — the five headlines plus "
+        "Shooting/Finishing and the split sub-ratings. **Impact** is pure RAPM: "
+        "points per 100 possessions a player adds vs an average player, holding "
+        "teammates AND opponents constant. **RimDef/PerimDef** and **OREB/DREB** "
+        "split the Defense and Rebounding ratings; **AST%** and **Pass FG%/Open%** "
+        "read playmaking depth. **Conf** flags how much game evidence backs the "
+        "number — *(box)* means mostly hand-entered box scores, not tracked film.")
 
     df = pd.DataFrame([{
         "Rank": r.get("Rank"), "Player": r.get("name"),
@@ -71,17 +72,24 @@ def leaderboard(rows, paid, key="adv"):
         "GP": r.get("GP"), "Box": r.get("ManualGP", 0) or 0,
         "Conf": r.get("Confidence"),
         "Impact": r.get("Impact"),
-        "OVERALL": r.get("OVERALL"), "DEFENSE": r.get("DEFENSE"),
+        # full rating set — the five headlines + the two offense sub-ratings +
+        # the split defense / rebounding sub-ratings, all 0-100.
+        "OVERALL": r.get("OVERALL"),
+        "OFFENSE": r.get("OFFENSE"), "Shooting": r.get("Shooting"),
+        "Finishing": r.get("Finishing"),
+        "DEFENSE": r.get("DEFENSE"),
         "RimDef": r.get("RimDef"), "PerimDef": r.get("PerimDef"),
+        "PLAYMAKING": r.get("PLAYMAKING"),
         "REBOUNDING": r.get("REBOUNDING"),
         "OREBrtg": r.get("OREBrtg"), "DREBrtg": r.get("DREBrtg"),
+        # detail leaves behind the ratings
         "AST%": r.get("AST%"), "PassFG%": r.get("PassFG%"),
         "PassOpen%": r.get("PassOpen%"),
     } for r in rows])
-    df = df.sort_values("Impact", ascending=False, na_position="last")
+    df = df.sort_values("OVERALL", ascending=False, na_position="last")
 
-    prog = ["OVERALL", "DEFENSE", "RimDef", "PerimDef",
-            "REBOUNDING", "OREBrtg", "DREBrtg"]
+    prog = ["OVERALL", "OFFENSE", "Shooting", "Finishing", "DEFENSE",
+            "RimDef", "PerimDef", "PLAYMAKING", "REBOUNDING", "OREBrtg", "DREBrtg"]
     cfg = {c: st.column_config.ProgressColumn(c, format="%.1f", min_value=0,
                                               max_value=100) for c in prog}
     cfg["Impact"] = st.column_config.NumberColumn(

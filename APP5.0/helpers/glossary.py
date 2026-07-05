@@ -404,6 +404,24 @@ STAT_DEFS = [
      "Total win-probability movement across a game — how much the outcome was in "
      "doubt and how often it swung.",
      "Higher = more dramatic; a blowout ≈ 0, a back-and-forth thriller scores high.", True),
+    ("Adj GEI", "Stakes-adjusted GEI", "Advanced", "GEI × (1 + stakes)",
+     "GEI lifted by the stakes: the two teams' mean quality percentile plus an "
+     "upset kicker when the worse-seeded team won — so a marquee thriller outranks "
+     "an equally-frantic bottom-of-the-league game.",
+     "A #1-vs-#2 nailbiter beats a low-vs-low one at a higher raw GEI; a live upset "
+     "lands in between.", True),
+    ("OffRating", "Officials Rating", "Advanced",
+     "50 + 10·Σ(weightᵢ·zᵢ) over the ref pool",
+     "The ref a coach wants, on a 0-100 index (50 = average): weighted, in order, "
+     "by fewer fouls/game, higher-leverage games worked, higher scoring, higher "
+     "pace, and clutch calls (Q4/OT within a possession or two).",
+     "Higher = works the big games, lets them play, and still makes the gutsy late "
+     "call. Needs 3+ games worked to rate.", True),
+    ("Leverage", "Game leverage (officials)", "Advanced",
+     "0.6·team-quality + 0.4·closeness",
+     "How much a game is worth to work — the mean quality percentile of the two "
+     "teams blended with how close the final was.",
+     "~1 = a marquee, tight game; ~0 = a low-vs-low blowout.", True),
     ("sTS%", "Stabilized rate", "Advanced", "(value·n + k·league_mean) / (n + k)",
      "Any rate (FG%, 3P%, TS%, rating) regressed toward the league average by how "
      "little evidence backs it (empirical-Bayes); the prior strength k is fit from "

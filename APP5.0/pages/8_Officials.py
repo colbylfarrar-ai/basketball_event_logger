@@ -143,6 +143,23 @@ def _official_game_log(off_pk, g, gids=None, season=None):
                                  season=season)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _official_ratings(g, gids=None, season=None):
+    """The Officials Rating composite (leverage / clutch / play-type bias +
+    the 0-100 index). Threads team ranks (all-season pool so a career view
+    still gets quality) for the game-leverage term."""
+    import helpers.team_ratings as _TR
+    scored = {}
+    for _szn in ({r["season"] for r in query(
+            "SELECT DISTINCT season FROM games WHERE tracked=1")} or {"Current"}):
+        try:
+            scored.update(_TR.score_ratings(gender=g, season=_szn))
+        except Exception:
+            pass
+    return OFF.official_ratings(gender=g, game_ids=(set(gids) if gids else None),
+                                season=season, scored=scored)
+
+
 hc1, hc2 = st.columns([3, 1])
 gender = gender_radio(hc2, default=None, key="off_league", include_all=True)
 gender_lbl = "All" if gender is None else gender_label(gender)
@@ -256,8 +273,83 @@ _glass(_g[3], "MOST CONSISTENT", f"±{_steady['FPG_std']:.1f}",
 _glass(_g[4], "HOTTEST ENV.", f"{_hottest['PPP']:.2f}",
        f"{_hottest['name']} · PPP", "#e3b341")
 
-tab_over, tab_charts, tab_ind, tab_gloss = st.tabs(
-    ["Overview", "Charts", "Individual", "Glossary"])
+tab_rate, tab_over, tab_charts, tab_ind, tab_gloss = st.tabs(
+    ["Ratings", "Overview", "Charts", "Individual", "Glossary"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 0 — OFFICIALS RATING  (the ref a coach wants)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_rate:
+    st.caption(
+        "The **Officials Rating** — the ref coaches want: works the big games, "
+        "lets them play, and still makes the gutsy call late. A 0-100 index "
+        "(50 = average) weighting, in order: **fewer fouls/game** · **higher-"
+        "leverage games worked** · **higher scoring** · **higher pace** · "
+        "**clutch calls** (Q4/OT with the game within a possession or two).")
+    _rat = _official_ratings(gender, _off_gids, _off_season)
+    _rrows = _rat.get("officials", [])
+    _rated = [r for r in _rrows if r.get("rating") is not None]
+    if not _rated:
+        st.info(f"Need at least {OFF.RATING_MIN_GAMES} games worked to rate an "
+                "official — the board fills in as refs build a tracked-game "
+                "history.")
+    else:
+        # headline tiles
+        _top = _rated[0]
+        _bigstage = max(_rrows, key=lambda r: r.get("leverage", 0))
+        _letplay = min([r for r in _rrows if r["games"] >= 2],
+                       key=lambda r: r["FPG"], default=_rated[0])
+        _clutchref = max(_rrows, key=lambda r: r.get("clutch_pg", 0))
+        gg = st.columns(4)
+        _glass(gg[0], "TOP-RATED", f"{_top['rating']:.0f}",
+               f"{_top['name']}", ACCENT)
+        _glass(gg[1], "BIG-STAGE REF", f"{_bigstage['leverage']:.2f}",
+               f"{_bigstage['name']} · leverage", "#e3b341")
+        _glass(gg[2], "LETS THEM PLAY", f"{_letplay['FPG']:.1f}",
+               f"{_letplay['name']} · FPG", "#3fb950")
+        _glass(gg[3], "MAKES THE CALL", f"{_clutchref['clutch']}",
+               f"{_clutchref['name']} · clutch", "#bc8cff")
+
+        import pandas as _pd
+        _rdf = _pd.DataFrame([{
+            "Official": r["name"], "Rating": round(r["rating"], 0),
+            "GP": r["games"], "FPG": round(r["FPG"], 1),
+            "Leverage": round(r["leverage"], 2),
+            "PPP": round(r["PPP"], 2), "Pace": round(r["POSSPG"], 0),
+            "Clutch": r["clutch"],
+        } for r in _rated])
+        st.dataframe(
+            _rdf, hide_index=True, width="stretch", key="off_rating_df",
+            column_config={"Rating": st.column_config.ProgressColumn(
+                "Rating", format="%.0f", min_value=0, max_value=100)})
+        st.caption(
+            "Leverage = mean stakes of the games worked (team quality + "
+            "closeness). Clutch = fouls called in Q4/OT within a possession or "
+            "two. FPG lower is better; everything else higher is better.")
+
+        # ── play-type foul bias ────────────────────────────────────────────
+        import helpers.playtypes as _PTP
+        _ptl = dict(_PTP.NAMED_PLAY_TYPES)
+        _bias_rows = [r for r in _rrows if r.get("pt_bias")]
+        if _bias_rows:
+            st.markdown("<div class='lab-hdr'>Play-type foul bias — which sets a "
+                        "ref whistles more</div>", unsafe_allow_html=True)
+            st.caption("How much more (or less) of a ref's fouls come on a given "
+                       "set call vs the league — a positive gap means they call "
+                       "that action tight. Needs play-type-tagged fouls.")
+            def _bias_cell(bias, i):
+                if i >= len(bias):
+                    return "—"
+                k, d, n, s = bias[i]
+                return f"{_ptl.get(k, k)} {d * 100:+.0f}%"
+            st.dataframe(_pd.DataFrame([{
+                "Official": r["name"], "GP": r["games"],
+                "Calls tight #1": _bias_cell(r["pt_bias"], 0),
+                "#2": _bias_cell(r["pt_bias"], 1),
+                "#3": _bias_cell(r["pt_bias"], 2),
+            } for r in _bias_rows[:15]]), hide_index=True, width="stretch",
+                key="off_bias_df")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

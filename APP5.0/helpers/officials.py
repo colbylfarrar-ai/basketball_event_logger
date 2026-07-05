@@ -281,3 +281,189 @@ def official_game_log(off_pk, gender=None, game_ids=None, season="Current"):
         })
     out.sort(key=lambda r: (r["date"] or ""), reverse=True)
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  OFFICIALS RATING — "the ref a coach WANTS: gets big games, lets them play,
+#  makes the gutsy call when it matters"  (founder spec)
+# ══════════════════════════════════════════════════════════════════════════════
+# Founder's importance order (1 = most important): 1 low fouls/game · 2 works
+# high-leverage games · 3 high scoring (PPP) · 4 high pace · 5 clutch calls.
+# Each is z-scored across the rated pool, weighted by that order, and scaled to a
+# 0-100 index (50 = pool average, +10 per SD). Rewards the "let them play" ref
+# who still makes the call late in a close one.
+_RATING_WEIGHTS = [
+    ("fpg",     -0.30),   # fewer fouls/game is better (negative weight)
+    ("leverage", 0.25),   # the games' stakes (team quality + drama)
+    ("ppp",      0.20),   # scoring environment
+    ("pace",     0.15),   # possessions/game
+    ("clutch",   0.10),   # willingness to make the late high-leverage call
+]
+RATING_MIN_GAMES = 3      # below this an official isn't rated (too few games)
+CLUTCH_MARGIN = 6         # |margin| within this in Q4/OT = a clutch situation
+
+
+def _game_leverage(games, scored):
+    """{game_id: leverage in [0,1]} — how much a game is worth to work: the mean
+    quality percentile of the two teams (rank-based) blended with the game's
+    drama (final closeness). scored = team_ratings.score_ratings for the ranks;
+    empty → leverage 0. A marquee, close game scores ~1; a low-vs-low blowout ~0."""
+    n = len(scored) or 1
+    out = {}
+    for gid, g in games.items():
+        rk1 = (scored.get(g["team1_id"]) or {}).get("Rank")
+        rk2 = (scored.get(g["team2_id"]) or {}).get("Rank")
+        if rk1 and rk2 and n > 1:
+            q = 1.0 - ((rk1 - 1) / (n - 1) + (rk2 - 1) / (n - 1)) / 2
+        else:
+            q = 0.0
+        # drama from the final margin (no timeline needed): a 1-possession game
+        # is max drama, a 20+ blowout ~0.
+        hs, as_ = g.get("home_score"), g.get("away_score")
+        if hs is not None and as_ is not None:
+            drama = max(0.0, 1.0 - abs(hs - as_) / 20.0)
+        else:
+            drama = 0.0
+        out[gid] = 0.6 * q + 0.4 * drama
+    return out
+
+
+def _clutch_and_playtype(game_ids):
+    """One events pass → (clutch_fouls, playtype_fouls, league_playtype).
+
+    clutch_fouls  {off_pk: n} — fouls a ref called in Q4/OT while the score was
+                  within CLUTCH_MARGIN (running margin reconstructed from the
+                  scoring events, like situational/runs).
+    playtype_fouls {off_pk: {play_type: n}}  — fouls by the set they happened in.
+    league_playtype {play_type: n}           — the pooled baseline for bias."""
+    import helpers.gameflow as GF
+    import helpers.stats as S
+    clutch = defaultdict(int)
+    pt_off = defaultdict(lambda: defaultdict(int))
+    pt_lg = defaultdict(int)
+    if not game_ids:
+        return dict(clutch), pt_off, dict(pt_lg)
+    ev = S.fetch_events(list(game_ids))   # provides derived shooter_team_id
+    by_game = defaultdict(list)
+    for e in ev:
+        by_game[e["game_id"]].append(e)
+    for gid, evs in by_game.items():
+        evs.sort(key=lambda e: _elapsed_safe(e, GF))
+        margin = 0            # team1 - team2, BEFORE the event
+        t1 = _game_team1(gid)
+        for e in evs:
+            et = e["event_type"]
+            if et == "foul":
+                q = e["quarter"] or 0
+                if q >= 4 and abs(margin) <= CLUTCH_MARGIN:
+                    opk = e["official_id"]
+                    if opk is not None:
+                        clutch[opk] += 1
+                        pk = e.get("play_type")
+                        if pk:
+                            pt_off[opk][pk] += 1
+                            pt_lg[pk] += 1
+                elif e.get("play_type") and e["official_id"] is not None:
+                    pt_off[e["official_id"]][e["play_type"]] += 1
+                    pt_lg[e["play_type"]] += 1
+            elif ((et == "shot" and e["shot_result"] == "make")
+                  or (et == "free_throw" and e["shot_result"] == "make")):
+                pts = (3 if e["shot_type"] == 3 else 2) if et == "shot" else 1
+                if e["shooter_team_id"] == t1:
+                    margin += pts
+                elif e["shooter_team_id"] is not None:
+                    margin -= pts
+    return dict(clutch), pt_off, dict(pt_lg)
+
+
+_TEAM1_CACHE = {}
+
+
+def _game_team1(gid):
+    if gid not in _TEAM1_CACHE:
+        r = query("SELECT team1_id FROM games WHERE id=?", (gid,))
+        _TEAM1_CACHE[gid] = r[0]["team1_id"] if r else None
+    return _TEAM1_CACHE[gid]
+
+
+def _elapsed_safe(e, GF):
+    try:
+        return GF.elapsed(e)
+    except Exception:
+        return (e.get("quarter") or 1) * 100000
+
+
+def _z(values):
+    """{k: v} → {k: z} over present values (0 when SD is 0 / n<2)."""
+    vals = [v for v in values.values() if v is not None]
+    if len(vals) < 2:
+        return {k: 0.0 for k in values}
+    m = sum(vals) / len(vals)
+    sd = (sum((v - m) ** 2 for v in vals) / len(vals)) ** 0.5
+    return {k: (0.0 if (v is None or not sd) else (v - m) / sd)
+            for k, v in values.items()}
+
+
+def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
+    """The Officials Rating table — the founder's composite. Builds on
+    official_overview (FPG / PPP / POSSPG), adds the mean leverage of the games
+    each ref worked, a clutch-call count, a 0-100 rating, and each ref's
+    play-type foul BIAS (which sets they whistle more than the field).
+
+    `scored` = team_ratings.score_ratings (for game leverage); without it
+    leverage falls back to game closeness only. Returns
+    {"officials": [row + {leverage, clutch, clutch_pg, rating, pt_bias}],
+     "weights": _RATING_WEIGHTS}."""
+    base = official_overview(gender=gender, game_ids=game_ids, season=season)
+    rows = base["officials"]
+    if not rows:
+        return {"officials": [], "weights": _RATING_WEIGHTS}
+
+    games = _games(gender, allow=game_ids, season=season)
+    lev = _game_leverage(games, scored or {})
+    # per-official mean leverage over the games they worked
+    worked = _worked(list(games.keys()))
+    clutch, pt_off, pt_lg = _clutch_and_playtype(list(games.keys()))
+    lg_pt_total = sum(pt_lg.values()) or 1
+
+    for r in rows:
+        opk = r["off_pk"]
+        gset = worked.get(opk, set())
+        r["leverage"] = (sum(lev.get(g, 0.0) for g in gset) / len(gset)
+                         if gset else 0.0)
+        r["clutch"] = clutch.get(opk, 0)
+        r["clutch_pg"] = _safe(r["clutch"], r["games"])
+        # play-type foul bias: this ref's share of a set among their fouls vs the
+        # league share — the biggest positive gap is "calls this a lot".
+        mine = pt_off.get(opk, {})
+        mine_total = sum(mine.values()) or 1
+        bias = []
+        for pk, nn in mine.items():
+            if nn < 2:
+                continue
+            my_share = nn / mine_total
+            lg_share = pt_lg.get(pk, 0) / lg_pt_total
+            bias.append((pk, my_share - lg_share, nn, my_share))
+        bias.sort(key=lambda t: -t[1])
+        r["pt_bias"] = bias[:3]
+
+    # rated pool = officials with enough games; z-score each component there
+    rated = [r for r in rows if r["games"] >= RATING_MIN_GAMES]
+    metrics = {
+        "fpg":      {r["off_pk"]: r["FPG"] for r in rated},
+        "leverage": {r["off_pk"]: r["leverage"] for r in rated},
+        "ppp":      {r["off_pk"]: r["PPP"] for r in rated},
+        "pace":     {r["off_pk"]: r["POSSPG"] for r in rated},
+        "clutch":   {r["off_pk"]: r["clutch_pg"] for r in rated},
+    }
+    zmaps = {k: _z(v) for k, v in metrics.items()}
+    for r in rows:
+        if r["games"] < RATING_MIN_GAMES:
+            r["rating"] = None
+            continue
+        wz = sum(w * zmaps[k].get(r["off_pk"], 0.0) for k, w in _RATING_WEIGHTS)
+        r["rating"] = max(0.0, min(100.0, 50.0 + 10.0 * wz))
+
+    rows.sort(key=lambda r: (r["rating"] is not None, r["rating"] or -1),
+              reverse=True)
+    return {"officials": rows, "weights": _RATING_WEIGHTS, "teams": base["teams"]}

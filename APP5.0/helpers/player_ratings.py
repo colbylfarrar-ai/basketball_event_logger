@@ -48,6 +48,7 @@ streamlit, so any page or script can import it.
 from __future__ import annotations
 
 import math
+import sqlite3
 import statistics
 from collections import defaultdict
 
@@ -59,6 +60,24 @@ import helpers.shrinkage as SHR
 CATEGORIES = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 
 DEFAULT_MIN_GAMES = 1   # players below this are dropped from the pool (and z-math)
+
+# Discounted-evidence weight for a HAND-ENTERED (untracked) box-score game vs a
+# fully play-by-play tracked one. Founder rule: "tracked > manual box completely
+# and entirely." A boxed game feeds ONLY box-derivable leaves (shooting %s, per-
+# game counting rates) — never the event leaves (SMOE, DSHOT%, USG%, rim/perim,
+# passer quality, on-court %). And it counts at this fraction of a tracked game
+# toward EVIDENCE (the games-equivalent that drives shrink-to-50 and the
+# confidence tier), so a box-heavy player never earns full-tracked confidence.
+# The per-game RATE itself blends all games at face value (18 games of shooting
+# is 18 games of shooting); only the trust weighting is discounted.
+MANUAL_GAME_WEIGHT = 0.35
+
+# Base box fields a hand-entered manual_player_box row can supply (mapped to the
+# engine's finalized-box keys). Everything else in a finalized box (paint_*, SC*,
+# shots_*) is event-only and stays 0 for a manual game — so combined-box leaves
+# built from these fields are honest, and event leaves never read manual data.
+_MANUAL_BOX_KEYS = ("FGM", "FGA", "3PM", "3PA", "FTM", "FTA", "2PM", "2PA",
+                    "ORB", "DRB", "TRB", "AST", "STL", "BLK", "TOV", "PF", "PTS")
 
 
 def overall_blurb(off, deff, ply, reb):
@@ -94,19 +113,29 @@ def overall_blurb(off, deff, ply, reb):
     return "Balanced — no standout strength or hole"
 
 
-def sample_confidence(gp):
+def sample_confidence(gp, box_heavy=False):
     """Coarse reliability flag for how much to trust a player's ratings.
 
     A 0-100 rating built on 2 games is mostly noise; this lets every view label
     or gray-out thin samples instead of presenting them with false precision.
+    `gp` here is the EVIDENCE games-equivalent (tracked games + discounted manual
+    games), so a box-heavy player already reads thinner. `box_heavy` (most of the
+    evidence came from hand-entered boxes) caps the ceiling one notch and tags the
+    label, since a boxed game carries no event context however many there are.
     """
     if gp >= 10:
-        return "High"
-    if gp >= 6:
-        return "Medium"
-    if gp >= 3:
-        return "Low"
-    return "Very Low"
+        tier = "High"
+    elif gp >= 6:
+        tier = "Medium"
+    elif gp >= 3:
+        tier = "Low"
+    else:
+        tier = "Very Low"
+    if box_heavy:
+        # a box-heavy sample can't be "High" — no event context behind it
+        tier = {"High": "Medium"}.get(tier, tier)
+        return f"{tier} (box)"
+    return tier
 
 
 TEAM_REL_COLS = ("OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING")
@@ -212,14 +241,81 @@ def _player_meta(gender=None):
             for r in rows}
 
 
-def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
+def _manual_box_totals(gender=None, season="Current"):
+    """{player_id: {**base box totals, "manual_gp": n}} from hand-entered boxes on
+    UNtracked games (games.tracked=0). Tracked wins: a game tracked after its box
+    was entered is excluded here (the event stream is the truth) — the same
+    g.tracked=0 guard helpers/manual_box.py uses everywhere.
+
+    Only the base counting fields a box supplies are summed (see _MANUAL_BOX_KEYS);
+    paint / shot-creation / on-court fields are event-only and never faked from a
+    box. `season` scopes to the active season so ratings never blend seasons.
     """
-    Raw stat profile for every eligible player (GP >= min_games, matching gender).
+    clause = "WHERE g.tracked=0"
+    params = []
+    if gender:
+        clause += " AND t.gender=?"
+        params.append(gender)
+    if season is not None:
+        clause += " AND g.season=?"
+        params.append(season)
+    try:
+        rows = query(
+            f"""SELECT m.player_id pid, m.fgm, m.fga, m.tpm, m.tpa, m.ftm, m.fta,
+                       m.oreb, m.dreb, m.ast, m.stl, m.blk, m.tov, m.pf
+                FROM manual_player_box m
+                JOIN games g ON g.id = m.game_id
+                JOIN players p ON p.id = m.player_id
+                JOIN teams t ON t.id = p.team_id
+                {clause}""",
+            tuple(params),
+        )
+    except sqlite3.OperationalError:
+        # legacy / minimal DB without manual_player_box or games.season — the
+        # manual-box merge is optional enrichment, so degrade to tracked-only.
+        return {}
+    out = {}
+    for r in rows:
+        d = out.get(r["pid"])
+        if d is None:
+            d = out[r["pid"]] = {k: 0 for k in _MANUAL_BOX_KEYS}
+            d["manual_gp"] = 0
+        fgm, fga, tpm, tpa, ftm = r["fgm"], r["fga"], r["tpm"], r["tpa"], r["ftm"]
+        d["FGM"] += fgm; d["FGA"] += fga
+        d["3PM"] += tpm; d["3PA"] += tpa
+        d["FTM"] += ftm; d["FTA"] += r["fta"]
+        d["2PM"] += fgm - tpm; d["2PA"] += fga - tpa
+        d["ORB"] += r["oreb"]; d["DRB"] += r["dreb"]; d["TRB"] += r["oreb"] + r["dreb"]
+        d["AST"] += r["ast"]; d["STL"] += r["stl"]; d["BLK"] += r["blk"]
+        d["TOV"] += r["tov"]; d["PF"] += r["pf"]
+        d["PTS"] += 2 * fgm + tpm + ftm
+        d["manual_gp"] += 1
+    return out
+
+
+def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
+                    season="Current", include_manual=True):
+    """
+    Raw stat profile for every eligible player (combined GP >= min_games, gender).
 
     Returns {player_id: profile} where profile holds the box, games played, the
     per-game / rate inputs the ratings are built from, and meta (name/team).
     A value of None means "undefined for this player" (e.g. 3P% with no 3PA) and
     is skipped in the z-score math rather than counted as zero.
+
+    DEPTH MODEL (founder: "tracked > manual box completely and entirely"):
+      * tracked events drive every EVENT leaf (SMOE, DSHOT%, USG%, rim/perim,
+        passer quality, on-court %, paint) — these read ONLY the tracked box `b`.
+      * BOX-DERIVABLE leaves (shooting %s, per-game counting rates) read a COMBINED
+        box `cb` = tracked box + hand-entered manual boxes on untracked games, so a
+        player with 3 tracked + 15 boxed games is shot-rated on all 18. Per-game
+        box leaves divide by combined GP (`cg`); event per-game leaves by tracked
+        GP (`g`).
+      * `eg` = tracked_gp + MANUAL_GAME_WEIGHT·manual_gp is the EVIDENCE
+        games-equivalent — feeds shrink-to-50 and the confidence tier so a
+        box-heavy player never earns full-tracked trust. `box_heavy` flags a
+        player whose evidence is mostly manual.
+    `include_manual=False` reproduces the pure tracked-only engine (cb == b).
     """
     events = S.fetch_events(game_ids)
     boxes = S.aggregate_player_boxes(game_ids, events=events)
@@ -229,36 +325,60 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
     ddr = S.individual_defensive_rating_all(game_ids, events=events)  # DRtg (lower=better)
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
+    pcomp = S.passer_completion(events=events)   # FG%/xFG%/Open% on the passer's feeds
+    asr = S.assist_rate(game_ids, events=events)  # AST% (on-court teammate FGM share)
     wtov = S.playmaking_weighted_tov(events=events)  # type-weighted TOs (playmaking)
     rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
     import helpers.fouls as FL
     ftp = FL.player_foul_ft(events=events)       # clutch FT + and-1 detail
     meta = _player_meta(gender=gender)
+    manual = _manual_box_totals(gender=gender, season=season) if include_manual else {}
+
+    # ── USAGE inputs: minutes + team possessions (event-only; tracked players) ──
+    mins = S.minutes_played(game_ids)
+    team_of = {r["id"]: r["team_id"]
+               for r in query("SELECT id, team_id FROM players")}
+    team_poss = defaultdict(float)
+    team_min = defaultdict(float)
+    for ppid, bb in boxes.items():
+        tid = team_of.get(ppid)
+        team_poss[tid] += S.estimate_possessions(bb)
+        team_min[tid] += mins.get(ppid, 0.0)
 
     profiles = {}
     for pid, m in meta.items():
-        g = gp.get(pid, 0)
-        if g < min_games:
+        g = gp.get(pid, 0)                       # tracked games
+        mrow = manual.get(pid)
+        mgp = mrow["manual_gp"] if mrow else 0   # manual (boxed) games
+        cg = g + mgp                             # combined games (all)
+        if cg < min_games:
             continue
-        b = boxes.get(pid, S.finalize_box(S._blank_box()))
+        eg = g + MANUAL_GAME_WEIGHT * mgp        # evidence games-equivalent
+        box_heavy = mgp > 0 and g < mgp * MANUAL_GAME_WEIGHT  # mostly boxed
+        b = boxes.get(pid, S.finalize_box(S._blank_box()))    # TRACKED box (events)
+        # COMBINED box: tracked base fields + manual base fields (box-derivable only)
+        cb = dict(b)
+        if mrow:
+            for k in _MANUAL_BOX_KEYS:
+                cb[k] = b.get(k, 0) + mrow.get(k, 0)
         o = oc.get(pid, {})
         df = dfg.get(pid, {})
 
-        FGA = b["FGA"]
-        per_g = lambda x: x / g if g else 0.0
+        FGA = b["FGA"]           # tracked FGA (event leaves)
+        cFGA = cb["FGA"]         # combined FGA (box leaves)
+        per_g = lambda x: x / g if g else 0.0    # event per-game (tracked GP)
+        cper_g = lambda x: x / cg if cg else 0.0  # box per-game (combined GP)
 
-        # AST/TOV: undefined with no turnovers AND no assists; else assists if
-        # turnover-free (denominator 1), otherwise the true ratio.
-        if b["TOV"]:
-            ast_tov = b["AST"] / b["TOV"]
-        elif b["AST"]:
-            ast_tov = float(b["AST"])
+        # AST/TOV over the COMBINED box: undefined with no TOV AND no AST.
+        if cb["TOV"]:
+            ast_tov = cb["AST"] / cb["TOV"]
+        elif cb["AST"]:
+            ast_tov = float(cb["AST"])
         else:
             ast_tov = None
 
-        # Playmaking-weighted variants: TOs weighted by what their type says
-        # about the player (bad pass > drive > shot-clock=0; untagged = 1.0, so
-        # with no type tags these equal the raw AST/TOV + TOV% exactly).
+        # Playmaking-weighted TOV twins (event-tagged; TRACKED box only — a manual
+        # game has no TO types, so these stay a tracked-only playmaking signal).
         wt = wtov.get(pid)
         if wt is None:
             wt = float(b["TOV"])
@@ -269,30 +389,47 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
         else:
             ast_wtov = None
 
+        # USG% (event-only): player possessions vs team possessions per minute.
+        pmin = mins.get(pid, 0.0)
+        tposs = team_poss.get(m["team_id"], 0.0)
+        gmin_t = team_min.get(m["team_id"], 0.0) / 5.0
+        usg = (S.usage_pct(S.estimate_possessions(b), pmin, tposs, gmin_t)
+               if pmin > 0 and tposs > 0 else None)
+        pc = pcomp.get(pid)
+
         profiles[pid] = {
             **m,
-            "GP": g,
-            "box": b,
-            # ── OFFENSE: efficiency ─────────────────────────────────
-            "3PR":   _safe(b["3PA"], FGA) if FGA else None,
-            "3P%":   _safe(b["3PM"], b["3PA"]) if b["3PA"] else None,
-            "TS%":   S.ts(b) if (FGA or b["FTA"]) else None,
-            "eFG%":  S.efg(b) if FGA else None,
-            "FTR":   S.ftr(b) if FGA else None,
-            # SMOE — shot-making over expected: real FG% minus the FG% expected
-            # from the player's shot-creation mix (positive = finishes the looks
-            # they take better than the league does).
+            "GP": g, "manual_gp": mgp, "combined_gp": cg,
+            "evidence_gp": eg, "box_heavy": box_heavy,
+            "box": b, "cbox": cb,
+            # ── SHOOTING (box-derivable — read the combined box) ────
+            "3PR":   _safe(cb["3PA"], cFGA) if cFGA else None,
+            "3P%":   _safe(cb["3PM"], cb["3PA"]) if cb["3PA"] else None,
+            "3PA/G": cper_g(cb["3PA"]),
+            "TS%":   S.ts(cb) if (cFGA or cb["FTA"]) else None,
+            "eFG%":  S.efg(cb) if cFGA else None,
+            "FTR":   S.ftr(cb) if cFGA else None,
+            # SMOE — shot-making over expected (event-only: needs the shot-quality
+            # baseline from tracked events). Read the TRACKED box.
             "SMOE":  ((_safe(b["FGM"], b["FGA"]) - xfg[pid])
                       if (FGA and pid in xfg) else None),
+            # ── FINISHING (event-only: paint comes from tap/zone) ───
             "Paint%": S.paint_fg_pct(b) if b["paint_FGA"] else None,
             "PaintSh/G": per_g(b["paint_FGA"]),
-            # ── OFFENSE: scoring volume ─────────────────────────────
-            "PPG":   per_g(b["PTS"]),
-            "PRF/G": per_g(S.prf(b)),
+            "PPS":   S.pps(b) if FGA else None,          # points per shot (tracked)
+            "ScEff": S.scoring_efficiency(b) if FGA else None,
+            # ── OFFENSE: scoring volume / role ──────────────────────
+            "PPG":   cper_g(cb["PTS"]),                  # box-derivable (combined)
+            "PRF/G": per_g(S.prf(b)),                    # assist pts → tracked only
+            "USG%":  usg,                                # event-only
+            "MPG":   per_g(pmin) if pmin > 0 else None,  # event-only
+            "PPP":   S.ppp(cb) if (cFGA or cb["TOV"]) else None,   # box (combined)
+            "PPSA":  S.ppsa(cb) if cFGA else None,       # box (combined)
+            "VPS":   S.vps(cb),                          # box (combined) — a ratio
             # ── DEFENSE ─────────────────────────────────────────────
-            "Stocks/G": per_g(b["STL"] + b["BLK"]),
-            "STL/G": per_g(b["STL"]),
-            "BLK/G": per_g(b["BLK"]),
+            "Stocks/G": cper_g(cb["STL"] + cb["BLK"]),   # box (combined)
+            "STL/G": cper_g(cb["STL"]),
+            "BLK/G": cper_g(cb["BLK"]),
             "Guarded%": o.get("guarded_pct") if o.get("opp_FGA_on") else None,
             "DSHOT%": df.get("pct") if df.get("def_FGA") else None,
             # rim protection / perimeter defense: league FG% − FG% allowed on
@@ -310,33 +447,37 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
             "And1": ftp.get(pid, {}).get("and1", 0),
             "And1M": ftp.get(pid, {}).get("and1_made", 0),
             "DRtg":  ddr.get(pid),   # Oliver individual DRtg (per-100, lower=better)
-            "PF/G":  per_g(b["PF"]),
+            "PF/G":  cper_g(cb["PF"]),                   # box (combined)
             # ── PLAYMAKING ──────────────────────────────────────────
-            "AST/G": per_g(b["AST"]),
-            "SC/G": per_g(b["SC"]),
-            "SCPass/G": per_g(b["SC"] - FGA),
-            "TOV/G": per_g(b["TOV"]),
-            "TOV%":  S.tov_pct(b) if (FGA or b["TOV"]) else None,
-            "AST/TOV": ast_tov,
-            # type-weighted twins (PLAYMAKING leaves; == raw when untagged)
+            "AST/G": cper_g(cb["AST"]),                  # box (combined)
+            "AST%":  asr.get(pid),                       # event-only (on-court)
+            "SC/G": per_g(b["SC"]),                      # event-only
+            "SCPass/G": per_g(b["SC"] - FGA),            # event-only
+            "TOV/G": cper_g(cb["TOV"]),                  # box (combined)
+            "TOV%":  S.tov_pct(cb) if (cFGA or cb["TOV"]) else None,  # box (combined)
+            "AST/TOV": ast_tov,                          # box (combined)
+            # type-weighted twins (event-tagged; == raw when untagged) — tracked
             "pmTOV": wt,
             "AST/pmTOV": ast_wtov,
             "pmTOV%": (100 * _safe(wt, FGA + b["TOV"])
                        if (FGA or b["TOV"]) else None),
-            # xPPS of the looks this player's passes create (make-independent shot-
-            # quality); None for non-passers / < min feeds so it drops from the mean.
+            # xPPS of the looks this player's passes create + how they resolve
+            # (make-independent quality + actual FG%/open share). event-only.
             "SCPassQ": plq.get(pid),
+            "PassFG%": pc["fg_pct"] if pc else None,
+            "PassxFG%": pc["xfg_pct"] if pc else None,
+            "PassOpen%": pc["open_pct"] if pc else None,
             # ── REBOUNDING ──────────────────────────────────────────
-            "OREB/G": per_g(b["ORB"]),
-            "DREB/G": per_g(b["DRB"]),
-            "REB/G": per_g(b["TRB"]),
-            "OREB%": o.get("oreb_pct") if o.get("oreb_avail") else None,
+            "OREB/G": cper_g(cb["ORB"]),                 # box (combined)
+            "DREB/G": cper_g(cb["DRB"]),
+            "REB/G": cper_g(cb["TRB"]),
+            "OREB%": o.get("oreb_pct") if o.get("oreb_avail") else None,  # event
             "DREB%": o.get("dreb_pct") if o.get("dreb_avail") else None,
             "REB%":  o.get("reb_pct") if o.get("reb_avail") else None,
-            # ── PRODUCTION (feeds OVERALL) ──────────────────────────
-            "GS/G":  per_g(S.game_score(b)),
-            "EFF/G": per_g(S.eff(b)),
-            "FIC/G": per_g(S.fic(b)),
+            # ── PRODUCTION (feeds OVERALL) — combined box ───────────
+            "GS/G":  cper_g(S.game_score(cb)),
+            "EFF/G": cper_g(S.eff(cb)),
+            "FIC/G": cper_g(S.fic(cb)),
         }
     return profiles
 
@@ -351,28 +492,49 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES):
 #   lower_better True negates the z (turnovers, fouls, FG% allowed → less is more).
 # Every leaf is None-skipped per player (3P% with no 3PA, DSHOT% with no contested
 # FGA, …), so a missing stat drops out of the weighted mean rather than counting 0.
+# SHOOTING — perimeter + overall scoring efficiency. TS%/eFG% carry it; SMOE
+# rewards finishing looks better than their difficulty warrants; 3P%/3PR reward
+# range + volume-of-threes. Box-derivable leaves (all but SMOE) read the combined
+# box so boxed games count.
 _SHOOTING  = [("TS%", 1.5, False), ("3P%", 1.0, False), ("eFG%", 1.0, False),
-              ("SMOE", 1.0, False), ("FTR", 0.75, False), ("3PR", 0.5, False)]
-_FINISHING = [("Paint%", 1.0, False), ("PaintSh/G", 0.75, False)]
-_DEFENSE   = [("DSHOT%", 1.25, True), ("DRtg", 1.0, True), ("STL/G", 1.0, False),
-              ("BLK/G", 1.0, False), ("Guarded%", 0.75, False), ("PF/G", 0.5, True),
-              # WHERE the defense happens: FG% saved vs league on contested rim
-              # 2s / threes (positive = better, so not inverted). Secondary
-              # weight — DSHOT% already carries the overall contest signal;
-              # these split it into rim protection and perimeter containment.
-              ("RimProt", 0.75, False), ("PerimD", 0.75, False)]
-_PLAYMAKING = [("AST/G", 1.0, False),
+              ("SMOE", 1.0, False), ("3PA/G", 0.5, False), ("FTR", 0.5, False),
+              ("3PR", 0.4, False)]
+# FINISHING — interior scoring. Paint FG% + how many rim/paint tries per game,
+# points-per-shot, scoring efficiency, and shot-making over expected. Event-only
+# (paint/PPS/SMOE need the tracked shot context), so boxed games don't inflate it.
+_FINISHING = [("Paint%", 1.25, False), ("PaintSh/G", 0.75, False),
+              ("PPS", 0.75, False), ("ScEff", 0.6, False), ("SMOE", 0.5, False)]
+# RIM DEFENSE — protecting the basket. RimProt (league FG% − rim FG% allowed) is
+# the headline; rim FG% allowed inverted is the raw twin; blocks are the event.
+_RIMDEF    = [("RimProt", 1.5, False), ("RimD_pct", 0.75, True), ("BLK/G", 1.0, False)]
+# PERIMETER DEFENSE — containment on the arc + ball pressure. PerimD (FG% saved on
+# contested threes) + the raw twin, steals, and share of opp shots contested.
+_PERIMDEF  = [("PerimD", 1.5, False), ("PerimD_pct", 0.75, True),
+              ("STL/G", 1.0, False), ("Guarded%", 0.6, False)]
+# DEFENSE (headline) = rim + perimeter defense components, plus the overall
+# contest signal (DSHOT%), Oliver DRtg, and foul discipline. The rim/perim split
+# is surfaced as its own sub-ratings; here it re-blends into one number.
+_DEFENSE_PARTS = [("rimdef", 1.0), ("perimdef", 1.0), ("DSHOT%z", 1.0),
+                  ("DRtgz", 0.75), ("PF/Gz", 0.4)]
+_PLAYMAKING = [("AST%", 1.25, False),   # on-court assist rate (share of teammate FGM)
+               ("AST/G", 0.75, False),
                # AST/TOV + TOV% enter through their TYPE-WEIGHTED twins: a bad
                # pass counts 1.3, a lost drive 0.9, a shot-clock violation 0
-               # (team turnover). Identical to the raw leaves until TOs are
-               # tagged, so legacy pools reproduce the old numbers exactly.
-               ("AST/pmTOV", 1.0, False), ("SC/G", 0.75, False),
-               ("SCPass/G", 0.75, False), ("pmTOV%", 0.75, True),
-               # look QUALITY a passer's feeds create (xPPS), not just volume —
-               # rewards creating good shots even when poor shooters miss them.
-               ("SCPassQ", 0.75, False)]
-_REBOUNDING = [("OREB%", 1.0, False), ("DREB%", 1.0, False), ("REB%", 0.75, False),
-               ("OREB/G", 0.75, False), ("DREB/G", 0.75, False), ("REB/G", 0.5, False)]
+               # (team turnover). Identical to the raw leaves until TOs are tagged.
+               ("AST/pmTOV", 1.0, False), ("pmTOV%", 0.75, True),
+               ("SC/G", 0.6, False), ("SCPass/G", 0.6, False),
+               # look QUALITY a passer's feeds create (xPPS) + how they resolve:
+               # actual FG% and OPEN% of the shots the passer sets up. Rewards
+               # creating good, uncontested shots even when poor shooters miss.
+               ("SCPassQ", 0.75, False), ("PassFG%", 0.6, False),
+               ("PassOpen%", 0.5, False)]
+# OFFENSIVE REBOUNDING — second chances. OREB% (on-court, event) + total/per-game.
+_OREB = [("OREB%", 1.25, False), ("OREB/G", 1.0, False)]
+# DEFENSIVE REBOUNDING — closing possessions. DREB% + total/per-game.
+_DREB = [("DREB%", 1.25, False), ("DREB/G", 1.0, False)]
+# REBOUNDING (headline) = offensive + defensive rebounding components + overall
+# REB% as the tie-break. The O/D split is surfaced as its own sub-ratings.
+_REBOUNDING_PARTS = [("oreb", 1.0), ("dreb", 1.0), ("REB%z", 0.6)]
 # PHYSICAL — the measurables (players.height/wingspan, inches), pool-z'd like any
 # leaf. Weight (mass) is deliberately excluded: no monotonic "more is better".
 # Mostly a descriptive rating (founder: ~15% utility); it feeds OVERALL at a
@@ -381,16 +543,21 @@ _REBOUNDING = [("OREB%", 1.0, False), ("DREB%", 1.0, False), ("REB%", 0.75, Fals
 _PHYSICAL   = [("height", 1.0, False), ("wingspan", 0.75, False)]
 
 # How the headline ratings combine their parts (re-standardized component z, weight).
-# OFFENSE folds scoring VOLUME (PPG/PRF) onto the two shooting sub-ratings so a
-# high-efficiency low-usage spot-up shooter no longer rates like a 25-PPG engine.
-_OFFENSE_PARTS = [("shooting", 1.0), ("finishing", 0.6), ("PPG", 1.0), ("PRF/G", 0.75)]
-# OVERALL = the four pillars (offense-leaning) + three production anchors. PER was
-# a literal duplicate of Game Score, so it is gone; EFF + FIC add independent
-# all-around production signal instead of double-counting one composite.
-# `physical` rides at 0.25 — a nudge, not a pillar (length matters, tape decides).
+# OFFENSE folds scoring VOLUME/ROLE (PPG, USG%, MPG) and possession efficiency
+# (PPP, PPSA, VPS) onto the two shooting sub-ratings, so a high-efficiency
+# low-usage spot-up shooter no longer rates like a 25-PPG on-ball engine, and a
+# high-usage possession-efficient scorer is rewarded. USG%/MPG are event-only
+# (None for boxed-only players → they drop from the mean, not penalized).
+_OFFENSE_PARTS = [("shooting", 1.0), ("finishing", 0.6),
+                  ("PPG", 1.0), ("PRF/G", 0.6), ("USG%", 0.6), ("MPG", 0.3),
+                  ("PPP", 0.75), ("PPSA", 0.5), ("VPS", 0.5)]
+# OVERALL = the four pillars (offense-leaning) + production anchors + a length
+# nudge + an OPPONENT-QUALITY bonus (oppadj). oppadj rewards genuine production
+# against strong opposition and cancels padding against weak opposition (see
+# _opponent_adjust): good-vs-good boosts, good-vs-bad ~0, weak production 0.
 _OVERALL_PARTS = [("offense", 1.1), ("defense", 1.0), ("playmaking", 1.0),
                   ("rebounding", 0.8), ("GS/G", 1.0), ("EFF/G", 0.6), ("FIC/G", 0.5),
-                  ("physical", 0.25)]
+                  ("physical", 0.25), ("oppadj", 0.6)]
 
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players
 # is meaningless) and fall back to the raw weighted-mean z.
@@ -424,8 +591,95 @@ def _restandardize(zmap):
     return {p: (None if v is None else (v - mean) / sd) for p, v in zmap.items()}
 
 
+# Opponent-strength memo: score_ratings covers every team results-only and is
+# independent of player_ratings (no cycle), but recomputing it on every
+# player_ratings call (badges/scout/lineups/cards) would tax the hot path. Memo it
+# by (gender, season, results_fingerprint) so it recomputes only when a score moves.
+_OPP_RATINGS_MEMO: dict = {}
+
+
+def _score_ratings_cached(gender, season):
+    """score_ratings(gender, season) memoized by the results fingerprint — the
+    opponent-strength lookup the player opponent-adjustment rides on."""
+    import helpers.team_ratings as TR
+    try:
+        fp = TR.results_fingerprint()
+    except Exception:
+        fp = None
+    key = (gender, season, fp)
+    cached = _OPP_RATINGS_MEMO.get(key)
+    if cached is None:
+        try:
+            cached = TR.score_ratings(gender=gender, season=season)
+        except sqlite3.OperationalError:
+            cached = {}                    # legacy DB without games.season
+        _OPP_RATINGS_MEMO.clear()          # keep it a single-entry cache
+        _OPP_RATINGS_MEMO[key] = cached
+    return cached
+
+
+def _opponent_strength(profiles, gender, game_ids, season, opp_ratings=None):
+    """{player_id: avg opponent team Rating faced} — the schedule-strength each
+    player actually played against, from results-only team ratings (score_ratings,
+    all teams, no dependency on player_ratings). Tracked games count full; boxed
+    (untracked) games count at MANUAL_GAME_WEIGHT, mirroring the evidence discount.
+    None for a player with no locatable opponents (drops from the adjustment)."""
+    if opp_ratings is None:
+        opp_ratings = _score_ratings_cached(gender, season)
+    if not opp_ratings:
+        return {}
+    pids = set(profiles)
+    # player → [(game_id, tracked?)] from the tracked lineup + manual boxes
+    clause, params = S._game_filter(game_ids)
+    try:
+        trk = query(
+            f"""SELECT DISTINCT gel.player_id pid, ge.game_id gid
+                FROM game_event_lineup gel JOIN game_events ge ON ge.id = gel.event_id
+                WHERE 1=1{clause}""", params)
+        mparams = []
+        mclause = "WHERE g.tracked=0"
+        if season is not None:
+            mclause += " AND g.season=?"; mparams.append(season)
+        man = query(
+            f"""SELECT DISTINCT m.player_id pid, m.game_id gid
+                FROM manual_player_box m JOIN games g ON g.id=m.game_id {mclause}""",
+            tuple(mparams))
+    except sqlite3.OperationalError:
+        return {}          # legacy DB without manual_player_box / games.season
+    # game → (team1, team2)
+    need = {r["gid"] for r in trk if r["pid"] in pids} | \
+           {r["gid"] for r in man if r["pid"] in pids}
+    gteams = {}
+    if need:
+        qmarks = ",".join("?" * len(need))
+        for r in query(f"SELECT id, team1_id, team2_id FROM games WHERE id IN ({qmarks})",
+                       tuple(need)):
+            gteams[r["id"]] = (r["team1_id"], r["team2_id"])
+
+    acc = defaultdict(lambda: [0.0, 0.0])   # pid -> [weighted opp-rating sum, weight]
+    def _add(pid, gid, w):
+        if pid not in pids:
+            return
+        tt = gteams.get(gid)
+        if not tt:
+            return
+        own = profiles[pid]["team_id"]
+        opp = tt[1] if tt[0] == own else tt[0]
+        orr = opp_ratings.get(opp)
+        if orr is None:
+            return
+        acc[pid][0] += orr["Rating"] * w
+        acc[pid][1] += w
+    for r in trk:
+        _add(r["pid"], r["gid"], 1.0)
+    for r in man:
+        _add(r["pid"], r["gid"], MANUAL_GAME_WEIGHT)
+    return {pid: s / w for pid, (s, w) in acc.items() if w > 0}
+
+
 def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
-                   stabilize=True, profiles=None):
+                   stabilize=True, profiles=None, season="Current",
+                   opp_adjust=True, opp_ratings=None):
     """
     Compute every player's five 0-100 ratings over the eligible pool.
 
@@ -480,21 +734,64 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         raw = {p: _wavg([(cols[name][p], w) for name, w in parts]) for p in pids}
         return _restandardize(raw)
 
+    # ── sub-rating components ────────────────────────────────────────────
     shooting_z   = group_z(_SHOOTING)
     finishing_z  = group_z(_FINISHING)
-    defense_z    = group_z(_DEFENSE)
+    rimdef_z     = group_z(_RIMDEF)
+    perimdef_z   = group_z(_PERIMDEF)
+    oreb_z       = group_z(_OREB)
+    dreb_z       = group_z(_DREB)
     playmaking_z = group_z(_PLAYMAKING)
-    rebounding_z = group_z(_REBOUNDING)
     physical_z   = group_z(_PHYSICAL)
+
+    # signed raw-leaf z's the headline defense/rebounding blends fold in alongside
+    # their split components (lower_better inverted where noted).
+    dshot_z = zcol_signed("DSHOT%", True)
+    drtg_z  = zcol_signed("DRtg", True)
+    pf_z    = zcol_signed("PF/G", True)
+    rebpct_z = zcol_signed("REB%", False)
+
+    defense_z = combine(_DEFENSE_PARTS,
+                        {"rimdef": rimdef_z, "perimdef": perimdef_z,
+                         "DSHOT%z": dshot_z, "DRtgz": drtg_z, "PF/Gz": pf_z})
+    rebounding_z = combine(_REBOUNDING_PARTS,
+                           {"oreb": oreb_z, "dreb": dreb_z, "REB%z": rebpct_z})
     offense_z = combine(_OFFENSE_PARTS,
                         {"shooting": shooting_z, "finishing": finishing_z})
+
+    # ── opponent-quality bonus (reward good production vs strong opposition) ──
+    # oppadj = max(0, offense_z) · max(0, opp_strength_z) — a pure BONUS, never a
+    # penalty (a star shouldn't be docked for a soft schedule they don't pick).
+    # Both factors clamped at 0 give exactly the four cases the founder named:
+    #   good-vs-good  → positive·positive = boost
+    #   good-vs-bad   → positive·0        = 0  (rewarded LESS than good-vs-good)
+    #   weak producer → 0·anything        = 0  (bad-vs-bad cancels, bad-on-good 0)
+    # offense_z is the production signal (already re-standardized to unit SD).
+    # The bonus is SHRUNK by evidence games (eg/(eg+k)) so a 1-game player who drew
+    # one tough opponent can't buy a rating — only a player with a real sample AND a
+    # genuinely strong slate earns it. On a thin single-team tracked pool this makes
+    # the adjustment nearly inert (correct: little schedule spread to credit); it
+    # grows into a real signal as league-wide tracking deepens.
+    oppadj_z = {p: None for p in pids}
+    if opp_adjust:
+        opp_str = _opponent_strength(profiles, gender, game_ids, season, opp_ratings)
+        opp_z = _zscores(opp_str)      # opponent-strength z across the pool
+        for p in pids:
+            oz, sz = offense_z.get(p), opp_z.get(p)
+            if oz is None or sz is None:
+                continue
+            eg = profiles[p]["evidence_gp"]
+            shrink = eg / (eg + RATING_K_GAMES)
+            oppadj_z[p] = max(0.0, oz) * max(0.0, sz) * shrink
+
     overall_z = combine(_OVERALL_PARTS,
                         {"offense": offense_z, "defense": defense_z,
                          "playmaking": playmaking_z, "rebounding": rebounding_z,
-                         "physical": physical_z})
+                         "physical": physical_z, "oppadj": oppadj_z})
 
     def _rate(z, g):
-        """0-100 rating from a z-score, regressed toward 50 by games when on."""
+        """0-100 rating from a z-score, regressed toward 50 by EVIDENCE games (a
+        box-heavy player already reads thinner, so it regresses harder)."""
         v = _scale100(z)
         if stabilize:
             v = SHR.stabilize_index(v, g, k_games=RATING_K_GAMES)
@@ -504,19 +801,24 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     for p in pids:
         prof = profiles[p]
         b = prof["box"]
-        g = prof["GP"]
+        eg = prof["evidence_gp"]       # tracked + discounted-manual games
         out[p] = {
             "name": prof["name"], "number": prof["number"],
             "team": prof["team"], "team_id": prof["team_id"], "GP": prof["GP"],
-            "OVERALL":    _rate(overall_z[p], g),
-            "OFFENSE":    _rate(offense_z[p], g),
-            "DEFENSE":    _rate(defense_z[p], g),
-            "PLAYMAKING": _rate(playmaking_z[p], g),
-            "REBOUNDING": _rate(rebounding_z[p], g),
-            "Shooting":   _rate(shooting_z[p], g),
-            "Finishing":  _rate(finishing_z[p], g),
+            "OVERALL":    _rate(overall_z[p], eg),
+            "OFFENSE":    _rate(offense_z[p], eg),
+            "DEFENSE":    _rate(defense_z[p], eg),
+            "PLAYMAKING": _rate(playmaking_z[p], eg),
+            "REBOUNDING": _rate(rebounding_z[p], eg),
+            "Shooting":   _rate(shooting_z[p], eg),
+            "Finishing":  _rate(finishing_z[p], eg),
+            # split sub-ratings (surfaced): rim/perimeter defense, off/def rebounding
+            "RimDef":   (_rate(rimdef_z[p], eg) if rimdef_z.get(p) is not None else None),
+            "PerimDef": (_rate(perimdef_z[p], eg) if perimdef_z.get(p) is not None else None),
+            "OREBrtg":  (_rate(oreb_z[p], eg) if oreb_z.get(p) is not None else None),
+            "DREBrtg":  (_rate(dreb_z[p], eg) if dreb_z.get(p) is not None else None),
             # measurables rating — None when no height/wingspan recorded
-            "PHYSICAL":   (_rate(physical_z[p], g)
+            "PHYSICAL":   (_rate(physical_z[p], eg)
                            if physical_z.get(p) is not None else None),
             # raw stats for display
             "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
@@ -587,7 +889,7 @@ def _versatility(per_game, pool_means):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
-                      stabilize=True):
+                      stabilize=True, season="Current"):
     """
     A single flat row per eligible player holding EVERY stat the app computes:
     meta (name/number/team/class), games, the five 0-100 ratings, raw totals,
@@ -595,15 +897,18 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     metrics. This is what the Players page leaderboards / Best-Five / compare /
     profile views all read from, so they never re-derive anything.
 
-    Percentages are returned 0-100 (e.g. 47.5), counting stats are integers,
+    `season` scopes the hand-entered manual-box merge + opponent adjustment (it
+    must match the season the tracked `game_ids` belong to, or boxed games won't
+    join). Percentages are returned 0-100 (e.g. 47.5), counting stats are integers,
     per-game stats are rounded floats. A None means the stat is undefined for
     that player (e.g. 3P% with no 3PA) and should be skipped, not treated as 0.
     """
-    profiles = player_profiles(game_ids, gender=gender, min_games=min_games)
+    profiles = player_profiles(game_ids, gender=gender, min_games=min_games,
+                               season=season)
     if not profiles:
         return {}
     ratings = player_ratings(game_ids, gender=gender, min_games=min_games,
-                             stabilize=stabilize, profiles=profiles)
+                             stabilize=stabilize, profiles=profiles, season=season)
 
     # shared event pass + rate tables so the per-player advanced metrics below
     # don't each refetch / recompute the whole sample.
@@ -724,13 +1029,19 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "name": prof["name"], "number": prof["number"],
             "team": prof["team"], "team_id": prof["team_id"],
             "class": prof.get("class", "N/A"), "GP": g,
-            "Confidence": sample_confidence(g),
+            "ManualGP": prof.get("manual_gp", 0),
+            "CombinedGP": prof.get("combined_gp", g),
+            "Confidence": sample_confidence(prof.get("evidence_gp", g),
+                                           prof.get("box_heavy", False)),
             "Rank": rt.get("Rank"),
             # ── ratings (0-100) ─────────────────────────────────────
             "OVERALL": rt.get("OVERALL"), "OFFENSE": rt.get("OFFENSE"),
             "DEFENSE": rt.get("DEFENSE"), "PLAYMAKING": rt.get("PLAYMAKING"),
             "REBOUNDING": rt.get("REBOUNDING"),
             "Shooting": rt.get("Shooting"), "Finishing": rt.get("Finishing"),
+            # split sub-ratings (rim/perimeter defense, off/def rebounding)
+            "RimDef": rt.get("RimDef"), "PerimDef": rt.get("PerimDef"),
+            "OREBrtg": rt.get("OREBrtg"), "DREBrtg": rt.get("DREBrtg"),
             "PHYSICAL": rt.get("PHYSICAL"),
             "Height": prof.get("height"), "Wingspan": prof.get("wingspan"),
             "Weight": prof.get("weight"),
@@ -781,6 +1092,11 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "REB%": _pct(prof["REB%"]),
             "OREB%": _pct(prof["OREB%"]), "DREB%": _pct(prof["DREB%"]),
             "AST/TOV": _round(prof["AST/TOV"]),
+            "AST%": _pct(prof.get("AST%")),
+            # passer-quality: xPPS of looks created + how the fed shots resolve
+            "PassFG%": _pct(prof.get("PassFG%")),
+            "PassxFG%": _pct(prof.get("PassxFG%")),
+            "PassOpen%": _pct(prof.get("PassOpen%")),
             # ── split assists / paint scoring ───────────────────────
             "AST2": b["AST2"], "AST3": b["AST3"],
             "PaintPTS": b["paint_PTS"], "PRF": S.prf(b),
@@ -892,6 +1208,9 @@ EVENT_DERIVED_STATS = frozenset({
     # 0-100 ratings (gated wholesale) + the rank that rides on OVERALL
     "OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING",
     "Shooting", "Finishing", "2WAY", "Rank",
+    # split sub-ratings + on-court playmaking rate (all event-derived)
+    "RimDef", "PerimDef", "OREBrtg", "DREBrtg", "AST%",
+    "PassFG%", "PassxFG%", "PassOpen%",
     # shot-creation / usage / impact (lineups, minutes, possessions, events)
     "SC", "SC/G", "SCShot%", "SCPass%", "SCCreated%", "SelfCr%", "Astd%",
     "USG%", "MIN", "MPG", "+/-", "+/-/G", "STOCKS/32",

@@ -59,40 +59,33 @@ def test_block_credit_offball():
     assert out[6]["RimProt"] > 0
 
 
-def test_defense_rating_contract_real_db():
-    """Adding the leaves must not move the pool: the re-standardization keeps
-    the DEFENSE distribution where it was (mean/SD shift < 0.5 vs the old leaf
-    set — the STATUS-64 measure-before-committing check, automated)."""
+def test_defense_split_structure_real_db():
+    """DEFENSE is now built from RIM + PERIMETER sub-components (each a re-
+    standardized group), re-blended via _DEFENSE_PARTS. Verify the split leaf
+    lists exist, the headline DEFENSE rating stays well-formed (0-100, real
+    spread), and the rim/perimeter sub-ratings + raw stat-table keys surface."""
     import helpers.player_ratings as PR
 
-    def dist(leaves):
-        PR._DEFENSE[:] = leaves
-        rows = PR.player_stat_table(gender="F")
-        vals = [r["DEFENSE"] for r in rows.values()
-                if r.get("DEFENSE") is not None]
-        return rows, vals
+    # the split leaf lists that replaced the flat _DEFENSE
+    assert any(l[0] == "RimProt" for l in PR._RIMDEF)
+    assert any(l[0] == "PerimD" for l in PR._PERIMDEF)
+    assert any(name == "rimdef" for name, _w in PR._DEFENSE_PARTS)
+    assert any(name == "perimdef" for name, _w in PR._DEFENSE_PARTS)
 
-    new_leaves = list(PR._DEFENSE)
-    old_leaves = [l for l in new_leaves if l[0] not in ("RimProt", "PerimD")]
-    try:
-        rows, new_vals = dist(new_leaves)
-        if len(new_vals) < 20:
-            return                               # pool too thin locally
-        _, old_vals = dist(old_leaves)
-        d_mean = abs(statistics.mean(new_vals) - statistics.mean(old_vals))
-        d_sd = abs(statistics.pstdev(new_vals) - statistics.pstdev(old_vals))
-        assert d_mean < 0.5, f"DEFENSE pool mean shifted {d_mean:.2f}"
-        assert d_sd < 0.5, f"DEFENSE pool SD shifted {d_sd:.2f}"
-    finally:
-        PR._DEFENSE[:] = new_leaves              # restore for later tests
+    rows = PR.player_stat_table(gender="F")
+    vals = [r["DEFENSE"] for r in rows.values() if r.get("DEFENSE") is not None]
+    if len(vals) < 20:
+        return                                   # pool too thin locally
+    assert all(0 <= v <= 100 for v in vals), "DEFENSE off the 0-100 scale"
+    assert statistics.pstdev(vals) > 1.0, "DEFENSE collapsed toward 50"
     r = next(iter(rows.values()))
     for k in ("RimDFG%", "RimDShots", "PerimDFG%", "PerimDShots",
-              "RimProt", "PerimD"):
+              "RimProt", "PerimD", "RimDef", "PerimDef"):
         assert k in r, f"missing stat-table key {k}"
 
 
 if __name__ == "__main__":
     for fn in [test_rim_and_perimeter_buckets, test_block_credit_offball,
-               test_defense_rating_contract_real_db]:
+               test_defense_split_structure_real_db]:
         fn()
         print(f"PASS {fn.__name__}")

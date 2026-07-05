@@ -815,6 +815,105 @@ def passer_look_quality(game_ids=None, events=None, rates=None, min_feeds=8):
             for pid, c in agg.items() if c["feeds"] >= min_feeds}
 
 
+def passer_completion(game_ids=None, events=None, rates=None, min_feeds=8):
+    """{passer_id: {"fg_pct","xfg_pct","open_pct","feeds"}} — how the shots a
+    passer sets up actually resolve, three playmaking signals in one walk:
+
+      fg_pct    make rate of the fed field-goal attempts (did the looks go in?)
+      xfg_pct   expected make rate of those same looks from the league rate for
+                each (zone, creation, contested?) bucket — the make-independent
+                quality of the feed (== passer_look_quality's basis, but as FG%).
+      open_pct  share of the fed attempts that were UNGUARDED (guarded_by is None)
+                — a passer who consistently sets up open looks.
+
+    A make-rate over expected (fg_pct − xfg_pct) reads whether a passer's shooters
+    convert better than the look warrants; open_pct rewards creating uncontested
+    shots. Passers below ``min_feeds`` fed attempts are omitted (too noisy). Mirror
+    of passer_look_quality (xPPS created) on the FG%/open axis.
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    if rates is None:
+        rates = shot_quality_rates(events=events)
+    agg = defaultdict(lambda: {"feeds": 0, "fgm": 0, "xsum": 0.0, "open": 0})
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        passer = e.get("pass_from_id")
+        if passer is None:
+            continue
+        key = (e["zone"],
+               _creation_bucket(True, e["shot_created_by_id"] is not None),
+               e["guarded_by_id"] is not None)
+        c = agg[passer]
+        c["feeds"] += 1
+        if e["shot_result"] == "make":
+            c["fgm"] += 1
+        c["xsum"] += rates.get(key, {}).get("pct", 0.0)
+        if e["guarded_by_id"] is None:
+            c["open"] += 1
+    out = {}
+    for pid, c in agg.items():
+        if c["feeds"] < min_feeds:
+            continue
+        out[pid] = {
+            "feeds": c["feeds"],
+            "fg_pct": _safe(c["fgm"], c["feeds"]),
+            "xfg_pct": c["xsum"] / c["feeds"],
+            "open_pct": _safe(c["open"], c["feeds"]),
+        }
+    return out
+
+
+def assist_rate(game_ids=None, events=None):
+    """{player_id: AST%} — share of teammates' made field goals the player assisted
+    while on the floor. AST% = assists / (teammate FGM the player was on court for).
+
+    One pass over shot makes joined to the on-court lineup: every made FG credits
+    an on-floor teammate-FGM to each of the shooter's teammates (not the shooter),
+    the standard denominator for assist rate. A pure playmaking-volume signal that
+    is on-court-context aware (unlike raw AST/G), so a distributor on a
+    high-make team isn't flattered and a creator on a cold team isn't punished.
+    None-safe: players with no on-court teammate makes are omitted.
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    clause, params = _game_filter(game_ids)
+    lin_rows = query(
+        f"""SELECT gel.event_id eid, gel.player_id pid, gel.team_id tid
+            FROM game_event_lineup gel
+            JOIN game_events ge ON ge.id = gel.event_id
+            WHERE 1=1{clause}""",
+        params,
+    )
+    on_floor = defaultdict(list)
+    for r in lin_rows:
+        on_floor[r["eid"]].append((r["pid"], r["tid"]))
+
+    ast = defaultdict(int)          # assists credited to the player (box AST)
+    tm_fgm = defaultdict(int)       # teammate made FGs while the player was on floor
+    for e in events:
+        if e["event_type"] != "shot" or e["shot_result"] != "make":
+            continue
+        shooter = e["primary_player_id"]
+        steam = e["shooter_team_id"]
+        if steam is None:
+            continue
+        if e.get("pass_from_id") is not None:
+            ast[e["pass_from_id"]] += 1
+        floor = on_floor.get(e["id"])
+        if not floor:
+            continue
+        for pid, tid in floor:
+            if tid == steam and pid != shooter:
+                tm_fgm[pid] += 1
+    out = {}
+    for pid, made in tm_fgm.items():
+        if made > 0:
+            out[pid] = _safe(ast.get(pid, 0), made)
+    return out
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SHOT RATING  (difficulty: 50 = sample-average shot, 100 = contested self-3)
 # ══════════════════════════════════════════════════════════════════════════════

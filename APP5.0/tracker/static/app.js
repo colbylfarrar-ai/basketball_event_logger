@@ -1312,11 +1312,10 @@ function renderFlow() {
           wrap.appendChild(chipRow(d[1], players, f.details[d[0]],
             function (id) { f.details[d[0]] = id; renderFlow(); }, { allowNone: true, scroll: true }));
         });
-        // previews the sticky bar's pick until the coach overrides per-shot
-        wrap.appendChild(chipRow('Play type',
-          PLAY_TYPE_KEYS, f.details.play_type != null ? f.details.play_type : S.playType,
-          function (k) { f.details.play_type = k; renderFlow(); },
-          { allowNone: true, scroll: true, labelFn: ptLabel }));
+        // Set call comes from the always-visible sticky bar (renderPlayTypeBar)
+        // above the flow — no per-shot Play type row here (it duplicated the bar).
+        // baseEvent already stamps S.playType onto the shot; f.details.play_type
+        // stays null so the logShot fallback keeps the bar's pick.
       } else {
         wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
           function () { f.expand = true; renderFlow(); }));

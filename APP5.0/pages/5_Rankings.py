@@ -1767,13 +1767,9 @@ def _type_stat_table(g, game_type, season="Current"):
             if gids else [])
 
 
-# Stakes weights: how much the two teams' QUALITY and an UPSET lift a game's
-# excitement. Tuned to the founder's ordering — a #1-vs-#2 back-and-forth at a
-# 3.7 raw GEI should edge a #450-vs-#415 game at 4.2, and a competitive big
-# upset (#250 over #20) lands between the two. Multiplicative so a blowout's
-# low GEI is never rescued by stakes alone.
-_GEI_QUAL_W = 0.45      # weight on the two teams' mean quality percentile
-_GEI_UPSET_W = 0.60     # weight on the normalized rank gap when the underdog won
+# Stakes weights + the stakes math now live in helpers/excitement.py (single
+# source, shared with the Hall of Fame's exciting-games teaser so the two boards
+# can't drift). See EX.GEI_QUAL_W / EX.GEI_UPSET_W / EX.stakes.
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1787,6 +1783,7 @@ def _gei_board(g, season="Current", _scored=None):
     board falls back to raw GEI (stakes = 0). Tracked games only."""
     import helpers.win_probability as WP
     import helpers.gameflow as GF
+    import helpers.excitement as EX
     rows = query(
         """SELECT g.id, g.date, g.team1_id, g.team2_id, g.home_score, g.away_score,
                   t1.name AS n1, t2.name AS n2
@@ -1797,14 +1794,6 @@ def _gei_board(g, season="Current", _scored=None):
     if not rows:
         return []
     scored = _scored or {}
-    n_teams = len(scored) or 1
-
-    def _q(tid):
-        """A team's quality percentile in [0,1] (1 = best). None if unranked."""
-        rk = (scored.get(tid) or {}).get("Rank")
-        if rk is None or n_teams < 2:
-            return None
-        return 1.0 - (rk - 1) / (n_teams - 1)
 
     ev_by = defaultdict(list)
     for e in S.fetch_events([r["id"] for r in rows]):
@@ -1835,18 +1824,10 @@ def _gei_board(g, season="Current", _scored=None):
         gei = summ["gei"]
 
         # ── stakes: mean quality of the two teams + an upset kicker ──────────
-        q1, q2 = _q(r["team1_id"]), _q(r["team2_id"])
-        qual = ((q1 + q2) / 2) if (q1 is not None and q2 is not None) else 0.0
-        upset = 0.0
-        rk1 = (scored.get(r["team1_id"]) or {}).get("Rank")
-        rk2 = (scored.get(r["team2_id"]) or {}).get("Rank")
-        if (rk1 and rk2 and r["home_score"] is not None
-                and r["away_score"] != r["home_score"] and n_teams > 1):
-            win_rk = rk1 if r["home_score"] > r["away_score"] else rk2
-            los_rk = rk2 if r["home_score"] > r["away_score"] else rk1
-            if win_rk > los_rk:                    # worse-seeded team won
-                upset = (win_rk - los_rk) / (n_teams - 1)
-        stakes = _GEI_QUAL_W * qual + _GEI_UPSET_W * upset
+        # Shared with the Hall of Fame's exciting-games teaser so the two boards
+        # can't drift (see helpers/excitement.py).
+        stakes, qual, upset = EX.stakes(scored, r["team1_id"], r["team2_id"],
+                                        r["home_score"], r["away_score"])
         out.append({"date": r["date"], "matchup": f'{r["n1"]} vs {r["n2"]}',
                     "score": f'{r["home_score"]}-{r["away_score"]}',
                     "gei": gei, "adj_gei": gei * (1 + stakes),
@@ -2011,9 +1992,10 @@ def _fx_evr():
                     column_config={"Adj GEI": st.column_config.ProgressColumn(
                         "Adj GEI", format="%.2f", min_value=0,
                         max_value=max(4.0, _board[0]["adj_gei"]))})
+                import helpers.excitement as _EX
                 st.caption("**Adj GEI** = GEI × (1 + stakes); Stakes = "
-                           f"{int(_GEI_QUAL_W * 100)}% × the two teams' mean "
-                           f"quality + {int(_GEI_UPSET_W * 100)}% × the upset "
+                           f"{int(_EX.GEI_QUAL_W * 100)}% × the two teams' mean "
+                           f"quality + {int(_EX.GEI_UPSET_W * 100)}% × the upset "
                            "margin (⚡ = the worse-seeded team won). Sorted by "
                            "Adj GEI; raw GEI shown alongside.")
 

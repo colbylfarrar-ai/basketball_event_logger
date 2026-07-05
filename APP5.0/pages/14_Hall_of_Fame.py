@@ -168,10 +168,15 @@ def _tracked_ratings(g):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _gei_best(g):
-    """Most exciting games ever tracked — GEI over ALL seasons (teaser #2).
-    Same scoring-timeline → win-prob pipeline the box score uses."""
+    """Most exciting games ever tracked — STAKES-ADJUSTED GEI over ALL seasons
+    (teaser #2). Same scoring-timeline → win-prob pipeline the box score uses for
+    raw GEI, then lifted by helpers.excitement.stakes (team quality + upset) so
+    this board MATCHES the Rankings 'most exciting games' board — a marquee
+    thriller outranks an equally-frantic bottom-of-the-league game. Stakes use
+    each game's OWN season ranks (score_ratings per season)."""
     import helpers.win_probability as WP
     import helpers.gameflow as GF
+    import helpers.excitement as EX
     rows = query(
         """SELECT g.id, g.date, g.season, g.team1_id, g.team2_id,
                   g.home_score, g.away_score, t1.name AS n1, t2.name AS n2
@@ -183,6 +188,13 @@ def _gei_best(g):
     ev_by = defaultdict(list)
     for e in S.fetch_events([r["id"] for r in rows]):
         ev_by[e["game_id"]].append(e)
+    # per-season team ranks for the stakes lift (cached across the page)
+    _scored_by_season = {}
+    for lbl in {(r["season"] or "Current") for r in rows}:
+        try:
+            _scored_by_season[lbl] = TR.score_ratings(gender=g, season=lbl) or {}
+        except Exception:
+            _scored_by_season[lbl] = {}
     out = []
     for r in rows:
         scoring = [e for e in ev_by.get(r["id"], [])
@@ -206,11 +218,16 @@ def _gei_best(g):
         if len(curve) < 2:
             continue
         summ = WP.summarize(curve)
-        out.append({"Date": r["date"], "Season": r["season"] or "Current",
+        _lbl = r["season"] or "Current"
+        _stk, _q, _u = EX.stakes(_scored_by_season.get(_lbl, {}),
+                                 r["team1_id"], r["team2_id"],
+                                 r["home_score"], r["away_score"])
+        out.append({"Date": r["date"], "Season": _lbl,
                     "Matchup": f'{r["n1"]} vs {r["n2"]}',
                     "Score": f'{r["home_score"]}-{r["away_score"]}',
-                    "GEI": summ["gei"], "Feel": summ["label"]})
-    out.sort(key=lambda d: -d["GEI"])
+                    "GEI": summ["gei"], "AdjGEI": summ["gei"] * (1 + _stk),
+                    "Stakes": _stk, "Feel": summ["label"]})
+    out.sort(key=lambda d: -d["AdjGEI"])
     return out[:10]
 
 
@@ -348,9 +365,17 @@ with tab_records:
                     "from a final score alone.")
         else:
             _board([{"Date": r["Date"], "Matchup": r["Matchup"],
-                     "Score": r["Score"], "GEI": round(r["GEI"], 1),
+                     "Score": r["Score"], "Adj GEI": round(r["AdjGEI"], 1),
+                     "GEI": round(r["GEI"], 1),
+                     "Stakes": (f"+{r['Stakes'] * 100:.0f}%" if r["Stakes"] > 0.005
+                                else "—"),
                      "Feel": r["Feel"]} for r in _ge],
-                   ["Date", "Matchup", "Score", "GEI", "Feel"], "hof_gei")
+                   ["Date", "Matchup", "Score", "Adj GEI", "GEI", "Stakes",
+                    "Feel"], "hof_gei")
+            st.caption("**Adj GEI** = raw GEI lifted by the stakes (the two teams' "
+                       "quality + an upset kicker) — the same ranking the "
+                       "Rankings › Most-exciting board uses, so a marquee thriller "
+                       "outranks a frantic bottom-of-the-table game.")
 
     st.caption("Open to every account — season bests need "
                f"{SEASON_MIN_GP}+ games, careers {CAREER_MIN_GP}+. Entered box "

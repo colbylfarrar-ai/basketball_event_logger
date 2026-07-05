@@ -31,12 +31,15 @@ _safe = TA._safe
 # ── the taxonomy ─────────────────────────────────────────────────────────────
 # key, label. One source of truth — tracker, PWA, editors, dashboard all read
 # this list. "other" is a fold-in for unknown/legacy values, not offered in UI.
+# NOTE the KEYS are permanent data values (stored on game_events.turnover_type)
+# — only the display LABELS change. The 'travel' key now reads "Violation" (it
+# covers travels + other floor violations); order follows the founder's call.
 TURNOVER_TYPES = [
-    ("pass",       "Bad pass"),
-    ("drive",      "Lost on drive"),
-    ("held",       "Held ball"),
+    ("travel",     "Violation"),
+    ("drive",      "Drive"),
+    ("pass",       "Pass"),
     ("shot_clock", "Shot clock"),
-    ("travel",     "Travel"),
+    ("held",       "Held ball"),
     ("other",      "Other"),
 ]
 _KEYS = {k for k, _ in TURNOVER_TYPES}

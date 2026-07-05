@@ -88,7 +88,7 @@ class TurnoverTypes(unittest.TestCase):
         pv = TOV.player_turnover_types(events=self.events)
         p = pv[9011]
         self.assertEqual(p["total"], 2)
-        self.assertEqual(p["rows"][0], {"key": "pass", "label": "Bad pass",
+        self.assertEqual(p["rows"][0], {"key": "pass", "label": "Pass",
                                         "n": 2, "share": 1.0})
         self.assertEqual(pv[9012]["untagged"], 1)
 

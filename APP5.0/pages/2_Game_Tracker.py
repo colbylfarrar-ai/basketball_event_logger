@@ -68,6 +68,32 @@ def _scout_cues(team_id):
 def _has_cues(c):
     return bool(c["ten"].get("available") or c["scorers"])
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _win_formula(team_id, season):
+    """The team's signature win/loss goals — the ~4 stats that most separate its
+    wins from losses over the tracked games of `season` (the Team Dashboard →
+    Insights 'what separates wins from losses' read). Each goal carries its stat
+    key + target so the command center can score THIS game against it. Scoped to
+    the GAME's season so a past-season game reads that season's targets, not the
+    current one. Cached per (team, season); empty/unavailable when the team lacks
+    enough tracked win-and-loss history there."""
+    import helpers.insights_team as IT
+    if SEAS.is_current(season):
+        return IT.winloss_alignment(team_id)     # default = current-season games
+    gids = [r["id"] for r in query(
+        "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
+        "AND season=? AND home_score IS NOT NULL AND away_score IS NOT NULL",
+        (team_id, team_id, season))]
+    return IT.winloss_alignment(team_id, game_ids=gids)
+
+
+def _wf_fmt(v, fmt):
+    """Format a win-formula value the way the Insights tab does (pct / template)."""
+    if v is None:
+        return "—"
+    return f"{v * 100:.0f}%" if fmt == "pct" else fmt.format(v)
+
 _cfg, ACCENT = page_chrome("Game Tracker")
 
 page_header("Game Tracker",
@@ -499,6 +525,65 @@ def _render_command_center():
                                  unsafe_allow_html=True)
     except Exception:
         pass
+
+    # ── win formula: each team's signature win/loss stats (the Insights-tab
+    #    "what separates wins from losses" set, from its PRIOR tracked games) with
+    #    where the team SITS ON THEM right now in this game. The goals are rates,
+    #    so they read at any point; a ✅ means the team is currently on the winning
+    #    side of that stat's target (midpoint of its win vs loss average). Paid
+    #    depth, fully guarded — any failure silently skips. ──────────────────────
+    if _paid_view:
+        try:
+            import helpers.insights_team as _IT
+            _live_ev = None                       # fetched lazily, shared by teams
+            _wf_have = False
+            _wf_render = []                        # (team_name, goals, live_line)
+            for _tid, _tnm in ((t1id, t1name), (t2id, t2name)):
+                _wa = _win_formula(_tid, _gszn)
+                _goals = _wa.get("goals") if _wa.get("available") else None
+                if not _goals:
+                    continue
+                if _live_ev is None:
+                    import helpers.stats as _S
+                    _live_ev = _S.fetch_events([game_id])
+                _line = _IT.team_stat_line(_tid, game_id, _live_ev)
+                _wf_render.append((_tnm, _goals, _line))
+                _wf_have = True
+            if _wf_have:
+                st.markdown("<div class='lab-hdr' style='margin-top:4px'>"
+                            "Win formula — signature stats vs live</div>",
+                            unsafe_allow_html=True)
+                _wfc = st.columns(len(_wf_render))
+                for _col, (_tnm, _goals, _line) in zip(_wfc, _wf_render):
+                    _rows = []
+                    for gp in _goals:
+                        _tgt = _wf_fmt(gp["target"], gp["fmt"])
+                        _cur = (_line or {}).get(gp["key"])
+                        _now = _wf_fmt(_cur, gp["fmt"])
+                        # 'pace' is a full-game possession count — not comparable
+                        # mid-game, so it's shown for reference with no ✅/❌.
+                        if gp["key"] == "pace" or _cur is None:
+                            _st = "·"
+                        else:
+                            _hit = ((_cur >= gp["target"]) if gp["win_high"]
+                                    else (_cur <= gp["target"]))
+                            _st = "✅" if _hit else "❌"
+                        _rows.append({"Signature stat": gp["label"],
+                                      "Target": f"{'≥' if gp['win_high'] else '≤'} {_tgt}",
+                                      "Now": _now, "": _st})
+                    with _col:
+                        st.markdown(f"**{_tnm}**")
+                        if _line is None:
+                            st.caption("No possessions logged yet this game.")
+                        st.dataframe(pd.DataFrame(_rows), hide_index=True,
+                                     width="stretch",
+                                     key=f"wf_{game_id}_{_tnm}")
+                st.caption("Each team's own win/loss signature stats from prior "
+                           "tracked games (Team Dashboard → Insights). ✅ = "
+                           "currently on the winning side of the target "
+                           "(midpoint of the team's win vs loss average).")
+        except Exception:
+            pass
 
     # ── courtside decision strip (Tier 1, ML_LAYER_ROADMAP): live Leverage Index +
     #    run alert + a late-game decision card. Reuses the SAME _QSEC=480 / 240-OT
@@ -1018,10 +1103,14 @@ else:
                 # Build the event payload; helpers.game_events owns possession secs,
                 # the lineup snapshot, +/- and x/y -> zone/2-3 (shared with the mobile
                 # tracker API, so both writers stay in lockstep).
-                # Stamp the sticky current defense + set call onto the event;
-                # log_event persists them per type (FT ignores both).
-                ev = {"quarter": q, "time": t, "defense": cur_def_key,
-                      "play_type": cur_pt_key}
+                # Stamp the sticky current defense + set call onto the event —
+                # but NEVER on a free throw: an FT is a dead-ball possession, not
+                # a set the offense ran or a scheme the defense played. Gate here
+                # so the tag can't ride along even if the data layer changes.
+                ev = {"quarter": q, "time": t}
+                if event_type != "Free Throw":
+                    ev["defense"] = cur_def_key
+                    ev["play_type"] = cur_pt_key
                 if event_type == "Shot":
                     _xy = st.session_state.get(cap_key)
                     _sx, _sy = _xy if _xy else (None, None)

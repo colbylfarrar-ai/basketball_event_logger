@@ -376,6 +376,42 @@ _WL_SPEC = [
 ]
 
 
+def team_stat_line(team_id, game_id, events=None):
+    """The per-game team stat line winloss_alignment ranks — offense + defense,
+    keyed to _WL_SPEC (PPP/eFG/3P%/3PAr/TOVr/FTr/ORBpct/AST%/oPPP/oeFG/forced/
+    pace). `events` are that game's events (with the shooter/rebounder team joins
+    fetch_events adds); fetched for `game_id` when omitted. All fields are rates
+    except `pace` (raw possessions), so they read at ANY point in a game — which
+    is how the live tracker compares a game-in-progress to a team's win targets.
+    Returns None when the team logged no possessions yet."""
+    import helpers.team_analytics as TA          # lazy — avoids an import cycle
+    if events is None:
+        events = S.fetch_events([game_id])
+    if not events:
+        return None
+    tb, ob = TA.team_and_opp_box(team_id, [game_id], events=events)
+    poss = (tb.get("FGA", 0) or 0) + (tb.get("TOV", 0) or 0)
+    opos = (ob.get("FGA", 0) or 0) + (ob.get("TOV", 0) or 0)
+    if not poss:
+        return None
+    sf = lambda a, b_: (a / b_) if b_ else None
+    return {
+        "PPP":  sf(tb.get("PTS", 0), poss),
+        "eFG":  S.efg(tb) if tb.get("FGA") else None,
+        "3P%":  sf(tb.get("3PM", 0), tb.get("3PA", 0)),
+        "3PAr": sf(tb.get("3PA", 0), tb.get("FGA", 0)),
+        "TOVr": sf(tb.get("TOV", 0), poss),
+        "FTr":  sf(tb.get("FTA", 0), tb.get("FGA", 0)),
+        "ORBpct": sf(tb.get("ORB", 0),
+                     (tb.get("ORB", 0) or 0) + (ob.get("DRB", 0) or 0)),
+        "AST%": sf(tb.get("AST", 0), tb.get("FGM", 0)),
+        "oPPP": sf(ob.get("PTS", 0), opos) if opos else None,
+        "oeFG": S.efg(ob) if ob.get("FGA") else None,
+        "forced": sf(ob.get("TOV", 0), opos) if opos else None,
+        "pace": float(poss),
+    }
+
+
 def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
                       min_each=2, top=4, min_d=0.8):
     """The ~``top`` stats that most separate this team's WINS from its LOSSES.
@@ -386,7 +422,6 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
     loss_games, rows: [{key,label,win,loss,d,fmt}]} — rows sorted by |d|,
     gated at |d| >= min_d and both sides >= min_each games. game_ids (when
     given) is trusted as season-scoped, same contract as winloss_splits."""
-    import helpers.team_analytics as TA          # lazy — avoids an import cycle
     if game_ids is not None:
         allow = set(game_ids)
         if not allow:
@@ -421,33 +456,8 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
         if e["game_id"] in result:
             by_game.setdefault(e["game_id"], []).append(e)
 
-    def _line(gid):
-        evg = by_game.get(gid) or []
-        if not evg:
-            return None
-        tb, ob = TA.team_and_opp_box(team_id, [gid], events=evg)
-        poss = (tb.get("FGA", 0) or 0) + (tb.get("TOV", 0) or 0)
-        opos = (ob.get("FGA", 0) or 0) + (ob.get("TOV", 0) or 0)
-        if not poss:
-            return None
-        sf = lambda a, b_: (a / b_) if b_ else None
-        return {
-            "PPP":  sf(tb.get("PTS", 0), poss),
-            "eFG":  S.efg(tb) if tb.get("FGA") else None,
-            "3P%":  sf(tb.get("3PM", 0), tb.get("3PA", 0)),
-            "3PAr": sf(tb.get("3PA", 0), tb.get("FGA", 0)),
-            "TOVr": sf(tb.get("TOV", 0), poss),
-            "FTr":  sf(tb.get("FTA", 0), tb.get("FGA", 0)),
-            "ORBpct": sf(tb.get("ORB", 0),
-                         (tb.get("ORB", 0) or 0) + (ob.get("DRB", 0) or 0)),
-            "AST%": sf(tb.get("AST", 0), tb.get("FGM", 0)),
-            "oPPP": sf(ob.get("PTS", 0), opos) if opos else None,
-            "oeFG": S.efg(ob) if ob.get("FGA") else None,
-            "forced": sf(ob.get("TOV", 0), opos) if opos else None,
-            "pace": float(poss),
-        }
-
-    lines = {gid: ln for gid in result if (ln := _line(gid))}
+    lines = {gid: ln for gid in result
+             if (ln := team_stat_line(team_id, gid, by_game.get(gid) or []))}
     if (sum(1 for g in lines if result[g] == "win") < min_each
             or sum(1 for g in lines if result[g] == "loss") < min_each):
         return {"available": False, "win_games": n_w, "loss_games": n_l}
@@ -488,8 +498,8 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
             t = (r["win"] + r["loss"]) / 2.0
             win_high = r["d"] > 0
             thr.append((r["key"], t, win_high))
-            goals.append({"label": r["label"], "target": t, "win_high": win_high,
-                          "fmt": r["fmt"]})
+            goals.append({"key": r["key"], "label": r["label"], "target": t,
+                          "win_high": win_high, "fmt": r["fmt"]})
         rec = {}                                  # n_hit -> [wins, losses]
         for gid, ln in lines.items():
             hit = 0

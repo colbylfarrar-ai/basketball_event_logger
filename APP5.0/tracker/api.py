@@ -259,24 +259,42 @@ def game_detail(game_id: int):
     if not g:
         raise HTTPException(status_code=404, detail="no such game")
     g = g[0]
-    # Archived players included (flagged) so the event EDITOR can resolve and
-    # re-assign them — the lineup screen filters archived=1 out client-side.
-    # Mirrors event_log.game_people(), which includes archived by design.
+    # Roster = the GAME'S SEASON players (SEAS.roster_clause), UNION any player its
+    # events already reference. This mirrors event_log.game_people(): after a
+    # New-Season rollover a returner has BOTH an archived last-season row AND a
+    # fresh Current row on the same team_id, so an unscoped `team_id IN (?,?)`
+    # listed — and the flow/editor pickers dimmed as "(archived)" — TWO of every
+    # returner. Season-scoping drops the stale duplicate; the event-ref UNION keeps
+    # every historical reference (a transfer / cross-season correction) resolvable.
     #
-    # Retro tracking: `archived` in this payload is RELATIVE TO THE GAME'S
-    # SEASON — on a past-season game, that season's (rollover-archived) players
-    # report archived=0 so they take the floor, while everyone else (including
-    # today's active roster) reports archived=1 (pickable-but-dimmed in the
-    # editor). Current games keep the raw flag, i.e. today's exact behaviour.
-    players = query(
-        "SELECT id, name, number, team_id, archived, season, handedness "
-        "FROM players WHERE team_id IN (?,?) ORDER BY team_id, number, name",
-        (g["team1_id"], g["team2_id"]))
+    # `archived` in this payload is RELATIVE TO THE GAME: the season roster reports
+    # archived=0 (takes the floor — for a past game these are that season's
+    # rollover-archived rows), an event-only reference reports archived=1
+    # (pickable-but-dimmed in the editor, never on the lineup screen).
     gszn = g["season"] or "Current"
-    if not SEAS.is_current(gszn):
-        players = [{**p, "archived": 0 if (p["season"] or "") == gszn else 1}
-                   for p in players]
-    players = [{k: v for k, v in p.items() if k != "season"} for p in players]
+    _rc, _rp = SEAS.roster_clause(gszn, alias="p")
+    roster = query(
+        f"SELECT p.id, p.name, p.number, p.team_id, p.handedness FROM players p "
+        f"WHERE p.team_id IN (?,?) AND {_rc} ORDER BY p.team_id, p.number, p.name",
+        (g["team1_id"], g["team2_id"], *_rp))
+    _seen = {p["id"] for p in roster}
+    _ref_cols = ("primary_player_id", "secondary_player_id", "rebound_by_id",
+                 "pass_from_id", "shot_created_by_id", "blocked_by_id",
+                 "guarded_by_id", "stolen_by_id")
+    _refd = set()
+    for _c in _ref_cols:
+        for r in query(f"SELECT DISTINCT {_c} pid FROM game_events "
+                       f"WHERE game_id=? AND {_c} IS NOT NULL", (game_id,)):
+            _refd.add(r["pid"])
+    _extra = _refd - _seen
+    extra_rows = []
+    if _extra:
+        _ph = ",".join("?" * len(_extra))
+        extra_rows = query(
+            f"SELECT id, name, number, team_id, handedness FROM players "
+            f"WHERE id IN ({_ph}) ORDER BY team_id, number, name", tuple(_extra))
+    players = ([{**dict(p), "archived": 0} for p in roster]
+               + [{**dict(p), "archived": 1} for p in extra_rows])
     # archived included (flagged) like players: the editor must resolve a ref on an
     # existing foul; the client filters archived out of the lineup picker.
     officials = query("SELECT id, name, archived FROM officials ORDER BY name")
@@ -312,10 +330,16 @@ def post_events(game_id: int, batch: EventBatch,
             continue
         existed = query("SELECT id FROM game_events WHERE client_uuid=?", (ev.uuid,))
         on_court = [(pid, pid2team[pid]) for pid in ev.on_court if pid in pid2team]
+        payload = ev.model_dump(exclude={"uuid", "on_court", "officials_on"})
+        # A free throw is a dead-ball possession — never a set the offense ran or
+        # a defensive scheme. Strip any play_type/defense the client's sticky bar
+        # may have ridden along on the tap; the server is the authoritative gate.
+        if ev.event_type == "free_throw":
+            payload["play_type"] = None
+            payload["defense"] = None
         try:
             eid = GE.log_event(
-                game_id,
-                ev.model_dump(exclude={"uuid", "on_court", "officials_on"}),
+                game_id, payload,
                 on_court, ev.officials_on, client_uuid=ev.uuid)
         except sqlite3.IntegrityError:
             # A second device won the client_uuid race after the dup-check above

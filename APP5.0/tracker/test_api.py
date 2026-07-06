@@ -246,11 +246,23 @@ ok(client.post("/api/officials", json={"name": "  ", "official_id": 9002}).statu
    "blank official name rejected")
 r = client.post("/api/officials", json={"name": "Wrong Name", "official_id": 9001}).json()
 ok(r["name"] == "Ref One", "id collision returns STORED name")
-# archived players flagged in detail (editor needs them)
+# Roster is season-scoped (mirrors event_log.game_people): after a rollover a
+# returner has an archived last-season row AND a fresh Current row, so an
+# unscoped list showed two of everyone. An archived player now surfaces (flagged)
+# ONLY if the game's events reference it — pick one such pid dynamically.
+_refd_pid = query("SELECT primary_player_id pid FROM game_events "
+                  "WHERE game_id=? AND primary_player_id IS NOT NULL "
+                  "LIMIT 1", (gid,))[0]["pid"]
+execute("UPDATE players SET archived=1 WHERE id=?", (_refd_pid,))
+r = client.get(f"/api/games/{gid}").json()
+arch = next(p for p in r["players"] if p["id"] == _refd_pid)
+ok(arch["archived"] == 1, "event-referenced archived player included + flagged")
+# an archived player the game never references is dropped — no stale duplicate.
+# home[5] is on neither the floor (home[:5]) nor any event.
 execute("UPDATE players SET archived=1 WHERE id=?", (home[5],))
 r = client.get(f"/api/games/{gid}").json()
-arch = next(p for p in r["players"] if p["id"] == home[5])
-ok(arch["archived"] == 1 and len(r["players"]) == 12, "archived player included + flagged")
+ok(all(p["id"] != home[5] for p in r["players"]),
+   "unreferenced archived player dropped from roster")
 # drift protection: manually-corrected score on a tracked game must survive edits
 tov = client.post(f"/api/games/{gid}/events", json={"events": [
     {"uuid": "u-tov2", "event_type": "turnover", "quarter": 3, "time": "7:00",

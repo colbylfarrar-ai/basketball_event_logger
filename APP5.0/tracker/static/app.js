@@ -1438,6 +1438,11 @@ async function logFT(result) {
   ev.primary_player_id = f.shooter;
   ev.shot_result = result;
   ev.rebound_by_id = f.details.rebound_by_id;
+  // FTs never carry the set call or defense — the server's free_throw INSERT
+  // drops both columns, so clear them here too and keep the payload honest even
+  // when the sticky Set call / Defense bars are set.
+  ev.play_type = null;
+  ev.defense = null;
   await queueEvent(ev);
   toast('FT ' + result + ' — ' + pLabel(ev.primary_player_id));
   resetFlow('ft');

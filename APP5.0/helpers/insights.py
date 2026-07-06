@@ -276,6 +276,18 @@ def _g_totype(row, pools, d):
         txt = (f"**Strip them on the drive** — **{share:.0%} of their turnovers "
                f"come attacking off the bounce** ({n} tagged); wall up and dig "
                f"at the ball.")
+    elif key == "shot_clock":
+        txt = (f"**Stalls out** — **{share:.0%} of their giveaways are shot-clock "
+               f"violations** ({n} tagged); deny the first option and the "
+               f"possession dies on its own.")
+    elif key == "held":
+        txt = (f"**Ties up easy** — **{share:.0%} of their giveaways are held "
+               f"balls** ({n} tagged); dig at the ball and swarm — they get "
+               f"stuck with it.")
+    elif key == "travel":
+        txt = (f"**Happy feet** — **{share:.0%} of their giveaways are "
+               f"travels/violations** ({n} tagged); crowd the catch and "
+               f"pressure the handle, they rush.")
     else:
         txt = (f"**Turnover tell** — **{share:.0%} of their giveaways are "
                f"{label}** ({n} tagged); a pattern a defense can sit on.")
@@ -436,10 +448,177 @@ def _g_impact(row, pools, d):
     return {"text": txt, "score": abs(div), "z": div, "metric": "Impact", "n": n}
 
 
+def _g_rimdef(row, pools, d):
+    """Rim protection (the split RimDef rating): FG% allowed at the rim as the
+    contester. High = a wall in the paint, low = a rim worth attacking."""
+    rd = _num(row, "RimDef")
+    shots = _num(row, "RimDShots") or 0
+    if rd is None or shots < 12:
+        return None
+    z = _z(rd, pools.get("RimDef"))
+    if abs(z) < MIN_Z:
+        return None
+    allowed = _num(row, "RimDFG%")
+    ab = f" ({allowed:.0f}% at the rim)" if allowed is not None else ""
+    if z >= 0:
+        txt = (f"**Rim protector** — walls up the paint{ab} over {int(shots)} "
+               f"contested rim shots; think twice before driving on them.")
+    else:
+        txt = (f"**Attack the rim on them** — gives it up{ab} at the basket "
+               f"({int(shots)} rim shots faced); get downhill and finish over.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Rim D",
+            "n": int(shots)}
+
+
+def _g_perimdef(row, pools, d):
+    """Perimeter defense (the split PerimDef rating): FG% allowed on jumpers as
+    the contester. High = a close-out lockdown, low = shoot over them."""
+    pd = _num(row, "PerimDef")
+    shots = _num(row, "PerimDShots") or 0
+    if pd is None or shots < 12:
+        return None
+    z = _z(pd, pools.get("PerimDef"))
+    if abs(z) < MIN_Z:
+        return None
+    allowed = _num(row, "PerimDFG%")
+    ab = f" ({allowed:.0f}% on perimeter shots)" if allowed is not None else ""
+    if z >= 0:
+        txt = (f"**Perimeter lockdown** — smothers shooters{ab} over "
+               f"{int(shots)} contested jumpers; a tough close-out cover.")
+    else:
+        txt = (f"**Shoot over them** — concedes{ab} on the perimeter "
+               f"({int(shots)} jumpers faced); pull up and make them chase.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Perim D",
+            "n": int(shots)}
+
+
+def _g_rebound(row, pools, d):
+    """Rebounding identity from the split ratings — elite on the offensive glass
+    (second chances) or the defensive glass (closing possessions); fires on the
+    stronger of the two deviations."""
+    gp = _num(row, "GP") or 0
+    reb = (_num(row, "OREB") or 0) + (_num(row, "DREB") or 0)
+    if gp < 4 or reb < 12:
+        return None
+    orb, drb = _num(row, "OREBrtg"), _num(row, "DREBrtg")
+    zo = _z(orb, pools.get("OREBrtg")) if orb is not None else 0.0
+    zd = _z(drb, pools.get("DREBrtg")) if drb is not None else 0.0
+    off_side = abs(zo) >= abs(zd)
+    z = zo if off_side else zd
+    if abs(z) < MIN_Z:
+        return None
+    opg, dpg = _num(row, "OREB/G") or 0, _num(row, "DREB/G") or 0
+    if off_side:
+        if z >= 0:
+            txt = (f"**Second-chance machine** — elite on the offensive glass "
+                   f"(**{opg:.1f} OREB/g**); box them out or they bury you on "
+                   f"putbacks.")
+        else:
+            txt = (f"**No offensive-glass threat** — just **{opg:.1f} OREB/g**; "
+                   f"safe to leak out early against them.")
+    else:
+        if z >= 0:
+            txt = (f"**Closes possessions** — elite on the defensive glass "
+                   f"(**{dpg:.1f} DREB/g**); one shot and out when they're back.")
+        else:
+            txt = (f"**Crash on them** — weak defensive rebounder "
+                   f"(**{dpg:.1f} DREB/g**); send extra bodies to the offensive "
+                   f"glass.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Rebounding",
+            "n": int(reb)}
+
+
+def _g_selfcreate(row, pools, d):
+    """Shot-creation independence (SelfCr%): makes their own off the dribble vs
+    lives off the catch — the 'deny the ball' vs 'deny the pass' read."""
+    sc = _num(row, "SelfCr%")
+    fga = _num(row, "FGA") or 0
+    if sc is None or fga < 22:
+        return None
+    z = _z(sc, pools.get("SelfCr%"))
+    if abs(z) < MIN_Z:
+        return None
+    if z >= 0:
+        txt = (f"**Creates their own** — **{sc:.0f}% of their shots are self-made** "
+               f"off the bounce; doesn't need a setup, so pressure the ball and "
+               f"cut off the drive.")
+    else:
+        txt = (f"**Setup-dependent** — only **{sc:.0f}% self-created**; take away "
+               f"the catch — deny the entry pass and they can't manufacture their "
+               f"own look.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Shot creation",
+            "n": int(fga)}
+
+
+def _g_playmaking(row, pools, d):
+    """Creation for others (AST%): the offense's engine to blitz off the ball, or
+    a non-creator to help off. AST/TOV rides along as the ball-security note."""
+    ap = _num(row, "AST%")
+    gp = _num(row, "GP") or 0
+    if ap is None or gp < 4:
+        return None
+    z = _z(ap, pools.get("AST%"))
+    if abs(z) < MIN_Z:
+        return None
+    ato = _num(row, "AST/TOV")
+    ato_bit = f" ({ato:.1f} AST/TO)" if ato is not None else ""
+    if z >= 0:
+        txt = (f"**Offensive engine** — assists **{ap:.0f}%** of teammate baskets "
+               f"while on the floor{ato_bit}; get the ball out of their hands — "
+               f"blitz the screen and make someone else create.")
+    else:
+        txt = (f"**Not a creator** — sets up just **{ap:.0f}%** of teammate "
+               f"buckets{ato_bit}; help off them onto the real playmaker.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Playmaking",
+            "n": int(gp)}
+
+
+def _g_disruption(row, pools, d):
+    """Defensive event creation (STOCKS/32): a ball-hawk / shot-blocker worth
+    respecting. High side only — low disruption isn't a scouting tell."""
+    st32 = _num(row, "STOCKS/32")
+    gp = _num(row, "GP") or 0
+    if st32 is None or gp < 4:
+        return None
+    z = _z(st32, pools.get("STOCKS/32"))
+    if z < MIN_Z:
+        return None
+    spg, bpg = _num(row, "SPG") or 0, _num(row, "BPG") or 0
+    txt = (f"**Playmaker on defense** — **{st32:.1f} stocks/32** "
+           f"({spg:.1f} stl · {bpg:.1f} blk a game); punishes careless passes and "
+           f"pump-fakes — don't get loose with the ball near them.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Disruption",
+            "n": int(gp)}
+
+
+def _g_rimfinish(row, pools, d):
+    """True tap-distance finishing at the rim (Near_FG%): a downhill finisher to
+    wall off early, or a shaky one to funnel inside. Uses real shot location, not
+    the zone shadow."""
+    nfg = _num(row, "Near_FG%")
+    na = _num(row, "Near_FGA") or 0
+    if nfg is None or na < 12:
+        return None
+    z = _z(nfg, pools.get("Near_FG%"))
+    if abs(z) < MIN_Z:
+        return None
+    if z >= 0:
+        txt = (f"**Finishes everything inside** — **{nfg:.0f}% at the rim** on "
+               f"{int(na)} close attempts; wall up early, don't give them a "
+               f"downhill runway.")
+    else:
+        txt = (f"**Shaky finisher** — just **{nfg:.0f}% at the rim** ({int(na)} "
+               f"close attempts); funnel them inside and contest straight up.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Rim finish",
+            "n": int(na)}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
                _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
-               _g_clutchft, _g_pnr_role, _g_spacing]
+               _g_clutchft, _g_pnr_role, _g_spacing,
+               _g_rimdef, _g_perimdef, _g_rebound,
+               _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -516,6 +695,14 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
         "GS/G": col(lambda p, r: _num(r, "GS/G")),
         "RAPM": col(lambda p, r: (derived[p].get("impact") or {}).get("rapm")),
         "drawn_pg": col(lambda p, r: derived[p].get("drawn_pg")),
+        "RimDef": col(lambda p, r: _num(r, "RimDef")),
+        "PerimDef": col(lambda p, r: _num(r, "PerimDef")),
+        "OREBrtg": col(lambda p, r: _num(r, "OREBrtg")),
+        "DREBrtg": col(lambda p, r: _num(r, "DREBrtg")),
+        "SelfCr%": col(lambda p, r: _num(r, "SelfCr%")),
+        "AST%": col(lambda p, r: _num(r, "AST%")),
+        "STOCKS/32": col(lambda p, r: _num(r, "STOCKS/32")),
+        "Near_FG%": col(lambda p, r: _num(r, "Near_FG%")),
     }
 
     out = {}

@@ -51,7 +51,9 @@ def _league(gender, season="Current", season_gp=None):
                             war=_war_pc(gender, season, season_gp))
     except Exception:
         pass
-    feed = IN.build_feed(table, ev, top=3, impact=imp) if table else {}
+    # top=None → EVERY qualifying insight per player (the tab is the deep-dive
+    # home; the 3-line cap stays on player-card / rankings surfaces).
+    feed = IN.build_feed(table, ev, top=None, impact=imp) if table else {}
     roles = PT.player_role_splits(events=ev) if ev else {}
     cliffs = IN.guarded_cliffs(ev) if ev else {}
     try:

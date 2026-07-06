@@ -1,0 +1,145 @@
+"""
+test_lineup_projection.py — unit tests for the depth-chart minutes projection (B)
+and the signature-stat optimizer (C), helpers/lineup_projection.py. The core
+(project_minutes, scoring, the constrained hill-climb) is tested on a fully
+synthetic ctx; the DB-coupled reads (build_context, optimize_minutes on a real
+team) get a structure smoke against the local DB.
+"""
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+import helpers.lineup_projection as LP
+
+
+# ── synthetic ctx builders ──────────────────────────────────────────────────────
+def _pl(name, efg=50.0, flag="solid", fga_pm=0.20, obs_min=20.0,
+        dshot=45.0, stl_pm=0.05, foul=False):
+    proj = {"eFG%": {"proj": efg, "flag": flag}}
+    vol = {"fga_pm": fga_pm, "fta_pm": 0.05, "tpa_pm": 0.06, "tov_pm": 0.04,
+           "pts_pm": 0.42, "fgm_pm": 0.09, "ast_pm": 0.05,
+           "poss_pm": fga_pm + 0.44 * 0.05 + 0.04}
+    return {"name": name, "proj": proj, "vol": vol, "dshot": dshot,
+            "stl_pm": stl_pm, "obs_min": obs_min, "foul_prone": foul}
+
+
+_OBS = {"PPP": 0.90, "eFG": 0.47, "3P%": 0.30, "3PAr": 0.30, "TOVr": 0.20,
+        "FTr": 0.25, "ORBpct": 0.33, "AST%": 0.55, "oPPP": 0.92, "oeFG": 0.48,
+        "forced": 0.20, "pace": 60.0}
+
+
+def _ctx(players, sig=True):
+    goals = [{"key": "eFG", "target": 0.50, "win_high": True, "fmt": "pct"},
+             {"key": "TOVr", "target": 0.18, "win_high": False, "fmt": "pct"}]
+    return {"team_id": 0, "team_games": 12, "players": players,
+            "observed_line": dict(_OBS), "team_dshot_avg": 45.0,
+            "team_stl_pm_avg": 0.05,
+            "goals": goals if sig else [],
+            "d_by_key": {"eFG": 1.5, "TOVr": 1.0} if sig else {},
+            "sig_available": sig,
+            "stars": sorted(players, key=lambda p: -players[p]["obs_min"])[:2]}
+
+
+# ── B: minute-weighting is monotone + full 12-key line ─────────────────────────
+def test_minute_weighting_monotone():
+    players = {1: _pl("hi", efg=60.0), 2: _pl("lo", efg=40.0)}
+    ctx = _ctx(players)
+    more_hi = LP.project_minutes(0, {1: 100, 2: 60}, ctx)["line"]["eFG"]
+    less_hi = LP.project_minutes(0, {1: 60, 2: 100}, ctx)["line"]["eFG"]
+    assert more_hi > less_hi                      # more of the good shooter → higher eFG
+
+
+def test_line_has_all_keys():
+    players = {1: _pl("a"), 2: _pl("b")}
+    line = LP.project_minutes(0, {1: 80, 2: 80}, _ctx(players))["line"]
+    for k in ("PPP", "eFG", "3P%", "3PAr", "TOVr", "FTr", "ORBpct", "AST%",
+              "oPPP", "oeFG", "forced", "pace"):
+        assert k in line
+
+
+# ── observed-unit Net folds in by credibility ──────────────────────────────────
+def test_blend_unit_net():
+    assert LP.blend_unit_net(0.0, None, 0) == 0.0          # no observed → model
+    assert LP.blend_unit_net(0.0, 10.0, 0) == 0.0          # zero poss → model
+    thin = LP.blend_unit_net(0.0, 10.0, 5)                 # thin unit ≈ ignored
+    deep = LP.blend_unit_net(0.0, 10.0, 400)               # deep unit pulls hard
+    assert 0.0 < thin < deep < 10.0
+    assert deep > 8.0
+
+
+# ── C: objective scoring + fallback ────────────────────────────────────────────
+def test_signature_scoring_direction():
+    goals = [{"key": "eFG", "target": 0.50, "win_high": True}]
+    d = {"eFG": 2.0}
+    hit = LP.score_signature({"eFG": 0.60}, goals, d)
+    miss = LP.score_signature({"eFG": 0.40}, goals, d)
+    assert hit > 0 > miss
+    # effect-size weight scales the credit
+    assert LP.score_signature({"eFG": 0.60}, goals, {"eFG": 4.0}) > hit
+
+
+def test_objective_fallback_to_net():
+    players = {1: _pl("a"), 2: _pl("b")}
+    proj = LP.project_minutes(0, {1: 80, 2: 80}, _ctx(players, sig=False))
+    val, kind = LP.objective_value(proj, _ctx(players, sig=False))
+    assert kind == "net"
+    val2, kind2 = LP.objective_value(proj, _ctx(players, sig=True))
+    assert kind2 == "signature"
+
+
+# ── C: constrained hill-climb (synthetic, no DB) ───────────────────────────────
+def _roster_ctx(sig=True):
+    mins = [24.0, 22.0, 18.0, 14.0, 10.0, 8.0]
+    efgs = [58.0, 44.0, 52.0, 46.0, 50.0, 41.0]
+    players = {i + 1: _pl(f"p{i+1}", efg=efgs[i], obs_min=mins[i],
+                          foul=(i == 5)) for i in range(6)}
+    return _ctx(players, sig)
+
+
+def test_optimizer_respects_constraints_and_improves():
+    ctx = _roster_ctx()
+    out = LP.optimize_minutes(0, ctx=ctx)
+    assert "minutes" not in out or abs(sum(out["minutes"].values()) - LP.TEAM_MIN) < 3
+    # constraints: no player over their cap; foul-prone (#6) never above MAX_PP_FOUL
+    for pid, m in out["minutes"].items():
+        cap = LP.MAX_PP_FOUL if ctx["players"][pid]["foul_prone"] else LP.MAX_PP
+        assert m <= cap + 1e-6
+    # star stagger: the two stars can cover a full game
+    stars = ctx["stars"]
+    assert sum(out["minutes"][p] for p in stars) >= LP.STAGGER_COVER - 1e-6
+    # objective is at least as good as the seed (hill-climb never regresses)
+    seed = LP._seed(ctx, LP._rotation(ctx))
+    seed_val, _ = LP.objective_value(LP.project_minutes(0, seed, ctx), ctx)
+    assert out["objective"] >= round(seed_val, 4) - 1e-6
+    assert out["objective_kind"] == "signature"
+
+
+# ── DB smoke: build_context + optimize on a real team; gating on a thin team ────
+def test_build_context_and_optimize_smoke():
+    from database.db import query
+    row = query(
+        "SELECT gel.team_id tid, COUNT(DISTINCT ge.game_id) g "
+        "FROM game_event_lineup gel JOIN game_events ge ON ge.id=gel.event_id "
+        "GROUP BY gel.team_id ORDER BY g DESC LIMIT 1")
+    if not row:
+        return
+    tid, g = row[0]["tid"], row[0]["g"]
+    out = LP.optimize_minutes(tid)
+    if g >= LP.MIN_TEAM_GAMES:
+        assert "minutes" in out and out["objective_kind"] in ("signature", "net")
+        assert abs(sum(out["minutes"].values()) - LP.TEAM_MIN) < 4
+        tc = LP.project_team_current(tid)
+        assert "net" in tc and 0.0 <= tc["win_prob_vs_avg"] <= 1.0
+    else:
+        assert out.get("gated")
+
+
+def test_thin_team_is_gated():
+    from database.db import query
+    # a team with 1 tracked game (there are many) must gate
+    row = query(
+        "SELECT gel.team_id tid, COUNT(DISTINCT ge.game_id) g "
+        "FROM game_event_lineup gel JOIN game_events ge ON ge.id=gel.event_id "
+        "GROUP BY gel.team_id HAVING g < ? ORDER BY g ASC LIMIT 1", (LP.MIN_TEAM_GAMES,))
+    if not row:
+        return
+    out = LP.optimize_minutes(row[0]["tid"])
+    assert out.get("gated")

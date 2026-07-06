@@ -89,6 +89,7 @@ import helpers.dashboard.profile_tab as DPROF
 import helpers.dashboard.playstyle_tab as DPLAYSTYLE
 import helpers.dashboard.defense_tab as DDEFENSE
 import helpers.dashboard.situational_tab as DSITUATIONAL
+import helpers.dashboard.projection_tab as DPROJ
 import helpers.dashboard.share_tab as DSHARE
 import helpers.breakdown as BR
 import helpers.situational as SIT
@@ -1230,14 +1231,14 @@ def _matchup_grid(g, tid, _ids):
 # view with an inner lazy selector — scan the roster, switch to drill into a name.
 # Only the chosen sub-view's fragment runs (see the Roster gate near the file tail,
 # after _prof_ctx is built).
-_TD_VIEWS = ["Overview", "Scout", "Insights", "Roster",
+_TD_VIEWS = ["Overview", "Scout", "Insights", "Projection", "Roster",
              "Schedule", "Charts", "Lab", "Share", "Glossary"]
 # Icons make the top-level nav read as primary navigation, not just another
 # toggle (only the label list drives display; the option values are unchanged so
 # session state / routing below stay identical).
 _TD_VIEW_ICONS = {"Overview": "📊", "Scout": "🔍", "Insights": "💡",
-                  "Roster": "👥", "Schedule": "📅", "Charts": "📈",
-                  "Lab": "🧪", "Share": "📤", "Glossary": "📖"}
+                  "Projection": "🔮", "Roster": "👥", "Schedule": "📅",
+                  "Charts": "📈", "Lab": "🧪", "Share": "📤", "Glossary": "📖"}
 _tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view",
                format_func=lambda v: f"{_TD_VIEW_ICONS.get(v, '')} {v}") \
     or "Overview"
@@ -4026,6 +4027,18 @@ _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
                                 season=season_pick, season_gp=_season_gp)
 if _tdview == "Insights":
     DINS.render(_insights_ctx)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB — PROJECTION (depth-chart minutes + signature-stat optimizer; paid+team-gated)
+# ══════════════════════════════════════════════════════════════════════════════
+# Self-gates on is_paid + has_tracked + the engine's own MIN_TEAM_GAMES rotation
+# gate. game_ids = this team's entitlement-visible tracked ids, season-scoped.
+if _tdview == "Projection":
+    DPROJ.render(SimpleNamespace(
+        team_id=team_id, gender=gender, has_tracked=has_tracked,
+        is_paid=ENT.has_paid_plan(AUTH.current_user()),
+        game_ids=(list(_vis) if _vis is not None else None),
+        players=players))
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — SHARE (premade social-media cards; own-team surface — see share_tab)

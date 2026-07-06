@@ -18,7 +18,8 @@ def _pl(name, efg=50.0, flag="solid", fga_pm=0.20, obs_min=20.0,
            "pts_pm": 0.42, "fgm_pm": 0.09, "ast_pm": 0.05,
            "poss_pm": fga_pm + 0.44 * 0.05 + 0.04}
     return {"name": name, "proj": proj, "vol": vol, "dshot": dshot,
-            "stl_pm": stl_pm, "obs_min": obs_min, "foul_prone": foul}
+            "stl_pm": stl_pm, "obs_min": obs_min, "foul_prone": foul,
+            "value": max(0.0, efg - 40.0)}   # stand-in Impact for the value objective
 
 
 _OBS = {"PPP": 0.90, "eFG": 0.47, "3P%": 0.30, "3PAr": 0.30, "TOVr": 0.20,
@@ -87,6 +88,17 @@ def test_force_net_overrides_signature():
     # end-to-end: the optimizer honors the override in its returned kind
     out = LP.optimize_minutes(0, ctx=ctx, objective="net")
     assert out["objective_kind"] == "net"
+
+
+def test_value_objective_favors_high_impact():
+    # player impact objective must give the higher-value players more minutes.
+    # (efg drives the _pl stand-in value = max(0, efg-40); 6 players fill 160 min.)
+    efgs = [72.0, 66.0, 58.0, 50.0, 46.0, 42.0]
+    players = {i + 1: _pl(f"p{i+1}", efg=efgs[i], obs_min=18.0) for i in range(6)}
+    ctx = _ctx(players, sig=False)
+    out = LP.optimize_minutes(0, ctx=ctx, objective="value")
+    assert out["objective_kind"] == "value"
+    assert out["minutes"][1] > out["minutes"][6]     # highest value > lowest value
 
 
 def test_objective_fallback_to_net():

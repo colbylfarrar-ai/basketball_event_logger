@@ -55,6 +55,8 @@ NET_CLAMP    = 20.0     # sanity band on projected Net (points/100) — flagged 
 # signature score (~O(1-3)) and Net (~O(20)) live on different scales.
 FATIGUE_W_SIG = 0.30
 FATIGUE_W_NET = 6.0
+FATIGUE_W_VAL = 2.5     # scale for the player-impact objective (Impact ~0-100)
+REPLACEMENT   = 40.0    # a 0-100 Impact/OVERALL below this adds ~no value
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -137,10 +139,17 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
         }
         dshot = row.get("DSHOT%")
         stl_pm = pm("STL")
+        # per-player VALUE for the impact objective: the 0-100 OVERALL rating
+        # (the box+event composite that folds in the RAPM impact pillar; the raw
+        # Impact column is often 0 until RAPM fits). Above-replacement so bench
+        # value tapers to ~0 — the gradient the flat clamped team-net lacks.
+        _imp = row.get("Impact") or 0.0
+        _val = _imp if _imp > REPLACEMENT else (row.get("OVERALL") or 50.0)
+        value = max(0.0, _val - REPLACEMENT)
         players[pid] = {
             "name": pr["name"], "proj": pr["stats"], "vol": vol,
             "dshot": dshot, "stl_pm": stl_pm, "obs_min": m,
-            "foul_prone": pid in prone,
+            "foul_prone": pid in prone, "value": value,
         }
         if dshot is not None:
             dshot_num += dshot * m
@@ -335,14 +344,24 @@ def _fatigue_penalty(minutes):
     return sum((m / GAME_MIN) ** 2 for m in minutes.values() if m > 0)
 
 
+def score_value(minutes, players):
+    """Minute-weighted per-player value (above-replacement Impact) — the gradient
+    the flat clamped team-net lacks, so 'play your best players' actually varies."""
+    return sum((players.get(p, {}).get("value", 0.0)) * m
+               for p, m in minutes.items() if m > 0) / TEAM_MIN
+
+
 def objective_value(proj, ctx, force=None):
     """The objective for a projected allocation, minus the diminishing-returns
     (fatigue) penalty. `force` picks the target:
-        None       auto — signature when the team has mined signatures, else net
+        None        auto — signature when the team has mined signatures, else net
         "signature" signature when available, else net
-        "net"       always Net vs the average tracked team (coach override)
+        "value"     minute-weighted player Impact (the 'play your best' lever)
+        "net"       always Net vs the average tracked team
     """
     pen = _fatigue_penalty(proj["minutes"])
+    if force == "value":
+        return score_value(proj["minutes"], ctx["players"]) - FATIGUE_W_VAL * pen, "value"
     use_sig = (force != "net"
                and ctx.get("sig_available") and ctx.get("goals"))
     if use_sig:

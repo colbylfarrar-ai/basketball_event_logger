@@ -66,13 +66,16 @@ def render(ctx):
     # objective toggle — only meaningful when the team has mined signature stats
     # (without them the objective is always Net regardless).
     force = None
-    if ctxp.get("sig_available"):
-        pick = cset2.radio(
-            "Optimize for", ["Signature stats", "Best net"], horizontal=True,
-            key="proj_objective",
-            help="Signature stats = hit the ~4 stats your wins turn on. "
-                 "Best net = maximize projected point differential /100.")
-        force = "net" if pick == "Best net" else None
+    _obj_opts = (["Signature stats", "Player impact"] if ctxp.get("sig_available")
+                 else ["Player impact", "Best net"])
+    pick = cset2.radio(
+        "Optimize for", _obj_opts, horizontal=True, key="proj_objective",
+        help="Signature stats = hit the ~4 stats your wins turn on. "
+             "Player impact = concentrate minutes on your highest-Impact players "
+             "(box + event impact rating). Best net = projected point diff /100 "
+             "(a blunt lever — the net projection is clamped).")
+    force = {"Player impact": "value", "Best net": "net",
+             "Signature stats": None}.get(pick)
 
     opt = LP.optimize_minutes(tid, ctx=ctxp, max_rotation=rot, objective=force)
     proj = opt["projection"]
@@ -85,8 +88,10 @@ def render(ctx):
     c2.metric("Win prob vs avg team", f"{tc['win_prob_vs_avg'] * 100:.0f}%")
     if opt["objective_kind"] == "signature":
         _obj_lbl, _obj_help = "Signature stats", "Optimizing the team's own win/loss signature stats."
+    elif opt["objective_kind"] == "value":
+        _obj_lbl, _obj_help = "Player impact", "Concentrating minutes on your highest-Impact players."
     elif force == "net":
-        _obj_lbl, _obj_help = "Best net (chosen)", "Maximizing projected point differential /100."
+        _obj_lbl, _obj_help = "Best net (chosen)", "Maximizing projected point differential /100 (clamped, blunt)."
     else:
         _obj_lbl, _obj_help = "Net (fallback)", "Not enough wins AND losses to mine signatures — optimizing Net."
     c3.metric("Objective", _obj_lbl, help=_obj_help)

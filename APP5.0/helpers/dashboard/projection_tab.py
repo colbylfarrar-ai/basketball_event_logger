@@ -58,7 +58,11 @@ def render(ctx):
                     f"rotation sample — keep tracking.", icon="📉")
         return
 
-    opt = LP.optimize_minutes(tid, ctx=ctxp)
+    rot = st.slider("Rotation depth (players)", 6, 10, min(LP.MAX_ROTATION, 10),
+                    key="proj_rot_depth",
+                    help="How many players share the 32-minute game. Deeper = more "
+                         "even minutes; shorter = more on your best.")
+    opt = LP.optimize_minutes(tid, ctx=ctxp, max_rotation=rot)
     proj = opt["projection"]
     names = {p: ctxp["players"][p]["name"] for p in opt["minutes"]}
 
@@ -113,6 +117,60 @@ def render(ctx):
             "Foul-prone": "⚠️" if ctxp["players"][p]["foul_prone"] else "",
         })
     st.markdown(dense_table(mrows), unsafe_allow_html=True)
+
+    # ── what-if: coach sets the minutes, sees the projected difference ────────
+    with st.expander("🎛️ Try your own minutes — see the difference"):
+        st.caption("Set each player's minutes; the projection updates live. Deltas "
+                   "are vs the optimizer's recommendation above.")
+        order = sorted(opt["minutes"], key=lambda x: -opt["minutes"][x])
+        custom = {}
+        cols = st.columns(3)
+        for i, p in enumerate(order):
+            custom[p] = cols[i % 3].number_input(
+                names[p], min_value=0, max_value=32, step=2,
+                value=int(round(opt["minutes"][p])), key=f"proj_wi_{tid}_{p}")
+        total = sum(custom.values())
+        if total != int(LP.TEAM_MIN):
+            st.caption(f"⚖️ {total} of {int(LP.TEAM_MIN)} player-minutes "
+                       f"({'over' if total > LP.TEAM_MIN else 'under'} a full game) "
+                       "— rates still read, but fill to 160 for a fair read.")
+        wp = LP.project_minutes(tid, {p: float(m) for p, m in custom.items()}, ctxp)
+
+        # goals hit: yours vs recommended
+        def _hits(line):
+            n = 0
+            for goal in opt.get("signature_goals", []):
+                v = line.get(goal["key"])
+                if v is None:
+                    continue
+                if (v >= goal["target"]) if goal["win_high"] else (v <= goal["target"]):
+                    n += 1
+            return n
+        n_goals = len(opt.get("signature_goals", []))
+        yours, rec = _hits(wp["line"]), _hits(proj["line"])
+        m1, m2 = st.columns(2)
+        if n_goals:
+            m1.metric("Signature goals hit", f"{yours} / {n_goals}",
+                      delta=(yours - rec) or None, help="vs the recommendation")
+        m2.metric("Projected Net /100", f"{wp['net']:+.1f}",
+                  delta=round(wp["net"] - proj["net"], 1) or None,
+                  help="vs the recommendation")
+        if opt["objective_kind"] == "signature" and opt.get("signature_goals"):
+            wrows = []
+            for goal in opt["signature_goals"]:
+                k = goal["key"]
+                v = wp["line"].get(k)
+                if v is None:
+                    continue
+                hit = (v >= goal["target"]) if goal["win_high"] else (v <= goal["target"])
+                wrows.append({
+                    "Signature stat": k,
+                    "Target": _pct(goal["target"]) if goal["fmt"] == "pct" else f"{goal['target']:.2f}",
+                    "Yours": _pct(v) if goal["fmt"] == "pct" else f"{v:.2f}",
+                    "": "✅ hit" if hit else "❌ miss",
+                })
+            if wrows:
+                st.markdown(dense_table(wrows), unsafe_allow_html=True)
 
     # ── star stagger note ────────────────────────────────────────────────────
     # use the ctx-resolved, season-scoped game ids (gids may be None for an open

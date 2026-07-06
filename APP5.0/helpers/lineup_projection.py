@@ -48,6 +48,14 @@ DEF_CLAMP    = 0.06     # max shift of oeFG from observed (0-1 rate)
 OPPP_CLAMP   = 0.10     # max shift of oPPP from observed
 NET_CLAMP    = 20.0     # sanity band on projected Net (points/100) — flagged directional
 
+# Diminishing returns: a convex penalty on minutes so the optimizer doesn't pin
+# every player to a bound (the "4×30 + 5×8" vertex a LINEAR objective always
+# produces). penalty = W · Σ(minutes/32)² makes concentrated minutes cost more
+# than spread ones → natural rotations (24/22/18/16/…). Two weights because the
+# signature score (~O(1-3)) and Net (~O(20)) live on different scales.
+FATIGUE_W_SIG = 0.30
+FATIGUE_W_NET = 6.0
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CONTEXT  (one DB pass; injectable for tests)
@@ -320,22 +328,34 @@ def score_signature(line, goals, d_by_key):
     return total
 
 
+def _fatigue_penalty(minutes):
+    """Convex cost of concentrating minutes (Σ(m/32)²). Minimized by a spread
+    allocation, maximized by pinning players to the max — so subtracting it pulls
+    the optimizer off the all-or-nothing vertex into a realistic rotation."""
+    return sum((m / GAME_MIN) ** 2 for m in minutes.values() if m > 0)
+
+
 def objective_value(proj, ctx):
     """The objective for a projected allocation: signature attainment when the
-    team has mined signatures, else Net vs the average tracked team."""
+    team has mined signatures, else Net vs the average tracked team — each minus
+    the diminishing-returns (fatigue) penalty so minutes spread naturally."""
+    pen = _fatigue_penalty(proj["minutes"])
     if ctx.get("sig_available") and ctx.get("goals"):
-        return score_signature(proj["line"], ctx["goals"], ctx["d_by_key"]), "signature"
-    return proj["net_vs_baseline"], "net"
+        raw = score_signature(proj["line"], ctx["goals"], ctx["d_by_key"])
+        return raw - FATIGUE_W_SIG * pen, "signature"
+    return proj["net_vs_baseline"] - FATIGUE_W_NET * pen, "net"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  C — optimize the minutes allocation (constrained hill-climb)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _rotation(ctx):
-    """The optimizable rotation: top-MAX_ROTATION players by observed minutes."""
-    return sorted(ctx["players"], key=lambda p: -ctx["players"][p]["obs_min"]
-                  )[:MAX_ROTATION]
+def _rotation(ctx, max_rotation=MAX_ROTATION):
+    """The optimizable rotation: top-`max_rotation` players by observed minutes."""
+    # floor at 6: a 5-man rotation can't fill 160 min under the 30-min cap
+    # (5×30=150) — it would force everyone to a full 32 with no bench.
+    n = max(6, min(int(max_rotation or MAX_ROTATION), 10))
+    return sorted(ctx["players"], key=lambda p: -ctx["players"][p]["obs_min"])[:n]
 
 def _max_pp(ctx, pid):
     return MAX_PP_FOUL if ctx["players"][pid]["foul_prone"] else MAX_PP
@@ -401,20 +421,21 @@ def _rebalance(minutes, ctx, rotation):
 
 
 def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=400,
-                     season="Current"):
+                     season="Current", max_rotation=MAX_ROTATION):
     """Search a minutes allocation that maximizes the team's objective.
 
     Constrained 2-minute-swap hill-climb from an observed-minutes seed. Returns
     {gated?} | {minutes, projection, objective, objective_kind, iterations,
     observed, diff}. `diff` compares the recommendation to the team's observed
-    minutes — the "extra wins" prescription.
+    minutes — the "extra wins" prescription. `max_rotation` (6-10 typical) is how
+    many players the coach wants in the rotation.
     """
     if ctx is None:
         ctx = build_context(team_id, gender=gender, game_ids=game_ids, season=season)
     if ctx.get("gated"):
         return {"gated": ctx["gated"], "team_games": ctx.get("team_games")}
 
-    rotation = _rotation(ctx)
+    rotation = _rotation(ctx, max_rotation)
     minutes = _seed(ctx, rotation)
     proj = project_minutes(team_id, minutes, ctx)
     best_val, kind = objective_value(proj, ctx)

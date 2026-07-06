@@ -132,6 +132,27 @@ def test_build_context_and_optimize_smoke():
         assert out.get("gated")
 
 
+def test_fatigue_spreads_minutes():
+    # Diminishing returns must pull the optimizer off the all-at-bounds vertex:
+    # at least one rotation player lands strictly between the min and max cap.
+    ctx = _roster_ctx()
+    out = LP.optimize_minutes(0, ctx=ctx)
+    interior = [m for m in out["minutes"].values()
+                if LP.MIN_PP + 1e-6 < m < LP.MAX_PP - 1e-6]
+    assert interior, f"no interior minutes (all pinned to bounds): {out['minutes']}"
+
+
+def test_max_rotation_limits_players():
+    # 8-player roster, ask for a 6-man rotation → exactly 6 get minutes.
+    mins = [24.0, 22.0, 18.0, 14.0, 12.0, 10.0, 9.0, 8.0]
+    players = {i + 1: _pl(f"p{i+1}", efg=50.0 + i, obs_min=mins[i])
+               for i in range(8)}
+    ctx = _ctx(players)
+    out = LP.optimize_minutes(0, ctx=ctx, max_rotation=6)
+    assert len(out["minutes"]) == 6
+    assert abs(sum(out["minutes"].values()) - LP.TEAM_MIN) < 3
+
+
 def test_build_context_fallback_is_season_scoped():
     # game_ids=None must resolve the team's games FOR THE PASSED SEASON, not via
     # the 'Current'-hardcoded _team_game_ids (the archive "no tracked games" bug).

@@ -227,6 +227,27 @@ def _wpa(gender, season="Current"):
         return {"scoring": {}, "possession": {}}
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _projection(gender, season="Current", game_ids=None):
+    """League-wide career player projection {pid: projection} (helpers.projection).
+    Cached per gender/season like the other league fetchers; the projection is
+    league-relative, so the prior + baseline are built over the whole pool once."""
+    import helpers.player_ratings as _PR
+    import helpers.projection as _PJ
+    try:
+        table = _PR.player_stat_table(
+            game_ids=(list(game_ids) if game_ids is not None else None),
+            gender=gender, min_games=1, season=season)
+        if not table:
+            return {}
+        clusters = _PJ._clusters_for(table)
+        priors = _PJ.build_priors(table, clusters)
+        return {pid: _PJ.project_player(pid, table, priors, clusters)
+                for pid in table}
+    except Exception:
+        return {}
+
+
 def render_card(ctx):
     """Render the full player-profile card (header banner -> scouting report)."""
     P, pid, rows = ctx.P, ctx.pid, ctx.rows
@@ -1316,6 +1337,48 @@ def render_card(ctx):
             bar.update_xaxes(visible=False)
             bar.update_yaxes(showgrid=False, automargin=True, tickfont=dict(size=9))
             st.plotly_chart(bar, width="stretch", key="pcard_leaguebar")
+
+    # ── Projection (career-stabilized intrinsic rates → Paid) ─────────────────
+    # A player's SKILL rates pulled toward an archetype-else-league prior by how
+    # much tracked evidence backs them: a thin sample reads as its prior, a deep
+    # one keeps its edge. Skill only (usage/minutes are the team layer's job) and
+    # flagged directional. See helpers/projection.py.
+    if paid:
+        _pj = _projection(getattr(ctx, "gender", None), _szn, _gp).get(pid)
+        if _pj and _pj.get("stats"):
+            st.markdown("<div class='pl-hdr'>Projection — stabilized skill rates</div>",
+                        unsafe_allow_html=True)
+            st.caption(
+                f"Archetype: **{_pj['archetype']}** · {_pj['games']} tracked games · "
+                f"confidence **{_pj['confidence']['label']}**. Each rate is blended "
+                "toward its prior by evidence; Δ is vs the average tracked team. "
+                "Skill only — usage/minutes live in the team Projection view. "
+                "Directional.")
+            _PJ_LABELS = {
+                "eFG%": "Effective FG%", "TS%": "True shooting", "3P%": "Three-point %",
+                "SMOE": "Shot-making v exp", "ScEff": "Scoring eff",
+                "SelfCr%": "Self-creation %", "PassFG%": "Passing FG%", "AST%": "Assist %",
+                "TOV%": "Ball security", "FTR": "FT rate",
+                "OREB%": "Off. rebound %", "DREB%": "Def. rebound %",
+                "RimDFG%": "Rim D (allowed)", "PerimDFG%": "Perimeter D (allowed)"}
+            _flag_ico = {"solid": "🟢", "directional": "🟡", "thin": "⚪"}
+            prows = []
+            for key, lbl in _PJ_LABELS.items():
+                s = _pj["stats"].get(key)
+                if not s or s.get("proj") is None:
+                    continue
+                d = s.get("delta")
+                prows.append({
+                    "Skill": lbl,
+                    "Now": ("—" if s["own"] is None else f"{s['own']:.1f}"),
+                    "Projected": f"{s['proj']:.1f}",
+                    "Δ vs avg": ("—" if d is None else f"{d:+.1f}"),
+                    "Anchor": s["prior_src"],
+                    "": _flag_ico.get(s["flag"], ""),
+                })
+            if prows:
+                st.dataframe(pd.DataFrame(prows), hide_index=True, width="stretch")
+                st.caption("🟢 solid sample · 🟡 directional · ⚪ thin — reads as its prior.")
 
     # ── Per-32 minutes (MIN-based → Paid) ─────────────────────────────────────
     if paid:

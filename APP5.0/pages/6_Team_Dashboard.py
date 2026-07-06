@@ -4038,7 +4038,7 @@ if _tdview == "Projection":
         team_id=team_id, gender=gender, has_tracked=has_tracked,
         is_paid=ENT.has_paid_plan(AUTH.current_user()),
         game_ids=(list(_vis) if _vis is not None else None),
-        players=players))
+        season=season_pick, players=players))
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — SHARE (premade social-media cards; own-team surface — see share_tab)

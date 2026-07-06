@@ -81,11 +81,12 @@ def _observed_line(team_id, gids, events=None):
     }
 
 
-def build_context(team_id, gender=None, game_ids=None):
+def build_context(team_id, gender=None, game_ids=None, season="Current"):
     """Assemble everything project_minutes / optimize_minutes need, in one pass.
 
     Returns a ctx dict, or {"gated": reason} when the team has too few tracked
-    games to project a rotation.
+    games to project a rotation. `season` scopes the stat table + signature miner
+    to the season the `game_ids` belong to (a rolled-over prod is not 'Current').
     """
     gids = list(game_ids) if game_ids is not None else _team_game_ids(team_id)
     n_games = len(gids)
@@ -96,10 +97,10 @@ def build_context(team_id, gender=None, game_ids=None):
     events = S.fetch_events(gids)
     observed = _observed_line(team_id, gids, events)
 
-    proj = PJ.project_roster(team_id, gender=gender, game_ids=gids)
+    proj = PJ.project_roster(team_id, gender=gender, game_ids=gids, season=season)
     mins = S.minutes_played(gids)
     table = __import__("helpers.player_ratings", fromlist=["x"]).player_stat_table(
-        game_ids=gids, gender=gender, min_games=1)
+        game_ids=gids, gender=gender, min_games=1, season=season)
 
     import helpers.rotation_plan as RP
     prone = {r["pid"] for r in RP.foul_prone(team_id, game_ids=gids) if r["prone"]}
@@ -390,7 +391,8 @@ def _rebalance(minutes, ctx, rotation):
         guard += 1
 
 
-def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=400):
+def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=400,
+                     season="Current"):
     """Search a minutes allocation that maximizes the team's objective.
 
     Constrained 2-minute-swap hill-climb from an observed-minutes seed. Returns
@@ -399,7 +401,7 @@ def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=40
     minutes — the "extra wins" prescription.
     """
     if ctx is None:
-        ctx = build_context(team_id, gender=gender, game_ids=game_ids)
+        ctx = build_context(team_id, gender=gender, game_ids=game_ids, season=season)
     if ctx.get("gated"):
         return {"gated": ctx["gated"], "team_games": ctx.get("team_games")}
 
@@ -450,11 +452,13 @@ def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=40
 #  D-PLUMBING — current-roster team projection (honest today; YoY at season 2)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def project_team_current(team_id, gender=None, game_ids=None, ctx=None):
+def project_team_current(team_id, gender=None, game_ids=None, ctx=None,
+                         season="Current"):
     """Project the CURRENT roster's team rating from its optimized allocation and
     a win probability vs the average tracked team. Not a next-season claim — it
     becomes the year-to-year engine unchanged once identity sees a 2nd season."""
-    opt = optimize_minutes(team_id, gender=gender, game_ids=game_ids, ctx=ctx)
+    opt = optimize_minutes(team_id, gender=gender, game_ids=game_ids, ctx=ctx,
+                           season=season)
     if opt.get("gated"):
         return {"gated": opt["gated"]}
     net = opt["projection"]["net_vs_baseline"]

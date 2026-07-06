@@ -50,7 +50,8 @@ def render(ctx):
         return
 
     gids = list(ctx.game_ids) if getattr(ctx, "game_ids", None) is not None else None
-    ctxp = LP.build_context(tid, gender=g, game_ids=gids)
+    season = getattr(ctx, "season", "Current")
+    ctxp = LP.build_context(tid, gender=g, game_ids=gids, season=season)
     if ctxp.get("gated"):
         empty_state("Not enough tracked games to project a rotation",
                     f"{ctxp['gated']}. The depth-chart projection needs a real "

@@ -224,16 +224,21 @@ def _clusters_for(table):
         return {}
 
 
-def project_roster(team_id, gender=None, game_ids=None, min_games=1):
+def project_roster(team_id, gender=None, game_ids=None, min_games=1,
+                   season="Current"):
     """Projected intrinsic rates for every player on `team_id`.
 
     Builds the stat table, archetype clusters and priors ONCE (league-wide, so the
     prior + the average-tracked baseline stay league-relative), then projects each
     of the team's players against them. Returns {pid: projection}.
+
+    `season` scopes the manual-box merge + opponent adjustment and MUST match the
+    season the `game_ids` belong to — on a rolled-over prod the active season is a
+    real string, not the 'Current' sentinel, so callers pass season_pick through.
     """
     import helpers.player_ratings as PR
     table = PR.player_stat_table(game_ids=game_ids, gender=gender,
-                                 min_games=min_games)
+                                 min_games=min_games, season=season)
     if not table:
         return {}
     clusters = _clusters_for(table)
@@ -243,13 +248,14 @@ def project_roster(team_id, gender=None, game_ids=None, min_games=1):
             and (proj := project_player(pid, table, priors, clusters)) is not None}
 
 
-def tracked_baseline(gender=None, game_ids=None, min_games=1, table=None):
+def tracked_baseline(gender=None, game_ids=None, min_games=1, table=None,
+                     season="Current"):
     """The average-tracked-team baseline per stat (the league volume-weighted pool
     mean). Shared with helpers.lineup_projection. {stat: mean}."""
     if table is None:
         import helpers.player_ratings as PR
         table = PR.player_stat_table(game_ids=game_ids, gender=gender,
-                                     min_games=min_games)
+                                     min_games=min_games, season=season)
     if not table:
         return {}
     return build_priors(table)["league"]

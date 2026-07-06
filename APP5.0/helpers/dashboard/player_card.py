@@ -953,19 +953,25 @@ def render_card(ctx):
         st.markdown("<div class='pl-hdr'>Set-call profile</div>",
                     unsafe_allow_html=True)
         if _named:
-            # Go-to / take-away chip pair (ranked sets only, ≥8 poss).
-            _ranked = {k: c for k, c in _named.items()
-                       if c.get("pct") is not None and c["poss"] >= 8}
+            # Go-to / take-away chip pair (real-volume sets only, ≥8 poss).
+            # GO-TO = the set they RUN MOST (usage — their bread-and-butter);
+            # TAKE-AWAY = the set they're MOST EFFICIENT on (highest PPP — the
+            # weapon to deny). Percentile is shown for context but no longer
+            # drives the pick: a player can rank high-percentile on a low-value
+            # set (iso) it isn't their go-to.
+            _ranked = {k: c for k, c in _named.items() if c["poss"] >= 8}
             if _ranked:
-                _go_k = max(_ranked, key=lambda k: _ranked[k]["pct"])
-                _aw_k = min(_ranked, key=lambda k: _ranked[k]["pct"])
+                _go_k = max(_ranked, key=lambda k: _ranked[k]["poss"])
+                _aw_k = max(_ranked, key=lambda k: _ranked[k]["PPP"])
 
                 def _chip(k):
                     c = _ranked[k]
+                    _pctbit = (f" · {c['pct']}th pct"
+                               if c.get("pct") is not None else "")
                     return _glass(
                         "GO-TO SET" if k == _go_k else "TAKE-AWAY",
                         _ptlbl.get(k, k.title()),
-                        f"{c['PPP']:.2f} PPP · {c['pct']}th pct · {c['poss']} poss",
+                        f"{c['PPP']:.2f} PPP · {c['poss']} poss{_pctbit}",
                         c["color"])
                 _keys = [_go_k] + ([_aw_k] if _aw_k != _go_k else [])
                 _cc = st.columns(len(_keys))

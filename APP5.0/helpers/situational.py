@@ -303,6 +303,64 @@ def _player_line(events, pid, quarters=None):
             "PPP": (PTS / poss) if poss else 0.0}
 
 
+GARBAGE = 15               # |margin| >= this = game effectively decided (low win-prob leverage)
+
+
+def player_margin_scoring(events, min_pts=12):
+    """{pid: {pts, garbage_share, close_share}} — how a player's scoring splits by
+    the game state it happened in: the share of their points scored while the game
+    was DECIDED (|margin| >= GARBAGE, win-prob effectively settled = "garbage time")
+    vs while it was CLOSE (|margin| <= CLOSE, one-possession). ``tag_events`` supplies
+    the running margin BEFORE each event, so a garbage bucket is one scored with a
+    15+ cushion either way. Players below ``min_pts`` total are omitted."""
+    if not events:
+        return {}
+    # own per-game running-margin replay (a reference team per game — the first
+    # shooter_team_id seen); |margin| is perspective-invariant, so the garbage /
+    # close buckets are the same whichever side we anchor to.
+    order = sorted(events, key=lambda e: (e.get("game_id") or 0, _elapsed(e)))
+    agg = {}
+    margin = 0
+    ref_team = None
+    _cur_game = _UNSET
+    for e in order:
+        gid = e.get("game_id")
+        if gid != _cur_game:               # new game → reset the score-state replay
+            _cur_game = gid
+            margin = 0
+            ref_team = None
+        m_before = abs(margin)
+        pts, scorer = _event_points(e)
+        if pts and scorer is not None:
+            if ref_team is None:
+                ref_team = scorer
+            margin += pts if scorer == ref_team else -pts
+        pid = e.get("primary_player_id")
+        if pid is None or e.get("shot_result") != "make":
+            continue
+        et = e.get("event_type")
+        if et == "shot":
+            p = 3 if e.get("shot_type") == 3 else 2
+        elif et == "free_throw":
+            p = 1
+        else:
+            continue
+        d = agg.setdefault(pid, {"pts": 0, "garbage": 0, "close": 0})
+        d["pts"] += p
+        if m_before >= GARBAGE:
+            d["garbage"] += p
+        elif m_before <= CLOSE:
+            d["close"] += p
+    out = {}
+    for pid, d in agg.items():
+        if d["pts"] < min_pts:
+            continue
+        out[pid] = {"pts": d["pts"],
+                    "garbage_share": d["garbage"] / d["pts"],
+                    "close_share": d["close"] / d["pts"]}
+    return out
+
+
 def player_situational_edges(events, min_poss=PLAYER_SIT_MIN):
     """{pid: {situation, ppp_here, ppp_overall, poss, label}} — each player's most
     notable QUARTER-based scoring swing (4th-quarter clutch vs overall). Quarter is

@@ -613,12 +613,64 @@ def _g_rimfinish(row, pools, d):
             "n": int(na)}
 
 
+def _g_usage(row, pools, d):
+    """Offensive role (USG%): the focal point who ends a big share of possessions
+    vs a low-usage complementary piece — the 'who runs the offense' read."""
+    u = _num(row, "USG%")
+    fga = _num(row, "FGA") or 0
+    if u is None or (_num(row, "GP") or 0) < 4 or fga < 22:
+        return None
+    z = _z(u, pools.get("USG%"))
+    if abs(z) < MIN_Z:
+        return None
+    if z >= 0:
+        txt = (f"**Focal point** — ends **{u:.0f}% of possessions** while on the "
+               f"floor; the offense runs through them — load to the ball and make "
+               f"someone else beat you.")
+    else:
+        txt = (f"**Low-usage role** — uses just **{u:.0f}%** of possessions; a "
+               f"complementary piece, not a first option — help off onto the "
+               f"creators.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Usage",
+            "n": int(fga)}
+
+
+def _g_garbage(row, pools, d):
+    """Garbage-time scoring: the share of a player's points scored with the game
+    already decided (|margin| ≥ 15, win prob effectively settled) vs in the clutch
+    (±5). The 'the box score flatters them' read — an empty-calories padder, or a
+    scorer who shows up while it's still live."""
+    g = d.get("garbage")
+    if not g:
+        return None
+    gs = g.get("garbage_share")
+    if gs is None:
+        return None
+    z = _z(gs, pools.get("garbage_share"))
+    if abs(z) < MIN_Z:
+        return None
+    pts, cs = int(g.get("pts") or 0), (g.get("close_share") or 0)
+    if z >= 0 and gs >= 0.30:
+        txt = (f"**Pads it in garbage time** — **{gs * 100:.0f}% of their points "
+               f"come with the game decided** (±15+), only {cs * 100:.0f}% in "
+               f"one-possession moments; the scoring line flatters them.")
+    elif z <= 0:
+        txt = (f"**Every bucket counts** — just **{gs * 100:.0f}% of their points "
+               f"in garbage time**; {cs * 100:.0f}% come in one-possession "
+               f"moments — they score when the game is still live.")
+    else:
+        return None
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Garbage time",
+            "n": pts}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
                _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
                _g_clutchft, _g_pnr_role, _g_spacing,
                _g_rimdef, _g_perimdef, _g_rebound,
-               _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish]
+               _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish,
+               _g_usage, _g_garbage]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -637,7 +689,7 @@ def _derive(row):
 def league_insights(table, *, guarded=None, q4=None, playtypes=None,
                     playstyles=None, situational=None, impact=None,
                     matchup=None, totypes=None, foulft=None, pnr=None,
-                    spacing=None, top=3):
+                    spacing=None, garbage=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
@@ -678,6 +730,8 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
             d["pnr_role"] = pnr[pid]
         if spacing and pid in spacing:
             d["spacing"] = spacing[pid]
+        if garbage and pid in garbage:
+            d["garbage"] = garbage[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -703,6 +757,9 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
         "AST%": col(lambda p, r: _num(r, "AST%")),
         "STOCKS/32": col(lambda p, r: _num(r, "STOCKS/32")),
         "Near_FG%": col(lambda p, r: _num(r, "Near_FG%")),
+        "USG%": col(lambda p, r: _num(r, "USG%")),
+        "garbage_share": col(
+            lambda p, r: (derived[p].get("garbage") or {}).get("garbage_share")),
     }
 
     out = {}
@@ -927,6 +984,14 @@ def impact_map(rapm=None, war=None):
     return out
 
 
+def garbage_edges(events):
+    """{pid: {'pts','garbage_share','close_share'}} — the share of a player's points
+    scored with the game decided (|margin|≥15) vs in one-possession moments. Reads
+    situational.player_margin_scoring; empty until games carry scored play-by-play."""
+    import helpers.situational as SIT
+    return SIT.player_margin_scoring(events)
+
+
 def situational_edges(events):
     """{pid: {'label','ppp_here','ppp_overall','poss','delta'}} — each player's most
     notable quarter-based scoring swing (4th-quarter clutch vs their overall). Reads
@@ -983,7 +1048,12 @@ def build_feed(table, events, *, top=3, impact=None):
         sit = situational_edges(events)
     except Exception:
         pass
+    gt = None
+    try:
+        gt = garbage_edges(events)
+    except Exception:
+        pass
     return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
                            playstyles=ps, situational=sit, impact=impact,
                            matchup=mu, totypes=tt, foulft=ff, pnr=pr,
-                           spacing=sp, top=top)
+                           spacing=sp, garbage=gt, top=top)

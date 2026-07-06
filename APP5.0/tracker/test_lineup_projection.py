@@ -76,6 +76,19 @@ def test_signature_scoring_direction():
     assert LP.score_signature({"eFG": 0.60}, goals, {"eFG": 4.0}) > hit
 
 
+def test_force_net_overrides_signature():
+    players = {1: _pl("a"), 2: _pl("b")}
+    ctx = _ctx(players, sig=True)          # signatures ARE available
+    proj = LP.project_minutes(0, {1: 80, 2: 80}, ctx)
+    _, kind_auto = LP.objective_value(proj, ctx)               # auto → signature
+    _, kind_net = LP.objective_value(proj, ctx, force="net")   # forced → net
+    assert kind_auto == "signature"
+    assert kind_net == "net"
+    # end-to-end: the optimizer honors the override in its returned kind
+    out = LP.optimize_minutes(0, ctx=ctx, objective="net")
+    assert out["objective_kind"] == "net"
+
+
 def test_objective_fallback_to_net():
     players = {1: _pl("a"), 2: _pl("b")}
     proj = LP.project_minutes(0, {1: 80, 2: 80}, _ctx(players, sig=False))

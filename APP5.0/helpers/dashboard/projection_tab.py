@@ -58,11 +58,23 @@ def render(ctx):
                     f"rotation sample — keep tracking.", icon="📉")
         return
 
-    rot = st.slider("Rotation depth (players)", 6, 10, min(LP.MAX_ROTATION, 10),
-                    key="proj_rot_depth",
-                    help="How many players share the 32-minute game. Deeper = more "
-                         "even minutes; shorter = more on your best.")
-    opt = LP.optimize_minutes(tid, ctx=ctxp, max_rotation=rot)
+    cset1, cset2 = st.columns([1, 1])
+    rot = cset1.slider("Rotation depth (players)", 6, 10, min(LP.MAX_ROTATION, 10),
+                       key="proj_rot_depth",
+                       help="How many players share the 32-minute game. Deeper = more "
+                            "even minutes; shorter = more on your best.")
+    # objective toggle — only meaningful when the team has mined signature stats
+    # (without them the objective is always Net regardless).
+    force = None
+    if ctxp.get("sig_available"):
+        pick = cset2.radio(
+            "Optimize for", ["Signature stats", "Best net"], horizontal=True,
+            key="proj_objective",
+            help="Signature stats = hit the ~4 stats your wins turn on. "
+                 "Best net = maximize projected point differential /100.")
+        force = "net" if pick == "Best net" else None
+
+    opt = LP.optimize_minutes(tid, ctx=ctxp, max_rotation=rot, objective=force)
     proj = opt["projection"]
     names = {p: ctxp["players"][p]["name"] for p in opt["minutes"]}
 
@@ -71,11 +83,13 @@ def render(ctx):
     c1, c2, c3 = st.columns(3)
     c1.metric("Projected Net /100", f"{tc['net']:+.1f}", help="vs the average tracked team (clamped, directional)")
     c2.metric("Win prob vs avg team", f"{tc['win_prob_vs_avg'] * 100:.0f}%")
-    c3.metric("Objective", "Signature stats" if opt["objective_kind"] == "signature"
-              else "Net (fallback)",
-              help=("Optimizing the team's own win/loss signature stats."
-                    if opt["objective_kind"] == "signature" else
-                    "Not enough wins AND losses to mine signatures — optimizing Net."))
+    if opt["objective_kind"] == "signature":
+        _obj_lbl, _obj_help = "Signature stats", "Optimizing the team's own win/loss signature stats."
+    elif force == "net":
+        _obj_lbl, _obj_help = "Best net (chosen)", "Maximizing projected point differential /100."
+    else:
+        _obj_lbl, _obj_help = "Net (fallback)", "Not enough wins AND losses to mine signatures — optimizing Net."
+    c3.metric("Objective", _obj_lbl, help=_obj_help)
     if proj["flags"]["tier"] != "solid":
         st.caption(f"⚠️ {int(proj['flags']['thin_minute_share'] * 100)}% of these minutes "
                    "go to thin-sample players — read as directional.")

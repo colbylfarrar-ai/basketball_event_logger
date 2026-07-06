@@ -335,12 +335,17 @@ def _fatigue_penalty(minutes):
     return sum((m / GAME_MIN) ** 2 for m in minutes.values() if m > 0)
 
 
-def objective_value(proj, ctx):
-    """The objective for a projected allocation: signature attainment when the
-    team has mined signatures, else Net vs the average tracked team — each minus
-    the diminishing-returns (fatigue) penalty so minutes spread naturally."""
+def objective_value(proj, ctx, force=None):
+    """The objective for a projected allocation, minus the diminishing-returns
+    (fatigue) penalty. `force` picks the target:
+        None       auto — signature when the team has mined signatures, else net
+        "signature" signature when available, else net
+        "net"       always Net vs the average tracked team (coach override)
+    """
     pen = _fatigue_penalty(proj["minutes"])
-    if ctx.get("sig_available") and ctx.get("goals"):
+    use_sig = (force != "net"
+               and ctx.get("sig_available") and ctx.get("goals"))
+    if use_sig:
         raw = score_signature(proj["line"], ctx["goals"], ctx["d_by_key"])
         return raw - FATIGUE_W_SIG * pen, "signature"
     return proj["net_vs_baseline"] - FATIGUE_W_NET * pen, "net"
@@ -421,7 +426,7 @@ def _rebalance(minutes, ctx, rotation):
 
 
 def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=400,
-                     season="Current", max_rotation=MAX_ROTATION):
+                     season="Current", max_rotation=MAX_ROTATION, objective=None):
     """Search a minutes allocation that maximizes the team's objective.
 
     Constrained 2-minute-swap hill-climb from an observed-minutes seed. Returns
@@ -438,7 +443,7 @@ def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=40
     rotation = _rotation(ctx, max_rotation)
     minutes = _seed(ctx, rotation)
     proj = project_minutes(team_id, minutes, ctx)
-    best_val, kind = objective_value(proj, ctx)
+    best_val, kind = objective_value(proj, ctx, force=objective)
 
     iters = 0
     improved = True
@@ -456,7 +461,7 @@ def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=40
                 if not _feasible(trial, ctx):
                     continue
                 tp = project_minutes(team_id, trial, ctx)
-                val, _ = objective_value(tp, ctx)
+                val, _ = objective_value(tp, ctx, force=objective)
                 if val > best_val + 1e-9:
                     minutes, proj, best_val = trial, tp, val
                     improved = True

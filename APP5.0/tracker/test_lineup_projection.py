@@ -132,6 +132,27 @@ def test_build_context_and_optimize_smoke():
         assert out.get("gated")
 
 
+def test_build_context_fallback_is_season_scoped():
+    # game_ids=None must resolve the team's games FOR THE PASSED SEASON, not via
+    # the 'Current'-hardcoded _team_game_ids (the archive "no tracked games" bug).
+    from database.db import query
+    row = query(
+        "SELECT g.season s, gel.team_id tid, COUNT(DISTINCT ge.game_id) g "
+        "FROM game_event_lineup gel JOIN game_events ge ON ge.id=gel.event_id "
+        "JOIN games g ON g.id=ge.game_id "
+        "GROUP BY gel.team_id ORDER BY g DESC LIMIT 1")
+    if not row or row[0]["g"] < LP.MIN_TEAM_GAMES:
+        return
+    tid, season = row[0]["tid"], row[0]["s"]
+    # correct season → resolves the games (not gated), and stamps ctx.game_ids
+    ok = LP.build_context(tid, game_ids=None, season=season)
+    assert not ok.get("gated")
+    assert ok["game_ids"] and len(ok["game_ids"]) >= LP.MIN_TEAM_GAMES
+    # a non-existent season → no games → gated (proves it's season-scoped)
+    bad = LP.build_context(tid, game_ids=None, season="1900-1901")
+    assert bad.get("gated")
+
+
 def test_thin_team_is_gated():
     from database.db import query
     # a team with 1 tracked game (there are many) must gate

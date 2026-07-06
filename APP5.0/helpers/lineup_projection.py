@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from database.db import query
 import helpers.stats as S
-from helpers.stats import _team_game_ids
 import helpers.projection as PJ
 
 
@@ -88,7 +88,16 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
     games to project a rotation. `season` scopes the stat table + signature miner
     to the season the `game_ids` belong to (a rolled-over prod is not 'Current').
     """
-    gids = list(game_ids) if game_ids is not None else _team_game_ids(team_id)
+    # When no explicit game_ids (own team / open archive → entitlement returns
+    # None = unrestricted), resolve the team's tracked games FOR `season` — NOT
+    # via the 'Current'-hardcoded _team_game_ids, which reads zero on any archive
+    # season (the founder's "no tracked games for 2025-2026" bug).
+    if game_ids is not None:
+        gids = list(game_ids)
+    else:
+        gids = [r["id"] for r in query(
+            "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
+            "AND tracked=1 AND season=?", (team_id, team_id, season))]
     n_games = len(gids)
     if n_games < MIN_TEAM_GAMES:
         return {"gated": f"only {n_games} tracked games (need {MIN_TEAM_GAMES})",
@@ -143,7 +152,7 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
     stars = sorted(players, key=lambda p: -players[p]["obs_min"])[:2]
 
     return {
-        "team_id": team_id, "team_games": n_games,
+        "team_id": team_id, "team_games": n_games, "game_ids": gids,
         "players": players, "observed_line": observed,
         "team_dshot_avg": team_dshot_avg, "team_stl_pm_avg": team_stl_pm_avg,
         "goals": goals, "d_by_key": d_by_key, "sig_available": sig_available,

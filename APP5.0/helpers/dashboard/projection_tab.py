@@ -115,9 +115,11 @@ def render(ctx):
     st.markdown(dense_table(mrows), unsafe_allow_html=True)
 
     # ── star stagger note ────────────────────────────────────────────────────
+    # use the ctx-resolved, season-scoped game ids (gids may be None for an open
+    # archive / own team — star_coverage would otherwise read the 'Current' season)
     try:
         import helpers.rotation_plan as RP
-        sc = RP.star_coverage(tid, game_ids=gids)
+        sc = RP.star_coverage(tid, game_ids=ctxp.get("game_ids"))
         if sc.get("note"):
             st.info("🔄 " + sc["note"])
     except Exception:

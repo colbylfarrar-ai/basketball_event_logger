@@ -201,7 +201,7 @@ if _is_cur_season and not ENT.has_paid_plan(AUTH.current_user()):
     st.stop()
 
 name_of = {t: r["name"] for t, r in scored.items()}
-class_of = {t: r["class"] for t, r in scored.items()}
+class_of = {t: r.get("class_lbl", r["class"]) for t, r in scored.items()}
 order = sorted(scored, key=lambda t: scored[t]["Rank"])
 
 

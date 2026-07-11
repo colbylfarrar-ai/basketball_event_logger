@@ -167,11 +167,27 @@ def _vs_topn(results, topn_set):
 
 
 def _filter_rows(rows, key=None):
-    """Filter rows by the PAGE-LEVEL Class + min-games selection (set once at the
-    top of the page — see _PICKED_CLASSES / _MIN_GP). No longer renders its own
-    widgets; `key` is accepted for backward-compat and ignored."""
+    """Filter rows by the PAGE-LEVEL State + Class + min-games selection (set
+    once at the top of the page — see _SCOPE_LBLS / _MIN_GP). Matches on the
+    state-scoped class label so 'OK 4A' and 'TX 4A' filter independently. No
+    longer renders its own widgets; `key` is accepted for backward-compat and
+    ignored."""
     return [r for r in rows
-            if r["class"] in _PICKED_CLASSES and r["GP"] >= _MIN_GP]
+            if r.get("class_lbl", r["class"]) in _SCOPE_LBLS
+            and r["GP"] >= _MIN_GP]
+
+
+def _clbl(r):
+    """State-scoped class label of a scored/tracked row ('4A', or 'OK 4A' once
+    the field spans states)."""
+    return r.get("class_lbl", r["class"])
+
+
+def _clbl_key(lbl):
+    """Sort key for class labels: state prefix (if any), then ladder rank."""
+    parts = lbl.rsplit(" ", 1)
+    return (parts[0] if len(parts) == 2 else "",
+            TR._CLASS_RANK.get(parts[-1], 99))
 
 
 # ── futuristic-lab UI helpers ─────────────────────────────────────────────────
@@ -413,7 +429,7 @@ if not scored:
     st.stop()
 
 name_of = {tid: r["name"] for tid, r in scored.items()}
-class_of = {tid: r["class"] for tid, r in scored.items()}
+class_of = {tid: r.get("class_lbl", r["class"]) for tid, r in scored.items()}
 rank_of = {tid: r["Rank"] for tid, r in scored.items()}
 TOP5 = {tid for tid, r in scored.items() if r["Rank"] <= 5}
 TOP10 = {tid for tid, r in scored.items() if r["Rank"] <= 10}
@@ -424,21 +440,39 @@ TOP25 = {tid for tid, r in scored.items() if r["Rank"] <= 25}
 # Solo coach's tracked depth.
 pack = _tracked_pack(gender, tracked, _VISK, season_pick)
 
-# Page-level Class + Min-games filter — set the scope ONCE here (instead of each
-# tab rendering its own copy) so a coach picks classes + a games threshold and
-# every ranking view (Overview leaders / signature metrics / standings / table,
-# and the Tracked table) follows the same scope. The league pulse + recent results
-# stay league-wide by design.
-_rk_classes = sorted({r["class"] for r in scored.values()},
-                     key=lambda c: TR._CLASS_RANK.get(c, 99))
+# Page-level State + Class + Min-games filter — set the scope ONCE here (instead
+# of each tab rendering its own copy) so a coach picks the scope and every
+# ranking view (Overview leaders / signature metrics / standings / table, and
+# the Tracked table) follows it. The league pulse + recent results stay
+# league-wide by design. Classes are STATE-SCOPED: a 4A in Oklahoma is not a 4A
+# in Texas, so once the field spans states the class options read 'OK 4A' /
+# 'TX 4A' and a State filter appears. One state (today) = the old plain view.
+_rk_states = sorted({(r.get("state") or "") for r in scored.values()})
+_RK_MULTI_ST = len(_rk_states) > 1
+# (state, raw class, display label) per class group, ladder-ordered within state
+_rk_ctriples = sorted(
+    {((r.get("state") or ""), r["class"], r.get("class_lbl", r["class"]))
+     for r in scored.values()},
+    key=lambda x: (x[0], TR._CLASS_RANK.get(x[1], 99)))
+_rk_classes = [l for _s, _c, l in _rk_ctriples]
 _rk_maxgp = max((r["GP"] for r in scored.values()), default=1)
 st.markdown("<div class='section-hdr'>Filters</div>", unsafe_allow_html=True)
-_rkf1, _rkf2 = st.columns([2, 1])
+if _RK_MULTI_ST:
+    _rkf0, _rkf1, _rkf2 = st.columns([1, 2, 1])
+    _PICKED_STATES = _rkf0.multiselect("State", _rk_states, default=_rk_states,
+                                       key="rk_state_page")
+else:
+    _rkf1, _rkf2 = st.columns([2, 1])
+    _PICKED_STATES = _rk_states
 _PICKED_CLASSES = _rkf1.multiselect("Class", _rk_classes, default=_rk_classes,
                                     key="rk_class_page")
 _MIN_GP = (_rkf2.slider("Min games played", 1, int(_rk_maxgp), 1, key="rk_mingp_page")
            if _rk_maxgp > 1 else 1)
-st.caption("Class / min-games scope every ranking view below.")
+# ONE scope set every site tests: the class labels that survive both filters.
+_SCOPE_LBLS = {l for _s, _c, l in _rk_ctriples
+               if l in _PICKED_CLASSES and _s in _PICKED_STATES}
+st.caption(("State / " if _RK_MULTI_ST else "")
+           + "Class / min-games scope every ranking view below.")
 
 # Lazy-load: a "View" segmented_control instead of st.tabs, so only the chosen
 # view's heavy queries run each rerun (st.tabs computes every tab body). The
@@ -504,7 +538,8 @@ if _view == "Overview":
         # Scored class-rank chip per team (results-only ranking → ungated).
         def _rchip(tid):
             r = scored.get(tid)
-            return rank_chip(r["class"], r["ClassRank"]) if r else ""
+            return rank_chip(r.get("class_lbl", r["class"]),
+                             r["ClassRank"]) if r else ""
         rc = st.columns(4)
         for i, g in enumerate(recent):
             t1w = g["home_score"] > g["away_score"]
@@ -518,7 +553,7 @@ if _view == "Overview":
     # drives the team leaders, signature metrics, advanced standings and the
     # rankings table below. The league pulse + recent results stay league-wide.
     ov_tids = [t for t in sorted(scored, key=lambda t: scored[t]["Rank"])
-               if scored[t]["class"] in _PICKED_CLASSES and scored[t]["GP"] >= _MIN_GP]
+               if class_of[t] in _SCOPE_LBLS and scored[t]["GP"] >= _MIN_GP]
     ov_rows = [scored[t] for t in ov_tids]
     ov_set = set(ov_tids)
 
@@ -536,7 +571,7 @@ if _view == "Overview":
                 f"<div class='dash-card'><div class='dash-card-title'>{label}</div>"
                 f"<div class='dash-card-value'>{fmt.format(best[key])}</div>"
                 f"<div class='dash-card-sub'>{best['name']}</div>"
-                f"<div class='dash-card-meta'>{best['class']} · "
+                f"<div class='dash-card-meta'>{best.get('class_lbl', best['class'])} · "
                 f"{best['W']}-{best['L']}</div></div>", unsafe_allow_html=True)
 
         tl = st.columns(5)
@@ -587,7 +622,7 @@ if _view == "Overview":
             _grp = {}
             for t in ov_tids:
                 r = scored[t]
-                key = _distmap.get(t) or f"Class {r['class']}"
+                key = _distmap.get(t) or f"Class {r.get('class_lbl', r['class'])}"
                 _grp.setdefault(key, []).append(r)
             for _dname in sorted(_grp):
                 _gts = sorted(_grp[_dname],
@@ -608,9 +643,9 @@ if _view == "Overview":
         st.markdown("<div class='section-hdr'>Rankings table</div>",
                     unsafe_allow_html=True)
         df = pd.DataFrame(ov_rows)[[
-            "Rank", "name", "class", "W", "L", "Power", "Rating",
+            "Rank", "name", "class_lbl", "W", "L", "Power", "Rating",
             "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]].rename(
-            columns={"name": "Team", "class": "Class"})
+            columns={"name": "Team", "class_lbl": "Class"})
         # Inline margin-trend sparkline per team (last 7 games, oldest→newest) —
         # reads the engine's per_team_results; aligned to ov_tids row order.
         try:
@@ -885,9 +920,8 @@ def _fx_team():
         st.markdown("**Record by opponent class**")
         if by_class:
             cls_rows = [{"Class": c, "W": wl[0], "L": wl[1]}
-                        for c, wl in sorted(
-                            by_class.items(),
-                            key=lambda kv: TR._CLASS_RANK.get(kv[0], 99))]
+                        for c, wl in sorted(by_class.items(),
+                                            key=lambda kv: _clbl_key(kv[0]))]
             st.dataframe(pd.DataFrame(cls_rows), hide_index=True,
                          width="stretch")
         # The Adj-O/Adj-D bar just re-plots the xPPG/xoPPG metrics shown above —
@@ -1178,11 +1212,11 @@ def _fx_track():
             st.info("No teams match the current Class / games filter.")
         else:
             df = pd.DataFrame(rows)[[
-                "Rank", "name", "class", "GP", "Power", "Rating", "RatingPts",
+                "Rank", "name", "class_lbl", "GP", "Power", "Rating", "RatingPts",
                 "NetRtg", "ORtg", "DRtg", "PPP", "oPPP", "Pace",
                 "eFG", "oeFG", "AdjeFG", "AdjoeFG",
                 "FGpct", "oFGpct", "TPpct", "SOS", "SOR",
-                "ClassAdj"]].rename(columns={"name": "Team", "class": "Class"})
+                "ClassAdj"]].rename(columns={"name": "Team", "class_lbl": "Class"})
             st.dataframe(
                 df, hide_index=True, width="stretch",
                 height=min(640, 60 + 35 * len(df)),
@@ -1944,7 +1978,7 @@ def _fx_evr():
                                "filter above.")
         else:
             _tt = [r for r in _type_stat_table(gender, _gt, season_pick)
-                   if r.get("Class") in _PICKED_CLASSES
+                   if r.get("Class") in _SCOPE_LBLS
                    and (r.get("Trk GP") or 0) >= _MIN_GP]
             if not _tt:
                 st.info(f"No **tracked** {_gt} games match — efficiency needs a "
@@ -2299,11 +2333,10 @@ def _fx_evr():
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Power distribution by class**")
-            classes = sorted({s["class"] for s in sv},
-                             key=lambda c: TR._CLASS_RANK.get(c, 99))
+            classes = sorted({_clbl(s) for s in sv}, key=_clbl_key)
             vio = go.Figure()
             for c in classes:
-                sub = [s for s in sv if s["class"] == c]
+                sub = [s for s in sv if _clbl(s) == c]
                 vals = [s["Power"] for s in sub]
                 nms = [s["name"] for s in sub]
                 vio.add_trace(go.Violin(
@@ -2327,7 +2360,7 @@ def _fx_evr():
                 x=sx, y=sy, mode="markers",
                 marker=dict(size=9, color=scl, colorscale="Viridis",
                             showscale=False, line=dict(width=0.5, color="#0d1117")),
-                text=[f"{s['name']} ({s['class']})" for s in sv],
+                text=[f"{s['name']} ({_clbl(s)})" for s in sv],
                 hovertemplate="%{text}<br>SOS %{x:.2f} · Power %{y:.1f}"
                               "<extra></extra>"))
             ov.add_vline(x=sum(sx) / len(sx), line=dict(color="#30363d", dash="dot"))
@@ -2339,10 +2372,9 @@ def _fx_evr():
 
         st.markdown("**League map** — class → team (size = wins, color = Power)")
         labels, parents, vals, colors = [], [], [], []
-        classes = sorted({s["class"] for s in sv},
-                         key=lambda c: TR._CLASS_RANK.get(c, 99))
+        classes = sorted({_clbl(s) for s in sv}, key=_clbl_key)
         # children first so each class value == sum of its children (branch=total)
-        children = [(s["name"], s["class"], max(s["W"], 0.5), s["Power"])
+        children = [(s["name"], _clbl(s), max(s["W"], 0.5), s["Power"])
                     for s in sv]
         cls_val = defaultdict(float)
         cls_pow = defaultdict(list)
@@ -2489,8 +2521,7 @@ def _fx_evr():
                    "the ring by rank. Node size = games, color = Power. Filter to "
                    "keep it readable.")
         net = _win_net(gender, scored, season_pick)
-        classes = sorted({n["class"] for n in net["nodes"]},
-                         key=lambda c: TR._CLASS_RANK.get(c, 99))
+        classes = sorted({n["class"] for n in net["nodes"]}, key=_clbl_key)
         fc1, fc2 = st.columns([2, 1])
         topn = fc1.slider("Show top-N teams (by rank)", 6,
                           min(40, len(net["nodes"])),

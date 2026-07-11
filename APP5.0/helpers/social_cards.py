@@ -310,19 +310,20 @@ def rank_line(scored, team_id, record=True, power=True, cls=True):
     if cls:
         cr, _cn = class_rank(scored, team_id)
         if cr:
-            bits.append(f"{s.get('class', '')} #{cr}")
+            bits.append(f"{s.get('class_lbl') or s.get('class', '')} #{cr}")
     return "  ·  ".join(bits)
 
 
 def class_rank(scored, team_id):
-    """(rank, n) of `team_id` among same-class teams by Power (1 = best), or
-    (None, 0)."""
+    """(rank, n) of `team_id` among same-STATE-same-class teams by Power
+    (1 = best), or (None, 0). Classes are state associations — a 4A in Oklahoma
+    never groups with a 4A in Texas."""
     s = scored.get(team_id)
     if not s:
         return None, 0
-    cls = s.get("class")
+    key = (s.get("state") or "", s.get("class"))
     peers = sorted(((tid, v) for tid, v in scored.items()
-                    if v.get("class") == cls),
+                    if (v.get("state") or "", v.get("class")) == key),
                    key=lambda kv: -(kv[1].get("Power") or 0))
     for i, (tid, _v) in enumerate(peers, 1):
         if tid == team_id:

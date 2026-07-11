@@ -126,12 +126,15 @@ def _finished_games(gender=None, tracked_only=False, game_ids=None,
 
 
 def _team_meta(gender=None):
-    """{team_id: {'name','class','gender'}} for teams, optionally one gender."""
+    """{team_id: {'name','class','gender','state'}} for teams, optionally one
+    gender."""
     clause = "WHERE gender = ?" if gender else ""
     params = (gender,) if gender else ()
     return {
-        r["id"]: {"name": r["name"], "class": r["class"], "gender": r["gender"]}
-        for r in query(f"SELECT id, name, class, gender FROM teams {clause}", params)
+        r["id"]: {"name": r["name"], "class": r["class"], "gender": r["gender"],
+                  "state": (r["state"] or "").strip()}
+        for r in query(f"SELECT id, name, class, gender, state FROM teams {clause}",
+                       params)
     }
 
 
@@ -194,7 +197,12 @@ def _adjust(team_games, value_for, value_against, league_avg,
 
 
 def _class_adj(meta, team_ids, class_step):
-    """Points bump per team from school-class, centered on the field's mean rank."""
+    """Points bump per team from school-class, centered on the field's mean rank.
+
+    NOTE: the bump reads the shared CLASS_ORDER ladder by label, so a '4A' in any
+    state gets the same ordinal step — per-state ladders (Texas's 6A ≠ Missouri's
+    ladder shape) are a down-the-line add once non-OSSAA scrapers exist. Class
+    GROUPING (ranks, filters, labels) is already state-scoped via _assign_ranks."""
     ranks = {t: _CLASS_RANK.get(meta.get(t, {}).get("class"), None) for t in team_ids}
     known = [r for r in ranks.values() if r is not None]
     mean_rank = _safe(sum(known), len(known)) if known else 0.0
@@ -331,6 +339,7 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
         out[t] = {
             "name": meta.get(t, {}).get("name", f"#{t}"),
             "class": meta.get(t, {}).get("class", "N/A"),
+            "state": meta.get(t, {}).get("state", ""),
             "GP": gp[t], "W": wins[t], "L": gp[t] - wins[t],
             "PPG": round(ppg[t], 1), "oPPG": round(oppg[t], 1),
             "MOV": round(ppg[t] - oppg[t], 1),
@@ -462,6 +471,7 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
         out[t] = {
             "name": meta.get(t, {}).get("name", f"#{t}"),
             "class": meta.get(t, {}).get("class", "N/A"),
+            "state": meta.get(t, {}).get("state", ""),
             "GP": n,
             "Pace": round(pace, 1),
             "ORtg": round(adjO[t], 1), "DRtg": round(adjD[t], 1),
@@ -486,17 +496,33 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
 #  RANKING + SPREAD PREDICTION
 # ══════════════════════════════════════════════════════════════════════════════
 
+def class_label(cls, state, multi):
+    """Display label for a class group: '4A' in a one-state field, 'OK 4A' once
+    the field spans states — a 4A in Oklahoma is not a 4A in Texas."""
+    cls = cls or "N/A"
+    state = (state or "").strip()
+    return f"{state} {cls}" if (multi and state and cls != "N/A") else cls
+
+
 def _assign_ranks(ratings):
     """Add a 1-based overall 'Rank' (by descending Rating within gender) plus
-    'ClassRank'/'ClassOf' (the same order partitioned by each team's class) to
-    every team, in place. Both ranking systems (score_ratings + tracked_ratings)
-    route through here, so a class rank is available anywhere a rank is."""
+    'ClassRank'/'ClassOf' (the same order partitioned by each team's STATE +
+    class — classes are state associations, so '4A' only groups within one
+    state) to every team, in place. Also stamps 'class_lbl', the display label
+    ('4A', or 'OK 4A' once the field spans states) every surface should show
+    instead of raw 'class'. Both ranking systems (score_ratings +
+    tracked_ratings) route through here. A one-state field (today's OSSAA-only
+    data) is byte-identical to the old class-only behavior."""
     order = sorted(ratings, key=lambda t: ratings[t]["Rating"], reverse=True)
     for i, t in enumerate(order, 1):
         ratings[t]["Rank"] = i
+    multi = len({(ratings[t].get("state") or "") for t in ratings}) > 1
     by_class: dict = {}
     for t in order:                       # order already Rating-descending
-        by_class.setdefault(ratings[t].get("class", "N/A"), []).append(t)
+        r = ratings[t]
+        r["class_lbl"] = class_label(r.get("class"), r.get("state"), multi)
+        by_class.setdefault((r.get("state") or "", r.get("class", "N/A")),
+                            []).append(t)
     for ts in by_class.values():
         for i, t in enumerate(ts, 1):
             ratings[t]["ClassRank"] = i
@@ -536,7 +562,8 @@ def team_rank(team_id, scored=None, tracked=None, gender=None):
         if not r:
             return None
         return {"rank": r["Rank"], "of": len(ratings),
-                "class": r.get("class"),
+                "class": r.get("class"), "state": r.get("state", ""),
+                "class_lbl": r.get("class_lbl", r.get("class")),
                 "class_rank": r.get("ClassRank"), "class_of": r.get("ClassOf"),
                 "power": r["Power"], rating_name: r[rating_key]}
 

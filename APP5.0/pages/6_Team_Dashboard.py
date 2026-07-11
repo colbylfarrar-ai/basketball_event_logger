@@ -883,7 +883,8 @@ strk = bundle["streaks"]
 _cur = strk["current"]
 _cur_txt = (f"{_cur['len']}{_cur['type']}" if _cur["type"] else "—")
 _ov = rank_info["overall"] or {}
-_ovcls = (f" <span style='color:#6e7681'>· {_ov['class']} #{_ov['class_rank']}</span>"
+_ovcls = (f" <span style='color:#6e7681'>· {_ov.get('class_lbl') or _ov['class']} "
+          f"#{_ov['class_rank']}</span>"
           if _ov.get("class_rank") else "")
 _chips = [
     f"<span class='stat-chip'>RANK <b>#{sc_score.get('Rank', '—')}</b> "
@@ -899,7 +900,8 @@ _chips = [
 if has_tracked:
     if rank_info["tracked"]:
         _trk = rank_info["tracked"]
-        _trkcls = (f" <span style='color:#6e7681'>· {_trk['class']} #{_trk['class_rank']}</span>"
+        _trkcls = (f" <span style='color:#6e7681'>· {_trk.get('class_lbl') or _trk['class']} "
+                   f"#{_trk['class_rank']}</span>"
                    if _trk.get("class_rank") else "")
         _chips.insert(1, f"<span class='stat-chip'>TRK RANK <b>#{_trk['rank']}</b> "
                       f"<span style='color:#6e7681'>/ {_trk['of']}</span>{_trkcls}</span>")

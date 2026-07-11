@@ -440,7 +440,8 @@ def _day_section():
     _gsr = _ratings(gotd["gender"])
     def _gchip(tid):
         r = _gsr.get(tid)
-        return rank_chip(r["class"], r["ClassRank"]) if r else ""
+        return rank_chip(r.get("class_lbl", r["class"]),
+                         r["ClassRank"]) if r else ""
     st.markdown(f"""
     <div class="game-hero">
         <div style="font-size:12px;color:#8b949e;margin-bottom:8px">
@@ -580,7 +581,8 @@ def _day_section():
         _sr = _ratings(g["gender"])
         def _chip(tid):
             r = _sr.get(tid)
-            return rank_chip(r["class"], r["ClassRank"]) if r else ""
+            return rank_chip(r.get("class_lbl", r["class"]),
+                             r["ClassRank"]) if r else ""
 
         st.markdown(score_card(
             [(g['t2'], as_s, t2_win, _chip(g['team2_id'])),

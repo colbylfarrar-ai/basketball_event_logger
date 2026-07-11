@@ -292,8 +292,9 @@ def win_network(gender=None, rows=None, scored=None, season="Current"):
         r = scored.get(tid, {})
         nodes.append({
             "id": tid,
+            # state-scoped display label ('OK 4A' once the field spans states)
+            "class": r.get("class_lbl", r.get("class", "N/A")),
             "name": r.get("name", f"#{tid}"),
-            "class": r.get("class", "N/A"),
             "power": r.get("Power", 50.0),
             "rank": r.get("Rank", 999),
             "W": wins.get(tid, 0), "L": losses.get(tid, 0),
@@ -474,7 +475,7 @@ _TEAM_STAT_SPEC = [
     # identity
     ("Team",      "trk",    "name",        None),
     ("Rank",      "trk",    "Rank",        None),
-    ("Class",     "trk",    "class",       None),
+    ("Class",     "trk",    "class_lbl",   None),   # state-scoped label ('OK 4A' once multi-state)
     ("Trk GP",    "trk",    "GP",          None),
     # power / rating
     ("Power",     "trk",    "Power",       1),

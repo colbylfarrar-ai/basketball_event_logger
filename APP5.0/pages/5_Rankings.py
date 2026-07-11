@@ -388,6 +388,15 @@ def _win_net(g, _scored, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _style_tags(g, vis=None, season="Current"):
+    """Per-team tagged play-type / defense mixes over the viewer's pool —
+    the tag axes of the team similarity read (LA.similar_teams)."""
+    _gids = (set(vis) if vis is not None
+             else set(SEAS.game_pool(season=season, gender=g, tracked_only=True)))
+    return LA.team_style_tags(_gids)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _runs_table(g, vis=None, season="Current"):
     """League scoring-run profiles (helpers/runs.py) over the viewer's tracked
     pool — 10-0 runs made / allowed per game, records by run count."""
@@ -1013,6 +1022,23 @@ def _fx_team():
         a2[2].metric("OREB%", f"{_deep['oreb'] * 100:.1f}%")
         a2[3].metric("DREB%", f"{_deep['dreb'] * 100:.1f}%")
         a2[4].metric("FT rate", f"{_deep['ftr']:.3f}", help="FTA / FGA")
+
+        # ── stylistic twins — the team analog of the player similarity% ───────
+        # Style axes only (pace, shot diet, crash/security, tagged play-type +
+        # defense mixes) — never Power/Net, so a strong team and a weak one that
+        # play the same way read as twins. Pool-scoped via the page pack.
+        try:
+            _sims = LA.similar_teams(pick, pack, n=5,
+                                     tags=_style_tags(gender, _VISK, season_pick))
+        except Exception:
+            _sims = []
+        if _sims:
+            st.markdown("**Plays like:** " + " · ".join(
+                f"{s['name']} **{s['similarity'] * 100:.0f}%**" for s in _sims))
+            st.caption("Style similarity (pace, shot diet, glass, ball security, "
+                       "tagged set/defense mixes) — not strength. Closest axes: "
+                       + "; ".join(f"{s['name']}: {', '.join(s['axes'])}"
+                                   for s in _sims[:2]) + ".")
 
         _dt_q, _dt_wl = st.tabs(["Quarters & PPP", "Win/Loss patterns"])
 

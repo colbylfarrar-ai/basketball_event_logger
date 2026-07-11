@@ -652,3 +652,144 @@ def team_stat_table(gender=None, tracked=None, pack=None, form=None,
                                    ndigits, pct)
         rows.append(row)
     return rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TEAM SIMILARITY — "who plays like this team?" (style, not strength)
+# ══════════════════════════════════════════════════════════════════════════════
+# The team twin of archetypes.similar_players. Cosine similarity over z-scored
+# STYLE axes only — pace, shot diet, crash/security/movement, disruption and the
+# tagged play-type / defense-scheme mixes — never Power/Net/eFG, so a good team
+# and a bad team that play the same way read as twins.
+
+_STYLE_AXES = [
+    # (label, source, key)  source: 'trk' = tracked ratings row, 'ts' = pack.ts
+    ("Pace",        "trk", "Pace"),
+    ("3PA rate",    "ts",  "TPAr"),
+    ("FT rate",     "ts",  "FTr"),
+    ("Paint pt%",   "ts",  "paint_share"),
+    ("3PT pt%",     "ts",  "three_share"),
+    ("ORB%",        "ts",  "ORBpct"),
+    ("DRB%",        "ts",  "DRBpct"),
+    ("TOV%",        "ts",  "TOVpct"),
+    ("AST%",        "ts",  "Astpct"),
+    ("STL/100",     "ts",  "stl_r"),
+    ("BLK/100",     "ts",  "blk_r"),
+    ("PF/G",        "ts",  "pf_pg"),
+]
+
+_TAG_MIN_EVENTS = 25    # a team's tag mix needs this many tagged events to count
+
+
+def team_style_tags(game_ids=None):
+    """Per-team tagged-style mixes over `game_ids` (the viewer's pool):
+
+      {tid: {"pt": {play_type: share}, "dfn": {defense: share}}}
+
+    play_type belongs to the OFFENSE (the event player's team); defense is the
+    scheme the event's offense FACED, so it's credited to the other team of the
+    game. A side under _TAG_MIN_EVENTS tagged events returns no mix (None-ish)
+    so a barely-tagged team never matches on noise."""
+    if game_ids is not None and not game_ids:
+        return {}
+    ev = S.fetch_events(set(game_ids) if game_ids is not None else None)
+    team_of = {p["id"]: p["team_id"] for p in query("SELECT id, team_id FROM players")}
+    gteams = {g["id"]: (g["t1"], g["t2"]) for g in query(
+        "SELECT id, team1_id AS t1, team2_id AS t2 FROM games")}
+    pt = defaultdict(lambda: defaultdict(int))
+    dfn = defaultdict(lambda: defaultdict(int))
+    for e in ev:
+        tid = team_of.get(e["primary_player_id"])
+        if tid is None:
+            continue
+        if e["play_type"]:
+            pt[tid][e["play_type"]] += 1
+        if e["defense"]:
+            pair = gteams.get(e["game_id"])
+            if pair:
+                other = pair[1] if tid == pair[0] else pair[0]
+                dfn[other][e["defense"]] += 1
+    out = {}
+    for tid in set(pt) | set(dfn):
+        d = {}
+        for kind, src in (("pt", pt), ("dfn", dfn)):
+            tot = sum(src.get(tid, {}).values())
+            if tot >= _TAG_MIN_EVENTS:
+                d[kind] = {k: v / tot for k, v in src[tid].items()}
+        if d:
+            out[tid] = d
+    return out
+
+
+def similar_teams(team_id, pack, n=5, tags=None):
+    """Most stylistically similar tracked teams to `team_id`.
+
+    `pack` = team_tracked_pack (already pool-scoped to the viewer). `tags` =
+    team_style_tags output (optional — adds play-type + defense-mix axes for
+    pairs where BOTH teams have a real tagged sample). Returns
+    [{"tid","name","similarity","axes"}] most similar first; similarity is the
+    0-1 cosine mapped from the z-scored style space, axes = the two style axes
+    where the pair sits closest (the "why")."""
+    ts = pack.get("ts", {})
+    trk = pack.get("tracked", {})
+    teams = [t for t in pack.get("teams", []) if t in ts]
+    if team_id not in teams or len(teams) < 3:
+        return []
+
+    # z-scale each axis over the field
+    import math
+    feats = {}
+    for lbl, src, key in _STYLE_AXES:
+        vals = {}
+        for t in teams:
+            v = (trk.get(t, {}) if src == "trk" else ts.get(t, {})).get(key)
+            if v is not None:
+                vals[t] = float(v)
+        if len(vals) < 3:
+            continue
+        mu = sum(vals.values()) / len(vals)
+        sd = math.sqrt(sum((x - mu) ** 2 for x in vals.values()) / len(vals)) or 1.0
+        feats[lbl] = {t: (x - mu) / sd for t, x in vals.items()}
+
+    def _vec(t):
+        return {lbl: col[t] for lbl, col in feats.items() if t in col}
+
+    base = _vec(team_id)
+    base_tags = (tags or {}).get(team_id, {})
+    out = []
+    for t in teams:
+        if t == team_id:
+            continue
+        v = _vec(t)
+        shared = [l for l in base if l in v]
+        if len(shared) < 6:
+            continue
+        num = sum(base[l] * v[l] for l in shared)
+        na = math.sqrt(sum(base[l] ** 2 for l in shared))
+        nb = math.sqrt(sum(v[l] ** 2 for l in shared))
+        # tagged-mix axes: overlap of the two teams' play-type / defense shares
+        # (Bhattacharyya-style sum of min shares), z-free, appended at weight 2
+        # per mix — the founder's "play type / defenses" axes when both sides
+        # actually have tags.
+        tag_terms = []
+        t_tags = (tags or {}).get(t, {})
+        for kind in ("pt", "dfn"):
+            a, b = base_tags.get(kind), t_tags.get(kind)
+            if a and b:
+                overlap = sum(min(a.get(k, 0.0), b.get(k, 0.0))
+                              for k in set(a) | set(b))
+                tag_terms.append(2.0 * (2.0 * overlap - 1.0))   # [-2, 2]
+        if na > 1e-9 and nb > 1e-9:
+            cos = num / (na * nb)
+        else:
+            cos = 0.0
+        if tag_terms:
+            w_style, w_tags = len(shared), 2.0 * len(tag_terms)
+            cos = (cos * w_style + sum(t_/2.0 for t_ in tag_terms) * 2.0) \
+                  / (w_style + w_tags)
+        sim = max(0.0, min(1.0, (cos + 1) / 2))
+        closest = sorted(shared, key=lambda l: abs(base[l] - v[l]))[:2]
+        out.append({"tid": t, "name": pack["name_of"].get(t, str(t)),
+                    "similarity": round(sim, 3), "axes": closest})
+    out.sort(key=lambda d: -d["similarity"])
+    return out[:n]

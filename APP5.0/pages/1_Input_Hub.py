@@ -72,10 +72,15 @@ def load_teams():
     rows = query("SELECT id, name, class, gender, state FROM teams ORDER BY name")
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","class","gender","state"])
 
-def load_players_for(team_id):
+def load_players_for(team_id, season=SZ.ACTIVE):
+    """A team's roster for one season — the live roster (archived=0) for the
+    current season, or the season-stamped rows for a past one (roster_clause),
+    so archived seasons are editable with the same grid."""
+    rc, rp = SZ.roster_clause(season)
     rows = query(
-        "SELECT id, name, number, grad_year, height, wingspan, weight, handedness FROM players WHERE team_id=? AND archived=0 ORDER BY name",
-        (team_id,)
+        f"SELECT id, name, number, grad_year, height, wingspan, weight, handedness "
+        f"FROM players WHERE team_id=? AND {rc} ORDER BY name",
+        (team_id, *rp)
     )
     return pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["id","name","number","grad_year","height","wingspan","weight","handedness"])
@@ -472,18 +477,40 @@ if _hubview == "Players":
     if not tnames:
         st.warning("Add at least one team first.")
     else:
-        selected_team = st.selectbox("Select Team", tnames, key="player_team_sel")
+        _pc1, _pc2 = st.columns([2, 1])
+        selected_team = _pc1.selectbox("Select Team", tnames, key="player_team_sel")
         tm = team_map()
         team_id = tm[selected_team]
 
-        # Reset editor when team changes
-        prev_key = "_players_prev_team"
-        if st.session_state.get(prev_key) != selected_team:
-            invalidate("_players_orig", "players_editor")
-            st.session_state[prev_key] = selected_team
+        # Season picker — the current season edits the live roster; a past season
+        # edits that season's archived rows directly (names, numbers, grad years),
+        # and NEW rows land on that season's roster (retro-add, identity-linked).
+        _pszn_opts = SZ.season_options()
+        if len(_pszn_opts) > 1:
+            _pszn_lbls = [l for _v, l in _pszn_opts]
+            _pszn_sel = _pc2.selectbox(
+                "Season", _pszn_lbls, index=0, key="players_szn",
+                help="Pick a past season to edit that season's roster — fix a "
+                     "name or grad year, or add a player who was there. Edits to "
+                     "a name/grad year sync to the same player's other seasons.")
+            roster_season = next(v for v, l in _pszn_opts if l == _pszn_sel)
+        else:
+            roster_season = SZ.ACTIVE
+        _is_cur_roster = SZ.is_current(roster_season)
 
+        # Reset editor when team OR season changes
+        prev_key = "_players_prev_team"
+        _sel_key = (selected_team, roster_season)
+        if st.session_state.get(prev_key) != _sel_key:
+            invalidate("_players_orig", "players_editor")
+            st.session_state[prev_key] = _sel_key
+
+        if not _is_cur_roster:
+            st.caption(f"📅 Editing the **{roster_season}** roster. New rows join "
+                       "that season (and auto-link to the same player on other "
+                       "seasons); name & grad-year edits sync across seasons.")
         st.caption(EDITOR_HELP)
-        orig = get_orig("_players_orig", lambda: load_players_for(team_id))
+        orig = get_orig("_players_orig", lambda: load_players_for(team_id, roster_season))
         display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
             columns=["name","number","grad_year","height","wingspan","weight","handedness"])
 
@@ -497,8 +524,11 @@ if _hubview == "Players":
                 "number":   st.column_config.NumberColumn("Number",      min_value=0, max_value=999, step=1),
                 "grad_year": st.column_config.NumberColumn(
                     "Grad yr", min_value=2000, max_value=2100, step=1, format="%d",
-                    help="Class year (e.g. 2026). Seniors auto-graduate on New Season "
-                         "rollover; everyone else carries forward pre-linked."),
+                    default=SZ.default_grad_year(roster_season),
+                    help="Class year (e.g. 2026). New players default to season end "
+                         "+3 (a freshman) so nobody ghosts on rosters for years — "
+                         "correct it if they're older. Seniors auto-graduate on New "
+                         "Season rollover; everyone else carries forward pre-linked."),
                 "height":   st.column_config.NumberColumn("Height (in)", min_value=0.0, step=0.5),
                 "wingspan": st.column_config.NumberColumn("Wingspan (in)", min_value=0.0, step=0.5),
                 "weight":   st.column_config.NumberColumn("Weight (lbs)", min_value=0.0, step=1.0),
@@ -509,20 +539,40 @@ if _hubview == "Players":
         )
 
         if st.button("Save Changes", key="save_players", type="primary"):
+            import helpers.identity as IDN
+            skipped_dupes = []
             def _gy(r):
                 v = r.get("grad_year")
                 try:
-                    return int(v) if v not in (None, "") else None
+                    return int(v) if v not in (None, "") and v == v else None
                 except (ValueError, TypeError):
                     return None
             def ins_player(r):
-                if r.get("name","").strip():
-                    execute(
-                        "INSERT INTO players (team_id, name, number, grad_year, height, wingspan, weight, handedness) VALUES (?,?,?,?,?,?,?,?)",
-                        (team_id, r["name"].strip(), int(r.get("number") or 0), _gy(r),
-                         r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
-                         "left" if r.get("handedness") == "left" else "right")
-                    )
+                name = r.get("name", "").strip()
+                if not name:
+                    return
+                # dedupe: same name already on this team's roster for this season
+                rc, rp = SZ.roster_clause(roster_season)
+                if query(f"SELECT id FROM players WHERE team_id=? AND name=? AND {rc}",
+                         (team_id, name, *rp)):
+                    skipped_dupes.append(name)
+                    return
+                # auto grad year: season end +3 (a freshman) when left blank
+                gy = _gy(r) or SZ.default_grad_year(roster_season)
+                # a past season's new row is stamped onto THAT season (archived so
+                # it never surfaces in current-season pickers)
+                szn = SZ.ACTIVE if _is_cur_roster else str(roster_season)
+                pid = execute(
+                    "INSERT INTO players (team_id, name, number, grad_year, height, wingspan, weight, handedness, season, archived) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (team_id, name, int(r.get("number") or 0), gy,
+                     r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
+                     "left" if r.get("handedness") == "left" else "right",
+                     szn, 0 if _is_cur_roster else 1)
+                )
+                # retro-add: link to the same person on other seasons (unique
+                # same-name match on this team) so they never dupe as two people
+                if not _is_cur_roster:
+                    IDN.auto_link(pid)
             def upd_player(r):
                 execute(
                     "UPDATE players SET team_id=?, name=?, number=?, grad_year=?, height=?, wingspan=?, weight=?, handedness=? WHERE id=?",
@@ -531,6 +581,9 @@ if _hubview == "Players":
                      "left" if r.get("handedness") == "left" else "right",
                      r["id"])
                 )
+                # name / grad year are person-level — sync the edit to the same
+                # player's rows on other seasons (identity-linked)
+                IDN.propagate_person_fields(r["id"])
             def del_player(r):
                 if _gated_delete("players", r["id"], f"player '{r.get('name','?')}'"):
                     if delete_or_archive_player(r["id"]) == "archived":
@@ -542,6 +595,10 @@ if _hubview == "Players":
                 st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
             else:
                 flash("success", "Saved!")
+                for _nm in skipped_dupes:
+                    flash("warning", f"Skipped adding **{_nm}** — already on this "
+                          f"team's {SZ.active_label() if _is_cur_roster else roster_season} "
+                          "roster.")
                 invalidate("_players_orig", "players_editor")
                 st.cache_data.clear()
                 st.rerun()
@@ -569,12 +626,34 @@ if _hubview == "Players":
                     st.cache_data.clear()
                     st.rerun()
 
+        # One-shot cross-season sync (admin): fix rosters renamed AFTER a rollover
+        # (the archived rows kept the old names — e.g. a Current-roster rename that
+        # should read back onto last season). Edits made from now on sync live;
+        # this backfills the ones made before that existed.
+        if _is_admin:
+            with st.expander("🔁 Sync names & grad years across seasons (all teams)"):
+                st.caption("For every identity-linked player, copies the newest "
+                           "season's **name** (and freshest known **grad year**) "
+                           "onto their older-season rows. Run once to clean up "
+                           "renames done before cross-season sync existed.")
+                if st.button("Run sync", key="idn_sync_btn"):
+                    import helpers.identity as IDN
+                    _n = IDN.sync_person_fields()
+                    st.cache_data.clear()
+                    flash("success", f"Synced {_n} past-season player row(s).")
+                    st.rerun()
+
         # Transfer a player to another team — reassign their roster (team_id).
         # Past games stay attributed to the old team (events carry shooter_team_id),
         # and cross-season development history follows via identity. Same-gender
-        # targets only (a Boys player can't move to a Girls roster).
+        # targets only (a Boys player can't move to a Girls roster). Current
+        # season only — a past season's team_id is history, not a roster move.
         with st.expander("🔄 Transfer a player to another team"):
-            if orig.empty:
+            if not _is_cur_roster:
+                st.caption("Transfers apply to the current season's roster — a past "
+                           "season's team is history. Switch Season to "
+                           f"{SZ.active_label()} (current) to move a player.")
+            elif orig.empty:
                 st.caption("No players on this team to transfer.")
             else:
                 _gmap = {r["name"]: r["gender"]
@@ -933,6 +1012,10 @@ if _hubview == "Season Archive":
         st.info("No archived seasons yet. Use the New Season panel to roll over.")
     else:
         sel_season = st.selectbox("Select Season", seasons, key="archive_season_sel")
+        st.caption("Read-only view. To EDIT a past season's roster (fix a name, "
+                   "add a player who was there), use the **Players** section and "
+                   "pick the season there; past games are editable under **Games** "
+                   "with its season filter.")
 
         arc_tab_rosters, arc_tab_schedule = st.tabs(["Rosters", "Schedule"])
 

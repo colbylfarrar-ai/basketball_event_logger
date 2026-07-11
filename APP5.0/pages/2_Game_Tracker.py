@@ -264,7 +264,7 @@ def compute_box(game_id: int, t1id: int, t2id: int):
 # ══════════════════════════════════════════════════════════════════════════════
 
 all_games = query("""
-    SELECT g.id, g.date, g.tracked, t1.name AS t1, t2.name AS t2,
+    SELECT g.id, g.date, g.tracked, g.season, t1.name AS t1, t2.name AS t2,
            (SELECT COUNT(*) FROM game_events ge WHERE ge.game_id = g.id) AS n_ev
     FROM games g JOIN teams t1 ON t1.id=g.team1_id JOIN teams t2 ON t2.id=g.team2_id
 """)
@@ -272,6 +272,20 @@ all_games = sorted(all_games, key=lambda g: pd.to_datetime(g["date"], format="mi
 if not all_games:
     st.warning("No games found. Add games in the Input Hub first.")
     st.stop()
+
+# Season filter for the game list — retro games (past-season labels) stay fully
+# trackable; this only trims the picker. Shown once 2+ seasons have games.
+_szn_have = {g["season"] or SEAS.ACTIVE for g in all_games}
+_szn_opts = [(v, l) for v, l in SEAS.season_options() if v in _szn_have]
+if len(_szn_opts) > 1:
+    _gt_lbls = ["All seasons"] + [l for _v, l in _szn_opts]
+    _gt_sel = st.selectbox("Season", _gt_lbls, index=0, key="gt_szn_filter")
+    if _gt_sel != "All seasons":
+        _gt_v = next(v for v, l in _szn_opts if l == _gt_sel)
+        all_games = [g for g in all_games if (g["season"] or SEAS.ACTIVE) == _gt_v]
+        if not all_games:
+            st.info("No games in that season yet.")
+            st.stop()
 
 def _g_status(g):
     if g["tracked"]:
@@ -1228,14 +1242,21 @@ with st.expander("＋ Quick Add Player / Official"):
                     skipped += 1
                     continue
                 # retro game -> the new player joins THAT season's roster
-                # (archived so they never surface in current-season pickers)
-                execute(
-                    "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness, season, archived) VALUES (?,?,?,?,?,?,?,?,?)",
+                # (archived so they never surface in current-season pickers).
+                # Auto grad year (season end +3, a freshman) so quick-added
+                # players never ghost on rosters for years; and a retro add
+                # identity-links to the same name on other seasons (no dupes).
+                _new_pid = execute(
+                    "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness, season, archived, grad_year) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (tid, name, int(r.get("number") or 0),
                      r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
                      "left" if r.get("handedness") == "left" else "right",
-                     _gszn, 0 if SEAS.is_current(_gszn) else 1)
+                     _gszn, 0 if SEAS.is_current(_gszn) else 1,
+                     SEAS.default_grad_year(_gszn))
                 )
+                if not SEAS.is_current(_gszn):
+                    import helpers.identity as IDN
+                    IDN.auto_link(_new_pid)
                 saved += 1
             if saved or skipped:
                 msg = f"Added {saved} player(s)."

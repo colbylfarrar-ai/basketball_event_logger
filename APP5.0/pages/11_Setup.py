@@ -16,6 +16,8 @@ import streamlit as st
 from database.db import query, execute
 from helpers.ui import page_chrome, page_header, empty_state
 import helpers.manual_box as MB
+import helpers.seasons as SZ
+import helpers.identity as IDN
 
 _cfg, ACCENT = page_chrome("Setup")
 
@@ -40,13 +42,24 @@ with t_roster:
     if not teams:
         empty_state("No teams yet", "Add teams in the Input Hub first.")
     else:
-        tsel = st.selectbox("Team", teams, format_func=lambda r: r["name"],
-                            key="su_team")
+        _rc1, _rc2 = st.columns([2, 1])
+        tsel = _rc1.selectbox("Team", teams, format_func=lambda r: r["name"],
+                              key="su_team")
+        # Season picker — a past season edits that season's archived roster rows
+        # (grad year fixes flow to the player's other seasons via identity).
+        _szn_opts = SZ.season_options()
+        if len(_szn_opts) > 1:
+            _szn_lbls = [l for _v, l in _szn_opts]
+            _szn_sel = _rc2.selectbox("Season", _szn_lbls, index=0, key="su_szn")
+            _su_season = next(v for v, l in _szn_opts if l == _szn_sel)
+        else:
+            _su_season = SZ.ACTIVE
+        _su_rc, _su_rp = SZ.roster_clause(_su_season)
         pl = query(
-            """SELECT id, number, name, position, availability, handedness,
+            f"""SELECT id, number, name, position, availability, handedness,
                       grad_year, height, wingspan, weight
-               FROM players WHERE team_id=? AND archived=0 ORDER BY number""",
-            (tsel["id"],))
+               FROM players WHERE team_id=? AND {_su_rc} ORDER BY number""",
+            (tsel["id"], *_su_rp))
         if not pl:
             empty_state("No players on this team", "Add players in the Input Hub.")
         else:
@@ -83,6 +96,10 @@ with t_roster:
                             (r["position"] or "", r["availability"] or "Active",
                              "left" if r["handedness"] == "left" else "right", _gy,
                              int(r["id"])))
+                    if _gy is not None:
+                        # grad year is person-level — sync it to the player's
+                        # other seasons (identity-linked)
+                        IDN.propagate_person_fields(int(r["id"]))
                 st.cache_data.clear()   # depth chart & co. read these via cached queries
                 st.success("Roster saved.")
             st.caption("Height / wingspan / weight come from the Input Hub (read-only "
@@ -210,6 +227,9 @@ with t_box:
                                    + ("  ✓ entered" if MB.has_manual(g["id"]) else "")))
         existing = MB.load_manual_box(gsel["id"])
         _UP = [c.upper() for c in MB.STAT_COLS]
+        # Rosters below are the GAME's season's (retro box entry on a past-season
+        # game lists who actually played that year, not the current roster).
+        _mb_rc, _mb_rp = SZ.roster_clause(SZ.game_season(gsel["id"]))
 
         with st.expander("⬆ Import box from CSV (MaxPreps export format)"):
             st.caption("Upload a CSV in the same shape the Box Score tab's "
@@ -230,8 +250,8 @@ with t_box:
                     _tn = {gsel["team1_id"]: gsel["n1"],
                            gsel["team2_id"]: gsel["n2"]}
                     _ros = {tid: query(
-                        "SELECT id, number, name FROM players WHERE team_id=? "
-                        "AND archived=0", (tid,)) for tid in _tn}
+                        f"SELECT id, number, name FROM players WHERE team_id=? "
+                        f"AND {_mb_rc}", (tid, *_mb_rp)) for tid in _tn}
                     _rows_by_team, _probs = MB.parse_maxpreps_csv(_csv, _tn, _ros)
                     for _p in _probs:
                         st.warning(_p)
@@ -264,8 +284,8 @@ with t_box:
                            (gsel["team2_id"], gsel["n2"])):
             st.markdown(f"**{_tnm}**")
             roster = query(
-                "SELECT id, number, name FROM players WHERE team_id=? AND "
-                "archived=0 ORDER BY number", (_tid,))
+                f"SELECT id, number, name FROM players WHERE team_id=? AND "
+                f"{_mb_rc} ORDER BY number", (_tid, *_mb_rp))
             if not roster:
                 st.caption("No players on this team — add them in the Input Hub.")
                 continue

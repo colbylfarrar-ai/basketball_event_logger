@@ -35,6 +35,7 @@ from database.db import (execute, initialize_database, normalize_date, query,
 import helpers.event_log as EL
 import helpers.game_events as GE
 import helpers.entitlement as ENT
+import helpers.identity as IDN
 import helpers.seasons as SEAS
 
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -462,11 +463,16 @@ def quick_add_player(game_id: int, p: NewPlayer,
     if existing:
         return {"id": existing[0]["id"], "created": False}
     hand = "left" if p.handedness == "left" else "right"
+    # Auto grad year (season end +3, a freshman) so quick-added players never
+    # ghost on rosters for years; a retro add identity-links to the same name on
+    # other seasons (no duplicate person) and inherits their real class year.
     pid = execute(
-        "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness, season, archived) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO players (team_id, name, number, height, wingspan, weight, handedness, season, archived, grad_year) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
         (p.team_id, name, int(p.number or 0), p.height, p.wingspan, p.weight, hand,
-         gszn, 0 if SEAS.is_current(gszn) else 1))
+         gszn, 0 if SEAS.is_current(gszn) else 1, SEAS.default_grad_year(gszn)))
+    if not SEAS.is_current(gszn):
+        IDN.auto_link(pid)
     GE.bump_data_version()
     return {"id": pid, "created": True}
 

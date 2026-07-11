@@ -53,7 +53,24 @@ if not games:
                 icon="📝")
     st.stop()
 
-gsel = st.selectbox(
+# Season filter — past-season games are just as editable; this only trims the
+# list. Shown once more than one season has tracked events.
+import helpers.seasons as SZ
+_szn_opts = SZ.season_options()
+_have = {g["season"] or SZ.ACTIVE for g in games}
+_szn_opts = [(v, l) for v, l in _szn_opts if v in _have]
+if len(_szn_opts) > 1:
+    _c1, _c2 = st.columns([1, 3])
+    _lbls = ["All seasons"] + [l for _v, l in _szn_opts]
+    _sel = _c1.selectbox("Season", _lbls, index=0, key="ee_szn")
+    if _sel != "All seasons":
+        _v = next(v for v, l in _szn_opts if l == _sel)
+        games = [g for g in games if (g["season"] or SZ.ACTIVE) == _v]
+    _gbox = _c2
+else:
+    _gbox = st
+
+gsel = _gbox.selectbox(
     "Game", games, key="ee_game",
     format_func=lambda g: (f"{g['date']} · {g['n1']} vs {g['n2']} "
                            f"· {g['n_events']} events"

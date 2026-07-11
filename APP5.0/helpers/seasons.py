@@ -190,6 +190,22 @@ def roster_clause(season, alias="") -> tuple[str, tuple]:
     return f"{col}season=?", (str(season),)
 
 
+def season_end_year(season=ACTIVE) -> int | None:
+    """END calendar year of a season ('2025-2026' -> 2026). 'Current' resolves
+    through the active label. None when the label can't be parsed."""
+    label = active_label() if is_current(season) else str(season)
+    return graduating_year(label)
+
+
+def default_grad_year(season=ACTIVE) -> int | None:
+    """Auto grad year for a player ADDED during `season`: assume a freshman, so
+    end year + 3 (added in 2025-2026 -> class of 2029). Founder rule: every new
+    player gets SOME grad year so nobody lingers on rosters for a decade
+    (the MaxPreps/Hudl ghost-senior problem); the coach can correct the year."""
+    y = season_end_year(season)
+    return (y + 3) if y else None
+
+
 # ── New-Season rollover with grad-year auto-graduate + roster carry-forward ──────
 def graduating_year(label) -> int | None:
     """The class year that graduates after a season — the END year of the label

@@ -130,6 +130,102 @@ def unlink(current_pid):
     execute("UPDATE players SET identity_id=NULL WHERE id=?", (int(current_pid),))
 
 
+def propagate_person_fields(pid):
+    """Copy PERSON-level fields (name; grad_year when set) from row `pid` to every
+    other season-row of the same person. A player's name/class don't change season
+    to season — they're duplicated per-row by the rollover — so an edit on any one
+    row is the person's truth. grad_year only propagates when non-NULL (a source
+    row that never had one set must not wipe a year a past row knows).
+    Returns the number of sibling rows updated."""
+    r = query("SELECT name, grad_year, COALESCE(identity_id, id) AS k "
+              "FROM players WHERE id=?", (int(pid),))
+    if not r:
+        return 0
+    name, gy, key = r[0]["name"], r[0]["grad_year"], r[0]["k"]
+    sibs = query("SELECT id FROM players WHERE COALESCE(identity_id, id)=? AND id!=?",
+                 (key, int(pid)))
+    if not sibs:
+        return 0
+    if gy is None:
+        execute("UPDATE players SET name=? "
+                "WHERE COALESCE(identity_id, id)=? AND id!=?",
+                (name, key, int(pid)))
+    else:
+        execute("UPDATE players SET name=?, grad_year=? "
+                "WHERE COALESCE(identity_id, id)=? AND id!=?",
+                (name, gy, key, int(pid)))
+    return len(sibs)
+
+
+def auto_link(pid):
+    """Best-effort identity link for a row just created onto a DIFFERENT season
+    (retro-add): if exactly ONE person on the same team, in another season,
+    carries the same normalized name, link the new row to that person — so a
+    retro-added returner never becomes a duplicate person. Ambiguous (two
+    same-name persons) or no match -> leave unlinked. Returns the person key
+    linked to, or None."""
+    r = query("SELECT team_id, name, season FROM players WHERE id=?", (int(pid),))
+    if not r:
+        return None
+    team_id, name, season = r[0]["team_id"], r[0]["name"], r[0]["season"]
+    rows = query(
+        "SELECT id, name, identity_id FROM players "
+        "WHERE team_id=? AND id!=? AND season!=?", (team_id, int(pid), season))
+    keys = {(x["identity_id"] or x["id"]) for x in rows
+            if _norm(x["name"]) == _norm(name)}
+    if len(keys) != 1:
+        return None
+    key = keys.pop()
+    link(pid, key)
+    # inherit the person's known grad_year (the new row got an auto default that
+    # assumed a brand-new freshman — the linked person's real class year wins)
+    sib = query(
+        "SELECT grad_year FROM players WHERE COALESCE(identity_id, id)=? "
+        "AND id!=? AND grad_year IS NOT NULL "
+        "ORDER BY archived ASC, season DESC LIMIT 1", (key, int(pid)))
+    if sib:
+        execute("UPDATE players SET grad_year=? WHERE id=?",
+                (sib[0]["grad_year"], int(pid)))
+    return key
+
+
+def sync_person_fields():
+    """One-shot backfill: for every linked person with rows in 2+ seasons, copy
+    the freshest row's name (live archived=0 row first, else newest season) onto
+    the older rows, and spread the freshest non-NULL grad_year. Fixes rosters
+    renamed on the current season AFTER a rollover (the archived rows kept the
+    old names). Returns the number of rows updated."""
+    rows = query("SELECT id, name, grad_year, archived, season, "
+                 "COALESCE(identity_id, id) AS k FROM players")
+    by_key = {}
+    for r in rows:
+        by_key.setdefault(r["k"], []).append(r)
+    changed = 0
+    for group in by_key.values():
+        if len(group) < 2:
+            continue
+        # freshest row wins: the live (archived=0) row if the person is on a
+        # current roster, else the newest archived season's row
+        live = [r for r in group if not r["archived"]]
+        src = live[0] if live else max(group, key=lambda r: r["season"] or "")
+        # grad_year: src's own, else the freshest non-NULL anywhere in the chain
+        gy = src["grad_year"]
+        if gy is None:
+            with_gy = [r for r in group if r["grad_year"] is not None]
+            if with_gy:
+                gy = max(with_gy, key=lambda r: (0 if r["archived"] else 1,
+                                                 r["season"] or ""))["grad_year"]
+        for r in group:
+            if r["id"] == src["id"]:
+                continue
+            new_gy = gy if gy is not None else r["grad_year"]
+            if r["name"] != src["name"] or r["grad_year"] != new_gy:
+                execute("UPDATE players SET name=?, grad_year=? WHERE id=?",
+                        (src["name"], new_gy, r["id"]))
+                changed += 1
+    return changed
+
+
 def identity_history(identity_key):
     """Every player row across seasons sharing `identity_key` (current + archived),
     oldest season first — the person's season-by-season footprint. Feeds the future

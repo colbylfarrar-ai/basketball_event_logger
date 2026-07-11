@@ -1061,10 +1061,14 @@ else:
                         rebound = c3.selectbox("Rebound By", all_opts)
 
                     elif event_type == "Foul":
-                        c1, c2, c3 = st.columns([2, 2, 1])
+                        c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
                         fouled   = c1.selectbox("Player Fouled", all_opts[1:])
                         fouler   = c2.selectbox("Player Who Fouled", all_opts[1:])
                         official = c3.selectbox("Official", off_opts)
+                        foul_kind = c4.selectbox(
+                            "Type", ["—"] + [lbl for _k, lbl in FOULS.FOUL_TYPES],
+                            help="Kind of foul — optional. Leave — for a regular "
+                                 "defensive foul.")
 
                     elif event_type == "Turnover":
                         c1, c2, c3 = st.columns([2, 2, 1])
@@ -1135,11 +1139,13 @@ else:
                               rebound_by_id=plookup(rebound, all_id))
 
                 elif event_type == "Foul":
+                    _fk_key = {lbl: k for k, lbl in FOULS.FOUL_TYPES}
                     ev.update(event_type="foul",
                               primary_player_id=plookup(fouled, all_id),
                               secondary_player_id=plookup(fouler, all_id),
                               official_id=(off_eid.get(official)
-                                           if official and official != "—" else None))
+                                           if official and official != "—" else None),
+                              foul_type=_fk_key.get(foul_kind))
 
                 elif event_type == "Turnover":
                     _tov_key = {lbl: k for k, lbl in TOV.TURNOVER_TYPES}

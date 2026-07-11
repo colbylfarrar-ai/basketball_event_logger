@@ -79,7 +79,8 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
                   blocked_by_id, guarded_by_id, play_type, defense
       free_throw: primary_player_id, shot_result, rebound_by_id
       foul:       primary_player_id (fouled), secondary_player_id (fouler),
-                  official_id, play_type, defense
+                  official_id, play_type, defense, foul_type (offensive /
+                  rebounding — nullable KIND, taxonomy in helpers/fouls)
       turnover:   primary_player_id, stolen_by_id, play_type, defense,
                   turnover_type (pass/drive/held/shot_clock/travel — the KIND
                   of giveaway; nullable, taxonomy in helpers/turnovers)
@@ -141,11 +142,11 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
         eid = execute("""INSERT INTO game_events
             (game_id,event_type,quarter,time,possession_secs,
              primary_player_id,secondary_player_id,official_id,
-             play_type,defense,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+             play_type,defense,foul_type,client_uuid)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (game_id, "foul", q, t, poss,
              g("primary_player_id"), g("secondary_player_id"), g("official_id"),
-             g("play_type"), g("defense"), client_uuid))
+             g("play_type"), g("defense"), g("foul_type"), client_uuid))
         pts = 0
 
     else:  # turnover

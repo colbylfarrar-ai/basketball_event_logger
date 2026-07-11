@@ -354,6 +354,32 @@ button {
 #defense-bar:empty { display: none; }
 #defense-bar .chip-label { display: inline-block; margin: 0 0 4px; }
 
+/* Sticky-bar + flow dropdowns (replaced the horizontally scrolling chip
+   strips): native <select> opens the OS picker — one tap, no sideways hunt,
+   and each many-option field costs one row of screen. */
+.flow-select {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: var(--bg3);
+  color: var(--fg);
+  font-size: 0.95rem;
+}
+.flow-select:focus { outline: none; border-color: var(--gold); }
+#defense-bar .flow-select, #playtype-bar .flow-select {
+  display: inline-block;
+  width: auto;
+  min-width: 46%;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+#playtype-bar { margin-bottom: 8px; }
+#playtype-bar:empty { display: none; }
+#playtype-bar .chip-label { display: inline-block; margin: 0 0 4px; }
+
 #flow { background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 10px; min-height: 70px; }
 #flow .no-loc { display: block; margin: 0 auto 6px; }
 .chip-row { margin-bottom: 10px; }

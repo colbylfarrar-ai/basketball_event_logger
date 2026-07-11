@@ -1015,7 +1015,7 @@ function resetFlow(mode) {
     expand: false,                                  // quick-mode: details revealed for this entry
     shooter: null,
     details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
-    fouled: null, fouler: null, official: null,
+    fouled: null, fouler: null, official: null, foulKind: null,
     player: null, stolen: null, tovKind: null
   };
   if (window.Court) Court.clearMarker();
@@ -1095,6 +1095,67 @@ function chipRow(label, ids, selected, onPick, opts) {
   return row;
 }
 
+/* Native dropdown row — the compact replacement for long scrolling chip strips
+   (players, set calls, defenses). One tap opens the OS picker instead of a
+   sideways slide, so many-option fields stop eating the screen.
+   options: [{v, label, group}] — `group` builds <optgroup> sections (teams). */
+function makeSelect(options, selected, onChange, numeric) {
+  const sel = document.createElement('select');
+  sel.className = 'flow-select';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = '—';
+  sel.appendChild(none);
+  let curGroup = null, curOG = null;
+  options.forEach(function (op) {
+    let parent = sel;
+    if (op.group) {
+      if (op.group !== curGroup) {
+        curOG = document.createElement('optgroup');
+        curOG.label = op.group;
+        sel.appendChild(curOG);
+        curGroup = op.group;
+      }
+      parent = curOG;
+    }
+    const o = document.createElement('option');
+    o.value = String(op.v);
+    o.textContent = op.label;
+    parent.appendChild(o);
+  });
+  sel.value = selected == null ? '' : String(selected);
+  sel.addEventListener('change', function () {
+    const v = sel.value;
+    onChange(v === '' ? null : (numeric ? parseInt(v, 10) : v));
+  });
+  return sel;
+}
+
+function selRow(label, options, selected, onChange, opts) {
+  opts = opts || {};
+  const row = document.createElement('div');
+  row.className = 'chip-row sel-row';
+  const lab = document.createElement('span');
+  lab.className = 'chip-label';
+  lab.textContent = label;
+  row.appendChild(lab);
+  row.appendChild(makeSelect(options, selected, onChange, !!opts.numeric));
+  return row;
+}
+
+// player ids -> select options grouped by team (archived pickable but flagged)
+function playerOpts(ids) {
+  return ids.map(function (id) {
+    const p = playerById(id);
+    const side = teamSide(id);
+    return {
+      v: id,
+      label: pLabel(id) + ((p && p.archived) ? ' (archived)' : ''),
+      group: (side && S.game) ? S.game[side].name : null
+    };
+  });
+}
+
 function makeMissRow(onResult) {
   const row = document.createElement('div');
   row.className = 'mm-row';
@@ -1132,6 +1193,12 @@ const TOV_TYPES = [
   ['shot_clock', 'Shot clock'], ['held', 'Held ball']
 ];
 
+// Foul KIND (optional; untagged = a regular defensive foul). Keep in lockstep
+// with helpers/fouls.FOUL_TYPES. Orthogonal to play_type, same as TO kind.
+const FOUL_TYPES = [
+  ['offensive', 'Offensive'], ['rebounding', 'Rebounding']
+];
+
 // Sticky "current defense" the opponent is in. Unlike play_type (per-shot), a
 // defense holds for stretches, so this is set ONCE on the always-visible bar and
 // every event logged inherits S.defense until it's changed. Keep this list in
@@ -1160,21 +1227,16 @@ function renderDefenseBar() {
   lab.className = 'chip-label';
   lab.textContent = 'Defense';
   bar.appendChild(lab);
-  const box = document.createElement('div');
-  box.className = 'chips scroll';
-  function pickDefense(k) {
-    S.defense = k;
-    lsSet(LS.lastDefense, k);   // remember across games -> new-game default
-    savePrefs();
-    renderDefenseBar();
-  }
-  box.appendChild(flowBtn('—', 'chip' + (S.defense == null ? ' sel' : ''),
-    function () { pickDefense(null); }));
-  DEFENSE_KEYS.forEach(function (k) {
-    box.appendChild(flowBtn(defLabel(k), 'chip' + (S.defense === k ? ' sel' : ''),
-      function () { pickDefense(S.defense === k ? null : k); }));
-  });
-  bar.appendChild(box);
+  // dropdown, not a sliding chip strip — 17 schemes in one tap (OS picker)
+  bar.appendChild(makeSelect(
+    DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
+    S.defense,
+    function (k) {
+      S.defense = k;
+      lsSet(LS.lastDefense, k);   // remember across games -> new-game default
+      savePrefs();
+      renderDefenseBar();
+    }));
 }
 
 // Sticky "current set call" — the play_type twin of the defense bar, in the
@@ -1191,21 +1253,16 @@ function renderPlayTypeBar() {
   lab.className = 'chip-label';
   lab.textContent = 'Set call';
   bar.appendChild(lab);
-  const box = document.createElement('div');
-  box.className = 'chips scroll';
-  function pickPlayType(k) {
-    S.playType = k;
-    savePrefs();
-    renderPlayTypeBar();
-    renderFlow();               // shot-flow chips preview the sticky pick
-  }
-  box.appendChild(flowBtn('—', 'chip' + (S.playType == null ? ' sel' : ''),
-    function () { pickPlayType(null); }));
-  PLAY_TYPE_KEYS.forEach(function (k) {
-    box.appendChild(flowBtn(ptLabel(k), 'chip' + (S.playType === k ? ' sel' : ''),
-      function () { pickPlayType(S.playType === k ? null : k); }));
-  });
-  bar.appendChild(box);
+  // dropdown, not a sliding chip strip — 13 set calls in one tap (OS picker)
+  bar.appendChild(makeSelect(
+    PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
+    S.playType,
+    function (k) {
+      S.playType = k;
+      savePrefs();
+      renderPlayTypeBar();
+      renderFlow();             // shot flow previews the sticky pick
+    }));
 }
 
 /* ----- in-place subs (tracker screen) -----
@@ -1308,9 +1365,10 @@ function renderFlow() {
     wrap.appendChild(chipRow('Shooter', players, f.shooter, function (id) { f.shooter = id; renderFlow(); }));
     if (f.shooter != null) {
       if (!quickModeOn() || f.expand) {
+        // dropdowns, not sliding chip strips — five detail rows fit one screen
         SHOT_DETAILS.forEach(function (d) {
-          wrap.appendChild(chipRow(d[1], players, f.details[d[0]],
-            function (id) { f.details[d[0]] = id; renderFlow(); }, { allowNone: true, scroll: true }));
+          wrap.appendChild(selRow(d[1], playerOpts(players), f.details[d[0]],
+            function (id) { f.details[d[0]] = id; renderFlow(); }, { numeric: true }));
         });
         // Set call comes from the always-visible sticky bar (renderPlayTypeBar)
         // above the flow — no per-shot Play type row here (it duplicated the bar).
@@ -1327,8 +1385,8 @@ function renderFlow() {
     wrap.appendChild(chipRow('Shooter', players, f.shooter, function (id) { f.shooter = id; renderFlow(); }));
     if (f.shooter != null) {
       if (!quickModeOn() || f.expand) {
-        wrap.appendChild(chipRow('Rebound by', players, f.details.rebound_by_id,
-          function (id) { f.details.rebound_by_id = id; renderFlow(); }, { allowNone: true, scroll: true }));
+        wrap.appendChild(selRow('Rebound by', playerOpts(players), f.details.rebound_by_id,
+          function (id) { f.details.rebound_by_id = id; renderFlow(); }, { numeric: true }));
       } else {
         wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
           function () { f.expand = true; renderFlow(); }));
@@ -1347,6 +1405,9 @@ function renderFlow() {
       wrap.appendChild(chipRow('Official', offIds, f.official,
         function (id) { f.official = id; renderFlow(); }, { allowNone: true, labelFn: oLabel }));
     }
+    wrap.appendChild(optRow('Foul kind',
+      FOUL_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
+      f.foulKind, function (v) { f.foulKind = v; renderFlow(); }));
     if (f.fouled != null && f.fouler != null) {
       wrap.appendChild(flowBtn('LOG FOUL', 'btn primary big', logFoul));
     }
@@ -1358,7 +1419,7 @@ function renderFlow() {
         wrap.appendChild(chipRow('Stolen by',
           players.filter(function (id) { return id !== f.player; }),
           f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
-        wrap.appendChild(optRow('TO kind',
+        wrap.appendChild(selRow('TO kind',
           TOV_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
           f.tovKind, function (v) { f.tovKind = v; renderFlow(); }));
       } else {
@@ -1455,6 +1516,7 @@ async function logFoul() {
   ev.primary_player_id = f.fouled;     // fouled player
   ev.secondary_player_id = f.fouler;   // fouler
   ev.official_id = f.official;
+  ev.foul_type = f.foulKind;           // offensive / rebounding (null = regular)
   // the picked official may come from the all-officials fallback list — make
   // sure the event's snapshot includes them so the lineup row gets written
   if (f.official != null && ev.officials_on.indexOf(f.official) < 0) {
@@ -1657,7 +1719,8 @@ function formFromEvent(ev) {
     stolen_by_id: ev.stolen_by_id != null ? ev.stolen_by_id : null,
     play_type: ev.play_type || null,
     defense: ev.defense || null,
-    turnover_type: ev.turnover_type || null
+    turnover_type: ev.turnover_type || null,
+    foul_type: ev.foul_type || null
   };
 }
 
@@ -1745,8 +1808,19 @@ function buildEditForm(ev) {
   const roster = rosterIds();
   function rerender() { renderEditor(); }
   function pickRow(label, field, ids, opts) {
-    return chipRow(label, ids, f[field], function (id) { f[field] = id; rerender(); },
-      Object.assign({ allowNone: true, scroll: true }, opts || {}));
+    // dropdown pickers (was sliding chip strips) — the edit form fits on screen
+    opts = opts || {};
+    const lf = opts.labelFn;
+    const options = lf
+      ? ids.map(function (id) { return { v: id, label: lf(id) }; })
+      : playerOpts(ids);
+    return selRow(label, options, f[field],
+      function (id) { f[field] = id; rerender(); }, { numeric: true });
+  }
+  function tagRow(label, field, pairs) {
+    return selRow(label,
+      pairs.map(function (p) { return { v: p[0], label: p[1] }; }),
+      f[field], function (v) { f[field] = v; rerender(); });
   }
 
   box.appendChild(optRow('Type', [
@@ -1778,10 +1852,8 @@ function buildEditForm(ev) {
     SHOT_DETAILS.forEach(function (d) {
       box.appendChild(pickRow(d[1], d[0], roster));
     });
-    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
-      f.play_type, function (v) { f.play_type = v; rerender(); }));
-    box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
-      f.defense, function (v) { f.defense = v; rerender(); }));
+    box.appendChild(tagRow('Play type', 'play_type', PLAY_TYPES));
+    box.appendChild(tagRow('Defense', 'defense', DEFENSES));
   } else if (f.event_type === 'free_throw') {
     box.appendChild(pickRow('Shooter', 'primary_player_id', roster));
     box.appendChild(optRow('Result', [{ v: 'make', label: 'Make' }, { v: 'miss', label: 'Miss' }],
@@ -1792,19 +1864,16 @@ function buildEditForm(ev) {
     box.appendChild(pickRow('Fouler', 'secondary_player_id', roster));
     const offIds = ((S.game && S.game.officials) || []).map(function (o) { return o.id; });
     box.appendChild(pickRow('Official', 'official_id', offIds, { labelFn: oLabel }));
-    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
-      f.play_type, function (v) { f.play_type = v; rerender(); }));
-    box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
-      f.defense, function (v) { f.defense = v; rerender(); }));
+    box.appendChild(optRow('Foul kind', FOUL_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
+      f.foul_type, function (v) { f.foul_type = v; rerender(); }));
+    box.appendChild(tagRow('Play type', 'play_type', PLAY_TYPES));
+    box.appendChild(tagRow('Defense', 'defense', DEFENSES));
   } else if (f.event_type === 'turnover') {
     box.appendChild(pickRow('Player', 'primary_player_id', roster));
     box.appendChild(pickRow('Stolen by', 'stolen_by_id', roster));
-    box.appendChild(optRow('TO kind', TOV_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
-      f.turnover_type, function (v) { f.turnover_type = v; rerender(); }));
-    box.appendChild(optRow('Play type', PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
-      f.play_type, function (v) { f.play_type = v; rerender(); }));
-    box.appendChild(optRow('Defense', DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
-      f.defense, function (v) { f.defense = v; rerender(); }));
+    box.appendChild(tagRow('TO kind', 'turnover_type', TOV_TYPES));
+    box.appendChild(tagRow('Play type', 'play_type', PLAY_TYPES));
+    box.appendChild(tagRow('Defense', 'defense', DEFENSES));
   }
 
   const actions = document.createElement('div');
@@ -1863,7 +1932,8 @@ async function saveEdit(eid) {
     stolen_by_id: f.stolen_by_id,
     play_type: f.play_type,
     defense: f.defense,
-    turnover_type: f.turnover_type
+    turnover_type: f.turnover_type,
+    foul_type: f.foul_type
   };
   try {
     const res = await api('/api/games/' + S.gameId + '/events/' + eid, {

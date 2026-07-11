@@ -129,6 +129,7 @@ class EventIn(BaseModel):
     play_type: str | None = None
     defense: str | None = None
     turnover_type: str | None = None
+    foul_type: str | None = None
     on_court: list[int] = Field(default_factory=list)
     officials_on: list[int] = Field(default_factory=list)
 
@@ -157,6 +158,7 @@ class EventEdit(BaseModel):
     play_type: str | None = None
     defense: str | None = None
     turnover_type: str | None = None
+    foul_type: str | None = None
 
 
 class NewGame(BaseModel):

@@ -22,6 +22,26 @@ import helpers.stats as S
 _safe = S._safe   # shared definition lives in helpers.stats
 
 
+# ── foul-type taxonomy ────────────────────────────────────────────────────────
+# Optional KIND tag on a foul event (game_events.foul_type, nullable — old rows
+# stay NULL). One source of truth: tracker, PWA, editors all read this list.
+# KEYS are permanent data values; only labels may change. 'offensive' = a charge
+# / illegal screen (the fouler's team had the ball), 'rebounding' = over-the-back
+# etc. on the glass. Untagged = a regular defensive foul; founder historically
+# marked these via play_type='other', which stays readable as the legacy layer.
+FOUL_TYPES = [
+    ("offensive",  "Offensive"),
+    ("rebounding", "Rebounding"),
+]
+_FT_KEYS = {k for k, _ in FOUL_TYPES}
+_FT_LABEL = dict(FOUL_TYPES)
+
+
+def foul_type_label(key):
+    """Display label for a foul-type key (unknown -> the key itself)."""
+    return _FT_LABEL.get(key, key)
+
+
 def _half(q):
     return 1 if q <= 2 else 2
 

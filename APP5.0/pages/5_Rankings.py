@@ -680,7 +680,7 @@ if _view == "Overview":
                  else _comp_cols if _colset == "Composites"
                  else list(df.columns))
         st.dataframe(
-            df[_show], hide_index=True, width="stretch",
+            CD.round_df(df[_show]), hide_index=True, width="stretch",
             height=min(720, 60 + 35 * len(df)),
             column_config={
                 "Power": st.column_config.ProgressColumn(
@@ -2612,7 +2612,8 @@ def _fx_evr():
             _show = fc2.slider("Upsets to show", 5, min(40, len(ups)),
                                min(12, len(ups)), key="lab_net_ups") \
                 if len(ups) > 5 else len(ups)
-            st.dataframe(pd.DataFrame(ups[:_show]), hide_index=True, width="stretch")
+            st.dataframe(CD.round_df(pd.DataFrame(ups[:_show])), hide_index=True,
+                         width="stretch")
         else:
             st.info("No upsets match this filter." if pick_cls
                     else "No upsets recorded.")

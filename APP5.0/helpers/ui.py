@@ -377,7 +377,15 @@ def grid(df, key, *, height=480, page_size=25, fit_columns=False, pin_first=True
     scrolls horizontally past the viewport rather than squishing every column), and
     the first column (the identity — name/team) is PINNED left so it stays visible
     while you scroll the stat columns. Pass ``pin_first=False`` for a narrow /
-    single-entity table where pinning just wastes space."""
+    single-entity table where pinning just wastes space.
+
+    Numeric columns are display-rounded (cards.round_df: 1 decimal, 2 on
+    small-magnitude ratio columns) — no raw float tails in any grid."""
+    try:
+        from helpers.cards import round_df
+        df = round_df(df)
+    except Exception:
+        pass
     try:
         from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
         gob = GridOptionsBuilder.from_dataframe(df)

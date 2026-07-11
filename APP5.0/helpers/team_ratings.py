@@ -504,6 +504,19 @@ def class_label(cls, state, multi):
     return f"{state} {cls}" if (multi and state and cls != "N/A") else cls
 
 
+def league_multi_state() -> bool:
+    """Does the LEAGUE (the whole teams table) span more than one state?
+
+    This is the ONE switch for state-qualified class labels. It must be a
+    league-level fact, not a per-result-set one: a subset field (tracked teams,
+    one game type's teams) can sit in a single state while the full field spans
+    two — if each engine decided from its own rows, 'OK 3A' (scored) and '3A'
+    (tracked) would name the same group and label-keyed filters would match
+    nothing. Empty/NULL states don't count as a state."""
+    return len({(r["s"] or "").strip() for r in query(
+        "SELECT DISTINCT state AS s FROM teams") if (r["s"] or "").strip()}) > 1
+
+
 def _assign_ranks(ratings):
     """Add a 1-based overall 'Rank' (by descending Rating within gender) plus
     'ClassRank'/'ClassOf' (the same order partitioned by each team's STATE +
@@ -516,7 +529,13 @@ def _assign_ranks(ratings):
     order = sorted(ratings, key=lambda t: ratings[t]["Rating"], reverse=True)
     for i, t in enumerate(order, 1):
         ratings[t]["Rank"] = i
-    multi = len({(ratings[t].get("state") or "") for t in ratings}) > 1
+    # Label qualification: the field's own states OR the league-level switch.
+    # The league check matters for SUBSET fields (tracked teams, one game type)
+    # that happen to sit in one state while the full field spans two — every
+    # engine must label the same class group the same way or label-keyed
+    # filters cross-match nothing ('OK 3A' vs '3A').
+    _fs = {(ratings[t].get("state") or "").strip() for t in ratings}
+    multi = len(_fs - {""}) > 1 or league_multi_state()
     by_class: dict = {}
     for t in order:                       # order already Rating-descending
         r = ratings[t]

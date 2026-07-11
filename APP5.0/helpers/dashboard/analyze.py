@@ -20,23 +20,25 @@ import streamlit as st
 
 from helpers.ui import (gender_radio, style_fig as _style, empty_state,
                         grid as _grid, chart as _chart, DIVERGE)
+from helpers.cards import round_df as _round_df
 import helpers.player_ratings as PR
 import helpers.archetypes as AR
 import helpers.stats as S
 import helpers.court as court
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.seasons as SEAS
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _table(g, mg, gids=None):
+def _table(g, mg, gids=None, season="Current"):
     return PR.player_stat_table(game_ids=(set(gids) if gids else None),
-                                gender=g, min_games=mg)
+                                gender=g, min_games=mg, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _clusters(g, mg, vis=None):
-    return AR.cluster_players(_table(g, mg, vis))["players"]
+def _clusters(g, mg, vis=None, season="Current"):
+    return AR.cluster_players(_table(g, mg, vis, season))["players"]
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -51,8 +53,12 @@ def _shot_model(approx, vis=None):
     return S.distance_make_model(shots=_mapped(approx, vis=vis))
 
 
-def render():
-    """Draw the analytics playground (gender/min-games scope + 4 tabs)."""
+def render(season="Current"):
+    """Draw the analytics playground (gender/min-games scope + 4 tabs).
+
+    `season` scopes the whole pool: the active season keeps the entitlement
+    gates; a PAST season is an open archive (founder rule) — everyone reads
+    that season's tracked pool at full depth."""
     st.caption("⚙️ Power-user tool — unfiltered access to every stat, nothing "
                "dumbed down. Filter the table, build any scatter, correlate "
                "anything, and map shots.")
@@ -62,34 +68,45 @@ def render():
     gender = gender_radio(sc[0], key="dx_gender")
     min_g = sc[1].slider("Min games", 1, 15, 1, key="dx_ming",
                          help="Drop thin samples from the pool.")
-    table = _table(gender, min_g)
+    _is_cur = SEAS.is_current(season)
+    _pool = (None if _is_cur else tuple(sorted(
+        SEAS.game_pool(season, gender=gender, tracked_only=True))))
+    if not _is_cur and not _pool:     # empty pool must NOT fall back to 'Current'
+        empty_state("No tracked games in this season",
+                    f"No tracked games in {season} for this league.", icon="📊")
+        return
+    table = (_table(gender, min_g) if _is_cur
+             else _table(gender, min_g, _pool, season))
     if not table:
         empty_state("No players in this pool", "Lower the minimum games, or track "
                     "more games in the Game Tracker.", icon="📊")
         return
 
-    _ident = AUTH.current_user()
-    _paid = ENT.has_paid_plan(_ident) and ENT.viewer_is_league_wide(_ident)
-    _vis = None
-    if _paid:
-        _vis = ENT.visible_tracked_game_ids(_ident)   # None = admin (unrestricted)
-        if _vis is not None:
-            table = _table(gender, min_g, tuple(sorted(_vis))) or {}
-        if not table:                                  # league-wide but nothing pooled
-            _paid = False
-    if not _paid:
-        table = PR.box_only_table(_table(gender, min_g))
-        st.caption("🔒 Box-score stats only here. The whole-league tracked table "
-                   "(ratings, usage, shot quality, archetypes, shot maps) is a "
-                   "**Coaches' Co-op** feature — your own team's tracked depth is "
-                   "on its Team Dashboard.")
+    if _is_cur:
+        _ident = AUTH.current_user()
+        _paid = ENT.has_paid_plan(_ident) and ENT.viewer_is_league_wide(_ident)
+        _vis = None
+        if _paid:
+            _vis = ENT.visible_tracked_game_ids(_ident)  # None = admin (unrestricted)
+            if _vis is not None:
+                table = _table(gender, min_g, tuple(sorted(_vis))) or {}
+            if not table:                              # league-wide but nothing pooled
+                _paid = False
+        if not _paid:
+            table = PR.box_only_table(_table(gender, min_g))
+            st.caption("🔒 Box-score stats only here. The whole-league tracked table "
+                       "(ratings, usage, shot quality, archetypes, shot maps) is a "
+                       "**Coaches' Co-op** feature — your own team's tracked depth is "
+                       "on its Team Dashboard.")
+        _vis_key = (None if (_paid and _vis is None)
+                    else tuple(sorted(_vis)) if (_paid and _vis)
+                    else ())
+    else:
+        _paid = True                 # open archive: full depth for everyone
+        _vis_key = _pool
 
-    _vis_key = (None if (_paid and _vis is None)
-                else tuple(sorted(_vis)) if (_paid and _vis)
-                else ())
-
     if _paid:
-        _arche = _clusters(gender, min_g, _vis_key)
+        _arche = _clusters(gender, min_g, _vis_key, season)
         df = pd.DataFrame([{**r, "Archetype": _arche.get(pid, {}).get("archetype", "—")}
                            for pid, r in table.items()])
     else:
@@ -116,7 +133,7 @@ def render():
             "xPPS", "SMOE") if c in df.columns]
         cols = st.multiselect("Columns to show", list(df.columns),
                               default=default_cols, key="dx_cols")
-        gdf = df[cols] if cols else df
+        gdf = _round_df(df[cols] if cols else df)
         st.caption(f"{len(gdf)} players · {len(gdf.columns)} columns. "
                    "Click a column header to sort; AgGrid adds per-column filters.")
         _grid(gdf, "dx_grid")

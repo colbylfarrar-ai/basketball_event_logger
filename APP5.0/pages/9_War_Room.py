@@ -28,7 +28,8 @@ import streamlit as st
 from helpers.ui import (page_chrome, style_fig as _style, empty_state, team_color,
                         chart as _chart, seg as _seg, engine_status as _eng,
                         AWAY, GOOD, BAD, HEAT, gender_radio, gender_label)
-from helpers.cards import bar_h, team_short, style_df as _style_df
+from helpers.cards import bar_h, team_short, style_df as _style_df, \
+    round_df as _round_df
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
 import helpers.matchup_sheet as MS
@@ -407,7 +408,7 @@ def _render_proj_statline(pred, ctx, table, key):
              "REB": _sum("REB"), "AST": _sum("AST"), "STL": _sum("STL"),
              "BLK": _sum("BLK"), "TOV": _sum("TOV"), "SC/G": _sum("SC/G"),
              "DEF z": None, "WAR": _sum("WAR"), "PHY": None}
-    st.dataframe(pd.DataFrame(rows + [total]), hide_index=True,
+    st.dataframe(_round_df(pd.DataFrame(rows + [total])), hide_index=True,
                  width="stretch", key=key)
     st.caption(
         "Projected per-game line for this unit. **PTS** is lineup-aware — each "
@@ -684,8 +685,9 @@ def _render_matchup():
 
             st.markdown("**Where the margin comes from**")
             st.dataframe(
-                pd.DataFrame([{"Component": c["label"], "Points": c["value"],
-                               "Detail": c["note"]} for c in pred["components"]]),
+                _round_df(pd.DataFrame(
+                    [{"Component": c["label"], "Points": c["value"],
+                      "Detail": c["note"]} for c in pred["components"]])),
                 hide_index=True, width="stretch")
 
             if pred["tracked"] and _can_game(
@@ -733,12 +735,12 @@ def _render_matchup():
                            "to lean on.")
                 if off["rows"]:
                     st.markdown("**Exploit matrix — calls to lean on**")
-                    st.dataframe(pd.DataFrame([{
+                    st.dataframe(_round_df(pd.DataFrame([{
                         "Set": r["label"], "Our PPP": r["our_ppp"],
                         "Our %ile": r["our_pct"],
                         "They allow (PPP)": r["opp_ppp"], "Edge": r["edge"],
                         "Trust": "✓" if r["stable"] else "thin",
-                    } for r in off["rows"]]), hide_index=True, width="stretch",
+                    } for r in off["rows"]])), hide_index=True, width="stretch",
                         column_config={
                             "Our PPP": st.column_config.NumberColumn(format="%.2f"),
                             "They allow (PPP)": st.column_config.NumberColumn(
@@ -786,11 +788,11 @@ def _render_matchup():
                         if sp["rows_a"]:
                             st.markdown(f"**{pred['a_name']} — projected points by "
                                         "set call**")
-                            st.dataframe(pd.DataFrame([{
+                            st.dataframe(_round_df(pd.DataFrame([{
                                 "Set": r["label"], "Share": f"{r['share'] * 100:.0f}%",
                                 "Our PPP": r["off_ppp"], "They allow": r["opp_allowed"],
                                 "Lg avg": r["lg_ppp"], "Exp PPP": r["exp_ppp"],
-                            } for r in sp["rows_a"]]), hide_index=True,
+                            } for r in sp["rows_a"]])), hide_index=True,
                                 width="stretch")
                         st.caption(f"Based on {sp['tagged_min']} tagged set calls "
                                    f"(smallest leg) · ~{sp['poss']} possessions/game.")
@@ -1002,7 +1004,7 @@ def _render_bracket():
                              if d["finals_odds"] is not None else None),
             } for d in odds])
             st.dataframe(
-                df, hide_index=True, width="stretch", key="wr_brk_tbl",
+                _round_df(df), hide_index=True, width="stretch", key="wr_brk_tbl",
                 column_config={
                     "Champ %": st.column_config.ProgressColumn(
                         "Champ %", format="%.1f%%", min_value=0, max_value=100)})
@@ -1134,7 +1136,7 @@ if _wrview == "Lineups" and _lu_view == "Creator":
                              f"#{_pred['league']['rank']} / {_pred['league']['of']}")
                 _gids = [gr["id"] for gr in query(
                     "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
-                    "AND tracked=1 AND season='Current'", (_t, _t))]
+                    "AND tracked=1 AND season=?", (_t, _t, season_pick))]
                 # AXIS-2 read-filter: a League-wide coach scouting another team
                 # sees its observed lineups only over that team's POOLED games.
                 _ovis = ENT.team_visible_tracked_ids(AUTH.current_user(), _t)
@@ -1364,7 +1366,7 @@ if _wrview == "Lineups" and _lu_view == "Creator":
                 _tid = _one_tid
                 _gids = [g["id"] for g in query(
                     "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
-                    "AND tracked=1 AND season='Current'", (_tid, _tid))]
+                    "AND tracked=1 AND season=?", (_tid, _tid, season_pick))]
                 # AXIS-2 read-filter: scouting another team → its pooled games only.
                 _ovis = ENT.team_visible_tracked_ids(AUTH.current_user(), _tid)
                 if _ovis is not None:
@@ -1664,7 +1666,7 @@ if _wrview == "Defensive assignments":
 if _wrview == "Analyze":
     from helpers.dashboard.analyze import render as _render_analyze
     st.subheader("Analyze — the stat playground")
-    _render_analyze()
+    _render_analyze(season=season_pick)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -21,11 +21,32 @@ def _field(rows):
 
 
 def test_single_state_identical_to_class_only():
-    r = _field([("OK", "4A"), ("OK", "4A"), ("OK", "3A")])
-    TR._assign_ranks(r)
-    assert [r[t]["ClassRank"] for t in (1, 2, 3)] == [1, 2, 1]
-    assert r[1]["ClassOf"] == 2 and r[3]["ClassOf"] == 1
-    assert all(v["class_lbl"] == v["class"] for v in r.values())   # no prefix
+    # pin the league-level switch: a one-state LEAGUE keeps plain labels
+    _orig = TR.league_multi_state
+    TR.league_multi_state = lambda: False
+    try:
+        r = _field([("OK", "4A"), ("OK", "4A"), ("OK", "3A")])
+        TR._assign_ranks(r)
+        assert [r[t]["ClassRank"] for t in (1, 2, 3)] == [1, 2, 1]
+        assert r[1]["ClassOf"] == 2 and r[3]["ClassOf"] == 1
+        assert all(v["class_lbl"] == v["class"] for v in r.values())   # no prefix
+    finally:
+        TR.league_multi_state = _orig
+
+
+def test_subset_field_labels_follow_the_league():
+    """A single-state SUBSET field (e.g. tracked teams all in OK) must still
+    qualify labels when the LEAGUE spans states — else the scored table says
+    'OK 3A' while the tracked table says '3A' and label-keyed filters match
+    nothing (the empty archive Tracked-tab bug)."""
+    _orig = TR.league_multi_state
+    TR.league_multi_state = lambda: True
+    try:
+        r = _field([("OK", "4A"), ("OK", "3A")])
+        TR._assign_ranks(r)
+        assert r[1]["class_lbl"] == "OK 4A" and r[2]["class_lbl"] == "OK 3A"
+    finally:
+        TR.league_multi_state = _orig
 
 
 def test_multi_state_partitions_and_labels():

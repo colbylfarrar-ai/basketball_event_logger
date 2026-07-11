@@ -401,12 +401,33 @@ def gauge_dial(value, title, color, ref=50, vmax=100, vmin=0):
 
 
 # ── table polish (st.dataframe) ───────────────────────────────────────────────
+def round_df(df, nd=1, small_nd=2, small_below=10):
+    """Display-rounding for tables: numeric columns rounded to ``nd`` decimals;
+    a column whose magnitudes all sit under ``small_below`` (per-shot / ratio
+    scale — PPP, AST/TOV, WAR) keeps ``small_nd`` so it doesn't flatten. Only
+    touches columns that are entirely numeric/None, so labels/mixed text pass
+    through untouched."""
+    out = df.copy()
+    for c in out.columns:
+        col = out[c]
+        _num = col.map(lambda v: v is None
+                       or (isinstance(v, (int, float)) and not isinstance(v, bool)))
+        if not (_num.all() and col.map(lambda v: isinstance(v, float)).any()):
+            continue
+        num = pd.to_numeric(col, errors="coerce")
+        mx = num.abs().max()
+        out[c] = num.round(small_nd if (pd.notna(mx) and mx < small_below) else nd)
+    return out
+
+
 def style_df(df, grad_cols=None, signed_cols=None):
     """Return a pandas ``Styler`` for ``st.dataframe`` with a dark-friendly
     red→green heat on ``grad_cols`` (higher = greener) and red/green text on
     ``signed_cols`` (negative = red). Matplotlib-free, so it works on the deploy
-    mirror. Falls back to the plain DataFrame if styling can't apply."""
+    mirror. Falls back to the plain DataFrame if styling can't apply.
+    Numeric columns are display-rounded first (round_df) — no raw float tails."""
     try:
+        df = round_df(df)
         sty = df.style
         for c in (grad_cols or []):
             if c not in df.columns:

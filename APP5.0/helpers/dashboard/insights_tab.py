@@ -211,13 +211,17 @@ def render(ctx):
                 f"from **{_src}** (career) — a player switches to this season's "
                 "read once they have 5 tracked games in it.")
 
-    # this team's player ids, ordered by rating
-    pids = []
-    for p in (ctx.players or []):
-        pid = p.get("_pid") if isinstance(p, dict) else None
-        if pid in table:
-            pids.append(pid)
-    pids = sorted(set(pids), key=lambda p: -(table[p].get("OVERALL") or 0))
+    # this team's player ids, ordered by rating. Derive from the (career-blended)
+    # LEAGUE TABLE filtered to this team — NOT from ctx.players, which is the
+    # current-season bundle and is EMPTY on a freshly rolled-over season (0
+    # tracked games), so the career rows would never render. ctx.players still
+    # seeds the set (a current-season player who IS rated), then any career row
+    # for this team is unioned in.
+    _team = getattr(ctx, "team_id", None)
+    pids = {p.get("_pid") for p in (ctx.players or [])
+            if isinstance(p, dict) and p.get("_pid") in table}
+    pids |= {pid for pid, r in table.items() if r.get("team_id") == _team}
+    pids = sorted(pids, key=lambda p: -(table[p].get("OVERALL") or 0))
     if not pids:
         st.caption("No tracked shooters on this roster yet.")
         return

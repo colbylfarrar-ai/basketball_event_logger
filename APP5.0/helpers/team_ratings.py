@@ -125,17 +125,28 @@ def _finished_games(gender=None, tracked_only=False, game_ids=None,
     return rows
 
 
-def _team_meta(gender=None):
+def _team_meta(gender=None, season=None):
     """{team_id: {'name','class','gender','state'}} for teams, optionally one
-    gender."""
+    gender. `season` (an archive label) overlays each team's class with the
+    class it PLAYED IN that season (helpers.seasons.team_classes_for → the
+    team_class_history snapshot), so a past-season ranking groups by the class
+    that was true then, not today's re-aligned class. None / current season =
+    the live teams.class."""
     clause = "WHERE gender = ?" if gender else ""
     params = (gender,) if gender else ()
-    return {
+    meta = {
         r["id"]: {"name": r["name"], "class": r["class"], "gender": r["gender"],
                   "state": (r["state"] or "").strip()}
         for r in query(f"SELECT id, name, class, gender, state FROM teams {clause}",
                        params)
     }
+    import helpers.seasons as _SEAS
+    if season is not None and not _SEAS.is_current(season):
+        hist = _SEAS.team_classes_for(season)
+        for tid, m in meta.items():
+            if tid in hist and hist[tid] is not None:
+                m["class"] = hist[tid]
+    return meta
 
 
 def _per_team_games(games):
@@ -287,8 +298,8 @@ def results_fingerprint():
 
 
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                  reg=DEFAULT_REG, season="Current", sos_weight=DEFAULT_SOS_WEIGHT,
-                  game_ids=None):
+                  reg=DEFAULT_REG, sos_weight=DEFAULT_SOS_WEIGHT, game_ids=None,
+                  season="Current"):
     """
     Results-only power ratings for every team in `gender` (None = all).
     Returns {team_id: {...}} with, per team:
@@ -304,8 +315,8 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
     `sos_weight` is the points-per-SD schedule-strength nudge folded into Rating
     (standardized; see DEFAULT_SOS_WEIGHT); 0 reproduces pure AdjNet+Class.
     """
-    games = _finished_games(gender=gender, season=season, game_ids=game_ids)
-    meta = _team_meta(gender=gender)
+    games = _finished_games(gender=gender, game_ids=game_ids, season=season)
+    meta = _team_meta(gender=gender, season=season)
     tg = _per_team_games(games)
     if not tg:
         return {}
@@ -382,8 +393,8 @@ def _tracked_team_game_boxes(games):
 
 
 def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                    reg=DEFAULT_REG, game_ids=None, season="Current",
-                    sos_weight=DEFAULT_SOS_WEIGHT):
+                    reg=DEFAULT_REG, game_ids=None, sos_weight=DEFAULT_SOS_WEIGHT,
+                    season="Current"):
     """
     Advanced, possession-based power ratings over tracked games only.
     `game_ids` is the entitlement read-filter (see _finished_games): a League-wide
@@ -403,7 +414,7 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
     """
     games = _finished_games(gender=gender, tracked_only=True, game_ids=game_ids,
                             season=season)
-    meta = _team_meta(gender=gender)
+    meta = _team_meta(gender=gender, season=season)
     if not games:
         return {}
 

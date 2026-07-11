@@ -431,6 +431,38 @@ if _hubview == "Teams":
             st.cache_data.clear()
             st.rerun()
 
+    # ── Retroactive class — fix a team's class for a PAST season ──────────────
+    # The editor above sets the LIVE (current-season) class. Classes re-align
+    # each year, so a past-season view reads team_class_history (snapshotted at
+    # each rollover). This lets a coach correct a wrong past-season class without
+    # touching the current one. Appears only once a season has been archived.
+    _past = SZ.archived_labels()
+    if _past:
+        with st.expander("🗄️ Retroactive class — change a team's class for a past season"):
+            st.caption("Classes re-align each year, so this edits the class a team "
+                       "played in during a PAST season only — the current-season "
+                       "class stays as set in the table above.")
+            _rc1, _rc2 = st.columns([1, 2])
+            _rc_season = _rc1.selectbox("Season", _past, key="rc_season")
+            _teams_rc = query("SELECT id, name, gender FROM teams ORDER BY name")
+            _rc_team = _rc2.selectbox(
+                "Team", _teams_rc, key="rc_team",
+                format_func=lambda r: f"{r['name']} ({'Girls' if r['gender']=='F' else 'Boys'})")
+            if _rc_team is not None:
+                _cur = SZ.team_class(_rc_team["id"], _rc_season)
+                _idx = CLASS_OPTIONS.index(_cur) if _cur in CLASS_OPTIONS else len(CLASS_OPTIONS) - 1
+                _rc_class = st.selectbox(
+                    f"Class in {_rc_season}", CLASS_OPTIONS, index=_idx, key="rc_class",
+                    help=f"Currently recorded as **{_cur or 'N/A'}** for {_rc_season}.")
+                if st.button("Save past-season class", key="rc_save", type="primary"):
+                    execute("INSERT OR REPLACE INTO team_class_history "
+                            "(team_id, season, class) VALUES (?,?,?)",
+                            (_rc_team["id"], _rc_season, _rc_class))
+                    flash("success",
+                          f"{_rc_team['name']} recorded as {_rc_class} in {_rc_season}.")
+                    st.cache_data.clear()
+                    st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  PLAYERS  (standalone team picker)

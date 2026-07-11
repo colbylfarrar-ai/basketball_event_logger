@@ -252,3 +252,67 @@ def scoring_runs(game_id, events=None, min_run=6):
     runs = [r for r in runs if r["points"] >= min_run]
     runs.sort(key=lambda r: -r["points"])
     return runs
+
+
+# ── stint-length scoring splits (short bursts vs long runs) ──────────────────────
+def stint_scoring_splits(events, short_max=240.0, long_min=360.0):
+    """Per-player scoring rate by STINT LENGTH — does a player produce in short
+    bursts or need long runs of minutes?
+
+    A stint = one merged on-floor interval from the per-event lineup snapshots
+    (rotation()). Each of the player's points is assigned to the stint whose
+    clock window contains it; stints of ≤ `short_max` seconds are "short
+    bursts", ≥ `long_min` are "long runs" (the middle band is dropped so the
+    two reads don't blur). Rates are points per 32 minutes of stint time.
+
+    Returns {pid: {"short_secs","short_pts","n_short","long_secs","long_pts",
+                   "n_long","short_p32","long_p32","diff_p32"}} — players with
+    time in BOTH bands only.
+    """
+    by_game = defaultdict(list)
+    for e in events:
+        by_game[e["game_id"]].append(e)
+    agg = defaultdict(lambda: {"short_secs": 0.0, "short_pts": 0.0, "n_short": 0,
+                               "long_secs": 0.0, "long_pts": 0.0, "n_long": 0})
+    for gid, evs in by_game.items():
+        rot = rotation(gid, events=evs)
+        # this game's scoring moments per player: (elapsed, pts)
+        scores = defaultdict(list)
+        for e in evs:
+            if e["shot_result"] != "make" or e["primary_player_id"] is None:
+                continue
+            if e["event_type"] == "shot":
+                pts = 3 if e["shot_type"] == 3 else 2
+            elif e["event_type"] == "free_throw":
+                pts = 1
+            else:
+                continue
+            scores[e["primary_player_id"]].append((elapsed(e), pts))
+        for _team, rows in rot["teams"].items():
+            for r in rows:
+                pid = r["player_id"]
+                for (s0, s1) in r["segments"]:
+                    dur = s1 - s0
+                    if dur < 30:          # snapshot sliver, not a real stint
+                        continue
+                    if dur <= short_max:
+                        band = "short"
+                    elif dur >= long_min:
+                        band = "long"
+                    else:
+                        continue
+                    pts = sum(p for (t, p) in scores.get(pid, [])
+                              if s0 - 0.5 <= t <= s1 + 0.5)
+                    a = agg[pid]
+                    a[band + "_secs"] += dur
+                    a[band + "_pts"] += pts
+                    a["n_" + band] += 1
+    out = {}
+    for pid, a in agg.items():
+        if a["short_secs"] <= 0 or a["long_secs"] <= 0:
+            continue
+        s32 = a["short_pts"] / a["short_secs"] * 32 * 60
+        l32 = a["long_pts"] / a["long_secs"] * 32 * 60
+        out[pid] = {**a, "short_p32": round(s32, 2), "long_p32": round(l32, 2),
+                    "diff_p32": round(s32 - l32, 2)}
+    return out

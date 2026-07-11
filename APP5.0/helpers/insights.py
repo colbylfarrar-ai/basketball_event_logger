@@ -664,13 +664,46 @@ def _g_garbage(row, pools, d):
             "n": pts}
 
 
+def _g_stints(row, pools, d):
+    """Stint-length read: does the player score in SHORT BURSTS or need LONG
+    RUNS of minutes? Rates from gameflow.stint_scoring_splits (points per 32
+    stint-minutes, short ≤4-min stints vs long ≥6-min runs). Hard sample gates
+    (≥3 stints AND ≥12 minutes in EACH band) so one hot cameo never fires."""
+    st_ = d.get("stints")
+    if not st_:
+        return None
+    if (st_["n_short"] < 3 or st_["n_long"] < 3
+            or st_["short_secs"] < 12 * 60 or st_["long_secs"] < 12 * 60):
+        return None
+    s32, l32 = st_["short_p32"], st_["long_p32"]
+    if max(s32, l32) < 6:               # low-usage player — no scoring read
+        return None
+    diff = s32 - l32
+    ratio = (s32 / l32) if l32 > 0 else float("inf")
+    n = st_["n_short"] + st_["n_long"]
+    if diff >= 4 and ratio >= 1.4:
+        txt = (f"**Microwave scorer** — **{s32:.0f} pts/32 in short bursts** "
+               f"(≤4-min stints) vs {l32:.0f} in long runs; they heat up fast, "
+               "so ride them in spurts and rest them before they cool.")
+        score = min(3.0, diff / 4.0)
+    elif diff <= -4 and (l32 / s32 if s32 > 0 else float("inf")) >= 1.4:
+        txt = (f"**Rhythm player** — **{l32:.0f} pts/32 in long runs** "
+               f"(6+-min stints) vs {s32:.0f} in short bursts; they need "
+               "extended minutes to get going — avoid quick-hook substitutions.")
+        score = min(3.0, -diff / 4.0)
+    else:
+        return None
+    return {"text": txt, "score": score, "z": diff / 4.0,
+            "metric": "Stint length", "n": n}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
                _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
                _g_clutchft, _g_pnr_role, _g_spacing,
                _g_rimdef, _g_perimdef, _g_rebound,
                _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish,
-               _g_usage, _g_garbage]
+               _g_usage, _g_garbage, _g_stints]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -689,7 +722,7 @@ def _derive(row):
 def league_insights(table, *, guarded=None, q4=None, playtypes=None,
                     playstyles=None, situational=None, impact=None,
                     matchup=None, totypes=None, foulft=None, pnr=None,
-                    spacing=None, garbage=None, top=3):
+                    spacing=None, garbage=None, stints=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
@@ -732,6 +765,8 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
             d["spacing"] = spacing[pid]
         if garbage and pid in garbage:
             d["garbage"] = garbage[pid]
+        if stints and pid in stints:
+            d["stints"] = stints[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -992,6 +1027,14 @@ def garbage_edges(events):
     return SIT.player_margin_scoring(events)
 
 
+def stint_edges(events):
+    """{pid: stint-length scoring split} — short-burst vs long-run production
+    (gameflow.stint_scoring_splits). Needs the per-event lineup snapshots, so it
+    lights up only on tracked games."""
+    import helpers.gameflow as GF
+    return GF.stint_scoring_splits(events)
+
+
 def situational_edges(events):
     """{pid: {'label','ppp_here','ppp_overall','poss','delta'}} — each player's most
     notable quarter-based scoring swing (4th-quarter clutch vs their overall). Reads
@@ -1048,12 +1091,16 @@ def build_feed(table, events, *, top=3, impact=None):
         sit = situational_edges(events)
     except Exception:
         pass
-    gt = None
+    gt = sl = None
     try:
         gt = garbage_edges(events)
+    except Exception:
+        pass
+    try:
+        sl = stint_edges(events)
     except Exception:
         pass
     return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
                            playstyles=ps, situational=sit, impact=impact,
                            matchup=mu, totypes=tt, foulft=ff, pnr=pr,
-                           spacing=sp, garbage=gt, top=top)
+                           spacing=sp, garbage=gt, stints=sl, top=top)

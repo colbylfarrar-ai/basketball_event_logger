@@ -261,6 +261,93 @@ def tracked_baseline(gender=None, game_ids=None, min_games=1, table=None,
     return build_priors(table)["league"]
 
 
+# ── career-based reads across the season rollover ───────────────────────────────
+# A rolled-over league starts its new season with 0-4 tracked games per player —
+# a rate over that sample is noise while a full 20-game read of the SAME person
+# sits one season back (identity chain). Founder rule: everything reads career
+# (= the newest archived season's row) until a player has CAREER_CUTOFF tracked
+# games in the active season, then the live season takes over.
+CAREER_CUTOFF = 5
+
+
+def career_stat_table(gender=None, season="Current", cutoff=CAREER_CUTOFF,
+                      min_games=1, cur_table=None):
+    """A player_stat_table for `season` where every CURRENT-ROSTER player with
+    fewer than `cutoff` tracked games this season reads as their newest archived
+    season's row instead (resolved through the identity chain), keyed by the
+    CURRENT pid with current meta (name/number/team). Substitution, not merging
+    — each row stays internally consistent (one season's sample). Substituted
+    rows carry row['career_src'] = the archived season label.
+
+    Returns (table, n_substituted). Falls back to the plain season table when
+    there are no archived seasons. League-wide, so priors/pools stay
+    league-relative. Pass `cur_table` (an already-built, possibly
+    entitlement-scoped season table) to substitute into it instead of building
+    a fresh one — the archive rows swapped in are open-archive data either way."""
+    import helpers.player_ratings as PR
+    import helpers.seasons as SEAS
+
+    if cur_table is not None:
+        cur = cur_table
+    else:
+        pool = set(SEAS.game_pool(season, gender=gender, tracked_only=True))
+        cur = PR.player_stat_table(game_ids=(pool or None), gender=gender,
+                                   min_games=min_games, season=season) if pool else {}
+    arch_labels = [s for s in SEAS.archived_labels()]
+    if not arch_labels:
+        return dict(cur), 0
+
+    # identity map: person key -> {season_label_or_None(current): pid}
+    prows = query("SELECT id, COALESCE(identity_id, id) AS person, archived, "
+                  "season, team_id, name, number FROM players")
+    cur_players = [r for r in prows if not r["archived"]]
+    by_person_season = {}
+    for r in prows:
+        if r["archived"]:
+            by_person_season.setdefault(r["person"], {})[r["season"]] = r["id"]
+
+    # archived-season tables, newest first, built lazily (one query per season
+    # that actually gets consulted)
+    arch_tables = {}
+
+    def _arch_table(lbl):
+        if lbl not in arch_tables:
+            p = set(SEAS.game_pool(lbl, gender=gender, tracked_only=True))
+            arch_tables[lbl] = (PR.player_stat_table(
+                game_ids=p, gender=gender, min_games=min_games, season=lbl)
+                if p else {})
+        return arch_tables[lbl]
+
+    out = dict(cur)
+    subbed = 0
+    for pr in cur_players:
+        pid = pr["id"]
+        gp_cur = (cur.get(pid) or {}).get("GP") or 0
+        if gp_cur >= cutoff:
+            continue                          # live season has enough evidence
+        old_by_season = by_person_season.get(pr["person"], {})
+        for lbl in arch_labels:               # newest archive first
+            old_pid = old_by_season.get(lbl)
+            if old_pid is None:
+                continue
+            row = _arch_table(lbl).get(old_pid)
+            if not row or (row.get("GP") or 0) <= gp_cur:
+                continue                      # archive adds nothing over live
+            merged = dict(row)
+            # meta follows the CURRENT row (transfers keep their new team)
+            merged["name"] = pr["name"]
+            merged["number"] = pr["number"]
+            merged["team_id"] = pr["team_id"]
+            _t = query("SELECT name FROM teams WHERE id=?", (pr["team_id"],))
+            if _t:
+                merged["team"] = _t[0]["name"]
+            merged["career_src"] = lbl
+            out[pid] = merged
+            subbed += 1
+            break
+    return out, subbed
+
+
 # ── career window (cross-season hook; inert until a 2nd season is linked) ────────
 def career_game_ids(pid, game_ids=None):
     """Every tracked game_id belonging to this player's PERSON across seasons.

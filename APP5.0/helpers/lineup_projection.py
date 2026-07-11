@@ -109,6 +109,35 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
             "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
             "AND tracked=1 AND season=?", (team_id, team_id, season))]
     n_games = len(gids)
+    career_note = None
+    drop_departed = None
+    if n_games < MIN_TEAM_GAMES and game_ids is None:
+        # CAREER FALLBACK (founder rule: career-based until the live season has
+        # games): a freshly rolled-over season has no rotation to project, but
+        # the same program's full read sits one season back — an open archive,
+        # so no entitlement question. Project from the newest archived season
+        # with a real sample, dropping players who didn't carry into the
+        # current roster (graduated/left, resolved via the identity chain).
+        import helpers.seasons as SEAS
+        if SEAS.is_current(season):
+            for _lbl in SEAS.archived_labels():
+                _g2 = [r["id"] for r in query(
+                    "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
+                    "AND tracked=1 AND season=?", (team_id, team_id, _lbl))]
+                if len(_g2) >= MIN_TEAM_GAMES:
+                    gids = _g2
+                    season = _lbl
+                    career_note = (
+                        f"Career read — projected from {_lbl} "
+                        f"({len(_g2)} tracked games; this season has {n_games}). "
+                        "Departed players are dropped; the live season takes "
+                        "over as you track games.")
+                    # persons still on the CURRENT roster (identity chain)
+                    drop_departed = {r["p"] for r in query(
+                        "SELECT COALESCE(identity_id, id) AS p FROM players "
+                        "WHERE team_id=? AND archived=0", (team_id,))}
+                    n_games = len(gids)
+                    break
     if n_games < MIN_TEAM_GAMES:
         return {"gated": f"only {n_games} tracked games (need {MIN_TEAM_GAMES})",
                 "team_games": n_games}
@@ -158,6 +187,23 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
     team_dshot_avg = (dshot_num / dshot_den) if dshot_den else None
     team_stl_pm_avg = (stl_num / dshot_den) if dshot_den else 0.0
 
+    # career fallback: drop players whose person didn't carry to the current
+    # roster (graduated/left). If the identity links are too sparse to keep a
+    # five, keep everyone and say so — an over-full depth chart beats a fake one.
+    if drop_departed is not None and players:
+        ph = ",".join("?" * len(players))
+        _person = {r["id"]: r["p"] for r in query(
+            f"SELECT id, COALESCE(identity_id, id) AS p FROM players "
+            f"WHERE id IN ({ph})", tuple(players))}
+        kept = {p: v for p, v in players.items()
+                if _person.get(p) in drop_departed}
+        if len(kept) >= 5:
+            players = kept
+        elif career_note:
+            career_note += (" (Couldn't match enough returning players by "
+                            "identity — showing last season's full rotation, "
+                            "departures included.)")
+
     # signature goals (the OBJECTIVE) — the team's own win/loss stats
     import helpers.insights_team as IT
     wl = IT.winloss_alignment(team_id, gender=gender, game_ids=gids)
@@ -173,7 +219,7 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
         "players": players, "observed_line": observed,
         "team_dshot_avg": team_dshot_avg, "team_stl_pm_avg": team_stl_pm_avg,
         "goals": goals, "d_by_key": d_by_key, "sig_available": sig_available,
-        "stars": stars,
+        "stars": stars, "career_note": career_note, "season_used": season,
     }
 
 

@@ -47,20 +47,25 @@ def _build(ctx):
                     "Upgrade to project your roster's rates and optimize the rotation "
                     "against your win formula.", icon="🔒")
         return None
-    if not getattr(ctx, "has_tracked", False):
-        empty_state("No tracked games yet",
-                    "Track games to build the rotation history a projection needs.",
-                    icon="🎬")
-        return None
+    # NOTE: no early has_tracked gate — a rolled-over season with 0 tracked
+    # games can still project from the newest archived season (build_context's
+    # career fallback). Only a team with no usable sample ANY season is gated.
     gids = list(ctx.game_ids) if getattr(ctx, "game_ids", None) is not None else None
     season = getattr(ctx, "season", "Current")
     ctxp = LP.build_context(ctx.team_id, gender=ctx.gender, game_ids=gids,
                             season=season)
     if ctxp.get("gated"):
-        empty_state("Not enough tracked games to project a rotation",
-                    f"{ctxp['gated']}. The depth-chart projection needs a real "
-                    f"rotation sample — keep tracking.", icon="📉")
+        if not getattr(ctx, "has_tracked", False):
+            empty_state("No tracked games yet",
+                        "Track games to build the rotation history a projection "
+                        "needs.", icon="🎬")
+        else:
+            empty_state("Not enough tracked games to project a rotation",
+                        f"{ctxp['gated']}. The depth-chart projection needs a real "
+                        f"rotation sample — keep tracking.", icon="📉")
         return None
+    if ctxp.get("career_note"):
+        st.info("📅 " + ctxp["career_note"])
     return ctxp
 
 
@@ -108,6 +113,8 @@ def _rotation_table(opt, ctxp, names):
 def _star_note(tid, ctxp):
     # use the ctx-resolved, season-scoped game ids (gids may be None for an open
     # archive / own team — star_coverage would otherwise read the 'Current' season)
+    if ctxp.get("career_note"):
+        return   # last season's stagger read may name departed players — skip
     try:
         import helpers.rotation_plan as RP
         sc = RP.star_coverage(tid, game_ids=ctxp.get("game_ids"))

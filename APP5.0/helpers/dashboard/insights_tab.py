@@ -41,6 +41,20 @@ def _league(gender, season="Current", season_gp=None):
     table = PR.player_stat_table(
         gender=gender, min_games=1,
         game_ids=(set(gids) if season_gp is not None else None))
+    # CAREER BLEND (founder rule): on the ACTIVE season, a current-roster player
+    # with under PJ.CAREER_CUTOFF tracked games reads as their newest archived
+    # season's row (identity chain) — insights roll over the season boundary
+    # instead of going dark until the new sample builds. Substituted rows carry
+    # row['career_src'] (the render captions them). Archive rows are an open
+    # archive, so nothing entitlement-gated is widened.
+    try:
+        import helpers.seasons as _SEAS
+        import helpers.projection as _PJ
+        if _SEAS.is_current(season):
+            table, _ = _PJ.career_stat_table(gender=gender, season=season,
+                                             cur_table=table)
+    except Exception:
+        pass
     ev = S.fetch_events(gids) if gids else []
     # on-floor impact feed (RAPM + HoopWAR) for the stats-vs-substance generator —
     # reuses the player-card caches so the ridge solves at most once per gender
@@ -140,19 +154,29 @@ def _split_rows(pa, pb, la, lb):
 
 @st.fragment
 def render(ctx):
-    if not getattr(ctx, "has_tracked", False):
-        st.info("🔒 Insights read tracked play-by-play (shot quality, contest "
-                "splits, win-impact). Track this team's games — or unlock the "
-                "Paid tier — to light them up.")
-        return
-
     # (Team at a glance moved to the Overview tab — UI_DENSITY_PLAN phase A.)
     table, feed, roles, impact, cliffs = _league(
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "season_gp", None))
+    # career rows (last season's read, open archive) keep the tab alive on a
+    # freshly rolled-over season even before this season's tracked gate opens
+    _career_here = [r for r in table.values()
+                    if r.get("career_src")
+                    and r.get("team_id") == getattr(ctx, "team_id", None)]
+    if not getattr(ctx, "has_tracked", False) and not _career_here:
+        st.info("🔒 Insights read tracked play-by-play (shot quality, contest "
+                "splits, win-impact). Track this team's games — or unlock the "
+                "Paid tier — to light them up.")
+        return
     if not table:
         st.caption("No tracked players yet for this league.")
         return
+    if _career_here:
+        _src = _career_here[0].get("career_src")
+        st.info(f"📅 {len(_career_here)} player read"
+                f"{'s' if len(_career_here) != 1 else ''} on this roster come "
+                f"from **{_src}** (career) — a player switches to this season's "
+                "read once they have 5 tracked games in it.")
 
     # this team's player ids, ordered by rating
     pids = []

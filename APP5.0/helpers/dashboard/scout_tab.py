@@ -619,6 +619,16 @@ def render(ctx):
             # who normally starts + the 0-100 category breakdown behind OVERALL
             gs_txt = (f" · Starts {p['gs_pct']:.0f}%"
                       if p.get("gs_pct") is not None else "")
+            rtg_txt = (f" · RTG {p['rtg']}"
+                       if p.get("rtg") is not None else "")
+            _role_html = ""
+            if p.get("rtg_role"):
+                _rf = (f" · form {p['rtg_form']}"
+                       if p.get("rtg_form") is not None else "")
+                _role_html = (f"<br><span style='font-size:12px;color:#8b949e'>"
+                              f"Rating role: <b>{html.escape(p['rtg_role'])}</b>"
+                              f" <span style='font-size:11px'>(0–10 grade{_rf})"
+                              f"</span></span>")
             _bd = " · ".join(
                 f"{lbl} {p.get(k)}" for k, lbl in
                 (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))
@@ -649,8 +659,8 @@ def render(ctx):
                 f"<div class='glass-tile' style='margin-bottom:8px'>"
                 f"<b>#{p['num']} {html.escape(p['name'])}</b>{pos_html} "
                 f"<span style='color:#8b949e'>OVR "
-                f"{p['ovr'] if p['ovr'] is not None else '—'}{gs_txt}</span>"
-                f"{arch_html}{bd_html}{bio_html}<br>"
+                f"{p['ovr'] if p['ovr'] is not None else '—'}{gs_txt}{rtg_txt}</span>"
+                f"{arch_html}{_role_html}{bd_html}{bio_html}<br>"
                 f"<span style='font-size:13px'>{(p['ppg'] or 0):.1f} ppg · "
                 f"{(p['rpg'] or 0):.1f} reb · {(p['apg'] or 0):.1f} ast · "
                 f"3P {('%.0f%%'%p['tp']) if p['tp'] is not None else '—'} · "

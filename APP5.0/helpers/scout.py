@@ -187,6 +187,33 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     if exclude_pids:
         roster = [r for r in roster if pid_of.get(r["name"]) not in exclude_pids]
     _lim = len(roster) if personnel_limit is None else personnel_limit
+
+    # ── per-game RATING summary (soccer-style 0-10): season avg + last-5 form +
+    #    fixed role. Calibrated over the WHOLE gender pool (same number the box
+    #    score / player card show), roles reused from `table` so no second
+    #    stat-table pass. Graceful {} if the engine can't build. ──────────────
+    _rtg_sum = {}
+    try:
+        import helpers.game_rating as GR
+        _rroles = {pid: GR.role_for(row) for pid, row in table.items()}
+        _ggids = [x["id"] for x in query(
+            "SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id "
+            "WHERE g.tracked=1 AND g.season=? AND t.gender=?", (season, gender))]
+        _rbundle = GR.season_game_ratings(
+            events=(S.fetch_events(_ggids) if _ggids else []), roles=_rroles)
+        _by_pid = {}
+        for _gid in sorted(_rbundle):                 # chronological-ish by id
+            for _pid, _d in _rbundle[_gid].items():
+                _by_pid.setdefault(_pid, []).append((_pid, _d))
+        for _pid, _seq in _by_pid.items():
+            _rs = [d["rating"] for _, d in _seq]
+            _rtg_sum[_pid] = {
+                "season": round(sum(_rs) / len(_rs), 1),
+                "form": round(sum(_rs[-5:]) / len(_rs[-5:]), 1),
+                "role": _seq[-1][1]["role"], "gp": len(_rs)}
+    except Exception:
+        _rtg_sum = {}
+
     personnel = []
     for r in roster[:_lim]:
         notes = []
@@ -204,6 +231,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
             notes.append("role player — help off, clog the lane")
         pid = pid_of.get(r["name"])
         bl = badges.get(pid, [])[:3] if pid else []
+        _rt = _rtg_sum.get(pid, {})
         personnel.append({
             "pid": pid,
             "name": r["name"], "num": r.get("number"),
@@ -215,6 +243,9 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
             # 0-100 category breakdown behind the OVERALL (player_ratings)
             "off": r.get("OFFENSE"), "def": r.get("DEFENSE"),
             "ply": r.get("PLAYMAKING"), "reb": r.get("REBOUNDING"),
+            # per-game rating (0-10): season avg · last-5 form · fixed role
+            "rtg": _rt.get("season"), "rtg_form": _rt.get("form"),
+            "rtg_role": _rt.get("role"),
             "badges": [f"{b['emoji']} {b['name']}" for b in bl],
         })
 
@@ -1001,7 +1032,8 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             ovr = f"OVR {p['ovr']}" if p.get("ovr") is not None else ""
             gs = (f"Starts {p['gs_pct']:.0f}%"
                   if p.get("gs_pct") is not None else "")
-            head_bits = " · ".join(x for x in (ovr, gs) if x)
+            rtg = f"RTG {p['rtg']}" if p.get("rtg") is not None else ""
+            head_bits = " · ".join(x for x in (ovr, gs, rtg) if x)
             pos = f" <span class='pos'>{e(p['pos'])}</span>" if p.get("pos") else ""
             head = (f"<div class='phead'><b>#{p['num']} {e(p['name'])}</b>{pos}"
                     + (f" <span class='ovr'>{e(head_bits)}</span>" if head_bits else "")
@@ -1019,6 +1051,13 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                                     p.get("ply"), p.get("reb"))
             if _why:
                 brk += f"<div class='brk' style='color:#b25e00'>{e(_why)}</div>"
+            _role = p.get("rtg_role")
+            if _role:
+                _rform = (f" · form {p['rtg_form']}"
+                          if p.get("rtg_form") is not None else "")
+                brk += (f"<div class='brk'>Rating role: {e(_role)}"
+                        f"<span style='color:#8b949e'>"
+                        f" (0–10 game grade{_rform})</span></div>")
             tp = f"{p['tp']:.0f}%" if p.get("tp") is not None else "—"
             ts = f"{p['ts']:.0f}%" if p.get("ts") is not None else "—"
             _usg = f" · USG {p['usg']:.0f}%" if p.get("usg") is not None else ""

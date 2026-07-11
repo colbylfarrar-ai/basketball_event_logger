@@ -932,6 +932,37 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None,
                 f"{b.get('PTS', 0)} pts · {b.get('TRB', 0)} reb · "
                 f"{b.get('AST', 0)} ast"))
 
+    # ── optional per-game RATING (0-10) — paid/event-derived, so it appears ONLY
+    #    when the engine can grade this player's tracked games; the card stays
+    #    box-only + free-tier-safe when absent. game → that game's grade;
+    #    season/stretch/picked → average over the shown tracked games. ──────────
+    _rtg_disp = None
+    try:
+        import helpers.game_rating as _GR
+        _gd = query("SELECT t.gender FROM players p JOIN teams t ON t.id=p.team_id "
+                    "WHERE p.id=?", (player_id,))
+        _gender = _gd[0]["gender"] if _gd else None
+        if _gender:
+            _rszn = p["season"] or "Current"
+            _ggids = [x["id"] for x in query(
+                "SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id "
+                "WHERE g.tracked=1 AND g.season=? AND t.gender=?", (_rszn, _gender))]
+            _bundle = _GR.season_game_ratings(game_ids=_ggids or None)
+            _mine = {gid: pm[player_id]["rating"]
+                     for gid, pm in _bundle.items() if player_id in pm}
+            if _mine:
+                if mode == "game":
+                    _tgt = game_id if (game_id is not None and game_id in _mine) \
+                        else (grows[-1]["game_id"] if grows else None)
+                    _rtg_disp = _mine.get(_tgt)
+                else:
+                    _shown = [r["game_id"] for r in (locals().get("show") or [])]
+                    _vals = ([_mine[g] for g in _shown if g in _mine]
+                             or list(_mine.values()))
+                    _rtg_disp = round(sum(_vals) / len(_vals), 1) if _vals else None
+    except Exception:
+        _rtg_disp = None
+
     # ── draw — the player-profile banner grammar, card-sized ─────────────────
     from matplotlib.patches import FancyBboxPatch
     fig, ax = _fig(_BG)
@@ -967,6 +998,10 @@ def player_spotlight_png(player_id, mode="season", n=5, game_id=None, bg=None,
             va="center", zorder=3)
     ax.text(87, 74.2, big_lbl, color=GREY, fontsize=12, ha="center",
             va="center", zorder=3)
+    # per-game rating chip, top-right of the hero (only when graded)
+    if _rtg_disp is not None:
+        ax.text(93, 87.4, f"RTG {_rtg_disp:.1f}", color=GOLD, fontsize=11.5,
+                fontweight="bold", ha="right", va="center", zorder=3)
 
     # STAT STRIP — 8 tiles across the full width (two rows of four)
     for i, (lbl, val) in enumerate((

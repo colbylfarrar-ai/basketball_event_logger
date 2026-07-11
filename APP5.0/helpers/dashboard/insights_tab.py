@@ -16,6 +16,7 @@ import re
 
 import streamlit as st
 
+from database.db import query
 import helpers.player_ratings as PR
 import helpers.stats as S
 import helpers.insights as IN
@@ -47,15 +48,47 @@ def _league(gender, season="Current", season_gp=None):
     # instead of going dark until the new sample builds. Substituted rows carry
     # row['career_src'] (the render captions them). Archive rows are an open
     # archive, so nothing entitlement-gated is widened.
+    _career_ev = None          # archive events remapped onto current pids
     try:
         import helpers.seasons as _SEAS
         import helpers.projection as _PJ
         if _SEAS.is_current(season):
-            table, _ = _PJ.career_stat_table(gender=gender, season=season,
-                                             cur_table=table)
+            table, _n_sub = _PJ.career_stat_table(gender=gender, season=season,
+                                                  cur_table=table)
+            # If the active season has NO tracked events yet, the career TABLE
+            # rows are last season's — feed last season's EVENTS too, else only
+            # the box-derived generators fire and career players get thin
+            # 1-line reads. BUT the career rows are keyed by the CURRENT pid,
+            # while archive events carry the ARCHIVE pid, so remap every
+            # player-id field on the events onto the current pid (identity
+            # chain) — otherwise the event generators' per-pid splits never
+            # match the table and nothing extra fires.
+            if _n_sub and not gids:
+                _pr = query("SELECT id, COALESCE(identity_id, id) AS person, "
+                            "archived FROM players")
+                _person_cur = {r["person"]: r["id"] for r in _pr if not r["archived"]}
+                _a2c = {r["id"]: _person_cur[r["person"]] for r in _pr
+                        if r["archived"] and r["person"] in _person_cur}
+                _egids = None
+                for _lbl in _SEAS.archived_labels():
+                    _p = _SEAS.game_pool(_lbl, gender=gender, tracked_only=True)
+                    if _p:
+                        _egids = list(_p)
+                        break
+                if _egids:
+                    _PF = ("primary_player_id", "secondary_player_id",
+                           "rebound_by_id", "pass_from_id", "shot_created_by_id",
+                           "blocked_by_id", "guarded_by_id", "stolen_by_id")
+                    _career_ev = []
+                    for _e in S.fetch_events(_egids):
+                        _d = dict(_e)
+                        for _f in _PF:
+                            if _d.get(_f) is not None:
+                                _d[_f] = _a2c.get(_d[_f], _d[_f])
+                        _career_ev.append(_d)
     except Exception:
         pass
-    ev = S.fetch_events(gids) if gids else []
+    ev = _career_ev if _career_ev is not None else (S.fetch_events(gids) if gids else [])
     # on-floor impact feed (RAPM + HoopWAR) for the stats-vs-substance generator —
     # reuses the player-card caches so the ridge solves at most once per gender
     imp = None

@@ -237,6 +237,14 @@ STAT_DEFS = [
      "Positive and bigger is better.", False),
 
     # ── Advanced production ──────────────────────────────────────────────────────
+    ("RTG",   "Game Rating (0-10)","Advanced",
+     "6.0 + role-weighted (points-added vs expected), pool-calibrated, clamped 0–10",
+     "The soccer-style per-game grade. Every action is scored as points added vs "
+     "what was expected (a made contested shot is worth more than a made layup; a "
+     "forced miss, steal, screen or board all count), reshaped by the player's "
+     "fixed role so a glue guy isn't punished for low usage. 6.0 = an average game.",
+     "7.5 good · 8.5 great · 9+ rare · <6 poor. Per-game only — season talent is "
+     "OVERALL. 'Form' = the average of the last 5 game ratings.", True),
     ("GS",    "Game Score",       "Advanced",
      "PTS + 0.4·FGM − 0.7·FGA − 0.4·(FTA−FTM) + 0.7·OREB + 0.3·DREB + STL + "
      "0.7·AST + 0.7·BLK − 0.4·PF − TOV",

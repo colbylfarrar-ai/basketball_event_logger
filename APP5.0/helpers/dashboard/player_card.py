@@ -248,6 +248,20 @@ def _projection(gender, season="Current", game_ids=None):
         return {}
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _game_rtg_bundle(gender, game_ids=None):
+    """Per-game 0-10 player ratings for the gender's tracked pool, calibrated once
+    so a player's game-log grades are mutually comparable. {game_id: {pid: {...}}}.
+    Cached per gender/pool like the other league fetchers here."""
+    import helpers.game_rating as _GR
+    import helpers.playtypes as _PT
+    gids = list(game_ids) if game_ids is not None else _PT._tracked_game_ids(gender)
+    try:
+        return _GR.season_game_ratings(game_ids=gids or None)
+    except Exception:
+        return {}
+
+
 def render_card(ctx):
     """Render the full player-profile card (header banner -> scouting report)."""
     P, pid, rows = ctx.P, ctx.pid, ctx.rows
@@ -1156,6 +1170,7 @@ def render_card(ctx):
            FROM games g WHERE g.id IN ({})""".format(
             ",".join("?" * len(gids)) or "NULL"), tuple(gids)) if gids else []
     name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
+    _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp)
     log = []
     _boxes = pgb.get(pid, {})
     for g in sorted(games, key=lambda x: x["date"]):
@@ -1163,8 +1178,10 @@ def render_card(ctx):
         if not b:
             continue
         opp = g["team2_id"] if g["team1_id"] == P["team_id"] else g["team1_id"]
+        _rtg = _rtg_all.get(g["id"], {}).get(pid, {}).get("rating")
         log.append({
             "Date": g["date"], "Opp": name_of.get(opp, "?"),
+            "RTG": _rtg,
             "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
             "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
             "FG": f"{b['FGM']}/{b['FGA']}", "3P": f"{b['3PM']}/{b['3PA']}",
@@ -1172,6 +1189,24 @@ def render_card(ctx):
             "GS": round(S.game_score(b), 1),
         })
     if log:
+        # ── Form strip: avg of the last-5 game ratings (soccer-style) ──────────
+        _rvals = [x["RTG"] for x in log if x["RTG"] is not None]
+        if _rvals:
+            _last5 = _rvals[-5:]
+            _form = sum(_last5) / len(_last5)
+            _season_rtg = sum(_rvals) / len(_rvals)
+            _role = None                       # role from any rated game for this player
+            for _gid, _pm in _rtg_all.items():
+                if pid in _pm:
+                    _role = _pm[pid].get("role")
+                    break
+            fc1, fc2, fc3 = st.columns(3)
+            fc1.metric("Form (last 5)", f"{_form:.1f}",
+                       help="Average of the last 5 game ratings (0-10, 6.0 = average).")
+            fc2.metric("Season rating", f"{_season_rtg:.1f}",
+                       help="Average game rating across all tracked games.")
+            fc3.metric("Rating role", _role or "—",
+                       help="Fixed role the game rating grades this player against.")
         # trend across games
         gx = [f"{g['Date'][5:]} {g['Opp'][:8]}" for g in log]
         tr = go.Figure()
@@ -1180,6 +1215,12 @@ def render_card(ctx):
         tr.add_trace(go.Scatter(x=gx, y=[g["GS"] for g in log], name="Game Score",
                                 mode="lines+markers", line=dict(color="#56d4dd",
                                                                 width=2)))
+        if any(g["RTG"] is not None for g in log):
+            tr.add_trace(go.Scatter(x=gx, y=[g["RTG"] for g in log], name="Rating (0-10)",
+                                    mode="lines+markers", yaxis="y2",
+                                    line=dict(color="#f5a623", width=2, dash="dot")))
+            tr.update_layout(yaxis2=dict(title="Rating", overlaying="y", side="right",
+                                         range=[0, 10], showgrid=False))
         tr.update_yaxes(title="Points / Game Score")
         tr.update_xaxes(tickangle=-40)
         _style(tr, 320)
@@ -1187,7 +1228,10 @@ def render_card(ctx):
 
         st.dataframe(pd.DataFrame(log), hide_index=True,
                      width="stretch",
-                     height=min(560, 60 + 35 * len(log)))
+                     height=min(560, 60 + 35 * len(log)),
+                     column_config={"RTG": st.column_config.NumberColumn(
+                         "RTG", format="%.1f",
+                         help="Per-game rating 0-10 (6.0 = average, role-adjusted)")})
         st.caption(f"{len(log)} tracked games. Box scores are per game from "
                    "tracked events.")
 

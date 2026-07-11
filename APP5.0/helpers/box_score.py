@@ -191,6 +191,20 @@ def _score_ratings_fp(gender, _fp):
     return TR.score_ratings(gender=gender)
 
 
+@st.cache_resource(show_spinner=False)
+def _game_ratings_fp(gender, _fp):
+    """Per-game 0-10 player RATINGS for a gender's tracked season, cached on the
+    results fingerprint (recomputes when a game score moves). One pool calibration
+    across the whole gender season so the grades are mutually comparable.
+    cache_resource survives the app's cache_data.clear() (same rationale as the
+    header power rating above)."""
+    import helpers.game_rating as GR
+    gids = [r["id"] for r in query(
+        "SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id "
+        "WHERE g.tracked=1 AND g.season='Current' AND t.gender=?", (gender,))]
+    return GR.season_game_ratings(game_ids=gids or None)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _tracked_ratings_cached(gender, vis_key):
     """Possession (NetRtg) league rating behind the header's tracked rank, cached
@@ -1180,6 +1194,10 @@ def render_box_score(game_id: int):
             wpp = None
         if ws is None or wpp is None:
             st.caption("Win-probability data unavailable for this game.")
+        try:
+            _grt = _game_ratings_fp(g["gender"], TR.results_fingerprint()).get(game_id, {})
+        except Exception:
+            _grt = {}
         rows = []
         for b in sorted([b for b in boxes.values() if b["team_id"] == tid],
                         key=lambda b: -S.game_score(b)):
@@ -1192,6 +1210,7 @@ def render_box_score(game_id: int):
                 smoe = round((S.fg_pct(b) - xfg) * 100, 1)
             row = {
                 "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
+                "RTG": _grt.get(pid, {}).get("rating"),
                 "GS": round(S.game_score(b), 1), "PER": round(S.per(b), 1),
                 "FIC": round(S.fic(b), 1), "TS%": round(100*S.ts(b), 1),
                 "VPS": (round(S.vps(b), 2) if S.vps(b) is not None else None)}
@@ -1204,6 +1223,8 @@ def render_box_score(game_id: int):
         if rows:
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
                          column_config={
+                             "RTG": st.column_config.NumberColumn("RTG", format="%.1f",
+                                    help="Game rating 0-10 (6.0 = average game, role-adjusted)"),
                              "TS%": st.column_config.ProgressColumn("TS%", format="%.0f",
                                     min_value=0, max_value=100),
                              "VPS": st.column_config.NumberColumn("VPS", format="%.2f"),
@@ -1211,12 +1232,14 @@ def render_box_score(game_id: int):
                              "PossWPA": st.column_config.NumberColumn("PossWPA", format="%+.3f"),
                              "SMOE": st.column_config.NumberColumn("SMOE", format="%+.1f")},
                          key=f"bs{game_id}_adv_players_{tid}")
-            st.caption("GS = Game Score · PER ≈ Game Score (single-program proxy) · "
+            st.caption("RTG = per-game rating 0-10 (6.0 = an average game, role-adjusted; "
+                       "the soccer-style match grade) · GS = Game Score · "
+                       "PER ≈ Game Score (single-program proxy) · "
                        "FIC = Floor Impact Counter · VPS = Hudl Value Point System "
                        "(value ÷ mistakes) · WPA = win-probability added (scoring) · "
                        "PossWPA = possession-model WPA · SMOE = FG% over expected. "
                        "RAPM/shrunk metrics are season-scale — omitted here. "
-                       "GS ranks THIS game only; for who's best on the season use "
+                       "GS/RTG rank THIS game only; for who's best on the season use "
                        "OVERALL on the Players page (GS/g is just one input to it).")
 
         # ── rotation / stint timeline ───────────────────────────────────────

@@ -36,7 +36,7 @@ _FIELDS_BY_TYPE = {
     # captured on fouls + turnovers too, not just shots — a press forces both,
     # and a PnR can end in a strip or a drawn foul — so both survive a retype.
     "foul": ("primary_player_id", "secondary_player_id", "official_id",
-             "play_type", "defense", "foul_type"),
+             "play_type", "defense"),
     "turnover": ("primary_player_id", "stolen_by_id", "play_type", "defense",
                  "turnover_type"),
 }
@@ -46,10 +46,9 @@ _ALL_FIELDS = ("primary_player_id", "shot_type", "shot_result", "zone",
                "pass_from_id", "shot_created_by_id", "rebound_by_id",
                "blocked_by_id", "guarded_by_id", "secondary_player_id",
                "stolen_by_id", "official_id", "play_type", "defense",
-               "turnover_type", "foul_type")
+               "turnover_type")
 # Text columns among _ALL_FIELDS; the rest are integer ids / shot_type.
-_STR_FIELDS = ("shot_result", "zone", "play_type", "defense", "turnover_type",
-               "foul_type")
+_STR_FIELDS = ("shot_result", "zone", "play_type", "defense", "turnover_type")
 
 
 # ── people / labels ─────────────────────────────────────────────────────────────

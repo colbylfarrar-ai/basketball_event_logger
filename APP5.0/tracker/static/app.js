@@ -1015,7 +1015,7 @@ function resetFlow(mode) {
     expand: false,                                  // quick-mode: details revealed for this entry
     shooter: null,
     details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
-    fouled: null, fouler: null, official: null, foulKind: null,
+    fouled: null, fouler: null, official: null,
     player: null, stolen: null, tovKind: null
   };
   if (window.Court) Court.clearMarker();
@@ -1191,12 +1191,6 @@ function ptLabel(k) { return PLAY_TYPE_LABEL[k] || k; }
 const TOV_TYPES = [
   ['travel', 'Violation'], ['drive', 'Drive'], ['pass', 'Pass'],
   ['shot_clock', 'Shot clock'], ['held', 'Held ball']
-];
-
-// Foul KIND (optional; untagged = a regular defensive foul). Keep in lockstep
-// with helpers/fouls.FOUL_TYPES. Orthogonal to play_type, same as TO kind.
-const FOUL_TYPES = [
-  ['offensive', 'Offensive'], ['rebounding', 'Rebounding']
 ];
 
 // Sticky "current defense" the opponent is in. Unlike play_type (per-shot), a
@@ -1405,9 +1399,6 @@ function renderFlow() {
       wrap.appendChild(chipRow('Official', offIds, f.official,
         function (id) { f.official = id; renderFlow(); }, { allowNone: true, labelFn: oLabel }));
     }
-    wrap.appendChild(optRow('Foul kind',
-      FOUL_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
-      f.foulKind, function (v) { f.foulKind = v; renderFlow(); }));
     if (f.fouled != null && f.fouler != null) {
       wrap.appendChild(flowBtn('LOG FOUL', 'btn primary big', logFoul));
     }
@@ -1516,7 +1507,6 @@ async function logFoul() {
   ev.primary_player_id = f.fouled;     // fouled player
   ev.secondary_player_id = f.fouler;   // fouler
   ev.official_id = f.official;
-  ev.foul_type = f.foulKind;           // offensive / rebounding (null = regular)
   // the picked official may come from the all-officials fallback list — make
   // sure the event's snapshot includes them so the lineup row gets written
   if (f.official != null && ev.officials_on.indexOf(f.official) < 0) {
@@ -1719,8 +1709,7 @@ function formFromEvent(ev) {
     stolen_by_id: ev.stolen_by_id != null ? ev.stolen_by_id : null,
     play_type: ev.play_type || null,
     defense: ev.defense || null,
-    turnover_type: ev.turnover_type || null,
-    foul_type: ev.foul_type || null
+    turnover_type: ev.turnover_type || null
   };
 }
 
@@ -1864,8 +1853,6 @@ function buildEditForm(ev) {
     box.appendChild(pickRow('Fouler', 'secondary_player_id', roster));
     const offIds = ((S.game && S.game.officials) || []).map(function (o) { return o.id; });
     box.appendChild(pickRow('Official', 'official_id', offIds, { labelFn: oLabel }));
-    box.appendChild(optRow('Foul kind', FOUL_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
-      f.foul_type, function (v) { f.foul_type = v; rerender(); }));
     box.appendChild(tagRow('Play type', 'play_type', PLAY_TYPES));
     box.appendChild(tagRow('Defense', 'defense', DEFENSES));
   } else if (f.event_type === 'turnover') {
@@ -1932,8 +1919,7 @@ async function saveEdit(eid) {
     stolen_by_id: f.stolen_by_id,
     play_type: f.play_type,
     defense: f.defense,
-    turnover_type: f.turnover_type,
-    foul_type: f.foul_type
+    turnover_type: f.turnover_type
   };
   try {
     const res = await api('/api/games/' + S.gameId + '/events/' + eid, {

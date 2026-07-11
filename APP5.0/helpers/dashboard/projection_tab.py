@@ -78,9 +78,11 @@ def _headline(tid, ctxp, opt, force=None):
               help="vs the average tracked team (clamped, directional)")
     c2.metric("Win prob vs avg team", f"{tc['win_prob_vs_avg'] * 100:.0f}%")
     if opt["objective_kind"] == "signature":
-        _obj_lbl, _obj_help = "Signature stats", "Optimizing the team's own win/loss signature stats."
+        _obj_lbl, _obj_help = "Signature stats", ("Optimizing the team's own win/loss "
+                                                  "signature stats — who fits how you play.")
     elif opt["objective_kind"] == "value":
-        _obj_lbl, _obj_help = "Player impact", "Concentrating minutes on your highest-Impact players."
+        _obj_lbl, _obj_help = "Best 5", ("The five who give the best chance to win in "
+                                         "general — minutes to your highest-impact players.")
     elif force == "net":
         _obj_lbl, _obj_help = "Best net (chosen)", "Maximizing projected point differential /100 (clamped, blunt)."
     else:
@@ -137,17 +139,30 @@ def render(ctx):
                 unsafe_allow_html=True)
     st.caption(
         "Every player's skill rates are stabilized over their tracked games, then "
-        "the optimizer searches minute splits to best hit **this team's own "
-        "signature stats** — the ~4 stats your wins and losses actually turn on. "
-        "Directional: it reads the levers, it doesn't promise a scoreline.")
+        "the optimizer searches minute splits for the objective below. Directional: "
+        "it reads the levers, it doesn't promise a scoreline.")
 
     ctxp = _build(ctx)
     if ctxp is None:
         return
-    opt = LP.optimize_minutes(tid, ctx=ctxp)
+
+    # Two lenses (founder ask): **Best 5** = who gives the best chance to win in
+    # GENERAL (a coach walking into a new team), **Signature stats** = who fits
+    # HOW THIS TEAM plays (a staying coach). Signature needs a mined win/loss
+    # split; without it, only Best 5 shows.
+    from helpers.ui import seg as _seg
+    _force = "value"
+    if ctxp.get("sig_available"):
+        _pick = _seg("Show me", ["Signature stats", "Best 5"],
+                     default="Signature stats", key=f"proj_lens_{tid}",
+                     help="Signature stats = the five that fits how you play "
+                          "(your win/loss signature). Best 5 = the five with the "
+                          "best chance to win in general (highest-impact players).")
+        _force = {"Signature stats": None, "Best 5": "value"}.get(_pick)
+    opt = LP.optimize_minutes(tid, ctx=ctxp, objective=_force)
     names = {p: ctxp["players"][p]["name"] for p in opt["minutes"]}
 
-    _headline(tid, ctxp, opt)
+    _headline(tid, ctxp, opt, force=_force)
     _rotation_table(opt, ctxp, names)
 
     # ── the best five + its give-and-take vs the season line ─────────────────
@@ -211,15 +226,16 @@ def render_deep(ctx):
                             "even minutes; shorter = more on your best.")
     # objective toggle — only meaningful when the team has mined signature stats
     # (without them the objective is always Net regardless).
-    _obj_opts = (["Signature stats", "Player impact"] if ctxp.get("sig_available")
-                 else ["Player impact", "Best net"])
+    _obj_opts = (["Signature stats", "Best 5"] if ctxp.get("sig_available")
+                 else ["Best 5", "Best net"])
     pick = cset2.radio(
         "Optimize for", _obj_opts, horizontal=True, key="proj_objective",
-        help="Signature stats = hit the ~4 stats your wins turn on. "
-             "Player impact = concentrate minutes on your highest-Impact players "
-             "(box + event impact rating). Best net = projected point diff /100 "
+        help="Signature stats = the five that fits how you play (hit the ~4 stats "
+             "your wins turn on) — for a staying coach. Best 5 = the best chance "
+             "to win in general (minutes to your highest-impact players) — for a "
+             "coach walking into a new team. Best net = projected point diff /100 "
              "(a blunt lever — the net projection is clamped).")
-    force = {"Player impact": "value", "Best net": "net",
+    force = {"Best 5": "value", "Best net": "net",
              "Signature stats": None}.get(pick)
 
     opt = LP.optimize_minutes(tid, ctx=ctxp, max_rotation=rot, objective=force)

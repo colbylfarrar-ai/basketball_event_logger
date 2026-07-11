@@ -468,11 +468,11 @@ def initialize_database():
                    class   TEXT    NOT NULL,
                    PRIMARY KEY (team_id, season)
                )""",
-            # Optional foul KIND on a foul event (offensive / rebounding —
-            # taxonomy in helpers/fouls.FOUL_TYPES). Nullable like
-            # turnover_type: untagged = a regular defensive foul, so every
-            # existing row stays NULL and breakdowns light up only as coaches
-            # tag. Orthogonal to play_type (the set call stays the extra layer).
+            # RESERVED (nullable, unused): a foul-KIND tag (offensive/rebounding)
+            # was trialed 2026-07-11 and reverted — the founder liked it in
+            # theory, not in practice. The column stays for schema parity with
+            # prod (which already ran this ALTER) and a trivial future re-add; no
+            # code reads or writes it.
             "ALTER TABLE game_events     ADD COLUMN foul_type TEXT",
         ]
 

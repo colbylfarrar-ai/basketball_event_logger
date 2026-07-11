@@ -1,12 +1,17 @@
 """
-projection_tab.py — the Team Dashboard "Projection" super-tab (B + C surface).
+projection_tab.py — the Projection surface, in two depths (B + C).
 
-Turns helpers.lineup_projection into a coach-facing read: the minutes the
-signature-stat optimizer recommends vs the team's observed rotation (the "extra
-wins" diff), the projected line against the team's OWN win/loss signature goals
-(hit/miss + margin), the current-roster team projection, and the star-stagger
-note. A pure renderer (the situational_tab.py / defense_tab.py pattern); all data
-arrives via ctx values + the engines, so it's AppTest-able in isolation.
+`render(ctx)`   — the LIGHT read on the Team Dashboard: headline projection,
+                  the recommended rotation, the best five with its trade-off
+                  line, and a hand-off to the War Room for the deep dive.
+`render_deep(ctx)` — the FULL rotation lab on the War Room → Lineups view:
+                  rotation-depth slider, objective picker, signature-goal
+                  table, and the what-if minutes editor.
+
+Both depths run helpers.lineup_projection — the ONE lineup engine — so the
+number a coach sees on the dashboard is the number the War Room shows. Pure
+renderers (the situational_tab.py / defense_tab.py pattern); all data arrives
+via ctx values + the engines, so each is AppTest-able in isolation.
 
 Everything is flagged directional and TEAM-GATED — a team without enough tracked
 games has no rotation to project, and the objective states whether it optimized
@@ -25,11 +30,102 @@ def _pct(v):
     return f"{v * 100:.1f}%" if v is not None else "—"
 
 
+def _fmt_edge(e):
+    """One give-or-take as coach text: percentage points for rate stats, raw
+    for PPP-scale stats."""
+    d = e["diff"]
+    if e["key"] in ("PPP", "oPPP"):
+        return f"{d:+.2f} {e['label']}"
+    return f"{d * 100:+.1f} {e['label']}"
+
+
+def _build(ctx):
+    """Shared gates + engine context for both depths. Renders the empty state
+    and returns None when gated; returns the LP ctx dict when it can run."""
+    if not getattr(ctx, "is_paid", False):
+        empty_state("Projection is a paid feature",
+                    "Upgrade to project your roster's rates and optimize the rotation "
+                    "against your win formula.", icon="🔒")
+        return None
+    if not getattr(ctx, "has_tracked", False):
+        empty_state("No tracked games yet",
+                    "Track games to build the rotation history a projection needs.",
+                    icon="🎬")
+        return None
+    gids = list(ctx.game_ids) if getattr(ctx, "game_ids", None) is not None else None
+    season = getattr(ctx, "season", "Current")
+    ctxp = LP.build_context(ctx.team_id, gender=ctx.gender, game_ids=gids,
+                            season=season)
+    if ctxp.get("gated"):
+        empty_state("Not enough tracked games to project a rotation",
+                    f"{ctxp['gated']}. The depth-chart projection needs a real "
+                    f"rotation sample — keep tracking.", icon="📉")
+        return None
+    return ctxp
+
+
+def _headline(tid, ctxp, opt, force=None):
+    """The three headline metrics + the thin-sample caption (both depths)."""
+    proj = opt["projection"]
+    tc = LP.project_team_current(tid, ctx=ctxp)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Projected Net /100", f"{tc['net']:+.1f}",
+              help="vs the average tracked team (clamped, directional)")
+    c2.metric("Win prob vs avg team", f"{tc['win_prob_vs_avg'] * 100:.0f}%")
+    if opt["objective_kind"] == "signature":
+        _obj_lbl, _obj_help = "Signature stats", "Optimizing the team's own win/loss signature stats."
+    elif opt["objective_kind"] == "value":
+        _obj_lbl, _obj_help = "Player impact", "Concentrating minutes on your highest-Impact players."
+    elif force == "net":
+        _obj_lbl, _obj_help = "Best net (chosen)", "Maximizing projected point differential /100 (clamped, blunt)."
+    else:
+        _obj_lbl, _obj_help = "Net (fallback)", "Not enough wins AND losses to mine signatures — optimizing Net."
+    c3.metric("Objective", _obj_lbl, help=_obj_help)
+    if proj["flags"]["tier"] != "solid":
+        st.caption(f"⚠️ {int(proj['flags']['thin_minute_share'] * 100)}% of these minutes "
+                   "go to thin-sample players — read as directional.")
+
+
+def _rotation_table(opt, ctxp, names):
+    """Recommended-vs-observed minutes — the prescription (both depths)."""
+    st.markdown("<div class='pl-hdr'>Recommended rotation — vs your observed minutes</div>",
+                unsafe_allow_html=True)
+    st.caption("Minutes normalized to a 32-minute game (160 player-minutes). "
+               "The diff is the shift the optimizer wants toward your win formula.")
+    mrows = []
+    for p in sorted(opt["minutes"], key=lambda x: -opt["minutes"][x]):
+        d = opt["diff"][p]
+        mrows.append({
+            "Player": names[p],
+            "Recommend": f"{opt['minutes'][p]:.0f}",
+            "Observed": f"{opt['observed'][p]:.0f}",
+            "Shift": f"{d:+.0f}" + ("  ▲" if d > 1 else ("  ▼" if d < -1 else "")),
+            "Foul-prone": "⚠️" if ctxp["players"][p]["foul_prone"] else "",
+        })
+    st.markdown(dense_table(mrows), unsafe_allow_html=True)
+
+
+def _star_note(tid, ctxp):
+    # use the ctx-resolved, season-scoped game ids (gids may be None for an open
+    # archive / own team — star_coverage would otherwise read the 'Current' season)
+    try:
+        import helpers.rotation_plan as RP
+        sc = RP.star_coverage(tid, game_ids=ctxp.get("game_ids"))
+        if sc.get("note"):
+            st.info("🔄 " + sc["note"])
+    except Exception:
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LIGHT — Team Dashboard: the read, then hand off to the War Room
+# ══════════════════════════════════════════════════════════════════════════════
+
 @st.fragment
 def render(ctx):
-    """Render the Projection super-tab. ``ctx`` carries team_id, gender, is_paid,
-    has_tracked, game_ids (visible tracked ids, or None), and players (roster)."""
-    tid, g = ctx.team_id, ctx.gender
+    """Render the light Projection tab. ``ctx`` carries team_id, gender, is_paid,
+    has_tracked, game_ids (visible tracked ids, or None), and season."""
+    tid = ctx.team_id
     st.markdown("<div class='pl-hdr'>Projection — the minutes that hit your win formula</div>",
                 unsafe_allow_html=True)
     st.caption(
@@ -38,24 +134,67 @@ def render(ctx):
         "signature stats** — the ~4 stats your wins and losses actually turn on. "
         "Directional: it reads the levers, it doesn't promise a scoreline.")
 
-    if not getattr(ctx, "is_paid", False):
-        empty_state("Projection is a paid feature",
-                    "Upgrade to project your roster's rates and optimize the rotation "
-                    "against your win formula.", icon="🔒")
+    ctxp = _build(ctx)
+    if ctxp is None:
         return
-    if not getattr(ctx, "has_tracked", False):
-        empty_state("No tracked games yet",
-                    "Track games to build the rotation history a projection needs.",
-                    icon="🎬")
-        return
+    opt = LP.optimize_minutes(tid, ctx=ctxp)
+    names = {p: ctxp["players"][p]["name"] for p in opt["minutes"]}
 
-    gids = list(ctx.game_ids) if getattr(ctx, "game_ids", None) is not None else None
-    season = getattr(ctx, "season", "Current")
-    ctxp = LP.build_context(tid, gender=g, game_ids=gids, season=season)
-    if ctxp.get("gated"):
-        empty_state("Not enough tracked games to project a rotation",
-                    f"{ctxp['gated']}. The depth-chart projection needs a real "
-                    f"rotation sample — keep tracking.", icon="📉")
+    _headline(tid, ctxp, opt)
+    _rotation_table(opt, ctxp, names)
+
+    # ── the best five + its give-and-take vs the season line ─────────────────
+    top5 = sorted(opt["minutes"], key=lambda p: -opt["minutes"][p])[:5]
+    if len(top5) == 5:
+        lp = LP.project_lineup(tid, top5, ctxp, game_ids=ctxp.get("game_ids"))
+        hit, tot = LP.goals_hit(lp["line"], ctxp.get("goals", []))
+        edges = LP.compare_lines(lp["line"], ctxp["observed_line"])
+        gains = [e for e in edges if e["good"]][:2]
+        costs = [e for e in edges if not e["good"]][:2]
+        bits = [f"projected Net {lp['net_blended']:+.1f}"]
+        if tot:
+            bits.append(f"hits {hit}/{tot} of your signature stats")
+        trade = ""
+        if gains or costs:
+            trade = (" Vs your season line: "
+                     + " · ".join(_fmt_edge(e) for e in gains)
+                     + (" / " if gains and costs else "")
+                     + " · ".join(_fmt_edge(e) for e in costs) + ".")
+        st.markdown("**Best five** — " + " · ".join(names[p] for p in top5)
+                    + f" — {' · '.join(bits)}.{trade}")
+        if lp.get("obs_unit_poss"):
+            st.caption(f"Blended with {lp['obs_unit_poss']:.0f} observed possessions "
+                       "together — chemistry the sum-of-parts misses.")
+
+    _star_note(tid, ctxp)
+
+    # ── the hand-off: the deep controls live in the War Room ─────────────────
+    try:
+        st.page_link("pages/9_War_Room.py",
+                     label="Go deeper — War Room → Lineups: what-if minutes, "
+                           "objective & depth controls, and side-by-side lineup "
+                           "comparison", icon="🎯")
+    except Exception:
+        st.caption("Go deeper on the **War Room → Lineups** view: what-if minutes, "
+                   "objective & depth controls, and side-by-side lineup comparison.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DEEP — War Room → Lineups: the full rotation lab
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.fragment
+def render_deep(ctx):
+    """Render the full rotation lab (War Room). Same ctx contract as render()."""
+    tid = ctx.team_id
+    st.caption(
+        "Every player's skill rates are stabilized over their tracked games, then "
+        "the optimizer searches minute splits to best hit **this team's own "
+        "signature stats** — the ~4 stats your wins and losses actually turn on. "
+        "Directional: it reads the levers, it doesn't promise a scoreline.")
+
+    ctxp = _build(ctx)
+    if ctxp is None:
         return
 
     cset1, cset2 = st.columns([1, 1])
@@ -65,7 +204,6 @@ def render(ctx):
                             "even minutes; shorter = more on your best.")
     # objective toggle — only meaningful when the team has mined signature stats
     # (without them the objective is always Net regardless).
-    force = None
     _obj_opts = (["Signature stats", "Player impact"] if ctxp.get("sig_available")
                  else ["Player impact", "Best net"])
     pick = cset2.radio(
@@ -81,23 +219,7 @@ def render(ctx):
     proj = opt["projection"]
     names = {p: ctxp["players"][p]["name"] for p in opt["minutes"]}
 
-    # ── headline: current-roster projection ──────────────────────────────────
-    tc = LP.project_team_current(tid, ctx=ctxp)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Projected Net /100", f"{tc['net']:+.1f}", help="vs the average tracked team (clamped, directional)")
-    c2.metric("Win prob vs avg team", f"{tc['win_prob_vs_avg'] * 100:.0f}%")
-    if opt["objective_kind"] == "signature":
-        _obj_lbl, _obj_help = "Signature stats", "Optimizing the team's own win/loss signature stats."
-    elif opt["objective_kind"] == "value":
-        _obj_lbl, _obj_help = "Player impact", "Concentrating minutes on your highest-Impact players."
-    elif force == "net":
-        _obj_lbl, _obj_help = "Best net (chosen)", "Maximizing projected point differential /100 (clamped, blunt)."
-    else:
-        _obj_lbl, _obj_help = "Net (fallback)", "Not enough wins AND losses to mine signatures — optimizing Net."
-    c3.metric("Objective", _obj_lbl, help=_obj_help)
-    if proj["flags"]["tier"] != "solid":
-        st.caption(f"⚠️ {int(proj['flags']['thin_minute_share'] * 100)}% of these minutes "
-                   "go to thin-sample players — read as directional.")
+    _headline(tid, ctxp, opt, force=force)
 
     # ── signature goals: does the recommended lineup hit them? ───────────────
     if opt["objective_kind"] == "signature" and opt["signature_goals"]:
@@ -120,22 +242,7 @@ def render(ctx):
         if rows:
             st.markdown(dense_table(rows), unsafe_allow_html=True)
 
-    # ── recommended minutes vs observed (the prescription) ───────────────────
-    st.markdown("<div class='pl-hdr'>Recommended rotation — vs your observed minutes</div>",
-                unsafe_allow_html=True)
-    st.caption("Minutes normalized to a 32-minute game (160 player-minutes). "
-               "The diff is the shift the optimizer wants toward your win formula.")
-    mrows = []
-    for p in sorted(opt["minutes"], key=lambda x: -opt["minutes"][x]):
-        d = opt["diff"][p]
-        mrows.append({
-            "Player": names[p],
-            "Recommend": f"{opt['minutes'][p]:.0f}",
-            "Observed": f"{opt['observed'][p]:.0f}",
-            "Shift": f"{d:+.0f}" + ("  ▲" if d > 1 else ("  ▼" if d < -1 else "")),
-            "Foul-prone": "⚠️" if ctxp["players"][p]["foul_prone"] else "",
-        })
-    st.markdown(dense_table(mrows), unsafe_allow_html=True)
+    _rotation_table(opt, ctxp, names)
 
     # ── what-if: coach sets the minutes, sees the projected difference ────────
     with st.expander("🎛️ Try your own minutes — see the difference"):
@@ -156,17 +263,9 @@ def render(ctx):
         wp = LP.project_minutes(tid, {p: float(m) for p, m in custom.items()}, ctxp)
 
         # goals hit: yours vs recommended
-        def _hits(line):
-            n = 0
-            for goal in opt.get("signature_goals", []):
-                v = line.get(goal["key"])
-                if v is None:
-                    continue
-                if (v >= goal["target"]) if goal["win_high"] else (v <= goal["target"]):
-                    n += 1
-            return n
         n_goals = len(opt.get("signature_goals", []))
-        yours, rec = _hits(wp["line"]), _hits(proj["line"])
+        yours, _ = LP.goals_hit(wp["line"], opt.get("signature_goals", []))
+        rec, _ = LP.goals_hit(proj["line"], opt.get("signature_goals", []))
         m1, m2 = st.columns(2)
         if n_goals:
             m1.metric("Signature goals hit", f"{yours} / {n_goals}",
@@ -191,13 +290,4 @@ def render(ctx):
             if wrows:
                 st.markdown(dense_table(wrows), unsafe_allow_html=True)
 
-    # ── star stagger note ────────────────────────────────────────────────────
-    # use the ctx-resolved, season-scoped game ids (gids may be None for an open
-    # archive / own team — star_coverage would otherwise read the 'Current' season)
-    try:
-        import helpers.rotation_plan as RP
-        sc = RP.star_coverage(tid, game_ids=ctxp.get("game_ids"))
-        if sc.get("note"):
-            st.info("🔄 " + sc["note"])
-    except Exception:
-        pass
+    _star_note(tid, ctxp)

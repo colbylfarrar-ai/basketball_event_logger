@@ -314,6 +314,55 @@ def project_lineup(team_id, five, ctx, game_ids=None):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  LINE READS — shared by every surface that shows a projected line
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Winning direction per 12-key stat (+1 = higher is better). Style properties
+# (3PAr, pace) are deliberately absent — a 3-point-heavy mix is a choice, not a
+# win/loss lever, so it never shows up as a "give" or a "take".
+KEY_DIRECTION = {"eFG": 1, "3P%": 1, "TOVr": -1, "FTr": 1, "ORBpct": 1,
+                 "AST%": 1, "PPP": 1, "oeFG": -1, "oPPP": -1, "forced": 1}
+
+KEY_LABELS = {"eFG": "eFG%", "3P%": "3P%", "3PAr": "3PA rate", "TOVr": "TOV%",
+              "FTr": "FT rate", "ORBpct": "ORB%", "AST%": "AST%", "PPP": "PPP",
+              "oeFG": "opp eFG%", "oPPP": "opp PPP", "forced": "forced TO%",
+              "pace": "pace"}
+
+
+def goals_hit(line, goals):
+    """(hit, total) — how many of the team's mined signature goals a projected
+    line reaches. `total` counts every goal, so an unprojectable key reads as a
+    miss rather than silently shrinking the denominator."""
+    n = 0
+    for g in goals:
+        v = line.get(g["key"])
+        if v is None:
+            continue
+        if (v >= g["target"]) if g["win_high"] else (v <= g["target"]):
+            n += 1
+    return n, len(goals)
+
+
+def compare_lines(line, base):
+    """The give-and-take of one projected line vs another: directional diffs
+    [{key,label,diff,good}] sorted by |diff| desc. Only KEY_DIRECTION stats
+    participate (all live on a comparable 0-1-ish scale), so the top entries are
+    the honest trade-offs — what this lineup buys and what it pays."""
+    out = []
+    for k, d in KEY_DIRECTION.items():
+        a, b = line.get(k), base.get(k)
+        if a is None or b is None:
+            continue
+        diff = a - b
+        if abs(diff) < 1e-9:
+            continue
+        out.append({"key": k, "label": KEY_LABELS.get(k, k),
+                    "diff": diff, "good": (diff * d) > 0})
+    out.sort(key=lambda r: -abs(r["diff"]))
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  OBJECTIVES
 # ══════════════════════════════════════════════════════════════════════════════
 

@@ -1,19 +1,20 @@
 """
-9_War_Room.py — Monte-Carlo matchups, season sims and bracket odds.
+9_War_Room.py — the decision lab: lineups, matchups, season sims and brackets.
 
-The ratings give a single expected margin; this page turns that into the
-distributions coaches actually ask for: "what are our odds Friday?", "how many
-wins should we really have?", "what are our title odds?". Everything rolls the
-opponent-adjusted ratings thousands of times via the (previously dormant)
-helpers/simulation.py engine — no new math, pure surfacing.
-
-Three tabs:
+The spine follows the coach's decisions in order:
+  • Lineups    — build a five (Creator), optimize the rotation's minutes
+                 (the full lab from the Team Dashboard's light Projection tab),
+                 and COMPARE candidate fives side by side — the give and take
+                 each one offers. One engine (helpers.lineup_projection) under
+                 every lineup number here AND on the Team Dashboard.
   • Matchup    — predict any two teams (score, win prob, line-by-line margin)
                  plus the full simulated margin distribution.
   • Season sim — replay every finished game N times → expected wins + luck.
   • Bracket    — seed a single-elim field by rating → championship odds.
+  • Defensive assignments / Analyze / Glossary — prep + playground.
 
-Display + controls only; all simulation lives in the Streamlit-free engine.
+Display + controls only; simulation and projection live in Streamlit-free
+engines (helpers/simulation.py, helpers/lineup_projection.py).
 """
 import sys
 from pathlib import Path
@@ -35,6 +36,8 @@ import helpers.predictor as PRED
 import helpers.simulation as SIM
 import helpers.player_ratings as PR
 import helpers.lineups as LU
+import helpers.lineup_projection as LP
+import helpers.dashboard.projection_tab as DPROJ
 import helpers.team_analytics as TA
 import helpers.spacing as SPACE
 import helpers.auth as AUTH
@@ -49,9 +52,9 @@ _cfg, ACCENT = page_chrome("War Room")
 #  HEADER + LEAGUE + PRECISION
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown(
-    "<div class='lab-hero'><h1>War Room — Simulations &amp; Matchups</h1>"
-    "<p>Project any matchup, roll the season thousands of times, and bracket the "
-    "title. Monte-Carlo odds straight from the opponent-adjusted ratings.</p>"
+    "<div class='lab-hero'><h1>War Room — Lineups, Matchups &amp; Sims</h1>"
+    "<p>Build and compare your fives, optimize the rotation, project any matchup, "
+    "roll the season thousands of times, and bracket the title.</p>"
     "</div>", unsafe_allow_html=True)
 
 cc = st.columns([2, 3])
@@ -310,6 +313,38 @@ def _wl_player_spacing(g, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _lp_ctx(g, team_id, season="Current", vis=None):
+    """lineup_projection context, cached per (team, season, visible games) — the
+    ONE lineup engine every win-formula number on this page (and the Team
+    Dashboard Projection tab) reads. `vis` = the viewer's visible-game tuple
+    (None = own team / open archive = unrestricted)."""
+    return LP.build_context(team_id, gender=g,
+                            game_ids=(list(vis) if vis is not None else None),
+                            season=season)
+
+
+def _cmp_key(team_id):
+    """Session key for the team's saved comparison fives (per season)."""
+    return f"wr_cmp_{team_id}_{season_pick}"
+
+
+def _add_cmp(team_id, five):
+    """Save a five (pid tuple) for the Compare view; dedupes."""
+    cur = st.session_state.setdefault(_cmp_key(team_id), [])
+    if tuple(five) not in [tuple(x) for x in cur]:
+        cur.append(tuple(five))
+
+
+def _fmt_edge(e):
+    """One give-or-take (LP.compare_lines row) as coach text: percentage points
+    for rate stats, raw for PPP-scale stats."""
+    d = e["diff"]
+    if e["key"] in ("PPP", "oPPP"):
+        return f"{d:+.2f} {e['label']}"
+    return f"{d * 100:+.1f} {e['label']}"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _lineup_net(g, team_id, lineup, season="Current"):
     """NetRtg for one candidate five, cached on (gender, team, lineup tuple) —
     the bench-swap search tries ~50 lineups and must not recompute each rerun."""
@@ -384,21 +419,37 @@ def _render_proj_statline(pred, ctx, table, key):
         "PHY = measurables rating when recorded.")
 
 
-# Paid + Solo (not in the Coaches' Co-op) get ONLY the Lineup creator — building
-# your own team's lineup uses your own tracked data. Scouting other teams — the
+# Paid + Solo (not in the Coaches' Co-op) get ONLY the Lineups views — building
+# your own team's lineups uses your own tracked data. Scouting other teams — the
 # matchup projection and the season/bracket sims (league-wide) — is Co-op only.
-# Lineup + Glossary stay open to any paid coach; the other three gate on league-wide.
+# Lineups + Glossary stay open to any paid coach; the other three gate on league-wide.
 _wr_ident = AUTH.current_user()
 # a PAST season is an open archive → the co-op (league-wide) gate opens too
 _wr_league_wide = True if not _is_cur_season else ENT.viewer_is_league_wide(_wr_ident)
 _WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
 
 # View switcher — seg + if-dispatch (the lazy-load contract): only the chosen
-# view computes, where st.tabs ran EVERY body each rerun. "Matchup planner"
-# renamed "Defensive assignments" (what it actually is — who guards whom).
-_WR_VIEWS = ["Matchup", "Season sim", "Bracket", "Lineup",
+# view computes, where st.tabs ran EVERY body each rerun. Lineups leads — it's
+# the decision every coach makes every game, and it works for Solo coaches.
+_WR_VIEWS = ["Lineups", "Matchup", "Season sim", "Bracket",
              "Defensive assignments", "Analyze", "Glossary"]
-_wrview = _seg("View", _WR_VIEWS, default="Matchup", key="wr_view") or "Matchup"
+_wrview = _seg("View", _WR_VIEWS, default="Lineups", key="wr_view") or "Lineups"
+
+
+def _wr_team_pick(key):
+    """Team selector for the Lineups views: Solo coaches get their own team,
+    League-wide / admin / open-archive viewers get every rated team."""
+    _mine = _wr_ident.get("team_id")
+    opts = order if _wr_league_wide else [t for t in order if t == _mine]
+    if not opts:
+        empty_state("No team to build for",
+                    "Ask the admin to assign you a team with tracked games, "
+                    "then build its lineups here. Go League-wide in Settings to "
+                    "build any team's lineups.")
+        return None
+    return st.selectbox("Team", opts,
+                        format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
+                        key=key)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -663,7 +714,7 @@ def _render_matchup():
                                  f"matchup_{_slug}", key="wr_sheet_dl")
             st.caption("Print-ready scouting sheet — text it straight to the "
                        "staff. Next steps: **Defensive assignments** (who guards "
-                       "whom) and **Lineup** (pick the five) in the views above.")
+                       "whom) and **Lineups** (pick the five) in the views above.")
 
             # ── game plan vs this opponent: exploit matrix + defensive plan ──
             # (Tier 2, ML_LAYER_ROADMAP — the cross-team bridge). A = you, B = the
@@ -965,10 +1016,22 @@ if _wrview == "Bracket":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 4 — LINEUP CREATOR
+#  TAB 4 — LINEUPS  (Creator · Rotation optimizer · Compare — one engine)
 # ══════════════════════════════════════════════════════════════════════════════
-if _wrview == "Lineup":
-    st.subheader("Lineup creator")
+_lu_view = None
+if _wrview == "Lineups":
+    st.subheader("Lineups — build, optimize, compare")
+    st.caption(
+        "The decision every game turns on, in three reads: **Creator** hand-builds "
+        "a five · **Rotation optimizer** finds the minutes that hit your win "
+        "formula · **Compare** shows the give and take between candidate fives. "
+        "One engine under every win-formula number here and on the Team "
+        "Dashboard's Projection tab — the numbers agree everywhere.")
+    _lu_view = _seg("Lineups view", ["Creator", "Rotation optimizer", "Compare"],
+                    default="Creator", key="wr_lu_view",
+                    label_visibility="collapsed") or "Creator"
+
+if _wrview == "Lineups" and _lu_view == "Creator":
     # Solo (not League-wide) coaches build ONLY their own team — no "Any team"
     # mode and no cross-team selector. Admin / League-wide get every team.
     _li = AUTH.current_user()
@@ -1113,6 +1176,46 @@ if _wrview == "Lineup":
                     _style(_sca, 340)
                     st.plotly_chart(_sca, width="stretch", key="wl1_contrib")
                 _render_proj_statline(_pred, _ctxd, _tbl, "wl1_proj_tbl")
+                # ── win-formula read — the ONE lineup engine (lineup_projection):
+                # the same numbers the Rotation optimizer, Compare view and the
+                # Team Dashboard Projection tab show for this five.
+                if len(_chosen) == 5:
+                    _lpc = _lp_ctx(gender, _t, season_pick,
+                                   _vis_tuple(AUTH.current_user(), _t))
+                    if not _lpc.get("gated"):
+                        _lu5 = LP.project_lineup(_t, list(_chosen), _lpc,
+                                                 game_ids=_lpc.get("game_ids"))
+                        _hit, _tot = LP.goals_hit(_lu5["line"],
+                                                  _lpc.get("goals", []))
+                        st.markdown("**Win-formula read — this five**")
+                        _wf = st.columns(4)
+                        _wf[0].metric(
+                            "Net /100 (blended)", f"{_lu5['net_blended']:+.1f}",
+                            help="Projected intrinsic rates, blended with the "
+                                 "five's observed possessions together.")
+                        _wf[1].metric("ORtg / DRtg",
+                                      f"{_lu5['ortg']:.0f} / {_lu5['drtg']:.0f}")
+                        _wf[2].metric(
+                            "Signature stats hit",
+                            f"{_hit} / {_tot}" if _tot else "—",
+                            help="The ~4 stats this team's wins and losses "
+                                 "actually turn on (Insights win/loss miner).")
+                        _wf[3].metric("Obs. poss together",
+                                      f"{_lu5['obs_unit_poss']:.0f}")
+                        if st.button("➕ Send this five to Compare",
+                                     key="wl1_addcmp"):
+                            _add_cmp(_t, tuple(sorted(_chosen)))
+                            st.success("Saved — open **Compare** above to see "
+                                       "the give and take vs your other fives.")
+                        st.caption(
+                            "Same engine as the Rotation optimizer, the Compare "
+                            "view and the Team Dashboard Projection tab — one "
+                            "set of numbers everywhere. (The league-calibrated "
+                            "metrics above rank this five vs the league; this "
+                            "read scores it against your own win formula.)")
+                    else:
+                        st.caption("Win-formula read needs a rotation sample — "
+                                   f"{_lpc['gated']}.")
                 _bench = [r for r in _rows if r["_pid"] not in _chosen]
                 if _bench and len(_chosen) == 5 and _pred["NetRtg"] is not None:
                     _base = _pred["NetRtg"]
@@ -1287,6 +1390,156 @@ if _wrview == "Lineup":
                        "ratings projection only.")
 
 
+# ── LINEUPS · ROTATION OPTIMIZER — the full lab (deep sibling of the Team
+# Dashboard's light Projection tab; same renderer module, same engine).
+if _wrview == "Lineups" and _lu_view == "Rotation optimizer":
+    st.markdown("#### Rotation optimizer — the minutes that hit your win formula")
+    _t_opt = _wr_team_pick("wropt_team")
+    if _t_opt is not None:
+        if not _can_team(AUTH.current_user(), _t_opt):
+            st.info("🔒 Another team's rotation projection is a **Coaches' Co-op** "
+                    "feature — your own team works on any Paid plan. Go "
+                    "**League-wide** in Settings to project any team.")
+        else:
+            from types import SimpleNamespace as _NS
+            _ovt = _vis_tuple(AUTH.current_user(), _t_opt)
+            _ht = (bool(_ovt) if _ovt is not None else bool(query(
+                "SELECT 1 FROM games WHERE (team1_id=? OR team2_id=?) "
+                "AND tracked=1 AND season=? LIMIT 1",
+                (_t_opt, _t_opt, season_pick))))
+            DPROJ.render_deep(_NS(
+                team_id=_t_opt, gender=gender, is_paid=True, has_tracked=_ht,
+                game_ids=(list(_ovt) if _ovt is not None else None),
+                season=season_pick))
+
+
+# ── LINEUPS · COMPARE — the give and take between candidate fives ─────────────
+@st.fragment
+def _render_compare():
+    st.markdown("#### Compare lineups — the give and take")
+    st.caption(
+        "Project candidate fives with the SAME engine as the optimizer and see "
+        "what each one buys and what it pays: the three-point-heavy five might "
+        "shoot +4 3P% but give up 5 ORB% — or land barely under your best five, "
+        "which is exactly the read that lets you trust it.")
+    _cu = AUTH.current_user()
+    _t = _wr_team_pick("wrcmp_team")
+    if _t is None:
+        return
+    if not _can_team(_cu, _t):
+        st.info("🔒 Another team's lineup projections are a **Coaches' Co-op** "
+                "feature — your own team works on any Paid plan.")
+        return
+    _lpc = _lp_ctx(gender, _t, season_pick, _vis_tuple(_cu, _t))
+    if _lpc.get("gated"):
+        empty_state("Not enough tracked games to project lineups",
+                    f"{_lpc['gated']}. Keep tracking — the comparison needs a "
+                    "real rotation sample.", icon="📉")
+        return
+    _tbl = _wl_table(gender, season_pick)
+
+    def _lab(pid):
+        r = _tbl.get(pid, {})
+        num = r.get("number")
+        nm = _lpc["players"].get(pid, {}).get("name") or r.get("name", str(pid))
+        return f"#{num} {nm}" if num is not None else nm
+
+    _pickable = sorted(_lpc["players"],
+                       key=lambda p: -_lpc["players"][p]["obs_min"])
+    ac1, ac2 = st.columns([5, 1], vertical_alignment="bottom")
+    _new5 = ac1.multiselect("Build a five to add", _pickable, format_func=_lab,
+                            max_selections=5, key=f"wrcmp_pick_{_t}")
+    if ac2.button("➕ Add", key=f"wrcmp_add_{_t}", disabled=len(_new5) != 5):
+        _add_cmp(_t, tuple(sorted(_new5)))
+    sc1, sc2 = st.columns(2)
+    if len(_pickable) >= 5 and sc1.button(
+            "Add: most-used five (observed minutes)", key=f"wrcmp_top_{_t}"):
+        _add_cmp(_t, tuple(sorted(_pickable[:5])))
+    if sc2.button("Add: optimizer's five (top recommended minutes)",
+                  key=f"wrcmp_opt_{_t}"):
+        _o = LP.optimize_minutes(_t, ctx=_lpc)
+        _add_cmp(_t, tuple(sorted(sorted(
+            _o["minutes"], key=lambda p: -_o["minutes"][p])[:5])))
+
+    _saved = st.session_state.get(_cmp_key(_t), [])
+    if not _saved:
+        st.caption("No lineups saved yet — build a five above, load a shortcut, "
+                   "or send one over from the **Creator** view.")
+        return
+
+    projs = []
+    for five in _saved:
+        _lu = LP.project_lineup(_t, list(five), _lpc,
+                                game_ids=_lpc.get("game_ids"))
+        _h, _n = LP.goals_hit(_lu["line"], _lpc.get("goals", []))
+        projs.append((five, _lu, _h, _n))
+    best_i = max(range(len(projs)), key=lambda i: projs[i][1]["net_blended"])
+    best_net = projs[best_i][1]["net_blended"]
+    best_line = projs[best_i][1]["line"]
+
+    _p1 = lambda v: round(v * 100, 1) if v is not None else None
+    rows = []
+    for i, (five, _lu, _h, _n) in enumerate(projs):
+        ln = _lu["line"]
+        rows.append({
+            "": f"L{i + 1}" + (" ★" if i == best_i else ""),
+            "Lineup": " · ".join(_lab(p) for p in five),
+            "Net": _lu["net_blended"],
+            "Δ best": round(_lu["net_blended"] - best_net, 1),
+            "ORtg": _lu["ortg"], "DRtg": _lu["drtg"],
+            "eFG%": _p1(ln["eFG"]), "3P%": _p1(ln["3P%"]),
+            "TOV%": _p1(ln["TOVr"]), "ORB%": _p1(ln["ORBpct"]),
+            "opp eFG%": _p1(ln["oeFG"]), "Forced TO%": _p1(ln["forced"]),
+            "Sig": f"{_h}/{_n}" if _n else "—",
+            "Obs poss": _lu["obs_unit_poss"],
+        })
+    st.dataframe(_style_df(pd.DataFrame(rows), grad_cols=["Net"],
+                           signed_cols=["Δ best"]),
+                 hide_index=True, width="stretch", key=f"wrcmp_tbl_{_t}")
+    st.caption("★ = best projected Net (blended with each five's observed "
+               "possessions together). **Sig** = how many of your ~4 signature "
+               "win/loss stats the five projects to hit. Offensive rates are "
+               "projected intrinsic rates; defensive rates are your observed "
+               "line nudged by the five's defenders — directional, not a "
+               "promise.")
+
+    st.markdown("**Each five vs the best — what it buys, what it pays**")
+    for i, (five, _lu, _h, _n) in enumerate(projs):
+        if i == best_i:
+            st.markdown(f"- **L{i + 1}** — the benchmark: best projected Net "
+                        f"({best_net:+.1f}).")
+            continue
+        edges = LP.compare_lines(_lu["line"], best_line)
+        gains = [e for e in edges if e["good"]][:2]
+        costs = [e for e in edges if not e["good"]][:2]
+        dnet = _lu["net_blended"] - best_net
+        verdict = (f"within {abs(dnet):.1f} Net of the best — close enough to "
+                   "trust when the matchup calls for it"
+                   if abs(dnet) < 2.0 else f"{dnet:+.1f} Net vs the best")
+        parts = []
+        if gains:
+            parts.append("buys " + " · ".join(_fmt_edge(e) for e in gains))
+        if costs:
+            parts.append("pays " + " · ".join(_fmt_edge(e) for e in costs))
+        st.markdown(f"- **L{i + 1}** — {verdict}"
+                    + (" — " + "; ".join(parts) if parts else "") + ".")
+
+    with st.expander("✏️ Manage saved lineups"):
+        for i, (five, _lu, _h, _n) in enumerate(projs):
+            c1, c2 = st.columns([6, 1])
+            c1.markdown(f"**L{i + 1}** — " + " · ".join(_lab(p) for p in five))
+            if c2.button("✕", key=f"wrcmp_rm_{_t}_{i}"):
+                st.session_state[_cmp_key(_t)].pop(i)
+                st.rerun()
+        if st.button("Clear all", key=f"wrcmp_clear_{_t}"):
+            st.session_state[_cmp_key(_t)] = []
+            st.rerun()
+
+
+if _wrview == "Lineups" and _lu_view == "Compare":
+    _render_compare()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 5 — MATCHUP PLANNER  (who guards whom — opponent prep)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1303,7 +1556,7 @@ def _render_planner():
                "avg). Uses your tracked ratings, or hand-entered intel for a team "
                "you haven't tracked (add it on the Team Dashboard → Scout tab). "
                "Saved per opponent. The prep flow: **Matchup** projects it → the "
-               "game plan picks the calls → assignments here → **Lineup** picks "
+               "game plan picks the calls → assignments here → **Lineups** picks "
                "the five.")
 
     tbl = _wl_table(gender, season_pick)

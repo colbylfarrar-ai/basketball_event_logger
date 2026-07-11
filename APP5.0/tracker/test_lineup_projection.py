@@ -210,3 +210,27 @@ def test_thin_team_is_gated():
         return
     out = LP.optimize_minutes(row[0]["tid"])
     assert out.get("gated")
+
+
+# ── line reads: goals_hit + compare_lines (the Compare-view engine) ─────────────
+def test_goals_hit_counts_every_goal():
+    goals = [{"key": "eFG", "target": 0.50, "win_high": True, "fmt": "pct"},
+             {"key": "TOVr", "target": 0.18, "win_high": False, "fmt": "pct"},
+             {"key": "forced", "target": 0.22, "win_high": True, "fmt": "pct"}]
+    line = {"eFG": 0.52, "TOVr": 0.20}            # hit, miss, unprojectable
+    hit, tot = LP.goals_hit(line, goals)
+    assert (hit, tot) == (1, 3)                   # missing key counts as a miss
+    assert LP.goals_hit({}, []) == (0, 0)
+
+
+def test_compare_lines_direction_and_order():
+    base = dict(_OBS)
+    line = dict(_OBS, **{"3P%": 0.36, "ORBpct": 0.28, "oeFG": 0.46})
+    edges = LP.compare_lines(line, base)
+    by_key = {e["key"]: e for e in edges}
+    assert by_key["3P%"]["good"] and by_key["3P%"]["diff"] > 0      # shoots better
+    assert not by_key["ORBpct"]["good"]                             # rebounds worse
+    assert by_key["oeFG"]["good"] and by_key["oeFG"]["diff"] < 0    # defends better
+    assert "3PAr" not in by_key and "pace" not in by_key            # style ≠ trade-off
+    diffs = [abs(e["diff"]) for e in edges]
+    assert diffs == sorted(diffs, reverse=True)                     # biggest first

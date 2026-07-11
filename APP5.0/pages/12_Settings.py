@@ -215,8 +215,14 @@ elif _my_tok:
     except Exception:
         pass
     st.code(_deep, language=None)
-    st.caption("On the phone: open it, then **Add to Home Screen** for an app icon. "
-               "(Install `segno` to show a scannable QR code here too.)")
+    st.markdown(
+        "**Get the app icon on your phone** (works on any modern phone):\n"
+        "- **Android** — open the link in Chrome, tap the **⋮ menu → Add to Home "
+        "screen** (or **Install app** when offered).\n"
+        "- **iPhone / iPad** — open the link in Safari, tap the **Share button "
+        "→ Add to Home Screen**.")
+    st.caption("Once installed it launches full-screen like a native app and works "
+               "offline. (Install `segno` to show a scannable QR code here too.)")
 else:
     st.caption("No tracker token yet — the courtside logger is a Paid feature. Ask "
                "the admin to issue your token in **Account & users** below.")

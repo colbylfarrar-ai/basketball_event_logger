@@ -322,6 +322,7 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     gp = S.games_played(game_ids)
     oc = S.oncourt_rate_stats(game_ids, events=events)
     dfg = S.defended_fg_pct(game_ids, events=events)   # DSHOT% — defense quality
+    doe = S.defended_fg_over_expected(game_ids, events=events)  # shooter-adjusted
     ddr = S.individual_defensive_rating_all(game_ids, events=events)  # DRtg (lower=better)
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
@@ -432,6 +433,11 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "BLK/G": cper_g(cb["BLK"]),
             "Guarded%": o.get("guarded_pct") if o.get("opp_FGA_on") else None,
             "DSHOT%": df.get("pct") if df.get("def_FGA") else None,
+            # shooter-adjusted defended FG%: DSHOT% with WHO-they-guarded removed
+            # (each guarded shot is scored vs the shooter's own expected make
+            # rate — the defensive twin of PassFG%-vs-xPPS). Lower is better.
+            "AdjDFG%": doe.get(pid, {}).get("adj_pct"),
+            "DFGoe": doe.get(pid, {}).get("doe"),
             # rim protection / perimeter defense: league FG% − FG% allowed on
             # contested rim 2s / threes (positive = saves points); None below
             # the 8-shot gate so the leaf drops from the weighted mean.
@@ -799,7 +805,10 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
 
     # signed raw-leaf z's the headline defense/rebounding blends fold in alongside
     # their split components (lower_better inverted where noted).
-    dshot_z = zcol_signed("DSHOT%", True)
+    # The contest leaf uses the SHOOTER-ADJUSTED allowed rate (AdjDFG% — DSHOT%
+    # with who-they-guarded removed) so guarding elite shooters isn't punished;
+    # it covers exactly the DSHOT% population, so the leaf's reach is unchanged.
+    dshot_z = zcol_signed("AdjDFG%", True)
     drtg_z  = zcol_signed("DRtg", True)
     pf_z    = zcol_signed("PF/G", True)
     rebpct_z = zcol_signed("REB%", False)
@@ -1182,6 +1191,11 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "PPP": _round(S.ppp(b), 2) if p_poss > 0 else None,
             "DSHOT%": _pct(d["pct"]) if d.get("def_FGA") else None,
             "defFGA": d.get("def_FGA", 0),
+            # shooter-adjusted contest: DSHOT% rebased vs each guarded shooter's
+            # own expected make rate (negative DFGoe = holds shooters under
+            # their norm). This is the leaf the DEFENSE rating uses.
+            "AdjDFG%": _pct(prof.get("AdjDFG%")),
+            "DFGoe": _pct(prof.get("DFGoe")),
             # rim / perimeter defended splits (FG% allowed + volume) and the
             # league-relative saves that feed the DEFENSE rating (± FG points)
             "RimDFG%": _pct(prof["RimD_pct"]),
@@ -1286,6 +1300,7 @@ EVENT_DERIVED_STATS = frozenset({
     "USG%", "MIN", "MPG", "+/-", "+/-/G", "STOCKS/32",
     # on-court rate stats (need game_event_lineup)
     "Guarded%", "REB%", "OREB%", "DREB%", "DSHOT%", "defFGA",
+    "AdjDFG%", "DFGoe",
     # shot quality / location (need tap-captured shot context)
     "ShotRating", "xPPS", "xFG%", "SMOE", "RimFGA%", "MidFGA%",
     "PaintM", "PaintA", "PaintPTS", "Paint%", "PRF", "PRF/G",

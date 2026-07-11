@@ -176,6 +176,19 @@ STAT_DEFS = [
     ("DSHOT%","Defended FG%",      "Defense", "opp FG% when guarded by player",
      "Field-goal % opponents shoot when this player is the listed defender.",
      "Lower is better — tighter on-ball defense.", False),
+    ("AdjDFG%","Adjusted Defended FG%", "Defense",
+     "defended FG% rebased vs each shooter's expected make rate",
+     "Answers 'was it the shooter or the defender?': every guarded shot is "
+     "scored against that shooter's own season make rate for the shot value "
+     "(shrunk toward league on thin samples), so holding an elite shooter to "
+     "their norm no longer reads like bad defense. This is the contest leaf "
+     "the DEFENSE rating uses.",
+     "Lower is better — shooter quality removed.", True),
+    ("DFGoe","Defended FG% over expected", "Defense",
+     "(makes allowed − expected makes) / guarded shots",
+     "The raw edge behind AdjDFG%: FG-percentage points allowed above what the "
+     "guarded shooters normally make.",
+     "Negative = holds shooters below their norm.", True),
     ("Guarded%","Contest Rate",    "Defense", "guarded opp shots / opp shots on floor",
      "Share of opponent shots that were contested while the player was on court.",
      "Higher = active contesting defense.", False),

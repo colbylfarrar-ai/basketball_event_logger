@@ -1223,6 +1223,71 @@ def defended_fg_pct(game_ids=None, events=None):
     return {pid: {**v, "pct": _safe(v["def_FGM"], v["def_FGA"])} for pid, v in agg.items()}
 
 
+def defended_fg_over_expected(game_ids=None, events=None, k=12.0):
+    """
+    Shooter-adjusted defended shooting — "was it the shooter or the defender?".
+
+    Raw DSHOT% blames a defender for WHO they guarded: holding an elite shooter
+    to their season norm reads the same as losing a weak one. This separates
+    the two exactly like PassFG%/xPPS does for playmaking: every guarded shot
+    gets an EXPECTED make probability = that shooter's own season rate for the
+    shot value (2/3), leave-one-out and shrunk toward the league rate by k
+    attempts (thin shooters read as league). A defender's edge is then
+    actual makes allowed − expected makes allowed.
+
+    Returns {defender_pid: {"def_FGA", "def_FGM", "exp_FGM",
+        "doe":  (FGM − exp) / FGA        # FG% points vs expected; NEGATIVE = good
+        "adj_pct": lg_mix + doe          # re-baselined allowed FG% (compare to
+    }}                                   # DSHOT%: shooter-quality removed)
+    where lg_mix is the league make rate for the defender's guarded 2/3 mix, so
+    adj_pct sits on the familiar DSHOT% scale (lower is better).
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    shots = [e for e in events if e["event_type"] == "shot"]
+    # shooter baselines per shot value + the league rate per value
+    sh = defaultdict(lambda: {"fga": 0, "fgm": 0})
+    lg = {2: {"fga": 0, "fgm": 0}, 3: {"fga": 0, "fgm": 0}}
+    for e in shots:
+        v = 3 if e["shot_type"] == 3 else 2
+        made = e["shot_result"] == "make"
+        p = e["primary_player_id"]
+        if p is not None:
+            sh[(p, v)]["fga"] += 1
+            sh[(p, v)]["fgm"] += made
+        lg[v]["fga"] += 1
+        lg[v]["fgm"] += made
+    lg_rate = {v: _safe(d["fgm"], d["fga"]) or 0.0 for v, d in lg.items()}
+
+    agg = defaultdict(lambda: {"def_FGA": 0, "def_FGM": 0, "exp_FGM": 0.0,
+                               "_lg_mix": 0.0})
+    for e in shots:
+        g = e["guarded_by_id"]
+        if g is None:
+            continue
+        v = 3 if e["shot_type"] == 3 else 2
+        made = 1 if e["shot_result"] == "make" else 0
+        p = e["primary_player_id"]
+        b = sh.get((p, v), {"fga": 0, "fgm": 0}) if p is not None else {"fga": 0, "fgm": 0}
+        # leave-one-out + k-shrunk toward the league rate for this shot value
+        exp = ((b["fgm"] - made) + k * lg_rate[v]) / max((b["fga"] - 1) + k, 1e-9)
+        a = agg[g]
+        a["def_FGA"] += 1
+        a["def_FGM"] += made
+        a["exp_FGM"] += exp
+        a["_lg_mix"] += lg_rate[v]
+    out = {}
+    for pid, a in agg.items():
+        n = a["def_FGA"]
+        doe = (a["def_FGM"] - a["exp_FGM"]) / n if n else None
+        out[pid] = {"def_FGA": n, "def_FGM": a["def_FGM"],
+                    "exp_FGM": round(a["exp_FGM"], 2),
+                    "doe": round(doe, 4) if doe is not None else None,
+                    "adj_pct": (round(a["_lg_mix"] / n + doe, 4)
+                                if n and doe is not None else None)}
+    return out
+
+
 def quarter_boxes(game_ids=None, events=None):
     """
     Per-player, per-quarter finalized box scores.

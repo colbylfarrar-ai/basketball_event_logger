@@ -120,8 +120,9 @@ def _team_feed(gender, season="Current", team_id=None, tids=None):
     try:
         extras = None
         if team_id is not None:
-            _ex = TIN.team_extras(team_id,
-                                  game_ids=(list(tids) if tids else None))
+            _ex = TIN.team_extras(team_id, gender=gender,
+                                  game_ids=(list(tids) if tids else None),
+                                  season=season)
             extras = {team_id: _ex} if _ex else None
         # top=None → EVERY qualifying team read (the tab is the deep-dive home;
         # the 3-line cap stays on the league-wide surfaces).

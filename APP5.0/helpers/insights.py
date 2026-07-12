@@ -18,6 +18,30 @@ from __future__ import annotations
 # Minimum |z| to count as "notable" — below this it isn't surprising enough to say.
 MIN_Z = 1.0
 
+# ── game-count tier gating ────────────────────────────────────────────────────
+# A book's meaning tracks its game count: 1-5 games = the scout book against an
+# unknown opponent (tournament / playoffs / non-district), 6-10 = a district
+# opponent, 20+ = the pre-playoff book where the strict full gates apply. The
+# volume gates scale LINEARLY with games-played so a 3-game scout book still
+# fires its best-available reads (a coach prepping a tournament opponent needs
+# them most) while a full-season book keeps today's strict thresholds. MIN_Z is
+# never relaxed — a smaller sample lowers the *count* bar, never the *surprise*
+# bar — and every line still prints its own n=.
+FULL_BOOK = 20                # games at which the full-strength gates apply
+
+
+def tier_factor(gp):
+    """0.35-1.0 gate multiplier from a book's game count (1.0 at FULL_BOOK+)."""
+    return max(0.35, min(1.0, (gp or 0) / FULL_BOOK))
+
+
+def tier_gate(base, gp, floor=None):
+    """A volume gate scaled to the book: `base` at FULL_BOOK games, floored at
+    `floor` (default 35% of base, min 2) so tiny samples never headline."""
+    if floor is None:
+        floor = max(2, round(base * 0.35))
+    return max(floor, base * tier_factor(gp))
+
 
 def _pool(values):
     """(mean, sd) over a list, sd floored so z is always defined. None if thin."""
@@ -45,7 +69,8 @@ def _num(row, key):
 def _g_poe(row, pools, d):
     """Shot-MAKING: points per shot over the league-expected for those looks."""
     poe = d.get("poe")
-    if poe is None or (_num(row, "FGA") or 0) < 22:
+    gp = _num(row, "GP") or 0
+    if poe is None or (_num(row, "FGA") or 0) < tier_gate(22, gp, 8):
         return None
     z = _z(poe, pools.get("poe"))
     if abs(z) < MIN_Z:
@@ -55,7 +80,7 @@ def _g_poe(row, pools, d):
         txt = (f"**Shot-maker** — scores **{poe:+.2f} pts/shot over expected** for "
                f"the looks taken (elite finish quality, {n} FGA).")
     else:
-        txt = (f"**Due to bounce back** — **{poe:+.2f} pts/shot under expected**; "
+        txt = (f"**Due for a bounce-back** — **{poe:+.2f} pts/shot under expected**; "
                f"the looks are fine, the makes aren't falling yet ({n} FGA).")
     return {"text": txt, "score": abs(z), "z": z, "metric": "POE", "n": n}
 
@@ -63,7 +88,8 @@ def _g_poe(row, pools, d):
 def _g_selection(row, pools, d):
     """Shot SELECTION: quality of the looks chosen (xPPS / ShotRating)."""
     sr = _num(row, "ShotRating")
-    if sr is None or (_num(row, "FGA") or 0) < 22:
+    gp = _num(row, "GP") or 0
+    if sr is None or (_num(row, "FGA") or 0) < tier_gate(22, gp, 8):
         return None
     z = _z(sr, pools.get("ShotRating"))
     if abs(z) < MIN_Z:
@@ -82,7 +108,8 @@ def _g_hand(row, pools, d):
     """Force-left/right: dominant vs weak floor-side FG% gap."""
     gap = d.get("hand_gap")
     dfa, wfa = _num(row, "Dom_FGA") or 0, _num(row, "Weak_FGA") or 0
-    if gap is None or dfa < 6 or wfa < 6:
+    side_gate = tier_gate(6, _num(row, "GP") or 0, 4)
+    if gap is None or dfa < side_gate or wfa < side_gate:
         return None
     z = _z(gap, pools.get("hand_gap"))
     if abs(z) < MIN_Z or gap <= 0:
@@ -97,7 +124,7 @@ def _g_guarded(row, pools, d):
     """Space dependence: open vs contested FG% cliff (needs precomputed cliff)."""
     cliff = d.get("guard_cliff")
     n = d.get("guard_n") or 0
-    if cliff is None or n < 16:
+    if cliff is None or n < tier_gate(16, _num(row, "GP") or 0, 8):
         return None
     z = _z(cliff, pools.get("guard_cliff"))
     if abs(z) < MIN_Z:
@@ -115,7 +142,7 @@ def _g_q4(row, pools, d):
     """Late-game: 4th-quarter FG% swing vs the player's own earlier rate."""
     sw = d.get("q4_swing")
     n = d.get("q4_n") or 0
-    if sw is None or n < 10:
+    if sw is None or n < tier_gate(10, _num(row, "GP") or 0, 5):
         return None
     z = _z(sw, pools.get("q4_swing"))
     if abs(z) < MIN_Z:
@@ -132,7 +159,7 @@ def _g_q4(row, pools, d):
 def _g_three(row, pools, d):
     """Perimeter threat: 3P% with real volume."""
     tp, tpa = _num(row, "3P%"), _num(row, "3PA")
-    if tp is None or (tpa or 0) < 14:
+    if tp is None or (tpa or 0) < tier_gate(14, _num(row, "GP") or 0, 6):
         return None
     z = _z(tp, pools.get("3P%"))
     if abs(z) < MIN_Z:
@@ -158,7 +185,7 @@ def _g_consistency(row, pools, d):
         return None
     ppg, sd = _num(row, "PPG"), _num(row, "PTSsd")
     if z <= 0:
-        txt = (f"**Mr. Reliable** — **{ppg:.0f} ± {sd:.0f} a night**, lowest "
+        txt = (f"**Steady as they come** — **{ppg:.0f} ± {sd:.0f} a night**, lowest "
                f"variance in the pool; bankable production.")
     else:
         txt = (f"**Boom-or-bust** — **{ppg:.0f} ± {sd:.0f}** (high {int(_num(row,'bestPTS') or 0)} "
@@ -170,7 +197,7 @@ def _g_consistency(row, pools, d):
 def _g_defense(row, pools, d):
     """On-ball defense: FG% allowed as the contester (DSHOT%, lower = better)."""
     ds = _num(row, "DSHOT%")
-    if ds is None or (_num(row, "GP") or 0) < 4:
+    if ds is None or (_num(row, "GP") or 0) < 2:
         return None
     z = _z(ds, pools.get("DSHOT%"))
     if abs(z) < MIN_Z:
@@ -189,7 +216,8 @@ def _g_playtype(row, pools, d):
     """Signature action: the play_type set a player is most extreme on (vs the
     league pool of players on that same action). pct=league percentile."""
     pt = d.get("playtype")
-    if not pt or pt.get("pct") is None or (pt.get("poss") or 0) < 8:
+    if not pt or pt.get("pct") is None \
+            or (pt.get("poss") or 0) < tier_gate(8, _num(row, "GP") or 0, 4):
         return None
     pct, poss = pt["pct"], pt["poss"]
     if abs(pct - 50) < 20:
@@ -211,7 +239,7 @@ def _g_playstyle(row, pools, d):
     its PPP — a 3-hunting transition set, a rim-pressure call, or a set they get
     clean looks on. Reads the precomputed profile-edge for this player."""
     ps = d.get("playstyle")
-    if not ps or (ps.get("poss") or 0) < 8:
+    if not ps or (ps.get("poss") or 0) < tier_gate(8, _num(row, "GP") or 0, 4):
         return None
     val, poss = ps.get("val"), ps["poss"]
     if val is None:
@@ -239,7 +267,7 @@ def _g_situational(row, pools, d):
     early) vs their OWN overall rate. Reads the precomputed situational edge — the
     'who shows up late' read, quarter-based so it needs no score-margin context."""
     sit = d.get("situational")
-    if not sit or (sit.get("poss") or 0) < 8:
+    if not sit or (sit.get("poss") or 0) < tier_gate(8, _num(row, "GP") or 0, 4):
         return None
     delta = sit.get("delta")
     if delta is None:
@@ -265,6 +293,8 @@ def _g_totype(row, pools, d):
     if not tt or (_num(row, "TPG") or 0) < 1.5:
         return None
     share, n = tt["share"], tt["n"]
+    if n < tier_gate(8, _num(row, "GP") or 0, 4):
+        return None
     score = (share - 0.4) / 0.15
     if score < MIN_Z:
         return None
@@ -299,7 +329,7 @@ def _g_ftdraw(row, pools, d):
     green light to play them physical)."""
     dpg = d.get("drawn_pg")
     ff = d.get("foulft") or {}
-    if dpg is None or (_num(row, "GP") or 0) < 4:
+    if dpg is None or (_num(row, "GP") or 0) < 2:
         return None
     z = _z(dpg, pools.get("drawn_pg"))
     if abs(z) < MIN_Z:
@@ -321,7 +351,8 @@ def _g_clutchft(row, pools, d):
     """High-leverage free throws vs the season rate — who to foul late."""
     ff = d.get("foulft") or {}
     cfta, cpct, base = ff.get("cFTA") or 0, ff.get("ClutchFT%"), ff.get("FT%")
-    if cfta < 6 or cpct is None or base is None:
+    if cfta < tier_gate(6, _num(row, "GP") or 0, 4) or cpct is None \
+            or base is None:
         return None
     swing = cpct - base
     if abs(swing) < 12:
@@ -343,6 +374,9 @@ def _g_pnr_role(row, pools, d):
     screener rolling to the rim — the 'who should screen for whom' read."""
     pr = d.get("pnr_role")
     if not pr:
+        return None
+    role_gate = tier_gate(6, _num(row, "GP") or 0, 3)
+    if pr["h_n"] < role_gate or pr["r_n"] < role_gate:
         return None
     hp, rp = pr["h_ppp"], pr["r_ppp"]
     gap = hp - rp
@@ -389,7 +423,7 @@ def _g_matchup(row, pools, d):
     quality of the shooters they contested). The two reads: takes the toughest
     cover every night, or gets hidden on weak shooters AND still leaks."""
     mu = d.get("matchup")
-    if not mu or (mu.get("n") or 0) < 20:
+    if not mu or (mu.get("n") or 0) < tier_gate(20, _num(row, "GP") or 0, 8):
         return None
     diff = mu.get("diff")
     if diff is None:
@@ -426,7 +460,9 @@ def _g_impact(row, pools, d):
         return None
     rapm, gs = imp.get("rapm"), _num(row, "GS/G")
     poss = imp.get("poss") or 0
-    if rapm is None or gs is None or poss < 300 or (_num(row, "GP") or 0) < 4:
+    gp = _num(row, "GP") or 0
+    if rapm is None or gs is None or gp < 2 \
+            or poss < tier_gate(300, gp, 120):
         return None
     zb = _z(gs, pools.get("GS/G"))
     zi = _z(rapm, pools.get("RAPM"))
@@ -435,7 +471,7 @@ def _g_impact(row, pools, d):
     war_bit = f" · {war:+.1f} HoopWAR" if war is not None else ""
     n = int(poss)
     if div <= -1.8 and zb >= 0.5 and rapm < 0:
-        txt = (f"**Stats over substance?** — a big box line (**{gs:.1f} Game "
+        txt = (f"**Stats over substance** — a big box line (**{gs:.1f} Game "
                f"Score/g**) but the team is **{rapm:+.1f} pts/100** with them on"
                f"{war_bit}; the production isn't turning into team points yet "
                f"({n} poss).")
@@ -453,7 +489,7 @@ def _g_rimdef(row, pools, d):
     contester. High = a wall in the paint, low = a rim worth attacking."""
     rd = _num(row, "RimDef")
     shots = _num(row, "RimDShots") or 0
-    if rd is None or shots < 12:
+    if rd is None or shots < tier_gate(12, _num(row, "GP") or 0, 5):
         return None
     z = _z(rd, pools.get("RimDef"))
     if abs(z) < MIN_Z:
@@ -475,7 +511,7 @@ def _g_perimdef(row, pools, d):
     the contester. High = a close-out lockdown, low = shoot over them."""
     pd = _num(row, "PerimDef")
     shots = _num(row, "PerimDShots") or 0
-    if pd is None or shots < 12:
+    if pd is None or shots < tier_gate(12, _num(row, "GP") or 0, 5):
         return None
     z = _z(pd, pools.get("PerimDef"))
     if abs(z) < MIN_Z:
@@ -498,7 +534,7 @@ def _g_rebound(row, pools, d):
     stronger of the two deviations."""
     gp = _num(row, "GP") or 0
     reb = (_num(row, "OREB") or 0) + (_num(row, "DREB") or 0)
-    if gp < 4 or reb < 12:
+    if gp < 2 or reb < tier_gate(12, gp, 5):
         return None
     orb, drb = _num(row, "OREBrtg"), _num(row, "DREBrtg")
     zo = _z(orb, pools.get("OREBrtg")) if orb is not None else 0.0
@@ -533,7 +569,7 @@ def _g_selfcreate(row, pools, d):
     lives off the catch — the 'deny the ball' vs 'deny the pass' read."""
     sc = _num(row, "SelfCr%")
     fga = _num(row, "FGA") or 0
-    if sc is None or fga < 22:
+    if sc is None or fga < tier_gate(22, _num(row, "GP") or 0, 8):
         return None
     z = _z(sc, pools.get("SelfCr%"))
     if abs(z) < MIN_Z:
@@ -555,7 +591,7 @@ def _g_playmaking(row, pools, d):
     a non-creator to help off. AST/TOV rides along as the ball-security note."""
     ap = _num(row, "AST%")
     gp = _num(row, "GP") or 0
-    if ap is None or gp < 4:
+    if ap is None or gp < 2:
         return None
     z = _z(ap, pools.get("AST%"))
     if abs(z) < MIN_Z:
@@ -578,7 +614,7 @@ def _g_disruption(row, pools, d):
     respecting. High side only — low disruption isn't a scouting tell."""
     st32 = _num(row, "STOCKS/32")
     gp = _num(row, "GP") or 0
-    if st32 is None or gp < 4:
+    if st32 is None or gp < 2:
         return None
     z = _z(st32, pools.get("STOCKS/32"))
     if z < MIN_Z:
@@ -597,7 +633,7 @@ def _g_rimfinish(row, pools, d):
     the zone shadow."""
     nfg = _num(row, "Near_FG%")
     na = _num(row, "Near_FGA") or 0
-    if nfg is None or na < 12:
+    if nfg is None or na < tier_gate(12, _num(row, "GP") or 0, 5):
         return None
     z = _z(nfg, pools.get("Near_FG%"))
     if abs(z) < MIN_Z:
@@ -618,7 +654,8 @@ def _g_usage(row, pools, d):
     vs a low-usage complementary piece — the 'who runs the offense' read."""
     u = _num(row, "USG%")
     fga = _num(row, "FGA") or 0
-    if u is None or (_num(row, "GP") or 0) < 4 or fga < 22:
+    gp = _num(row, "GP") or 0
+    if u is None or gp < 2 or fga < tier_gate(22, gp, 8):
         return None
     z = _z(u, pools.get("USG%"))
     if abs(z) < MIN_Z:
@@ -672,8 +709,10 @@ def _g_stints(row, pools, d):
     st_ = d.get("stints")
     if not st_:
         return None
-    if (st_["n_short"] < 3 or st_["n_long"] < 3
-            or st_["short_secs"] < 12 * 60 or st_["long_secs"] < 12 * 60):
+    gp = _num(row, "GP") or 0
+    n_gate, sec_gate = tier_gate(3, gp, 2), tier_gate(12 * 60, gp, 6 * 60)
+    if (st_["n_short"] < n_gate or st_["n_long"] < n_gate
+            or st_["short_secs"] < sec_gate or st_["long_secs"] < sec_gate):
         return None
     s32, l32 = st_["short_p32"], st_["long_p32"]
     if max(s32, l32) < 6:               # low-usage player — no scoring read
@@ -697,13 +736,45 @@ def _g_stints(row, pools, d):
             "metric": "Stint length", "n": n}
 
 
+def _g_form(row, pools, d):
+    """Recent form: last-3 scoring vs the player's OWN season line — the 'are
+    they hot right now' read a scout wants on the eve of a game. Self-relative
+    (no pool), garnished with the stretch's per-game RATING avg and any active
+    double-figure streak. Needs a season line behind it (GP≥5) so a 2-game hot
+    start isn't 'trending'."""
+    fm = d.get("form")
+    if not fm or (_num(row, "GP") or 0) < 5:
+        return None
+    delta, l3, season = fm.get("delta"), fm.get("last3_ppg"), fm.get("season_ppg")
+    if delta is None or season is None or season < 4:
+        return None
+    if abs(delta) < 4:
+        return None
+    rtg = fm.get("rtg_avg")
+    rtg_bit = f", {rtg:.1f} avg match rating" if rtg is not None else ""
+    streak = fm.get("streak") or 0
+    n = fm.get("n") or 0
+    if delta > 0:
+        streak_bit = (f" — {streak} straight in double figures" if streak >= 3
+                      else "")
+        txt = (f"**Heating up** — **{l3:.0f} PPG last 3** vs a {season:.0f} "
+               f"season line ({delta:+.0f}){rtg_bit}{streak_bit}; catching "
+               f"them at their peak.")
+    else:
+        txt = (f"**Cooling off** — **{l3:.0f} PPG last 3** vs a {season:.0f} "
+               f"season line ({delta:+.0f}){rtg_bit}; the shot isn't falling "
+               f"right now — press the advantage.")
+    return {"text": txt, "score": abs(delta) / 4.0, "z": delta / 4.0,
+            "metric": "Form", "n": n}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
                _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
                _g_clutchft, _g_pnr_role, _g_spacing,
                _g_rimdef, _g_perimdef, _g_rebound,
                _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish,
-               _g_usage, _g_garbage, _g_stints]
+               _g_usage, _g_garbage, _g_stints, _g_form]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -722,7 +793,7 @@ def _derive(row):
 def league_insights(table, *, guarded=None, q4=None, playtypes=None,
                     playstyles=None, situational=None, impact=None,
                     matchup=None, totypes=None, foulft=None, pnr=None,
-                    spacing=None, garbage=None, stints=None, top=3):
+                    spacing=None, garbage=None, stints=None, form=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
@@ -767,6 +838,8 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
             d["garbage"] = garbage[pid]
         if stints and pid in stints:
             d["stints"] = stints[pid]
+        if form and pid in form:
+            d["form"] = form[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -1038,6 +1111,54 @@ def situational_edges(events):
     return SIT.player_situational_edges(events)
 
 
+def form_edges(events, table):
+    """{pid: {'last3_ppg','season_ppg','delta','rtg_avg','streak','n'}} — each
+    tracked player's recent-3-game scoring vs their own season line, plus the
+    stretch's average per-game RATING and any active double-figure streak. Reads
+    trends.player_game_log + game_rating.season_game_ratings (roles injected from
+    the passed stat table so no extra stat-table pass). Empty until players have
+    game logs."""
+    import helpers.trends as TR
+    import helpers.stats as S
+    boxes = S.player_game_boxes(events=events)
+    gids = list({e["game_id"] for e in events if e.get("game_id") is not None})
+    # per-game ratings keyed {gid: {pid: {...}}}; roles from the stat table
+    ratings = {}
+    try:
+        import helpers.game_rating as GR
+        roles = {pid: GR.role_for(r) for pid, r in table.items()}
+        ratings = GR.season_game_ratings(events=events, roles=roles)
+    except Exception:
+        ratings = {}
+    out = {}
+    for pid in boxes:
+        log = TR.player_game_log(pid, boxes=boxes)
+        if len(log) < 5:
+            continue
+        pts = [g["box"].get("PTS", 0) or 0 for g in log]
+        season = sum(pts) / len(pts)
+        last3 = pts[-3:]
+        l3 = sum(last3) / len(last3)
+        # avg match rating over the last-3 stretch (when graded)
+        rtgs = []
+        for g in log[-3:]:
+            rr = (ratings.get(g["game_id"]) or {}).get(pid)
+            if rr and rr.get("rating") is not None:
+                rtgs.append(rr["rating"])
+        rtg_avg = (sum(rtgs) / len(rtgs)) if rtgs else None
+        # active double-figure streak (trailing games ≥10)
+        streak = 0
+        for v in reversed(pts):
+            if v >= 10:
+                streak += 1
+            else:
+                break
+        out[pid] = {"last3_ppg": l3, "season_ppg": season,
+                    "delta": l3 - season, "rtg_avg": rtg_avg,
+                    "streak": streak, "n": len(last3)}
+    return out
+
+
 def build_feed(table, events, *, top=3, impact=None):
     """One-call insight feed: precomputes the event-derived splits (guarded-cliff,
     Q4, signature play_type, situational) and runs the miner. ``{pid: [insight,...]}``.
@@ -1094,7 +1215,12 @@ def build_feed(table, events, *, top=3, impact=None):
         sl = stint_edges(events)
     except Exception:
         pass
+    fm = None
+    try:
+        fm = form_edges(events, table)
+    except Exception:
+        pass
     return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
                            playstyles=ps, situational=sit, impact=impact,
                            matchup=mu, totypes=tt, foulft=ff, pnr=pr,
-                           spacing=sp, garbage=gt, stints=sl, top=top)
+                           spacing=sp, garbage=gt, stints=sl, form=fm, top=top)

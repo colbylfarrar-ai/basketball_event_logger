@@ -90,12 +90,22 @@ class TestTeamMiner(unittest.TestCase):
 
     def test_thin_schedule_gates(self):
         pack = _pack()
-        pack["gp"] = {t: 2 for t in pack["teams"]}       # under MIN_TRACKED
-        form = {t: _fm(games=3) for t in pack["teams"]}  # under MIN_GAMES
-        form[1] = _fm(games=3, Luck_wins=3.0)
+        pack["gp"] = {t: 1 for t in pack["teams"]}       # under MIN_TRACKED (2)
+        form = {t: _fm(games=2) for t in pack["teams"]}  # under MIN_GAMES (3)
+        form[1] = _fm(games=2, Luck_wins=3.0)
         pack["ts"][2] = _ts(eFG=60.0, ORtg=90.0, TOVpct=26.0)
         feed = TIN.team_insight_feed(pack=pack, form=form)
         self.assertEqual(feed, {})
+
+    def test_scout_tier_fires(self):
+        # a 3-game tournament book is the scout tier — it SHOULD earn its reads
+        pack = _pack()
+        pack["gp"] = {t: 3 for t in pack["teams"]}
+        form = {t: _fm(games=3) for t in pack["teams"]}
+        form[1] = _fm(games=3, W=3, L=0, Luck_wins=2.6, Pyth_W=1.6, Pyth_L=1.4)
+        feed = TIN.team_insight_feed(pack=pack, form=form)
+        self.assertTrue(any(l["metric"] == "Luck" for l in feed.get(1, [])),
+                        feed.get(1))
 
 
 if __name__ == "__main__":

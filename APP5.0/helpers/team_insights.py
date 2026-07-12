@@ -17,10 +17,11 @@ Streamlit-free; wrap calls in a cache at the page level.
 """
 from __future__ import annotations
 
-from helpers.insights import _pool, _z, MIN_Z
+from helpers.insights import _pool, _z, MIN_Z, tier_gate
 
-MIN_GAMES = 5          # a team read needs a real schedule behind it
-MIN_TRACKED = 3        # tracked-plane generators (ts) need tracked games
+MIN_GAMES = 3          # a team read needs a real schedule behind it (scout tier:
+                       # a 3-game tournament book still earns its best reads)
+MIN_TRACKED = 2        # tracked-plane generators (ts) need tracked games
 
 
 def _num(d, key):
@@ -108,7 +109,7 @@ def _t_momentum(tid, ts, fm, pools, d):
     """Last-5 form vs the season baseline — heating up or fading."""
     md = _num(fm, "mom_delta")
     gp = _num(fm, "games") or 0
-    if md is None or gp < 8:
+    if md is None or gp < 6:
         return None
     z = _z(md, pools.get("momentum"))
     if abs(z) < MIN_Z or abs(md) < 4:
@@ -346,9 +347,189 @@ def _t_chemistry(tid, ts, fm, pools, d):
     return max(cands, key=lambda c: c["score"])
 
 
+def _t_keys(tid, ts, fm, pools, d):
+    """The team's SIGNATURE-STAT keys and the record split by how many it hits —
+    the founder's own framing: 'undefeated unless the 4 keys don't hit; 3-0 with
+    4, 0-3 with 0 — that's HUGE'. NOT the four factors: these are the handful of
+    stats that most separate THIS team's wins from its losses (effect-size
+    ranked). Absolute-threshold read off the `keys` extra (winloss_alignment)."""
+    kd = d.get("keys")
+    if not kd:
+        return None
+    goals, record = kd.get("goals") or [], kd.get("record") or []
+    n_goals = len(goals)
+    if n_goals < 3 or not record:
+        return None
+    # split the record into "hit most keys" (>= n-1) vs "hit few" (<= 1)
+    hi_w = hi_l = lo_w = lo_l = 0
+    for r in record:
+        if r["n"] >= n_goals - 1:
+            hi_w += r["wins"]
+            hi_l += r["losses"]
+        elif r["n"] <= 1:
+            lo_w += r["wins"]
+            lo_l += r["losses"]
+    hi_n, lo_n = hi_w + hi_l, lo_w + lo_l
+    if hi_n < 2 or lo_n < 2:
+        return None
+    hi_pct, lo_pct = hi_w / hi_n, lo_w / lo_n
+    if (hi_pct - lo_pct) < 0.50:
+        return None
+    # name the single most-separating key (top of the effect-ranked list) + its
+    # target on the winning side
+    top = goals[0]
+    fmt = top.get("fmt") or "{:.2f}"
+    tv = (f"{top['target'] * 100:.0f}%" if fmt == "pct"
+          else fmt.format(top["target"]))
+    arrow = "≥" if top.get("win_high") else "≤"
+    z = (hi_pct - lo_pct) / 0.15
+    txt = (f"**They have {n_goals} keys** — **{hi_w}-{hi_l} hitting "
+           f"{n_goals - 1}+ of them, {lo_w}-{lo_l} at ≤1**; the top one is "
+           f"**{top['label']} {arrow} {tv}**. Take that away and it's a long "
+           f"night for them.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Keys",
+            "n": hi_n + lo_n}
+
+
+def _t_vs_scheme(tid, ts, fm, pools, d):
+    """Offense by DEFENSE FAMILY faced — the scheme to throw at them. Absolute
+    read off the `vs_scheme` extra (defenses.team_defense_families, offense=True):
+    the widest best-vs-worst PPP gap among schemes they've seen enough of."""
+    vs = d.get("vs_scheme")
+    if not vs or len(vs) < 2:
+        return None
+    best = min(vs, key=lambda r: r["PPP"])       # LOWEST PPP = the scheme to run
+    worst = max(vs, key=lambda r: r["PPP"])       # they score most vs this one
+    if best["PPP"] is None or worst["PPP"] is None:
+        return None
+    gap = worst["PPP"] - best["PPP"]
+    if gap < 0.25:
+        return None
+    z = gap / 0.15
+    txt = (f"**Play {best['label'].lower()} against them** — just "
+           f"**{best['PPP']:.2f} PPP vs {best['label'].lower()}** "
+           f"({best['poss']} poss) but {worst['PPP']:.2f} vs "
+           f"{worst['label'].lower()}; the scheme is worth the switch.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Scheme", "n":
+            best["poss"] + worst["poss"]}
+
+
+def _t_runs(tid, ts, fm, pools, d):
+    """Run personality: a team that lands scoring RUNS (the haymaker) vs one that
+    keeps giving them up. Absolute read off the `runs` extra (league_run_table
+    profile), self-relative made-vs-allowed."""
+    r = d.get("runs")
+    if not r or (r.get("gp") or 0) < MIN_TRACKED:
+        return None
+    made, allowed = r.get("made_pg"), r.get("allowed_pg")
+    if made is None or allowed is None:
+        return None
+    diff = made - allowed
+    if abs(diff) < 0.5 or max(made, allowed) < 0.8:
+        return None
+    z = diff / 0.4
+    if diff > 0:
+        txt = (f"**Run machine** — lands **{made:.1f} double-digit runs a game** "
+               f"vs {allowed:.1f} allowed (biggest {int(r.get('biggest') or 0)}-0); "
+               f"they bury you in a hurry — call timeout early.")
+    else:
+        txt = (f"**Run-prone** — gives up **{allowed:.1f} double-digit runs a "
+               f"game** vs {made:.1f} of their own; string stops together and "
+               f"the lead snowballs.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Runs",
+            "n": r.get("gp")}
+
+
+def _t_rest(tid, ts, fm, pools, d):
+    """Schedule fragility from rest days — a score-based read (fires on the FULL
+    schedule, untracked games included). Absolute read off the `rest` extra
+    (fatigue.rest_splits): the rest bucket where the team's MOV swings hardest."""
+    rs = d.get("rest")
+    if not rs or not rs.get("buckets"):
+        return None
+    cands = [b for b in rs["buckets"] if b["gp"] >= 3 and abs(b["delta"]) >= 7]
+    if rs.get("heavy") and rs["heavy"]["gp"] >= 3 \
+            and abs(rs["heavy"]["delta"]) >= 7:
+        hv = dict(rs["heavy"], label="3+ games in 7 days")
+        cands.append(hv)
+    if not cands:
+        return None
+    b = max(cands, key=lambda x: abs(x["delta"]))
+    z = b["delta"] / 5.0
+    if b["delta"] < 0:
+        txt = (f"**Fades on {b['label'].lower()}** — **{b['mov']:+.0f} MOV** "
+               f"({b['w']}-{b['l']}) vs {rs['overall_mov']:+.0f} overall "
+               f"({b['delta']:+.0f}); catch them on the tight turnaround.")
+    else:
+        txt = (f"**Thrives on {b['label'].lower()}** — **{b['mov']:+.0f} MOV** "
+               f"({b['w']}-{b['l']}) vs {rs['overall_mov']:+.0f} overall "
+               f"({b['delta']:+.0f}); the schedule spot doesn't rattle them.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Rest", "n": b["gp"]}
+
+
+def _t_predictable(tid, ts, fm, pools, d):
+    """Scoutability: how predictable is their play-call mix (Shannon entropy of
+    the tagged sets)? Absolute read off the `predict` extra (selfscout.scoutability)."""
+    p = d.get("predict")
+    if not p or not p.get("rated"):
+        return None
+    pred = p.get("predictability")
+    if pred is None:
+        return None
+    top, share = p.get("top_set"), p.get("top_share")
+    if pred >= 70:
+        z = (pred - 50) / 12.0
+        share_bit = (f" — {share:.0f}% is {top.lower()}"
+                     if top and share else "")
+        txt = (f"**Easy to scout** — predictability **{pred:.0f}/100**"
+               f"{share_bit}; they tip their sets, so key on the tell and sit "
+               f"on it.")
+    elif pred <= 25:
+        z = (50 - pred) / 12.0
+        txt = (f"**Hard to prep** — predictability just **{pred:.0f}/100**; the "
+               f"play-call mix is balanced enough that there's no single set to "
+               f"sit on.")
+    else:
+        return None
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Scoutability",
+            "n": p.get("tagged")}
+
+
+def _t_pv_leak(tid, ts, fm, pools, d):
+    """Possession-value ledger: do they beat themselves (turnovers) or protect it?
+    Absolute read off the `pv` extra (possession_value.team_ledger, offense)."""
+    pv = d.get("pv")
+    if not pv:
+        return None
+    off = pv.get("offense")
+    if not off or (off.get("poss") or 0) < 80:
+        return None
+    tov = off.get("tov_pct")
+    if tov is None:
+        return None
+    n = off.get("poss")
+    lost_100 = round(tov * 100)
+    if tov >= 0.23:
+        z = (tov - 0.16) / 0.04
+        txt = (f"**They beat themselves** — a turnover on **{tov * 100:.0f}% of "
+               f"possessions** ({lost_100} empty trips per 100); pressure the "
+               f"ball and the points come free.")
+    elif tov <= 0.11:
+        z = (0.16 - tov) / 0.04
+        txt = (f"**Won't give it away** — turnovers on just **{tov * 100:.0f}% "
+               f"of possessions**; you'll have to earn every stop with a "
+               f"contest — no cheap live-ball runouts here.")
+    else:
+        return None
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Ball security",
+            "n": n}
+
+
 _TEAM_GENERATORS = [_t_luck, _t_close, _t_volatility, _t_momentum,
                     _t_off_leak, _t_def_leak, _t_three_dep, _t_quarter,
-                    _t_lineup, _t_forced_tov, _t_frontrunner, _t_chemistry]
+                    _t_lineup, _t_forced_tov, _t_frontrunner, _t_chemistry,
+                    _t_keys, _t_vs_scheme, _t_runs, _t_rest, _t_predictable,
+                    _t_pv_leak]
 
 
 # ── extras builders (per-team feeds the league pools don't need) ──────────────
@@ -426,13 +607,111 @@ def chemistry_extra(team_id, game_ids=None, min_poss=40):
     return {"chemistry": out}
 
 
-def team_extras(team_id, game_ids=None):
+def keys_extra(team_id, gender=None, game_ids=None):
+    """{'keys': {goals, record}} for _t_keys — the team's signature win/loss stats
+    and its record split by how many it hit (insights_team.winloss_alignment).
+    game_ids (when given) is trusted season-scoped, same contract as the tab."""
+    try:
+        import helpers.insights_team as INT
+        wa = INT.winloss_alignment(team_id, gender=gender,
+                                   game_ids=list(game_ids) if game_ids else None)
+    except Exception:
+        return {}
+    if not wa.get("available") or not wa.get("goals"):
+        return {}
+    return {"keys": {"goals": wa["goals"], "record": wa.get("record") or []}}
+
+
+def vs_scheme_extra(team_id, events=None, game_ids=None):
+    """{'vs_scheme': [family rows]} for _t_vs_scheme — the team's OWN offense
+    grouped by the defense family it faced (defenses.team_defense_families,
+    offense=True). Needs the defense tag; {} until schemes are tagged."""
+    try:
+        import helpers.defenses as DEF
+        fam = DEF.team_defense_families(team_id, events=events, game_ids=game_ids,
+                                        offense=True)
+    except Exception:
+        return {}
+    rows = [r for r in fam.get("rows", []) if r.get("poss", 0) >= 8]
+    return {"vs_scheme": rows} if len(rows) >= 2 else {}
+
+
+def runs_extra(team_id, events=None):
+    """{'runs': profile} for _t_runs (runs.league_run_table for this team)."""
+    if not events:
+        return {}
+    try:
+        import helpers.runs as RN
+        prof = RN.league_run_table(events=events).get(team_id)
+    except Exception:
+        return {}
+    return {"runs": prof} if prof else {}
+
+
+def rest_extra(team_id, season="Current"):
+    """{'rest': rest_splits} for _t_rest — SCORE-based (fires on the full
+    schedule, untracked games included), scoped to `season`. Builds the team's
+    dated result rows directly so it honours the season (not just 'Current')."""
+    try:
+        from database.db import query
+        import helpers.fatigue as FT
+        rows = query(
+            "SELECT date, team1_id t1, team2_id t2, home_score hs, away_score aws "
+            "FROM games WHERE (team1_id=? OR team2_id=?) AND season=? "
+            "AND home_score IS NOT NULL AND away_score IS NOT NULL",
+            (team_id, team_id, season))
+        recs = []
+        for g in rows:
+            m = (g["hs"] - g["aws"]) if g["t1"] == team_id else (g["aws"] - g["hs"])
+            recs.append({"date": g["date"], "margin": m, "won": m > 0})
+        rs = FT.rest_splits(recs)
+    except Exception:
+        return {}
+    return {"rest": rs} if rs else {}
+
+
+def predict_extra(team_id, events=None):
+    """{'predict': scoutability} for _t_predictable (selfscout.scoutability)."""
+    try:
+        import helpers.selfscout as SS
+        p = SS.scoutability(team_id, events=events, offense=True)
+    except Exception:
+        return {}
+    return {"predict": p} if p else {}
+
+
+def pv_extra(team_id, events=None, game_ids=None):
+    """{'pv': team_ledger} for _t_pv_leak (possession_value.team_ledger)."""
+    try:
+        import helpers.possession_value as PV
+        led = PV.team_ledger(team_id, events=events, game_ids=game_ids)
+    except Exception:
+        return {}
+    return {"pv": led} if led else {}
+
+
+def team_extras(team_id, gender=None, game_ids=None, season="Current"):
     """One team's full extras bundle for the miner — merges every per-team feed
-    (lineup / matchup / chemistry as they land). Each sub-builder fails soft, so
-    a missing engine never blanks the rest."""
+    (lineup / chemistry / keys / scheme / runs / rest / predictability /
+    possession-value). Events are fetched ONCE and shared across the event-driven
+    builders. Each sub-builder fails soft, so a missing engine never blanks the
+    rest."""
+    events = None
+    if game_ids:
+        try:
+            import helpers.stats as S
+            events = S.fetch_events(list(game_ids))
+        except Exception:
+            events = None
     out = {}
     out.update(lineup_extra(team_id, game_ids=game_ids))
     out.update(chemistry_extra(team_id, game_ids=game_ids))
+    out.update(keys_extra(team_id, gender=gender, game_ids=game_ids))
+    out.update(vs_scheme_extra(team_id, events=events, game_ids=game_ids))
+    out.update(runs_extra(team_id, events=events))
+    out.update(rest_extra(team_id, season=season))
+    out.update(predict_extra(team_id, events=events))
+    out.update(pv_extra(team_id, events=events, game_ids=game_ids))
     return out
 
 

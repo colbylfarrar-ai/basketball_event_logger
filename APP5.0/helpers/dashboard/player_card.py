@@ -256,6 +256,10 @@ def _game_rtg_bundle(gender, game_ids=None):
     import helpers.game_rating as _GR
     import helpers.playtypes as _PT
     gids = list(game_ids) if game_ids is not None else _PT._tracked_game_ids(gender)
+    if game_ids is not None and not gids:
+        # empty visible set must STAY empty — `gids or None` would re-leak the
+        # whole tracked corpus (the empty-filter trap; see gating taxonomy).
+        return {}
     try:
         return _GR.season_game_ratings(game_ids=gids or None)
     except Exception:
@@ -1170,7 +1174,9 @@ def render_card(ctx):
            FROM games g WHERE g.id IN ({})""".format(
             ",".join("?" * len(gids)) or "NULL"), tuple(gids)) if gids else []
     name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
-    _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp)
+    # RTG (per-game 0-10) is event-delta — tracked depth, so Paid only. The box
+    # game log itself (PTS/REB/… + GS) is box-derivable and stays Free.
+    _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp) if paid else {}
     log = []
     _boxes = pgb.get(pid, {})
     for g in sorted(games, key=lambda x: x["date"]):
@@ -1226,7 +1232,10 @@ def render_card(ctx):
         _style(tr, 320)
         st.plotly_chart(tr, width="stretch", key="pcard_log")
 
-        st.dataframe(pd.DataFrame(log), hide_index=True,
+        _ldf = pd.DataFrame(log)
+        if not paid:                      # RTG column is Paid — drop, don't blank
+            _ldf = _ldf.drop(columns=["RTG"], errors="ignore")
+        st.dataframe(_ldf, hide_index=True,
                      width="stretch",
                      height=min(560, 60 + 35 * len(log)),
                      column_config={"RTG": st.column_config.NumberColumn(

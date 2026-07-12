@@ -813,12 +813,6 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
     return out
 
 
-def player_insights(pid, table, *, guarded=None, q4=None, top=3):
-    """The insight lines for a single player (wraps league_insights)."""
-    return league_insights(table, guarded=guarded, q4=q4, top=top).get(pid, [])
-
-
-# ── precomputed split feeds (the event-derived generators) ────────────────────
 def guarded_cliffs(events):
     """{pid: {'cliff','n'}} — pts of FG% better OPEN than CONTESTED (the richest
     live signal: guarded_by_id is well-populated). Reads stats.player_zone_guarded."""

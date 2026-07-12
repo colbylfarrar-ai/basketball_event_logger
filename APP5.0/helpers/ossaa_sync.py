@@ -178,18 +178,6 @@ def merge_teams(keep_id, dupe_id) -> dict:
     return {"moved": moved, "keep": k[0]["name"], "dupe": d[0]["name"]}
 
 
-def game_exists(team1_id: int, team2_id: int, date: str, season: str = "Current") -> bool:
-    """True if that matchup already exists on that date IN THIS SEASON, either
-    home/away order. Season-scoped so the same fixture can legitimately recur in a
-    later season (and so a post-rollover re-import isn't blocked by an archived row)."""
-    r = db.query(
-        "SELECT id FROM games WHERE date=? AND season=? AND "
-        "((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))",
-        (date, season, team1_id, team2_id, team2_id, team1_id))
-    return bool(r)
-
-
-# --------------------------------------------------------------------------- #
 def reconcile(plan) -> dict:
     """Classify every team in the plan against the current DB, WITHOUT writing.
 

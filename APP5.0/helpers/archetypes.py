@@ -324,79 +324,6 @@ def cluster_players(table, k=None, features=None, seed=7):
     return {"players": players, "clusters": clusters, "k": k, "features": feats}
 
 
-def style_map(table, features=None, seed=7):
-    """2D PCA projection of players in standardized style-space, tagged with the
-    archetype each was clustered into — a "map" where neighbours play alike.
-
-    Returns {"points": {pid: {x, y, archetype, cluster, name, team, overall}},
-             "evr": [pc1_var, pc2_var]}  (explained-variance ratio per axis).
-    The two axes are the directions of greatest style variance, so left/right and
-    up/down are the biggest real differences in how these players play. Needs
-    scikit-learn; returns empty points without it (caller can hide the chart)."""
-    if not _HAVE_SKLEARN:
-        return {"points": {}, "evr": None}
-    try:
-        from sklearn.decomposition import PCA
-    except Exception:
-        return {"points": {}, "evr": None}
-    pids, X, _means, _sds, _feats = build_matrix(table, features)
-    if len(pids) < 3:
-        return {"points": {}, "evr": None}
-    clus = cluster_players(table, features=features, seed=seed)
-    pca = PCA(n_components=2)
-    XY = pca.fit_transform(X)
-    pts = {}
-    for i, pid in enumerate(pids):
-        r = table.get(pid, {})
-        info = clus["players"].get(pid, {})
-        pts[pid] = {
-            "x": float(XY[i, 0]), "y": float(XY[i, 1]),
-            "archetype": info.get("archetype", "—"),
-            "cluster": info.get("cluster"),
-            "name": r.get("name", str(pid)), "team": r.get("team", ""),
-            "overall": r.get("OVERALL"),
-        }
-    return {"points": pts,
-            "evr": [round(float(v), 3) for v in pca.explained_variance_ratio_]}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  TEAM STYLE ARCHETYPES  (the team analog — how a TEAM plays, not how good it is)
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Features from league_analytics.team_tracked_pack's `ts` rows. Style-heavy
-# (tempo / shot diet / possession habits), with one quality read per end so the
-# namer can flag identity-defining shooting or defense.
-TEAM_FEATURES = [
-    "Pace", "TPAr", "three_share", "paint_share", "FTr",
-    "TOVpct", "ORBpct", "DRBpct", "Astpct", "stl_r",
-    "eFG", "oeFG",
-]
-
-_TEAM_AXES = {
-    "tempo":    ["Pace"],
-    "three":    ["TPAr", "three_share"],
-    "paint":    ["paint_share"],
-    "line":     ["FTr"],                # gets to the rim / foul line
-    "move":     ["Astpct"],
-    "crash":    ["ORBpct"],
-    "glass_d":  ["DRBpct"],
-    "pressure": ["stl_r"],
-    "shoot_q":  ["eFG"],
-    "def_q":    ["oeFG"],               # inverted below (lower allowed = better)
-    "security": ["TOVpct"],             # inverted below (fewer TOs = better)
-}
-_TEAM_INVERTED = ("def_q", "security")
-
-# axis → readable identity bit for the two-line signature under the tag
-_TEAM_AXIS_LABEL = {
-    "tempo": "fast pace", "three": "heavy threes", "paint": "paint-first",
-    "line": "attacks the line", "move": "ball movement", "crash": "crashes the glass",
-    "glass_d": "owns the defensive boards", "pressure": "turnover pressure",
-    "shoot_q": "elite shooting", "def_q": "elite defense", "security": "ball security",
-}
-
-
 def _team_axis_scores(centroid, features):
     """Axis scores for one team/centroid vector, inversions applied."""
     idx = {f: j for j, f in enumerate(features)}
@@ -467,46 +394,6 @@ def team_style_tags(ts_all, features=None, min_teams=5):
                     "axes": {a: round(v, 2) for a, v in axes.items()},
                     "signature": " · ".join(sig)}
     return out
-
-
-def cluster_teams(ts_all, k=None, features=None, seed=7):
-    """K-means team style clusters for the league view (groups of teams that play
-    alike). Same contract as cluster_players but over team `ts` rows:
-    {"teams": {tid: {cluster, archetype, fit}}, "clusters": [...], "k", "features"}.
-    Suppressed (k=0) below 8 teams — the per-team team_style_tags read stays
-    available at any size."""
-    feats = features or TEAM_FEATURES
-    tids, X, _m, _s, feats = build_matrix(ts_all, feats)
-    n = len(tids)
-    if n < 8:
-        return {"teams": {}, "clusters": [], "k": 0, "features": feats}
-    if k is None:
-        k = int(max(2, min(5, round(n / 6))))
-    k = max(1, min(k, n))
-    labels, C = _fit_kmeans(X, k, seed=seed)
-    axis_by_c = {c: _team_axis_scores(C[c], feats) for c in range(k)}
-    names, used = {}, {}
-    for c in range(k):
-        base = _team_name_for(axis_by_c[c])
-        used[base] = used.get(base, 0) + 1
-        names[c] = base if used[base] == 1 else f"{base} {used[base]}"
-    teams = {}
-    for i, tid in enumerate(tids):
-        c = int(labels[i])
-        dist = float(np.linalg.norm(X[i] - C[c]))
-        teams[tid] = {"cluster": c, "archetype": names[c],
-                      "fit": round(1.0 / (1.0 + dist), 3)}
-    clusters = []
-    for c in range(k):
-        members = [tids[i] for i in range(n) if labels[i] == c]
-        if not members:
-            continue
-        sig = sorted(axis_by_c[c].items(), key=lambda kv: kv[1], reverse=True)
-        clusters.append({"id": c, "archetype": names[c], "size": len(members),
-                         "members": members,
-                         "axes": {a: round(v, 2) for a, v in axis_by_c[c].items()},
-                         "signature": [(a, round(v, 2)) for a, v in sig[:3]]})
-    return {"teams": teams, "clusters": clusters, "k": k, "features": feats}
 
 
 def similar_players(table, player_id, features=None, n=6):

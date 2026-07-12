@@ -113,10 +113,6 @@ def viewer_is_league_wide(ident: dict | None) -> bool:
     return bool(ident.get("shares_pool")) and not is_pool_banned(ident)
 
 
-# Back-compat alias.
-viewer_in_pool = viewer_is_league_wide
-
-
 def pooled_game_ids(season="Current") -> set[int]:
     """Tracked game ids in the shared pool (games.in_pool = 1) — the read-filter
     candidate set for every LEAGUE-WIDE tracked aggregation. Duplicate tracks of
@@ -127,15 +123,6 @@ def pooled_game_ids(season="Current") -> set[int]:
     return GD.representative_game_ids(
         {r["id"] for r in query(
             "SELECT id FROM games WHERE in_pool=1 AND season=?", (season,))})
-
-
-def pool_team_ids() -> set[int]:
-    """Teams that field ≥1 pooled tracked game (derived from games.in_pool). Kept
-    for legacy callers / display only — per-coach gating no longer keys on a
-    team-level pool flag."""
-    return {r["id"] for r in query(
-        "SELECT DISTINCT t.id FROM teams t JOIN games g "
-        "ON g.in_pool=1 AND (g.team1_id=t.id OR g.team2_id=t.id)")}
 
 
 def _own_teams(ident: dict | None) -> set:

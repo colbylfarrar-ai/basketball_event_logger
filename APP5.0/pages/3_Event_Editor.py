@@ -21,7 +21,9 @@ import streamlit as st
 from PIL import Image
 
 from helpers.ui import page_chrome, page_header, empty_state
+import helpers.auth as AUTH
 import helpers.court_geom as CG
+import helpers.entitlement as ENT
 import helpers.event_log as EL
 import helpers.playtypes as PT
 
@@ -46,7 +48,20 @@ page_header("Event Editor",
 for _k, _m in st.session_state.pop("ee_flash", []):
     getattr(st, _k)(_m)
 
+# Tier gate (AXIS 1): the editable grid is full play-by-play — tracked depth, so
+# the page is Paid, same as the Game Tracker. Then the AXIS-2 read-filter: a coach
+# may only open games whose tracked depth they can see (own team's, or pooled games
+# when League-wide; a past season is an open archive). Admin sees everything.
+_ident = AUTH.current_user()
+if not ENT.has_paid_plan(_ident):
+    st.info(ENT.MSG_PAID)
+    st.stop()
+
 games = EL.games_with_events()
+games = [g for g in games
+         if (g["season"] or "Current") != "Current"
+         or ENT.can_see_game_tracked(_ident, g["t1_id"], g["t2_id"],
+                                     in_pool=g["in_pool"])]
 if not games:
     empty_state("No tracked events yet",
                 "Log a game in the Game Tracker first, then come here to fix it.",

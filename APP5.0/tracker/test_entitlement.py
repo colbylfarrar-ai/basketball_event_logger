@@ -103,7 +103,6 @@ ok(E.viewer_is_league_wide(lw), "shares_pool=1 -> league-wide")
 ok(not E.viewer_is_league_wide(solo), "Paid Solo -> not league-wide")
 ok(not E.viewer_is_league_wide(free), "Free Solo -> not league-wide")
 ok(not E.viewer_is_league_wide(None), "no identity -> not league-wide")
-ok(E.viewer_in_pool is E.viewer_is_league_wide, "viewer_in_pool back-compat alias")
 
 print("team_has_pooled_tracked")
 ok(not E.team_has_pooled_tracked(A), "team A (Solo games only) has no pooled depth")

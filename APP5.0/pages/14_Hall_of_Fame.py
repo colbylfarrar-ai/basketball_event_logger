@@ -136,7 +136,7 @@ def _war_best(g):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _tracked_ratings(g):
+def _tracked_ratings(g, vis_key=None):
     """Per-(player, season) tracked ratings across every season, each computed
     within THAT season's pool (ratings are pool-relative, so a season is rated on
     its own field — same per-season pass as _war_best). Returns
@@ -145,10 +145,18 @@ def _tracked_ratings(g):
     import helpers.player_ratings as PR
     idn = {r["id"]: (r["identity_id"] or r["id"]) for r in query(
         "SELECT id, identity_id FROM players")}
+    # AXIS-2 read-filter for the ACTIVE season only: past seasons are an open
+    # archive (owner rule), but the current season's cross-team OVR board must
+    # not show a Solo team's private tracked depth. `vis_key` is the viewer's
+    # visible tracked set as a hashable tuple (part of the cache key so viewers
+    # don't share a poisoned entry); None = admin, unrestricted.
+    _vis = None if vis_key is None else set(vis_key)
     out = []
     for lbl in _SEASONS:
         try:
             gids = SEAS.game_pool(lbl, gender=g, tracked_only=True)
+            if SEAS.is_current(lbl) and _vis is not None:
+                gids = [x for x in gids if x in _vis]
             if not gids:
                 continue
             rt = PR.player_ratings(game_ids=set(gids), gender=g)
@@ -401,7 +409,9 @@ with tab_tracked:
                 "tracked play-by-play. Upgrade to see the all-time rating board — "
                 "who's genuinely been the greatest, not just the highest scorer.")
     else:
-        _trk = _tracked_ratings(g)
+        _hof_vis = ENT.visible_tracked_game_ids(AUTH.current_user())
+        _trk = _tracked_ratings(
+            g, None if _hof_vis is None else tuple(sorted(_hof_vis)))
         if not _trk:
             st.info(f"No player has {TRK_MIN_GP}+ tracked games in a season yet — "
                     "the board fills in as seasons are tracked play-by-play.")

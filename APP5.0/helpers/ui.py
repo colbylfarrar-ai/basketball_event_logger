@@ -755,12 +755,6 @@ def spotlight(num, label, sub="", *, tier_class="", color=None):
                if sub else "") + "</div>")
 
 
-def glass_tile(label, value, sub="", *, tier_class="", color=None):
-    """Glassmorphism KPI tile (``.glass-tile``)."""
-    return _tile("glass-tile", label, value, sub, "glass-label", "glass-value",
-                 tier_class, color)
-
-
 def mini_tile(label, value, sub="", *, tier_class="", color=None):
     """Compact stat tile for dense grids (``.mini-tile``)."""
     return _tile("mini-tile", label, value, sub, "mini-lbl", "mini-val",

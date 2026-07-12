@@ -132,11 +132,11 @@ def game_people(game_id):
 
 # ── load ────────────────────────────────────────────────────────────────────────
 def games_with_events():
-    """[{id, date, n1, n2, t1_id, t2_id, tracked, season, n_events}] for every game
-    that has events, most recent first — the games the editor can open."""
+    """[{id, date, n1, n2, t1_id, t2_id, tracked, season, in_pool, n_events}] for
+    every game that has events, most recent first — the games the editor can open."""
     return query("""
         SELECT g.id, g.date, t1.name n1, t2.name n2,
-               g.team1_id t1_id, g.team2_id t2_id, g.tracked, g.season,
+               g.team1_id t1_id, g.team2_id t2_id, g.tracked, g.season, g.in_pool,
                COUNT(ge.id) n_events
         FROM games g
         JOIN teams t1 ON t1.id=g.team1_id

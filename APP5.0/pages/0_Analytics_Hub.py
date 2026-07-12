@@ -484,6 +484,8 @@ def _league_intel(gender, vis=None):
     if vis is None:                      # admin / unrestricted → whole league
         table = _PR.player_stat_table(gender=gender, min_games=2)
         gids = _PT._tracked_game_ids(gender)
+    elif not vis:                        # EMPTY visible set: nothing to mine —
+        return []                        # never pass it on (empty-filter trap)
     else:                                # league-wide viewer → own + pooled only
         _gset = set(vis)
         table = _PR.player_stat_table(game_ids=_gset, gender=gender, min_games=2)
@@ -512,7 +514,9 @@ def _league_intel(gender, vis=None):
         import helpers.team_insights as _TIN
         from database.db import query as _q
         _tname = {r["id"]: r["name"] for r in _q("SELECT id, name FROM teams")}
-        tfeed = _TIN.team_insight_feed(gender=gender)
+        # same AXIS-2 read-filter as the player feed (vis empty already returned)
+        tfeed = _TIN.team_insight_feed(
+            gender=gender, game_ids=(list(vis) if vis is not None else None))
         flat += [(abs(l["z"]), _tname.get(t, "Team"), _b(l["text"]),
                   l["metric"], l["n"])
                  for t, ls in tfeed.items() for l in ls[:1]]

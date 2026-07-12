@@ -189,9 +189,10 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     _lim = len(roster) if personnel_limit is None else personnel_limit
 
     # ── per-game RATING summary (soccer-style 0-10): season avg + last-5 form +
-    #    fixed role. Calibrated over the WHOLE gender pool (same number the box
-    #    score / player card show), roles reused from `table` so no second
-    #    stat-table pass. Graceful {} if the engine can't build. ──────────────
+    #    fixed role. Calibrated over the viewer's visible gender pool (the
+    #    AXIS-2 read-filter `visible_game_ids` — a non-pooled team's private
+    #    tracked games never feed a scout's numbers), roles reused from `table`
+    #    so no second stat-table pass. Graceful {} if the engine can't build. ──
     _rtg_sum = {}
     try:
         import helpers.game_rating as GR
@@ -199,6 +200,8 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         _ggids = [x["id"] for x in query(
             "SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id "
             "WHERE g.tracked=1 AND g.season=? AND t.gender=?", (season, gender))]
+        if visible_game_ids is not None:
+            _ggids = [x for x in _ggids if x in set(visible_game_ids)]
         _rbundle = GR.season_game_ratings(
             events=(S.fetch_events(_ggids) if _ggids else []), roles=_rroles)
         _by_pid = {}

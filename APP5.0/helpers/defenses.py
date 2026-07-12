@@ -82,11 +82,6 @@ def label(key):
     return _LABEL.get(key, key)
 
 
-def family_of(key):
-    """Family key for a defense key (man / zone / press / trap / junk / …)."""
-    return _FAMILY.get(key, "other")
-
-
 def _norm(d):
     """A tag value -> a known key, folding unknown/legacy labels into 'other'."""
     if not d:

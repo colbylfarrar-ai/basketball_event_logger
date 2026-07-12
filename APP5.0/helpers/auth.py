@@ -179,11 +179,6 @@ def set_teams(email: str, team_ids):
     recompute_game_pool()
 
 
-def set_team(email: str, team_id):
-    """Back-compat single-team assignment → delegates to set_teams."""
-    set_teams(email, [team_id] if team_id is not None else [])
-
-
 def _apply_pool_coupling():
     """Dual-staff coupling: if a coach staffs >=2 teams and ANY is League-wide,
     set ALL of that coach's teams League-wide (the rule — one gender in the pool
@@ -330,23 +325,3 @@ def current_user() -> dict:
     return st.session_state.get("auth_user", _LOCAL_IDENTITY)
 
 
-# ── entitlement (plan gating) ──────────────────────────────────────────────────
-def has_tracked_access(ident: dict | None = None) -> bool:
-    """True if this user may see tracked play-by-play depth (Paid tier).
-
-    Admin always qualifies; otherwise plan == 'paid', or a paid_until date that
-    hasn't passed. INERT until wired into the has_tracked render guards — adding
-    it here changes no behavior yet."""
-    ident = ident or current_user()
-    if ident.get("role") == "admin":
-        return True
-    if ident.get("plan") == "paid":
-        return True
-    pu = (ident.get("paid_until") or "").strip()
-    if pu:
-        from datetime import date
-        try:
-            return pu >= date.today().isoformat()
-        except Exception:
-            return False
-    return False

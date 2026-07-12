@@ -148,7 +148,6 @@ def conf_level(n, k=3.0, sig=None):
 
 
 _CONF_CLS = {"stable": "conf-stable", "fair": "conf-fair", "weak": "conf-weak"}
-_CONF_WORD = {"stable": "stable", "fair": "fair", "weak": "directional"}
 
 
 def conf_dot(n, k=3.0, sig=None, *, title=None):
@@ -162,16 +161,6 @@ def conf_dot(n, k=3.0, sig=None, *, title=None):
                     "weak": "Directional — small sample"}[lvl]
     return (f"<span class='conf-dot {_CONF_CLS[lvl]}' "
             f"title='{html.escape(str(tip))}'></span>")
-
-
-def conf_chip(n, k=3.0, sig=None, *, label=None):
-    """Confidence dot + word as a pill (``.conf-chip``). Use where there's room
-    for a labelled affordance (rating tiles, RAPM rows). ``label`` overrides the
-    word (e.g. 'n=4')."""
-    lvl = conf_level(n, k, sig)
-    word = label or _CONF_WORD[lvl]
-    return (f"<span class='conf-chip'><span class='conf-dot {_CONF_CLS[lvl]}'>"
-            f"</span>{html.escape(str(word))}</span>")
 
 
 def stat_kpi(label, value, *, ovrl=None, pct=None, conf_n=None, conf_k=3.0,

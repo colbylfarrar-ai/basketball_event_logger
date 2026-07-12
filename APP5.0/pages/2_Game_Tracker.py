@@ -42,13 +42,23 @@ REFRESH_SECS = 3
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _scout_cues(team_id):
+def _scout_cues(team_id, vis_key=None):
     """A team's PREGAME scouting read from its PRIOR tracked games (not this game's
     live events — coaches fast-track live, so live depth is thin). Shot diet +
-    side-lean (force them the other way) + hot zone + top scorers. Cached per team;
-    returns empty/graceful when the team has no tracked history."""
+    side-lean (force them the other way) + hot zone + top scorers. Cached per
+    team + visible set; returns empty/graceful when the team has no tracked history.
+
+    `vis_key` is the AXIS-2 read-filter (entitlement.team_visible_tracked_ids as a
+    hashable tuple): None = unrestricted (own team / admin), else only that team's
+    pooled games feed the tendencies — a Solo team's private tracked games never
+    leak into a scout read. An EMPTY visible set must stay empty (the empty-filter
+    trap), so it short-circuits rather than pass an empty filter downstream."""
     import helpers.insights_team as IT
-    ten = IT.shot_tendencies(team_id)
+    if vis_key is not None and not vis_key:
+        ten = {"available": False}
+    else:
+        ten = IT.shot_tendencies(
+            team_id, game_ids=(list(vis_key) if vis_key is not None else None))
     scorers = []
     grow = query("SELECT gender FROM teams WHERE id=?", (team_id,))
     gender = grow[0]["gender"] if grow else None
@@ -342,7 +352,10 @@ _paid_view = ENT.has_paid_plan(_ident)
 #    from this game's live events. Paid depth; hidden when neither team has a
 #    tracked history (untracked opponent → no panel). ──────────────────────────
 if _paid_view:
-    _cue1, _cue2 = _scout_cues(t1id), _scout_cues(t2id)
+    def _cue_vis(tid):
+        _v = ENT.team_visible_tracked_ids(_ident, tid)
+        return None if _v is None else tuple(sorted(_v))
+    _cue1, _cue2 = _scout_cues(t1id, _cue_vis(t1id)), _scout_cues(t2id, _cue_vis(t2id))
     if _has_cues(_cue1) or _has_cues(_cue2):
         with st.expander("📋 Pregame scouting cues — team tendencies from tracked "
                          "history", expanded=False):

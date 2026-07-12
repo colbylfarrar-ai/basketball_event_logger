@@ -324,10 +324,3 @@ def season_game_ratings(game_ids=None, events=None, roles=None):
     return dict(out)
 
 
-def game_ratings(game_id, all_ratings=None):
-    """Ratings for a single game. Pass a precomputed season_game_ratings() bundle
-    (`all_ratings`) to avoid recalibrating per game; otherwise computes over the
-    whole tracked pool and slices this game out."""
-    if all_ratings is None:
-        all_ratings = season_game_ratings()
-    return all_ratings.get(game_id, {})

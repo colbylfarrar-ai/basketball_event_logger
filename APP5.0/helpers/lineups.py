@@ -345,21 +345,3 @@ def custom_unit(team_id, player_ids, game_ids=None, events=None):
     }
 
 
-def player_unit_summary(team_id, game_ids=None, min_poss=DEFAULT_MIN_POSS):
-    """
-    Per-player rollup over the reportable units they appear in: total possessions
-    and possession-weighted Net. A quick "who lifts the lineups they're in" read.
-    Returns {pid: {"name","poss","wnet"}}.
-    """
-    units = unit_ratings(team_id, game_ids=game_ids, min_poss=min_poss)
-    name_of = {r["id"]: r["name"]
-               for r in query("SELECT id, name FROM players WHERE team_id=?",
-                              (team_id,))}
-    agg = defaultdict(lambda: {"poss": 0, "netposs": 0.0})
-    for u in units:
-        for p in u["players"]:
-            agg[p]["poss"] += u["poss"]
-            agg[p]["netposs"] += u["NetAdj"] * u["poss"]
-    return {p: {"name": name_of.get(p, str(p)), "poss": a["poss"],
-                "wnet": round(_safe(a["netposs"], a["poss"]), 1)}
-            for p, a in agg.items()}

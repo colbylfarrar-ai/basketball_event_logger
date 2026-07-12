@@ -9,9 +9,13 @@ when adding a field, ask "would I put this on a gym scoreboard?".
 Public by design:  score, status, quarter/clock, quarter scores, team fouls,
                    per-player box lines keyed by JERSEY NUMBER, play-by-play
                    strings (numbers only), shot-chart dots, officials as
-                   anonymized crew slots (R/U1/U2) with foul counts.
+                   anonymized crew slots (R/U1/U2) with foul counts, and the
+                   team directory: name/class/state, W-L record, ORDINAL rank
+                   (a wall poster ranking — derived from the same final scores
+                   the scoreboard already publishes).
 Never public:      player names, official names, play_type, defense,
-                   turnover_type, foul_type, ratings of any kind, minutes,
+                   turnover_type, foul_type, ratings of any kind (no Power /
+                   Rating / AdjNet — rank ordinals only), minutes,
                    possession counts.
 
 Fans poll every few seconds, so `state_by_token` sits behind a small TTL
@@ -27,6 +31,7 @@ from datetime import date as _date
 from database.db import execute, query
 import helpers.event_log as EL
 import helpers.stats as ST
+import helpers.team_ratings as TR
 import helpers.win_probability as WP
 
 CACHE_TTL = 3.0          # seconds; fan polling is decoupled from DB reads
@@ -40,6 +45,7 @@ def clear_cache() -> None:
     _CACHE.clear()
     _SB_CACHE.clear()
     _TEAM_CACHE.clear()
+    _DIR_CACHE.clear()
 
 
 _SB_CACHE: dict[str, tuple[float, dict]] = {}
@@ -240,6 +246,78 @@ def team_profile(team_id: int) -> dict | None:
                "wins": wins, "losses": losses,
                "games": games}
     _TEAM_CACHE[team_id] = (now, payload)
+    return payload
+
+
+# ── public team directory / rankings snapshot ───────────────────────────────────
+# {'at': monotonic, 'fp': results_fingerprint, 'payload': dict}
+_DIR_CACHE: dict = {}
+
+
+def teams_directory() -> dict:
+    """Public landing "Teams" payload: every team's identity + W-L record and
+    an ORDINAL rank within its gender (plus class rank). Rank comes from the
+    results-only engine (team_ratings.score_ratings) whose inputs are the same
+    public final scores the scoreboard shows — but only the ordinal crosses
+    the fence. No Power / Rating / AdjNet / tracked numbers, ever.
+
+    Season = the season of the most recent finished game (active season
+    in-season; in the offseason the latest played season, same precedent as
+    team_profile). The whole league recompute costs ~0.5s, so it sits behind
+    a fingerprint cache: <60s old serves as-is, otherwise a few-ms
+    results_fingerprint() check decides whether anything actually changed."""
+    now = time.monotonic()
+    if _DIR_CACHE and now - _DIR_CACHE["at"] < 60.0:
+        return _DIR_CACHE["payload"]
+    fp = TR.results_fingerprint()
+    # same scores AND younger than the hard cap -> just re-stamp. The cap
+    # exists because the fingerprint only sees scores: a newly added team
+    # (roster import, no games yet) must still surface within the half hour.
+    if (_DIR_CACHE and _DIR_CACHE["fp"] == fp
+            and now - _DIR_CACHE["built"] < 1800.0):
+        _DIR_CACHE["at"] = now
+        return _DIR_CACHE["payload"]
+
+    szn = query("SELECT season FROM games "
+                "WHERE home_score IS NOT NULL AND away_score IS NOT NULL "
+                "ORDER BY date DESC, id DESC LIMIT 1")
+    season = szn[0]["season"] if szn else None
+
+    ranked: dict[int, dict] = {}
+    if season:
+        for gd in ("M", "F"):
+            ratings = TR.score_ratings(gender=gd, season=season)
+            of = len(ratings)
+            for tid, r in ratings.items():
+                ranked[tid] = {"wins": r["W"], "losses": r["L"], "gp": r["GP"],
+                               "rank": r["Rank"], "of": of,
+                               "class_rank": r["ClassRank"],
+                               "class_of": r["ClassOf"],
+                               "class_lbl": r["class_lbl"]}
+
+    multi = TR.league_multi_state()
+    teams = []
+    for t in query("SELECT id, name, class, gender, state FROM teams "
+                   "ORDER BY name"):
+        rk = ranked.get(t["id"])
+        cls_lbl = (rk["class_lbl"] if rk else
+                   TR.class_label(t["class"], t["state"], multi))
+        teams.append({
+            "id": t["id"], "name": t["name"],
+            "gender": "Girls" if t["gender"] == "F" else "Boys",
+            "state": (t["state"] or "").strip(),
+            "class_lbl": cls_lbl if cls_lbl != "N/A" else "",
+            "wins": rk["wins"] if rk else 0,
+            "losses": rk["losses"] if rk else 0,
+            "gp": rk["gp"] if rk else 0,
+            "rank": rk["rank"] if rk else None,
+            "of": rk["of"] if rk else None,
+            "class_rank": rk["class_rank"] if rk else None,
+            "class_of": rk["class_of"] if rk else None,
+        })
+    payload = {"season": season if season and season != "Current" else "",
+               "teams": teams}
+    _DIR_CACHE.update({"at": now, "built": now, "fp": fp, "payload": payload})
     return payload
 
 

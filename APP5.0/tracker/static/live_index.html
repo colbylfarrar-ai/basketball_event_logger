@@ -84,6 +84,32 @@ a.g:active { background: var(--bg3); }
   padding: 6px 12px; min-height: 36px; cursor: pointer; }
 .chiprow button.on { color: var(--bg); background: var(--gold);
   border-color: var(--gold); font-weight: 700; }
+.vtabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.vtabs button { flex: 1; font: inherit; color: var(--muted); cursor: pointer;
+  background: var(--bg3); border: 1px solid var(--edge); border-radius: 10px;
+  padding: 9px 14px; min-height: 42px; font-weight: 600; }
+.vtabs button.on { color: var(--bg); background: var(--gold);
+  border-color: var(--gold); font-weight: 700; }
+ul.teams { list-style: none; margin: 0; padding: 0; border: 1px solid var(--edge);
+  border-radius: 12px; background: var(--bg2); overflow: hidden; }
+ul.teams li { border-bottom: 1px solid var(--edge); }
+ul.teams li:last-child { border-bottom: 0; }
+ul.teams a { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px;
+  align-items: center; padding: 10px 12px; color: var(--fg);
+  text-decoration: none; }
+ul.teams a:active { background: var(--bg3); }
+ul.teams .rk { color: var(--gold); font-weight: 800; font-size: .9rem; }
+ul.teams .rk.un { color: var(--muted); font-weight: 400; }
+ul.teams .nm { min-width: 0; }
+ul.teams .nm .m { display: block; font-size: .9rem; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ul.teams .nm .sub { display: block; color: var(--muted); font-size: .7rem;
+  margin-top: 2px; }
+ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
+.more { display: block; width: 100%; margin-top: 10px; font: inherit;
+  color: var(--muted); background: var(--bg3); border: 1px solid var(--edge);
+  border-radius: 10px; min-height: 42px; padding: 8px 12px; cursor: pointer; }
+.season-note { color: var(--muted); font-size: .72rem; margin: -2px 0 8px; }
 .footer { margin-top: 22px; text-align: center; color: var(--muted);
   font-size: .75rem; }
 .footer a { color: var(--gold); text-decoration: none; font-weight: 600; }
@@ -98,26 +124,44 @@ a.g:active { background: var(--bg3); }
     <span class="s">live scores &amp; schedules</span>
   </div>
 
-  <div id="live-sec" hidden>
-    <h3>LIVE NOW</h3>
-    <div id="live-list"></div>
+  <div class="vtabs" role="tablist">
+    <button id="v-scores" class="on">Scores</button>
+    <button id="v-teams">Teams</button>
   </div>
 
-  <div id="recent-sec" hidden>
-    <h3>LATEST FINALS</h3>
-    <div id="recent-rail" class="rail"></div>
+  <div id="view-scores">
+    <div id="live-sec" hidden>
+      <h3>LIVE NOW</h3>
+      <div id="live-list"></div>
+    </div>
+
+    <div id="recent-sec" hidden>
+      <h3>LATEST FINALS</h3>
+      <div id="recent-rail" class="rail"></div>
+    </div>
+
+    <h3>SCHEDULE</h3>
+    <div id="chips" class="chiprow" hidden></div>
+    <div class="datebar">
+      <button id="d-prev" aria-label="Previous day">&lsaquo;</button>
+      <input id="d-pick" type="date" aria-label="Pick a date">
+      <button id="d-next" aria-label="Next day">&rsaquo;</button>
+    </div>
+    <input id="filter" class="filter" type="search" placeholder="Filter by team…"
+           autocomplete="off" hidden>
+    <ul class="slate" id="slate"></ul>
   </div>
 
-  <h3>SCHEDULE</h3>
-  <div id="chips" class="chiprow" hidden></div>
-  <div class="datebar">
-    <button id="d-prev" aria-label="Previous day">&lsaquo;</button>
-    <input id="d-pick" type="date" aria-label="Pick a date">
-    <button id="d-next" aria-label="Next day">&rsaquo;</button>
+  <div id="view-teams" hidden>
+    <input id="t-search" class="filter" type="search"
+           placeholder="Search any team…" autocomplete="off">
+    <div id="t-season" class="season-note" hidden></div>
+    <div id="t-gender" class="chiprow"></div>
+    <div id="t-classes" class="chiprow"></div>
+    <div id="t-loading" class="empty">Loading teams…</div>
+    <ul class="teams" id="t-list" hidden></ul>
+    <button id="t-more" class="more" hidden>Show more</button>
   </div>
-  <input id="filter" class="filter" type="search" placeholder="Filter by team…"
-         autocomplete="off" hidden>
-  <ul class="slate" id="slate"></ul>
 
   <div class="footer">
     Live stats by <a href="https://hooptracks.com" rel="noopener">HoopTracks</a><br>
@@ -138,6 +182,12 @@ a.g:active { background: var(--bg3); }
   var params = new URLSearchParams(location.search);
   var cur = /^\d{4}-\d{2}-\d{2}$/.test(params.get('d') || '')
     ? params.get('d') : localISO(new Date());
+  var view = params.get('v') === 'teams' ? 'teams' : 'scores';
+
+  function syncUrl() {
+    var q = '?d=' + cur + (view === 'teams' ? '&v=teams' : '');
+    history.replaceState(null, '', q);
+  }
 
   function esc(s) {
     return String(s).replace(/[&<>"]/g, function (c) {
@@ -267,7 +317,7 @@ a.g:active { background: var(--bg3); }
   function setDate(iso) {
     cur = iso;
     $('d-pick').value = iso;
-    history.replaceState(null, '', '?d=' + iso);
+    syncUrl();
     load();
   }
 
@@ -287,6 +337,169 @@ a.g:active { background: var(--bg3); }
     filterTxt = this.value.trim();
     renderSlate();
   });
+
+  // ── Teams view: directory + rankings snapshot ────────────────────────────
+  // Default = Oklahoma's OSSAA ladder so only OK schools show out of the box;
+  // chips let fans widen it, and a non-empty search always spans every team.
+  var DEFAULT_CLASSES = ['OK B2', 'OK B1', 'OK A', 'OK 2A',
+                         'OK 3A', 'OK 4A', 'OK 5A', 'OK 6A'];
+  var PAGE = 150;
+  var tData = null, tGender = 'Boys', tClasses = null, tSearch = '', tLimit = PAGE;
+
+  function classSortKey(lbl) {
+    var i = DEFAULT_CLASSES.indexOf(lbl);
+    return (i >= 0 ? String.fromCharCode(65 + i) : 'z' + lbl);
+  }
+
+  function ordinal(n) {
+    var s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  function initClassChips() {
+    var avail = {};
+    tData.teams.forEach(function (t) {
+      if (t.class_lbl) avail[t.class_lbl] = 1;
+    });
+    var picked = DEFAULT_CLASSES.filter(function (c) { return avail[c]; });
+    tClasses = {};
+    picked.forEach(function (c) { tClasses[c] = 1; });
+  }
+
+  function selectedCount() {
+    return Object.keys(tClasses).length;
+  }
+
+  function renderTeamChips() {
+    var g = $('t-gender');
+    g.innerHTML = '';
+    ['Boys', 'Girls'].forEach(function (gd) {
+      var b = document.createElement('button');
+      b.textContent = gd;
+      if (tGender === gd) b.classList.add('on');
+      b.addEventListener('click', function () {
+        tGender = gd; tLimit = PAGE; renderTeamChips(); renderTeams();
+      });
+      g.appendChild(b);
+    });
+
+    var box = $('t-classes');
+    box.innerHTML = '';
+    var labels = {};
+    tData.teams.forEach(function (t) {
+      if (t.class_lbl) labels[t.class_lbl] = 1;
+    });
+    var all = document.createElement('button');
+    all.textContent = 'All';
+    if (!selectedCount()) all.classList.add('on');
+    all.addEventListener('click', function () {
+      tClasses = {}; tLimit = PAGE; renderTeamChips(); renderTeams();
+    });
+    box.appendChild(all);
+    Object.keys(labels).sort(function (a, b) {
+      var ka = classSortKey(a), kb = classSortKey(b);
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    }).forEach(function (c) {
+      var b = document.createElement('button');
+      b.textContent = c;
+      var on = !!tClasses[c];
+      if (on) b.classList.add('on');
+      b.addEventListener('click', function () {
+        if (on) delete tClasses[c]; else tClasses[c] = 1;
+        tLimit = PAGE; renderTeamChips(); renderTeams();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function renderTeams() {
+    var ul = $('t-list');
+    ul.innerHTML = '';
+    var f = tSearch.toLowerCase();
+    var rows = tData.teams.filter(function (t) {
+      if (f) return t.name.toLowerCase().indexOf(f) >= 0;
+      if (t.gender !== tGender) return false;
+      return !selectedCount() || tClasses[t.class_lbl];
+    });
+    rows.sort(function (a, b) {
+      if (a.rank != null && b.rank != null) {
+        if (a.gender !== b.gender) return a.gender < b.gender ? -1 : 1;
+        return a.rank - b.rank;
+      }
+      if ((a.rank != null) !== (b.rank != null)) return a.rank != null ? -1 : 1;
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+    rows.slice(0, tLimit).forEach(function (t) {
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '/live/team/' + t.id;
+      var sub = [t.class_lbl || null, t.gender,
+                 t.class_rank != null && t.class_of > 1
+                   ? ordinal(t.class_rank) + ' in class' : null]
+        .filter(Boolean).join(' · ');
+      a.innerHTML =
+        '<span class="rk' + (t.rank != null ? '' : ' un') + '">' +
+        (t.rank != null ? '#' + t.rank : '&ndash;') + '</span>' +
+        '<span class="nm"><span class="m">' + esc(t.name) + '</span>' +
+        '<span class="sub">' + esc(sub) + '</span></span>' +
+        '<span class="rec">' + (t.gp ? t.wins + '&ndash;' + t.losses : '') +
+        '</span>';
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+    if (!ul.children.length) {
+      ul.innerHTML = '<li><div class="empty">No teams match</div></li>';
+    }
+    $('t-more').hidden = rows.length <= tLimit;
+  }
+
+  function openTeams() {
+    if (tData) return;
+    fetch('/api/public/teams')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d) {
+          $('t-loading').textContent = 'Couldn’t load teams — try again soon.';
+          return;
+        }
+        tData = d;
+        if (d.season) {
+          $('t-season').textContent = d.season + ' season';
+          $('t-season').hidden = false;
+        }
+        initClassChips();
+        renderTeamChips();
+        $('t-loading').hidden = true;
+        $('t-list').hidden = false;
+        renderTeams();
+      })
+      .catch(function () {
+        $('t-loading').textContent = 'Couldn’t load teams — try again soon.';
+      });
+  }
+
+  $('t-search').addEventListener('input', function () {
+    tSearch = this.value.trim();
+    tLimit = PAGE;
+    if (tData) renderTeams();
+  });
+  $('t-more').addEventListener('click', function () {
+    tLimit += 300;
+    renderTeams();
+  });
+
+  function setView(v) {
+    view = v;
+    $('view-scores').hidden = v !== 'scores';
+    $('view-teams').hidden = v !== 'teams';
+    $('v-scores').classList.toggle('on', v === 'scores');
+    $('v-teams').classList.toggle('on', v === 'teams');
+    syncUrl();
+    if (v === 'teams') openTeams();
+  }
+  $('v-scores').addEventListener('click', function () { setView('scores'); });
+  $('v-teams').addEventListener('click', function () { setView('teams'); });
+  if (view === 'teams') setView('teams');
 
   load();
 })();

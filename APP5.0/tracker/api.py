@@ -693,6 +693,14 @@ def public_scoreboard(date: str):
     return sb
 
 
+@app.get("/api/public/teams")
+def public_teams():
+    """UNAUTHENTICATED team directory: identity, W-L record, ordinal rank
+    only. Shaped exclusively by helpers/public_feed.teams_directory
+    (allowlist — no Power/Rating numbers ever cross this fence)."""
+    return PF.teams_directory()
+
+
 @app.get("/live", include_in_schema=False)
 def live_index():
     """Public landing: pick a live game / browse the calendar. Also the root

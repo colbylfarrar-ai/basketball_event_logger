@@ -332,8 +332,9 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
     chip(state.status);
     $('home-name').textContent = state.home.name;
     $('away-name').textContent = state.away.name;
-    if (state.home.id) $('home-name').href = '/live/team/' + state.home.id;
-    if (state.away.id) $('away-name').href = '/live/team/' + state.away.id;
+    var from = '?from=' + encodeURIComponent(token);
+    if (state.home.id) $('home-name').href = '/live/team/' + state.home.id + from;
+    if (state.away.id) $('away-name').href = '/live/team/' + state.away.id + from;
     $('home-pts').textContent = state.home.pts;
     $('away-pts').textContent = state.away.pts;
     var q = state.quarter > 4 ? 'OT' + (state.quarter - 4) : 'Q' + state.quarter;

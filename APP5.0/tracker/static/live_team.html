@@ -55,6 +55,7 @@ a.g:active { background: var(--bg3); }
 <body>
 <div class="wrap">
   <div class="brand">
+    <a id="back-game" href="/live" hidden>&lsaquo; Back to game</a>
     <a href="/live">&lsaquo; Scores</a>
     <img src="/static/icon-192.png" alt="" width="20" height="20">
     <span>HoopTracks Live</span>
@@ -83,6 +84,14 @@ a.g:active { background: var(--bg3); }
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var id = location.pathname.split('/').filter(Boolean).pop();
+
+  // Arrived from a live game page? Offer the way back (validated token
+  // shape only — the href is always /live/ + token, never a free URL).
+  var from = new URLSearchParams(location.search).get('from') || '';
+  if (/^[A-Za-z0-9_-]{4,64}$/.test(from)) {
+    $('back-game').href = '/live/' + from;
+    $('back-game').hidden = false;
+  }
 
   function esc(s) {
     return String(s).replace(/[&<>"]/g, function (c) {

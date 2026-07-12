@@ -238,6 +238,38 @@ for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
         assert part not in blob, f"LEAK: '{part}' in team payload"
 ok(True, "team payload has no player/official names")
 
+print("teams directory (rankings snapshot)")
+PF.clear_cache()
+res = client.get("/api/public/teams")
+ok(res.status_code == 200, "anon fan can read the directory")
+td = res.json()
+ok(td["season"] == "", "active-season directory carries no archive label")
+by_name = {t["name"]: t for t in td["teams"]}
+ok({"Claremore", "Visitor Prep"} <= set(by_name), "every team listed")
+c, v = by_name["Claremore"], by_name["Visitor Prep"]
+ok(c["rank"] == 1 and c["of"] == 2 and c["wins"] == 1 and c["losses"] == 0,
+   "winner ranked #1 with W-L record")
+ok(v["rank"] == 2 and v["losses"] == 1, "loser ranked #2")
+ok(c["class_lbl"] == "5A" and c["class_rank"] == 1 and c["class_of"] == 2,
+   "class label + class rank ordinals")
+ok(c["gender"] == "Boys", "gender label")
+blob = json.dumps(td)
+for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
+    for part in name.split():
+        assert part not in blob, f"LEAK: '{part}' in teams payload"
+ok(True, "teams payload has no player/official names")
+for key in ("Power", "Rating", "AdjNet", "SOS", "SOR", "xPPG", "xoPPG",
+            "PPG", "oPPG", "MOV", "ClassAdj"):
+    assert f'"{key}"' not in blob, f"LEAK: '{key}' in teams payload"
+ok(True, "rank ordinals only — no rating-engine numbers in payload")
+t3 = execute("INSERT INTO teams (name, class, gender) VALUES "
+             "('Newbie High','4A','M')")
+PF.clear_cache()
+td = client.get("/api/public/teams").json()
+nb = next(t for t in td["teams"] if t["name"] == "Newbie High")
+ok(nb["rank"] is None and nb["gp"] == 0 and nb["wins"] == 0,
+   "team with no finished games still listed, unranked")
+
 print("fan counter")
 f1 = coach.get(f"/api/games/{gid}").json()["public"]["fans"]
 ok(f1 >= 1, "coach sees a fan count (test polls counted once)")

@@ -17,6 +17,7 @@ is stamped onto games.tracked_by for pool membership + attribution.
 """
 from __future__ import annotations
 
+import io
 import os
 import re
 import secrets
@@ -27,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -308,7 +309,8 @@ def game_detail(game_id: int):
         "away": {"id": g["team2_id"], "name": g["n2"]},
         "players": players, "officials": officials,
         "public": {"on": bool(g["is_public"]),
-                   "url": f"/live/{g['share_token']}" if g["share_token"] else ""},
+                   "url": f"/live/{g['share_token']}" if g["share_token"] else "",
+                   "fans": PF.fan_count(game_id)},
     }
 
 
@@ -621,18 +623,64 @@ def toggle_public(game_id: int, user: dict = Depends(require_full_user)):
             (now_public, token, game_id))
     PF.clear_cache()
     return {"public": bool(now_public), "token": token,
-            "url": f"/live/{token}" if token else ""}
+            "url": f"/live/{token}" if token else "",
+            "fans": PF.fan_count(game_id)}
 
 
 @app.get("/api/public/game/{token}")
-def public_game(token: str):
+def public_game(token: str, request: Request):
     """UNAUTHENTICATED fan feed. Allowlisted payload only — shaped exclusively
     by helpers/public_feed.py (jersey numbers, R/U1/U2 refs, no names, no
-    tags). Unknown token and non-public game 404 identically."""
-    state = PF.state_by_token(token)
+    tags). Unknown token and non-public game 404 identically. Each distinct
+    viewer bumps the coach-facing fan counter once per day (hash only)."""
+    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+          or (request.client.host if request.client else ""))
+    viewer = PF.viewer_key(ip, request.headers.get("user-agent", ""))
+    state = PF.state_by_token(token, viewer=viewer)
     if state is None:
         raise HTTPException(status_code=404, detail="no such game")
     return state
+
+
+@app.get("/api/public/team/{team_id}")
+def public_team(team_id: int):
+    """UNAUTHENTICATED team profile: identity, record, results + schedule.
+    Team-level public-record facts only (helpers/public_feed.team_profile)."""
+    prof = PF.team_profile(team_id)
+    if prof is None:
+        raise HTTPException(status_code=404, detail="no such team")
+    return prof
+
+
+@app.get("/live/team/{team_id}", include_in_schema=False)
+def live_team_page(team_id: int):
+    """Public team page shell (live.hooptracks.com/team/{id} lands here via
+    the Caddy short-path rewrite)."""
+    return FileResponse(_STATIC / "live_team.html")
+
+
+@api.get("/games/{game_id}/fanqr")
+def fan_link_qr(game_id: int, request: Request):
+    """QR of the game's fan link (SVG) — the coach flashes it at the gym door.
+    Requires the game to be public. Encodes the pretty live-host short URL on
+    prod, the request host's /live path anywhere else."""
+    g = query("SELECT is_public, share_token FROM games WHERE id=?", (game_id,))
+    if not g or not g[0]["is_public"] or not g[0]["share_token"]:
+        raise HTTPException(status_code=404, detail="fan link is off")
+    try:
+        import segno
+    except ImportError:
+        raise HTTPException(status_code=501, detail="qr library not installed")
+    host = request.headers.get("host", "")
+    tok = g[0]["share_token"]
+    if host.endswith("hooptracks.com"):
+        url = f"https://live.hooptracks.com/{tok}"
+    else:
+        url = f"http://{host}/live/{tok}"
+    buf = io.BytesIO()
+    segno.make(url, error="m").save(buf, kind="svg", scale=6, dark="#12141e",
+                                    light="#ffffff", xmldecl=False)
+    return Response(content=buf.getvalue(), media_type="image/svg+xml")
 
 
 @app.get("/api/public/scoreboard")

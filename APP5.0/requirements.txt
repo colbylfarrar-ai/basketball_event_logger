@@ -43,3 +43,6 @@ xhtml2pdf>=0.2.16
 # rankings page renders its schedule with JS, so a plain HTTP fetch sees nothing.
 # After install run `playwright install chromium` once to fetch the browser.
 playwright>=1.40
+# QR of the public fan link (tracker/api.py /fanqr): segno is pure-python,
+# zero-dependency; the endpoint degrades to 501 if it's ever missing.
+segno>=1.6

@@ -19,11 +19,15 @@ cache: N fans on one game cost ~1 DB read per TTL window.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import time
+from datetime import date as _date
 
-from database.db import query
+from database.db import execute, query
 import helpers.event_log as EL
+import helpers.stats as ST
+import helpers.win_probability as WP
 
 CACHE_TTL = 3.0          # seconds; fan polling is decoupled from DB reads
 _CACHE: dict[str, tuple[float, dict]] = {}
@@ -35,6 +39,7 @@ _SLOT_LABELS = ("R", "U1", "U2", "U3", "U4")
 def clear_cache() -> None:
     _CACHE.clear()
     _SB_CACHE.clear()
+    _TEAM_CACHE.clear()
 
 
 _SB_CACHE: dict[str, tuple[float, dict]] = {}
@@ -76,41 +81,61 @@ def scoreboard(date_str: str) -> dict | None:
                      "quarter": last[0]["quarter"], "clock": last[0]["time"],
                      "date": r["date"], "url": f"/live/{r['share_token']}"})
 
-    rows = query(
-        "SELECT g.id, g.tracked, g.home_score, g.away_score, g.is_public, "
-        "       g.share_token, g.location, "
-        "       t1.name AS hn, t2.name AS an, t1.gender AS gd "
+    _slate_cols = (
+        "SELECT g.id, g.date, g.tracked, g.home_score, g.away_score, g.is_public, "
+        "       g.share_token, g.location, g.team1_id, g.team2_id, "
+        "       t1.name AS hn, t2.name AS an, t1.gender AS gd, "
+        "       t1.class AS hc, t2.class AS ac "
         "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
-        "             JOIN teams t2 ON t2.id=g.team2_id "
-        "WHERE g.date=? ORDER BY t1.name, g.id LIMIT 300", (date_str,))
+        "             JOIN teams t2 ON t2.id=g.team2_id ")
+
+    def _row(r, status):
+        g = {"home": r["hn"], "away": r["an"],
+             "home_id": r["team1_id"], "away_id": r["team2_id"],
+             "gender": "Girls" if r["gd"] == "F" else "Boys",
+             "classes": sorted({c for c in (r["hc"], r["ac"]) if c and c != "N/A"}),
+             "status": status, "location": r["location"] or "", "date": r["date"]}
+        if status == "final":
+            g["home_score"], g["away_score"] = r["home_score"], r["away_score"]
+        if r["is_public"] and r["share_token"]:
+            g["url"] = f"/live/{r['share_token']}"
+        return g
+
+    rows = query(_slate_cols + "WHERE g.date=? ORDER BY t1.name, g.id LIMIT 300",
+                 (date_str,))
     games = []
     for r in rows:
         final = bool(r["tracked"]) or (r["home_score"] is not None
                                        and r["away_score"] is not None)
         status = "live" if r["id"] in live_ids else ("final" if final else "upcoming")
-        g = {"home": r["hn"], "away": r["an"],
-             "gender": "Girls" if r["gd"] == "F" else "Boys",
-             "status": status, "location": r["location"] or ""}
-        if status == "final":
-            g["home_score"], g["away_score"] = r["home_score"], r["away_score"]
-        if r["is_public"] and r["share_token"]:
-            g["url"] = f"/live/{r['share_token']}"
-        games.append(g)
+        games.append(_row(r, status))
 
-    payload = {"date": date_str, "live": live, "games": games}
+    # latest-finals rail: most recent finished games (any date), newest first
+    recent = [_row(r, "final") for r in query(
+        _slate_cols +
+        "WHERE (g.tracked=1 OR (g.home_score IS NOT NULL AND g.away_score IS NOT NULL)) "
+        "AND g.date >= date('now','-3 day') AND g.id NOT IN "
+        "(SELECT id FROM games WHERE date=?) "
+        "ORDER BY g.date DESC, g.id DESC LIMIT 12", (date_str,))]
+
+    payload = {"date": date_str, "live": live, "games": games, "recent": recent}
     _SB_CACHE[date_str] = (now, payload)
     return payload
 
 
-def state_by_token(token: str) -> dict | None:
+def state_by_token(token: str, viewer: str | None = None) -> dict | None:
     """Public payload for a share token, or None (unknown token OR a game the
-    coach has not made public — identical outcome, no existence leak)."""
+    coach has not made public — identical outcome, no existence leak). Pass a
+    stable `viewer` key (hashed ip+ua) to tally the coach-facing fan counter —
+    counted once per viewer per day, never per poll."""
     token = (token or "").strip()
     if not token:
         return None
     hit = _CACHE.get(token)
     now = time.monotonic()
     if hit and now - hit[0] < CACHE_TTL:
+        if viewer:
+            _count_view(hit[2], viewer)
         return hit[1]
     g = query(
         "SELECT g.id, g.date, g.location, g.tracked, "
@@ -122,7 +147,99 @@ def state_by_token(token: str) -> dict | None:
     if not g:
         return None
     payload = _build_state(dict(g[0]))
-    _CACHE[token] = (now, payload)
+    _CACHE[token] = (now, payload, g[0]["id"])
+    if viewer:
+        _count_view(g[0]["id"], viewer)
+    return payload
+
+
+# ── fan counter (coach-facing telemetry; never in the public payload) ───────────
+_SEEN_VIEWERS: set[tuple] = set()
+
+
+def viewer_key(ip: str, ua: str) -> str:
+    """Stable anonymous viewer id — hash only, raw ip/ua never stored."""
+    return hashlib.sha1(f"{ip}|{ua}".encode()).hexdigest()[:16]
+
+
+def _count_view(game_id: int, viewer: str) -> None:
+    day = _date.today().isoformat()
+    key = (game_id, day, viewer)
+    if key in _SEEN_VIEWERS:
+        return
+    if len(_SEEN_VIEWERS) > 50000:      # bound memory; worst case = recount
+        _SEEN_VIEWERS.clear()
+    _SEEN_VIEWERS.add(key)
+    try:
+        execute("INSERT INTO fan_views (game_id, day, viewers) VALUES (?,?,1) "
+                "ON CONFLICT(game_id, day) DO UPDATE SET viewers=viewers+1",
+                (game_id, day))
+    except Exception:
+        pass                            # telemetry never breaks the feed
+
+
+def fan_count(game_id: int) -> int:
+    r = query("SELECT COALESCE(SUM(viewers),0) AS n FROM fan_views "
+              "WHERE game_id=?", (game_id,))
+    return int(r[0]["n"])
+
+
+# ── public team profile ─────────────────────────────────────────────────────────
+_TEAM_CACHE: dict[int, tuple[float, dict]] = {}
+
+
+def team_profile(team_id: int) -> dict | None:
+    """Public team page payload: identity, W-L record, season results +
+    upcoming schedule (fan links where they exist). Team-level public-record
+    facts only — no ratings, no players. Season = the team's most recent
+    game's season, so a post-rollover archive still shows the played season."""
+    hit = _TEAM_CACHE.get(team_id)
+    now = time.monotonic()
+    if hit and now - hit[0] < 10.0:
+        return hit[1]
+    t = query("SELECT id, name, class, gender FROM teams WHERE id=?", (team_id,))
+    if not t:
+        return None
+    t = t[0]
+    szn = query("SELECT season FROM games WHERE team1_id=? OR team2_id=? "
+                "ORDER BY date DESC, id DESC LIMIT 1", (team_id, team_id))
+    season = szn[0]["season"] if szn else None
+    games, wins, losses = [], 0, 0
+    if season:
+        rows = query(
+            "SELECT g.id, g.date, g.location, g.tracked, g.home_score, "
+            "       g.away_score, g.is_public, g.share_token, g.team1_id, "
+            "       t1.name AS hn, t2.name AS an "
+            "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+            "             JOIN teams t2 ON t2.id=g.team2_id "
+            "WHERE (g.team1_id=? OR g.team2_id=?) AND g.season=? "
+            "ORDER BY g.date DESC, g.id DESC LIMIT 60",
+            (team_id, team_id, season))
+        for r in rows:
+            is_home = r["team1_id"] == team_id
+            final = bool(r["tracked"]) or (r["home_score"] is not None
+                                           and r["away_score"] is not None)
+            us = r["home_score"] if is_home else r["away_score"]
+            them = r["away_score"] if is_home else r["home_score"]
+            g = {"date": r["date"], "opp": r["an"] if is_home else r["hn"],
+                 "home_away": "vs" if is_home else "at",
+                 "status": "final" if final else "upcoming",
+                 "location": r["location"] or ""}
+            if final and us is not None:
+                g["us"], g["them"] = us, them
+                g["won"] = us > them
+                wins += 1 if us > them else 0
+                losses += 1 if us < them else 0
+            if r["is_public"] and r["share_token"]:
+                g["url"] = f"/live/{r['share_token']}"
+            games.append(g)
+    payload = {"id": t["id"], "name": t["name"],
+               "class": t["class"] if t["class"] != "N/A" else "",
+               "gender": "Girls" if t["gender"] == "F" else "Boys",
+               "season": season if season and season != "Current" else "",
+               "wins": wins, "losses": losses,
+               "games": games}
+    _TEAM_CACHE[team_id] = (now, payload)
     return payload
 
 
@@ -180,22 +297,57 @@ def _play_text(ev: dict, pmap: dict) -> str | None:
     return None
 
 
-def _officials_line(game_id: int, events: list) -> list:
-    """Anonymized crew: [{'slot': 'R', 'fouls': 7}, …]. Order = explicit
-    game_lineup_officials.slot when set, else first-seen (id) order — the
-    default alignment. Names never enter the payload."""
+def _officials_detail(game_id: int, events: list, pmap: dict) -> list:
+    """Anonymized crew for the assigner view: per slot the foul count TOTAL,
+    by quarter, and by charged side (home/away = the fouler's team). Order =
+    explicit game_lineup_officials.slot when set, else first-seen (id) order —
+    the default alignment. Names never enter the payload."""
     crew = query(
         "SELECT official_id FROM game_lineup_officials WHERE game_id=? "
         "ORDER BY (slot IS NULL), slot, id", (game_id,))
-    calls: dict[int, int] = {}
+    stats: dict[int, dict] = {
+        r["official_id"]: {"fouls": 0, "home": 0, "away": 0, "q": {}}
+        for r in crew}
     for ev in events:
-        if ev["event_type"] == "foul" and ev["official_id"]:
-            calls[ev["official_id"]] = calls.get(ev["official_id"], 0) + 1
+        s = stats.get(ev["official_id"]) if ev["event_type"] == "foul" else None
+        if s is None:
+            continue
+        s["fouls"] += 1
+        s["q"][str(ev["quarter"])] = s["q"].get(str(ev["quarter"]), 0) + 1
+        side = pmap.get(ev["primary_player_id"], {}).get("team")
+        if side:
+            s[side] += 1
     out = []
     for i, r in enumerate(crew):
         label = _SLOT_LABELS[i] if i < len(_SLOT_LABELS) else f"U{i}"
-        out.append({"slot": label, "fouls": calls.get(r["official_id"], 0)})
+        out.append({"slot": label, **stats[r["official_id"]]})
     return out
+
+
+def _wp_series(score_trace: list, final: bool) -> list:
+    """Win-probability strip from the (elapsed, margin) scoring trace. Uses the
+    shared WP model (helpers/win_probability). Total game length = regulation
+    or through the deepest period seen; a FINAL game's last point collapses to
+    the winner. Score/clock derived only — public-safe."""
+    if len(score_trace) < 2:
+        return []
+    max_t = max(t for t, _ in score_trace)
+    total = float(WP.GAME_SECONDS)
+    q = 4
+    while total < max_t:            # stretch for OT periods actually played
+        q += 1
+        total = ST.q_base(q) + ST.q_len(q)
+    pts = [{"t": round(t), "p": round(WP.win_prob(m, total - t, total), 3)}
+           for t, m in score_trace]
+    if final:
+        m = score_trace[-1][1]
+        pts.append({"t": round(total),
+                    "p": 1.0 if m > 0 else (0.0 if m < 0 else 0.5)})
+    # cap the payload — keep every late point, thin the early ones
+    if len(pts) > 150:
+        head, tail = pts[:-50], pts[-50:]
+        pts = head[::2] + tail
+    return pts
 
 
 def _build_state(g: dict) -> dict:
@@ -213,6 +365,7 @@ def _build_state(g: dict) -> dict:
     quarters: dict[str, dict] = {}
     team_fouls: dict[str, dict] = {}
     plays, shots = [], []
+    score_trace = [(0.0, 0.0)]    # (elapsed secs, home margin) for the WP strip
 
     def line(pid):
         if pid not in box:
@@ -240,6 +393,8 @@ def _build_state(g: dict) -> dict:
                     pts[side] += got
                     q = quarters.setdefault(str(ev["quarter"]), {"home": 0, "away": 0})
                     q[side] += got
+                    score_trace.append((ST.elapsed(ev["quarter"], ev["time"]),
+                                        pts["home"] - pts["away"]))
                 if ev["shot_x"] is not None and ev["shot_y"] is not None:
                     shots.append({"x": ev["shot_x"], "y": ev["shot_y"],
                                   "make": make, "type": 3 if three else 2,
@@ -252,6 +407,8 @@ def _build_state(g: dict) -> dict:
                     pts[side] += 1
                     q = quarters.setdefault(str(ev["quarter"]), {"home": 0, "away": 0})
                     q[side] += 1
+                    score_trace.append((ST.elapsed(ev["quarter"], ev["time"]),
+                                        pts["home"] - pts["away"]))
             elif et == "turnover":
                 ln["tov"] += 1
             elif et == "foul":
@@ -288,8 +445,8 @@ def _build_state(g: dict) -> dict:
     return {
         "status": status,
         "date": g["date"], "location": g["location"] or "",
-        "home": {"name": g["home_name"], "pts": pts["home"]},
-        "away": {"name": g["away_name"], "pts": pts["away"]},
+        "home": {"name": g["home_name"], "pts": pts["home"], "id": t1},
+        "away": {"name": g["away_name"], "pts": pts["away"], "id": t2},
         "quarter": last["quarter"] if last else 1,
         "clock": last["time"] if last else "",
         "quarters": quarters,
@@ -297,6 +454,7 @@ def _build_state(g: dict) -> dict:
         "box": {"home": home_box, "away": away_box},
         "plays": plays[-250:][::-1],   # newest first, capped
         "shots": shots,
-        "officials": _officials_line(gid, events),
+        "officials": _officials_detail(gid, events, pmap),
+        "wp": _wp_series(score_trace, status == "final"),
         "version": (events[-1]["id"] if events else 0) * 10 + (1 if g["tracked"] else 0),
     }

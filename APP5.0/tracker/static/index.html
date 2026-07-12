@@ -113,8 +113,13 @@ try {
     <div class="lineup-actions">
       <button id="btn-fan-link" class="btn ghost small" type="button">🔗 Fan link: OFF</button>
       <button id="btn-fan-copy" class="btn ghost small" type="button" hidden>Copy link</button>
+      <button id="btn-fan-qr" class="btn ghost small" type="button" hidden>QR</button>
     </div>
     <p id="fan-link-status" class="status"></p>
+    <!-- gym-door QR: fans scan straight to the live page -->
+    <div id="fan-qr-box" hidden style="text-align:center;padding:10px;background:#fff;border-radius:12px;max-width:240px">
+      <img id="fan-qr-img" alt="Fan link QR" style="width:100%;display:block">
+    </div>
   </div>
   <button id="btn-start" class="btn primary big">Start tracking</button>
   <button id="btn-lineup-edit-log" class="btn ghost big" type="button">Edit log</button>

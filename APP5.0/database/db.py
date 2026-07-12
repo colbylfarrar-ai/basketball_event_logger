@@ -36,6 +36,7 @@ def set_audit_actor(email) -> None:
 _AUDIT_SKIP_TABLES = {
     "app_settings", "change_requests", "audit_log",
     "game_event_lineup", "game_lineup_players", "game_lineup_officials",
+    "fan_views",
 }
 _AUDIT_RE = re.compile(
     r"^\s*(INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
@@ -485,6 +486,14 @@ def initialize_database():
             # 2=U1, 3=U2). NULL = fall back to first-seen (id) order, the
             # default alignment most crews follow.
             "ALTER TABLE game_lineup_officials ADD COLUMN slot INTEGER",
+            # Fan-link audience counter: daily unique viewers per public game
+            # (uniqueness approximated in-process by helpers/public_feed.py;
+            # one UPDATE per new viewer, never per poll). Shown to the coach
+            # in the PWA ("N fans followed"); audit-skipped (pure telemetry).
+            "CREATE TABLE IF NOT EXISTS fan_views ("
+            " game_id INTEGER NOT NULL, day TEXT NOT NULL,"
+            " viewers INTEGER NOT NULL DEFAULT 0,"
+            " PRIMARY KEY (game_id, day))",
         ]
 
         for stmt in migrations:

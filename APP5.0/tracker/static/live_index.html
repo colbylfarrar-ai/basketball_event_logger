@@ -57,9 +57,9 @@ ul.slate .g { display: grid; grid-template-columns: 1fr auto; gap: 10px;
   text-decoration: none; }
 a.g:active { background: var(--bg3); }
 .g .who { min-width: 0; }
-.g .who .m { font-size: .88rem; font-weight: 600; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-.g .who .sub { color: var(--muted); font-size: .7rem; margin-top: 2px; }
+.g .who .m { display: block; font-size: .88rem; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g .who .sub { display: block; color: var(--muted); font-size: .7rem; margin-top: 2px; }
 .g .right { text-align: right; font-size: .8rem; color: var(--muted);
   white-space: nowrap; }
 .g .right .sc { color: var(--fg); font-weight: 700; font-size: .95rem; }
@@ -67,6 +67,23 @@ a.g:active { background: var(--bg3); }
 .g .right .link { color: var(--gold); font-weight: 600; }
 .empty { padding: 22px 12px; text-align: center; color: var(--muted);
   font-size: .85rem; }
+.rail { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch; }
+.rail a { flex: 0 0 auto; min-width: 150px; background: var(--bg2);
+  border: 1px solid var(--edge); border-radius: 12px; padding: 8px 10px;
+  color: var(--fg); text-decoration: none; font-size: .78rem; }
+.rail a.nolink { pointer-events: none; }
+.rail .rl { display: flex; justify-content: space-between; gap: 8px; }
+.rail .rl .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 110px; }
+.rail .rl b { font-weight: 800; }
+.rail .sub { color: var(--muted); font-size: .68rem; margin-top: 3px; }
+.chiprow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.chiprow button { font: inherit; font-size: .78rem; color: var(--muted);
+  background: var(--bg3); border: 1px solid var(--edge); border-radius: 999px;
+  padding: 6px 12px; min-height: 36px; cursor: pointer; }
+.chiprow button.on { color: var(--bg); background: var(--gold);
+  border-color: var(--gold); font-weight: 700; }
 .footer { margin-top: 22px; text-align: center; color: var(--muted);
   font-size: .75rem; }
 .footer a { color: var(--gold); text-decoration: none; font-weight: 600; }
@@ -86,7 +103,13 @@ a.g:active { background: var(--bg3); }
     <div id="live-list"></div>
   </div>
 
+  <div id="recent-sec" hidden>
+    <h3>LATEST FINALS</h3>
+    <div id="recent-rail" class="rail"></div>
+  </div>
+
   <h3>SCHEDULE</h3>
+  <div id="chips" class="chiprow" hidden></div>
   <div class="datebar">
     <button id="d-prev" aria-label="Previous day">&lsaquo;</button>
     <input id="d-pick" type="date" aria-label="Pick a date">
@@ -143,6 +166,55 @@ a.g:active { background: var(--bg3); }
     $('live-sec').hidden = !(data.live || []).length;
   }
 
+  function renderRecent() {
+    var box = $('recent-rail');
+    box.innerHTML = '';
+    (data.recent || []).forEach(function (g) {
+      var a = document.createElement('a');
+      if (g.url) a.href = g.url; else a.className = 'nolink';
+      var hw = g.home_score > g.away_score;
+      a.innerHTML =
+        '<div class="rl"><span class="nm">' + esc(g.home) + '</span>' +
+        (hw ? '<b>' : '<span>') + g.home_score + (hw ? '</b>' : '</span>') + '</div>' +
+        '<div class="rl"><span class="nm">' + esc(g.away) + '</span>' +
+        (!hw ? '<b>' : '<span>') + g.away_score + (!hw ? '</b>' : '</span>') + '</div>' +
+        '<div class="sub">Final · ' + esc(g.gender) + ' · ' + esc(g.date) + '</div>';
+      box.appendChild(a);
+    });
+    $('recent-sec').hidden = !(data.recent || []).length;
+  }
+
+  var chip = { gender: '', klass: '' };
+
+  function renderChips() {
+    var rows = data.games || [];
+    var box = $('chips');
+    var genders = [], classes = [];
+    rows.forEach(function (g) {
+      if (genders.indexOf(g.gender) < 0) genders.push(g.gender);
+      (g.classes || []).forEach(function (c) {
+        if (classes.indexOf(c) < 0) classes.push(c);
+      });
+    });
+    classes.sort();
+    box.hidden = rows.length <= 8 || (genders.length < 2 && classes.length < 2);
+    if (box.hidden) { chip.gender = ''; chip.klass = ''; return; }
+    box.innerHTML = '';
+    function add(label, kind, val) {
+      var b = document.createElement('button');
+      b.textContent = label;
+      var on = chip[kind] === val;
+      if (on) b.classList.add('on');
+      b.addEventListener('click', function () {
+        chip[kind] = on ? '' : val;
+        renderChips(); renderSlate();
+      });
+      box.appendChild(b);
+    }
+    if (genders.length > 1) genders.forEach(function (g) { add(g, 'gender', g); });
+    classes.forEach(function (c) { add(c, 'klass', c); });
+  }
+
   function renderSlate() {
     var ul = $('slate');
     ul.innerHTML = '';
@@ -151,6 +223,8 @@ a.g:active { background: var(--bg3); }
     var f = filterTxt.toLowerCase();
     rows.forEach(function (g) {
       if (f && (g.home + ' ' + g.away).toLowerCase().indexOf(f) < 0) return;
+      if (chip.gender && g.gender !== chip.gender) return;
+      if (chip.klass && (g.classes || []).indexOf(chip.klass) < 0) return;
       var li = document.createElement('li');
       var el = document.createElement(g.url ? 'a' : 'div');
       el.className = 'g';
@@ -181,7 +255,7 @@ a.g:active { background: var(--bg3); }
     fetch('/api/public/scoreboard?date=' + encodeURIComponent(cur))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
-        if (d) { data = d; renderLive(); renderSlate(); }
+        if (d) { data = d; renderLive(); renderRecent(); renderChips(); renderSlate(); }
       })
       .catch(function () { /* keep last render */ })
       .then(function () {

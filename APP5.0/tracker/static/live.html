@@ -86,9 +86,18 @@ ul.pbp li:last-child { border-bottom: 0; }
 ul.pbp .qt { color: var(--muted); min-width: 66px; }
 ul.pbp .home-side { color: var(--gold); }
 ul.pbp .away-side { color: var(--blue); }
-.refs { color: var(--muted); font-size: .8rem; background: var(--bg2);
-  border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; }
-.refs b { color: var(--fg); }
+#wp-box { background: var(--bg2); border: 1px solid var(--edge);
+  border-radius: 12px; padding: 8px; }
+#wp-box svg { width: 100%; height: auto; display: block; }
+table.refs { width: 100%; border-collapse: collapse; background: var(--bg2);
+  border: 1px solid var(--edge); border-radius: 12px; overflow: hidden;
+  font-size: .8rem; }
+table.refs th, table.refs td { padding: 7px 8px; text-align: center;
+  border-bottom: 1px solid var(--edge); white-space: nowrap; }
+table.refs tr:last-child td { border-bottom: 0; }
+table.refs th { color: var(--muted); font-weight: 600; }
+table.refs td:first-child { font-weight: 700; color: var(--gold); }
+.refs-note { color: var(--muted); font-size: .7rem; margin-top: 6px; }
 .footer { margin-top: 22px; text-align: center; color: var(--muted);
   font-size: .75rem; }
 .footer a { color: var(--gold); text-decoration: none; font-weight: 600; }
@@ -113,12 +122,17 @@ ul.pbp .away-side { color: var(--blue); }
 
   <div id="game" hidden>
     <div class="score">
-      <div class="team"><div class="n" id="home-name"></div><div class="p" id="home-pts">0</div></div>
+      <div class="team"><a class="n" id="home-name" style="color:inherit;text-decoration:none;display:block"></a><div class="p" id="home-pts">0</div></div>
       <div class="mid"><div class="q" id="q-label"></div><div id="clock"></div></div>
-      <div class="team"><div class="n" id="away-name"></div><div class="p" id="away-pts">0</div></div>
+      <div class="team"><a class="n" id="away-name" style="color:inherit;text-decoration:none;display:block"></a><div class="p" id="away-pts">0</div></div>
     </div>
     <div class="meta" id="meta"></div>
     <table class="qtrs" id="qtrs" hidden></table>
+
+    <div id="wp-sec" hidden>
+      <h3 id="wp-title">Win probability</h3>
+      <div id="wp-box"></div>
+    </div>
 
     <div class="tabs" role="tablist">
       <button id="tab-home" class="on"></button>
@@ -151,7 +165,9 @@ ul.pbp .away-side { color: var(--blue); }
 
     <div id="refs-sec" hidden>
       <h3>Officiating</h3>
-      <div class="refs" id="refs"></div>
+      <div style="overflow-x:auto"><table class="refs" id="refs"></table></div>
+      <div class="refs-note">Crew shown by position (R / U1 / U2) — fouls
+        charged by period and team.</div>
     </div>
   </div>
 
@@ -178,6 +194,12 @@ ul.pbp .away-side { color: var(--blue); }
   }
 
   function fg(m, a) { return m + '-' + a; }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
 
   function renderBox() {
     var rows = state.box[side] || [];
@@ -262,11 +284,47 @@ ul.pbp .away-side { color: var(--blue); }
     var offs = state.officials || [];
     var any = offs.some(function (o) { return o.fouls > 0; });
     $('refs-sec').hidden = !offs.length || !any;
-    if (offs.length && any) {
-      $('refs').innerHTML = 'Fouls called — ' + offs.map(function (o) {
-        return '<b>' + o.slot + '</b>: ' + o.fouls;
-      }).join(' · ');
-    }
+    if (!offs.length || !any) return;
+    // union of quarters any official has calls in, in order
+    var qs = [];
+    offs.forEach(function (o) {
+      Object.keys(o.q || {}).forEach(function (k) {
+        if (qs.indexOf(k) < 0) qs.push(k);
+      });
+    });
+    qs.sort(function (a, b) { return a - b; });
+    var head = '<tr><th></th><th>Fouls</th>';
+    qs.forEach(function (k) { head += '<th>' + (k > 4 ? 'OT' + (k - 4) : 'Q' + k) + '</th>'; });
+    head += '<th>' + esc(state.home.name) + '</th><th>' + esc(state.away.name) + '</th></tr>';
+    var body = offs.map(function (o) {
+      var r = '<tr><td>' + o.slot + '</td><td><b>' + o.fouls + '</b></td>';
+      qs.forEach(function (k) { r += '<td>' + ((o.q || {})[k] || 0) + '</td>'; });
+      return r + '<td>' + o.home + '</td><td>' + o.away + '</td></tr>';
+    }).join('');
+    $('refs').innerHTML = head + body;
+  }
+
+  function renderWp() {
+    var wp = state.wp || [];
+    $('wp-sec').hidden = wp.length < 2;
+    if (wp.length < 2) return;
+    $('wp-title').textContent = 'Win probability — ' + state.home.name;
+    var W = 600, H = 120, total = wp[wp.length - 1].t || 1;
+    function x(t) { return (t / total) * W; }
+    function y(p) { return (1 - p) * H; }
+    var line = wp.map(function (d, i) {
+      return (i ? 'L' : 'M') + x(d.t).toFixed(1) + ' ' + y(d.p).toFixed(1);
+    }).join(' ');
+    var area = line + ' L ' + W + ' ' + H + ' L 0 ' + H + ' Z';
+    var last = wp[wp.length - 1];
+    $('wp-box').innerHTML =
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-label="win probability">' +
+      '<line x1="0" y1="' + (H / 2) + '" x2="' + W + '" y2="' + (H / 2) +
+      '" stroke="#343a52" stroke-width="1" stroke-dasharray="4 4"/>' +
+      '<path d="' + area + '" fill="#e6be64" opacity="0.13"/>' +
+      '<path d="' + line + '" fill="none" stroke="#e6be64" stroke-width="2.5"/>' +
+      '<circle cx="' + x(last.t) + '" cy="' + y(last.p) + '" r="4" fill="#e6be64"/>' +
+      '</svg>';
   }
 
   function render() {
@@ -274,6 +332,8 @@ ul.pbp .away-side { color: var(--blue); }
     chip(state.status);
     $('home-name').textContent = state.home.name;
     $('away-name').textContent = state.away.name;
+    if (state.home.id) $('home-name').href = '/live/team/' + state.home.id;
+    if (state.away.id) $('away-name').href = '/live/team/' + state.away.id;
     $('home-pts').textContent = state.home.pts;
     $('away-pts').textContent = state.away.pts;
     var q = state.quarter > 4 ? 'OT' + (state.quarter - 4) : 'Q' + state.quarter;
@@ -284,7 +344,7 @@ ul.pbp .away-side { color: var(--blue); }
     $('tab-away').textContent = state.away.name;
     var f = $('shot-filters').querySelectorAll('button');
     f[1].textContent = state.home.name; f[2].textContent = state.away.name;
-    renderQuarters(); renderBox(); renderShots(); renderPbp(); renderRefs();
+    renderQuarters(); renderWp(); renderBox(); renderShots(); renderPbp(); renderRefs();
     document.title = state.home.name + ' ' + state.home.pts + '–' +
       state.away.pts + ' ' + state.away.name + ' — HoopTracks';
   }

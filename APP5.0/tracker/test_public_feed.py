@@ -125,9 +125,11 @@ ok(len(st["shots"]) == 2 and st["shots"][0]["team"] == "home"
    "shot chart dots with x/y")
 ok(any("#1 3PT make (assist #2)" == p["text"] for p in st["plays"]),
    "pbp is jersey-numbers-only text")
-ok(st["officials"] == [{"slot": "R", "fouls": 0}, {"slot": "U1", "fouls": 1},
-                       {"slot": "U2", "fouls": 0}],
-   "refs anonymized R/U1/U2 with foul counts")
+offs = {o["slot"]: o for o in st["officials"]}
+ok(list(offs) == ["R", "U1", "U2"] and offs["R"]["fouls"] == 0
+   and offs["U1"]["fouls"] == 1, "refs anonymized R/U1/U2 with foul counts")
+ok(offs["U1"]["home"] == 1 and offs["U1"]["away"] == 0
+   and offs["U1"]["q"] == {"2": 1}, "assigner detail: side + quarter splits")
 
 print("privacy sweep")
 blob = json.dumps(st)
@@ -145,7 +147,7 @@ execute("UPDATE game_lineup_officials SET slot=CASE official_id "
         "WHEN ? THEN 3 WHEN ? THEN 1 WHEN ? THEN 2 END WHERE game_id=?",
         (refs[0], refs[1], refs[2], gid))
 st = client.get(f"/api/public/game/{tok}").json()
-ok(st["officials"][0] == {"slot": "R", "fouls": 1},
+ok(st["officials"][0]["slot"] == "R" and st["officials"][0]["fouls"] == 1,
    "slot column reorders crew (caller now R)")
 
 print("toggle off/on + token stability")
@@ -168,6 +170,14 @@ ok(st["home"]["pts"] == 5, "score updates live")
 coach.post(f"/api/games/{gid}/finish")
 st = client.get(f"/api/public/game/{tok}").json()
 ok(st["status"] == "final", "finish -> status final")
+
+print("win probability strip")
+wp = st["wp"]
+ok(len(wp) >= 3 and all(0.0 <= p["p"] <= 1.0 for p in wp), "wp series in [0,1]")
+ok(wp[0]["p"] == 0.5 and wp[-1]["p"] == 1.0,
+   "wp starts even, collapses to home winner at the final buzzer")
+ok(st["home"]["id"] == t1 and st["away"]["id"] == t2,
+   "team ids in payload (profile links)")
 
 print("scoreboard (landing feed)")
 today = query("SELECT date('now') d")[0]["d"]
@@ -204,11 +214,55 @@ for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
         assert part not in blob, f"LEAK: '{part}' in scoreboard payload"
 ok(True, "scoreboard payload has no player/official names")
 
+print("finals rail + class chips")
+yday = query("SELECT date('now','-1 day') d")[0]["d"]
+sb = client.get(f"/api/public/scoreboard?date={yday}").json()
+ok(any(r["home"] == "Claremore" and r["home_score"] == 5 and r.get("url")
+       for r in sb["recent"]), "today's final rides the latest-finals rail")
+sb = client.get(f"/api/public/scoreboard?date={today}").json()
+g1 = next(g for g in sb["games"] if g["home"] == "Claremore")
+ok(g1["classes"] == ["5A"] and g1["home_id"] == t1, "slate rows carry class + team ids")
+
+print("team profile")
+ok(client.get("/api/public/team/999999").status_code == 404, "unknown team -> 404")
+tp = client.get(f"/api/public/team/{t1}").json()
+ok(tp["name"] == "Claremore" and tp["gender"] == "Boys" and tp["class"] == "5A",
+   "team identity")
+ok(tp["wins"] == 1 and tp["losses"] == 0, "record from finals")
+fin = next(g for g in tp["games"] if g["status"] == "final")
+ok(fin["won"] is True and fin["us"] == 5 and fin["them"] == 1
+   and fin["url"] == f"/live/{tok}", "result row: W 5-1 + fan link")
+blob = json.dumps(tp)
+for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
+    for part in name.split():
+        assert part not in blob, f"LEAK: '{part}' in team payload"
+ok(True, "team payload has no player/official names")
+
+print("fan counter")
+f1 = coach.get(f"/api/games/{gid}").json()["public"]["fans"]
+ok(f1 >= 1, "coach sees a fan count (test polls counted once)")
+client.get(f"/api/public/game/{tok}", headers={"User-Agent": "second-phone"})
+client.get(f"/api/public/game/{tok}", headers={"User-Agent": "second-phone"})
+f2 = coach.get(f"/api/games/{gid}").json()["public"]["fans"]
+ok(f2 == f1 + 1, "new viewer counts once, repeat polls don't")
+
+print("fan link QR")
+res = coach.get(f"/api/games/{gid}/fanqr")
+ok(res.status_code == 200 and "svg" in res.headers.get("content-type", "")
+   and "<svg" in res.text, "QR svg for a public game")
+gid3 = execute("INSERT INTO games (team1_id,team2_id,date) "
+               "VALUES (?,?, date('now'))", (t1, t2))
+ok(coach.get(f"/api/games/{gid3}/fanqr").status_code == 404,
+   "QR 404 when the fan link is off")
+ok(client.get(f"/api/games/{gid}/fanqr").status_code == 401, "QR needs auth")
+
 print("fan page shell")
 res = client.get(f"/live/{tok}")
 ok(res.status_code == 200 and "HoopTracks" in res.text, "/live/<token> serves the page")
 ok("text/html" in res.headers.get("content-type", ""), "page is html")
 res = client.get("/live")
 ok(res.status_code == 200 and "SCHEDULE" in res.text, "/live serves the landing page")
+res = client.get(f"/live/team/{t1}")
+ok(res.status_code == 200 and "RESULTS" in res.text, "/live/team/<id> serves the team page")
 
 print(f"\nALL {PASS} CHECKS PASSED")

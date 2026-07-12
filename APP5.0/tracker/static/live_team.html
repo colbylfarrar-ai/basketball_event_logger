@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12141e">
+<link rel="icon" href="/static/icon-192.png">
+<title>Team — HoopTracks Live</title>
+<style>
+/* Public team profile — same self-contained brand look as live.html. */
+:root {
+  --bg: #12141e; --bg2: #1a1d2b; --bg3: #232738; --edge: #343a52;
+  --fg: #e8eaf0; --muted: #9aa0aa; --gold: #e6be64; --blue: #6ea8e0;
+  --green: #4caf7d; --red: #e05c5c;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 640px; margin: 0 auto; padding: 12px 12px 24px; }
+.brand { display: flex; align-items: center; gap: 8px; color: var(--muted);
+  font-size: .8rem; margin-bottom: 10px; }
+.brand a { color: var(--gold); text-decoration: none; font-weight: 600; }
+.brand img { border-radius: 5px; }
+.hero { background: var(--bg2); border: 1px solid var(--edge);
+  border-radius: 14px; padding: 16px 14px; }
+.hero .nm { font-size: 1.35rem; font-weight: 800; }
+.hero .sub { color: var(--muted); font-size: .8rem; margin-top: 4px; }
+.hero .rec { font-size: 1.05rem; font-weight: 700; margin-top: 8px;
+  color: var(--gold); }
+h3 { font-size: .95rem; margin: 18px 0 8px; color: var(--muted);
+  letter-spacing: .04em; }
+ul.games { list-style: none; margin: 0; padding: 0; border: 1px solid var(--edge);
+  border-radius: 12px; background: var(--bg2); overflow: hidden; }
+ul.games li { border-bottom: 1px solid var(--edge); }
+ul.games li:last-child { border-bottom: 0; }
+.g { display: grid; grid-template-columns: 1fr auto; gap: 10px;
+  align-items: center; padding: 10px 12px; color: var(--fg);
+  text-decoration: none; }
+a.g:active { background: var(--bg3); }
+.g .m { font-size: .88rem; font-weight: 600; }
+.g .sub { display: block; color: var(--muted); font-size: .7rem; margin-top: 2px; }
+.g .right { text-align: right; font-size: .8rem; color: var(--muted);
+  white-space: nowrap; }
+.g .right .sc { font-weight: 800; font-size: .95rem; }
+.g .right .w { color: var(--green); }
+.g .right .l { color: var(--red); }
+.g .right .link { color: var(--gold); font-weight: 600; }
+.state { text-align: center; color: var(--muted); padding: 48px 16px; }
+.footer { margin-top: 22px; text-align: center; color: var(--muted);
+  font-size: .75rem; }
+.footer a { color: var(--gold); text-decoration: none; font-weight: 600; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <a href="/live">&lsaquo; Scores</a>
+    <img src="/static/icon-192.png" alt="" width="20" height="20">
+    <span>HoopTracks Live</span>
+  </div>
+
+  <div id="loading" class="state">Loading team…</div>
+  <div id="gone" class="state" hidden>Team not found.</div>
+
+  <div id="team" hidden>
+    <div class="hero">
+      <div class="nm" id="t-name"></div>
+      <div class="sub" id="t-sub"></div>
+      <div class="rec" id="t-rec"></div>
+    </div>
+    <h3>RESULTS &amp; SCHEDULE</h3>
+    <ul class="games" id="games"></ul>
+  </div>
+
+  <div class="footer">
+    Live stats by <a href="https://hooptracks.com" rel="noopener">HoopTracks</a>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var id = location.pathname.split('/').filter(Boolean).pop();
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function render(t) {
+    $('loading').hidden = true;
+    $('team').hidden = false;
+    $('t-name').textContent = t.name;
+    $('t-sub').textContent = [t.gender, t.class, t.season].filter(Boolean).join(' · ');
+    $('t-rec').textContent = t.wins + '–' + t.losses;
+    document.title = t.name + ' — HoopTracks Live';
+    var ul = $('games');
+    ul.innerHTML = '';
+    (t.games || []).forEach(function (g) {
+      var li = document.createElement('li');
+      var el = document.createElement(g.url ? 'a' : 'div');
+      el.className = 'g';
+      if (g.url) el.href = g.url;
+      var right;
+      if (g.status === 'final' && g.us != null) {
+        right = '<span class="sc ' + (g.won ? 'w' : 'l') + '">' +
+          (g.won ? 'W' : 'L') + ' ' + g.us + '&ndash;' + g.them + '</span>' +
+          (g.url ? ' · <span class="link">Box</span>' : '');
+      } else if (g.status === 'final') {
+        right = 'Final';
+      } else {
+        right = 'Upcoming' + (g.url ? ' · <span class="link">Watch</span>' : '');
+      }
+      el.innerHTML =
+        '<span><span class="m">' + esc(g.home_away) + ' ' + esc(g.opp) + '</span>' +
+        '<span class="sub">' + esc(g.date) +
+        (g.location ? ' · ' + esc(g.location) : '') + '</span></span>' +
+        '<span class="right">' + right + '</span>';
+      li.appendChild(el);
+      ul.appendChild(li);
+    });
+    if (!ul.children.length) {
+      ul.innerHTML = '<li><div class="state">No games yet</div></li>';
+    }
+  }
+
+  function load() {
+    fetch('/api/public/team/' + encodeURIComponent(id))
+      .then(function (r) {
+        if (r.status === 404) {
+          $('loading').hidden = true; $('gone').hidden = false;
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (t) { if (t) render(t); })
+      .catch(function () {})
+      .then(function () { setTimeout(load, 60000); });
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

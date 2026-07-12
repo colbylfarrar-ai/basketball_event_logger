@@ -733,8 +733,10 @@ function renderFanLink() {
   const pub = (S.game && S.game.public) || { on: false, url: '' };
   $('btn-fan-link').textContent = '🔗 Fan link: ' + (pub.on ? 'ON' : 'OFF');
   $('btn-fan-copy').hidden = !(pub.on && pub.url);
+  $('btn-fan-qr').hidden = !(pub.on && pub.url);
+  if (!(pub.on && pub.url)) { $('fan-qr-box').hidden = true; }
   $('fan-link-status').textContent = pub.on && pub.url
-    ? location.origin + pub.url
+    ? location.origin + pub.url + (pub.fans ? ' · ' + pub.fans + (pub.fans === 1 ? ' fan' : ' fans') : '')
     : 'Share a live score + box page with fans (numbers only, refs hidden).';
 }
 
@@ -744,11 +746,26 @@ async function toggleFanLink() {
     const res = await api('/api/games/' + S.gameId + '/public', { method: 'POST' });
     if (!res.ok) { toast('Could not update fan link'); return; }
     const d = await res.json();
-    S.game.public = { on: d.public, url: d.url };
+    S.game.public = { on: d.public, url: d.url, fans: d.fans || 0 };
     lsSet(LS.roster(S.gameId), S.game);
     renderFanLink();
     if (d.public && d.url) copyFanLink();
   } catch (e) { toast('Could not update fan link'); }
+}
+
+async function toggleFanQr() {
+  // Gym-door QR: fetched with the auth header (an <img src> can't send it),
+  // shown inline on a white card so any phone camera reads it.
+  const box = $('fan-qr-box');
+  if (!box.hidden) { box.hidden = true; return; }
+  if (!isOnline()) { toast('Needs connection'); return; }
+  try {
+    const res = await api('/api/games/' + S.gameId + '/fanqr');
+    if (!res.ok) { toast('QR unavailable'); return; }
+    const blob = await res.blob();
+    $('fan-qr-img').src = URL.createObjectURL(blob);
+    box.hidden = false;
+  } catch (e) { toast('QR unavailable'); }
 }
 
 function copyFanLink() {
@@ -2067,6 +2084,7 @@ function bindUI() {
   $('btn-lineup-edit-log').addEventListener('click', openEditor);
   $('btn-fan-link').addEventListener('click', toggleFanLink);
   $('btn-fan-copy').addEventListener('click', copyFanLink);
+  $('btn-fan-qr').addEventListener('click', toggleFanQr);
 
   // tracker header
   $('btn-subs').addEventListener('click', function () { toggleSubsPanel(); });
@@ -2147,7 +2165,7 @@ function bindUI() {
 // Controls whose endpoints a guest "assistant scorer" link can't call.
 const GUEST_HIDE_IDS = ['btn-new-game', 'btn-add-home', 'btn-add-away',
   'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log',
-  'btn-hands-home', 'btn-hands-away', 'btn-fan-link', 'btn-fan-copy'];
+  'btn-hands-home', 'btn-hands-away', 'btn-fan-link', 'btn-fan-copy', 'btn-fan-qr'];
 
 async function applyGuestMode() {
   // A guest link is log-only — hide create/finish/edit/add controls so the

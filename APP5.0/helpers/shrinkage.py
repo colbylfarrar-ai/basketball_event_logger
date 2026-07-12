@@ -37,6 +37,15 @@ from __future__ import annotations
 # Default prior weights when EB can't be estimated (or for non-binomial rates).
 DEFAULT_RATE_K   = 12.0   # attempts-equivalent prior weight for a rate
 DEFAULT_INDEX_K  = 3.0    # games-equivalent prior weight for a 0-100 index
+# Retention-curve exponent for the games-based index shrink: retention =
+# g^p / (g^p + k^p). p=1 is the classic linear-evidence curve; p>1 makes it
+# SIGMOID — a 1-game cameo is pinned harder toward the anchor while a
+# full-season sample keeps nearly all of its edge. Recalibrated against the
+# 2025-2026 full-season backtest (tools/backtest.py T4): p=1.5, k=3 beat the
+# linear k=5 incumbent on every games-played bucket (thin 4.24→4.21, deep
+# 3.79→3.76 LOGO MAE) with identical 1-game cameo protection (retention 0.16
+# vs 0.17) while a 23-game season keeps 96% of its edge (was 82%).
+DEFAULT_INDEX_POWER = 1.5
 _K_BOUNDS        = (4.0, 60.0)   # clamp EB-estimated k to this band
 RATING_ANCHOR    = 50.0   # league-average value on the 0-100 rating scale
 
@@ -101,8 +110,8 @@ def rating_confidence(games, poss=None, rating_sd=10.0, k_games=DEFAULT_INDEX_K,
     draw as the band behind a rating bar.
     """
     g = max(0, int(games or 0))
-    # games evidence → 0-1 (same shrink weight the ratings use toward 50)
-    frac = g / (g + k_games) if (g + k_games) > 0 else 0.0
+    # games evidence → 0-1 (same shrink curve the ratings use toward 50)
+    frac = evidence_frac(g, k_games)
     if poss is not None:
         # possession evidence with a heavier phantom weight (a rating needs a
         # few dozen tracked possessions before it firms up)
@@ -156,16 +165,33 @@ def stabilize_value(value, n, prior_mean, k=DEFAULT_RATE_K):
     return (value * n + k * prior_mean) / denom if denom > 0 else prior_mean
 
 
-def stabilize_index(value, games, k_games=DEFAULT_INDEX_K, anchor=RATING_ANCHOR):
+def evidence_frac(games, k_games=DEFAULT_INDEX_K, power=None):
+    """0-1 evidence retention for a games-backed sample: g^p / (g^p + k^p).
+
+    The single curve behind every games-based trust decision (index shrink,
+    confidence meter, opponent-quality bonus), so "how much do we believe g
+    games" is answered the same way everywhere. p defaults to the module's
+    DEFAULT_INDEX_POWER; p=1 reproduces the classic g/(g+k)."""
+    p = DEFAULT_INDEX_POWER if power is None else power
+    g = max(0.0, float(games or 0))
+    if g <= 0:
+        return 0.0
+    gp, kp = g ** p, float(k_games) ** p
+    return _safe(gp, gp + kp)
+
+
+def stabilize_index(value, games, k_games=DEFAULT_INDEX_K, anchor=RATING_ANCHOR,
+                    power=None):
     """Pull a 0-100 index toward `anchor` (50 = average) by games played.
 
-    value' = anchor + (value − anchor)·games/(games + k_games). A full-season
-    player keeps almost all of their rating; a 1-game sample is dragged most of
-    the way back to league average.
+    value' = anchor + (value − anchor)·evidence_frac(games, k_games, power).
+    A full-season player keeps almost all of their rating; a 1-game sample is
+    dragged most of the way back to league average. With power>1 the curve is
+    sigmoid: cameos pinned harder, deep samples released faster.
     """
     if value is None:
         return None
-    return anchor + (value - anchor) * _safe(games, games + k_games)
+    return anchor + (value - anchor) * evidence_frac(games, k_games, power)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

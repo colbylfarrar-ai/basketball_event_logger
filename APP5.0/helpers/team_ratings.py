@@ -54,9 +54,17 @@ _CLASS_RANK = {c: i for i, c in enumerate(CLASS_ORDER)}  # 'N/A' handled separat
 DEFAULT_CLASS_STEP = 1.5   # rating points added per class above the field's mean
 DEFAULT_ITERS      = 25    # SRS iterations (converges well before this)
 DEFAULT_HCA        = 3.0   # home-court advantage, points (predict_spread only)
-DEFAULT_REG        = 4.0   # phantom average-games per team (shrinkage strength)
+DEFAULT_REG        = 2.0   # phantom average-games per team (shrinkage strength).
+                           # Recalibrated on the 2025-2026 full-season backtest
+                           # (tools/backtest.py T1): held-out margin MAE falls
+                           # monotonically as reg drops (4.0 → 2.0 = 10.97 →
+                           # 10.41 league-wide, 10.0 → 9.42 on the Adair folds).
+                           # 2.0 keeps the divergence guard a sparse schedule
+                           # graph needs; 1.0 scored marginally better but blows
+                           # the rating spread out (sd 21 vs 18) and would make
+                           # thin early-season fields jumpy.
 _SOR_MARGIN_CAP    = 20    # margin credited to a result is clamped to ±this
-DEFAULT_SOS_WEIGHT = 0.8   # slight schedule-strength nudge, in RATING POINTS PER
+DEFAULT_SOS_WEIGHT = 0.8   # schedule-strength nudge, in RATING POINTS PER
                            # STANDARD DEVIATION of SOS. The SRS opponent-adjustment
                            # already accounts for who you played, but its shrinkage
                            # (DEFAULT_REG phantom games) and the sparsely-connected
@@ -74,6 +82,9 @@ DEFAULT_SOS_WEIGHT = 0.8   # slight schedule-strength nudge, in RATING POINTS PE
                            # 1.0+ because at 1.0 the reshuffle among real, classed,
                            # deep-GP (15+) teams was too big (23% moved >10 ranks
                            # vs 12.5% at 0.8) relative to a "slight nudge".
+                           # Re-audited 2026-07-12 by the recal backtest: held-out
+                           # margin MAE is nearly flat in SOS (±0.05 over 0-2.0),
+                           # so the churn-based 0.8 stands — no evidence to move.
 
 
 _safe = S._safe   # shared definition lives in helpers.stats

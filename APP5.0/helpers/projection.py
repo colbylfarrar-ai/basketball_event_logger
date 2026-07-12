@@ -83,9 +83,15 @@ _STAT_SPECS = [
     ("PerimDFG%","PerimDFG%",lambda r: r.get("PerimDShots") or 0, True),
 ]
 
-# attempts-equivalent prior weight for the volume shrink (shrinkage's tuned
-# default: ~60 opportunities keeps almost all of an edge, ~4 is dragged back).
-K = SH.DEFAULT_RATE_K
+# attempts-equivalent prior weight for the volume shrink. Recalibrated on the
+# 2025-2026 full-season backtest (tools/backtest.py T3): held-out projection
+# error falls monotonically with K up to a flat optimum around 60-80 —
+# shooting rates are binomial-noisy, so the archetype/league prior deserves
+# far more weight than shrinkage's display default (12). At K=60 the engine
+# beats a prior-only projection on eFG%/TS% AND 3P% (the old K=12 lost to the
+# prior on 3P%). ~60 opportunities = a half-season of attempts keeps half the
+# player's own edge.
+K = 60.0
 
 # an archetype's pooled opportunities for a stat must clear this before its mean
 # is trusted as a prior anchor; below it, the league mean is used instead. On a

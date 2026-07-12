@@ -65,6 +65,7 @@ LEAGUE_TAIL_FRAC = 0.10
 REGISTRY = {
     "shrinkage.DEFAULT_RATE_K":            (SHR, "DEFAULT_RATE_K"),
     "shrinkage.DEFAULT_INDEX_K":           (SHR, "DEFAULT_INDEX_K"),
+    "shrinkage.DEFAULT_INDEX_POWER":       (SHR, "DEFAULT_INDEX_POWER"),
     "player_ratings.RATING_K_GAMES":       (PR, "RATING_K_GAMES"),
     "player_ratings.MANUAL_GAME_WEIGHT":   (PR, "MANUAL_GAME_WEIGHT"),
     "player_ratings.MIN_POOL_FOR_RESTD":   (PR, "MIN_POOL_FOR_RESTD"),

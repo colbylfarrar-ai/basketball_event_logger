@@ -40,11 +40,14 @@ def test_thin_vs_deep_blend():
     priors = PJ.build_priors(table)
     p3 = PJ.project_player(1, table, priors)["stats"]["eFG%"]
     p21 = PJ.project_player(2, table, priors)["stats"]["eFG%"]
-    # deep player keeps almost all of his edge; thin player is dragged toward prior
-    assert p21["c"] > 0.9
-    assert p3["c"] < 0.6
+    # deep player keeps most of their edge; thin player is dragged toward the
+    # prior. Thresholds anchor to the module's own credibility ladder so the
+    # test tracks the contract, not a hardcoded K (K recalibrated 12 -> 60 on
+    # the 2025-2026 full-season backtest).
+    assert p21["c"] > PJ._SOLID_C
+    assert p3["c"] < PJ._THIN_C
     assert abs(p21["proj"] - 70.0) < abs(p3["proj"] - 70.0)
-    assert p3["flag"] in ("directional", "thin")
+    assert p3["flag"] == "thin"
     assert p21["flag"] == "solid"
 
 

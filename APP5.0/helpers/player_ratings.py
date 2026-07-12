@@ -575,11 +575,13 @@ _OVERALL_PARTS = [("offense", 1.1), ("impact", 0.9), ("defense", 1.0),
 MIN_POOL_FOR_RESTD = 8
 
 # Games-equivalent prior weight for the per-rating shrinkage toward 50 (passed to
-# shrinkage.stabilize_index). Higher than shrinkage's default (3) so thin 1-2 game
-# samples — typically lightly-tracked opponents — regress harder toward average and
-# stop surfacing mid-pack on a single fluky line, without flattening full-season
-# players (retention g/(g+k): 1 GP 0.17, 2 GP 0.29, 8 GP 0.62, 15 GP 0.75).
-RATING_K_GAMES = 5
+# shrinkage.stabilize_index, which applies the SIGMOID retention curve — see
+# shrinkage.DEFAULT_INDEX_POWER). Recalibrated on the 2025-2026 full-season
+# backtest (tools/backtest.py T4 + rating_diff audit): the sigmoid keeps the
+# cameo protection the old linear k=5 bought (1 GP retains 0.16 vs 0.17) while
+# releasing real seasons the linear curve was flattening (retention g^1.5/
+# (g^1.5+k^1.5): 1 GP 0.16, 3 GP 0.50, 8 GP 0.81, 23 GP 0.96 — was 0.82).
+RATING_K_GAMES = 3
 
 
 def _restandardize(zmap):
@@ -843,7 +845,7 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             if oz is None or sz is None:
                 continue
             eg = profiles[p]["evidence_gp"]
-            shrink = eg / (eg + RATING_K_GAMES)
+            shrink = SHR.evidence_frac(eg, RATING_K_GAMES)
             oppadj_z[p] = max(0.0, oz) * max(0.0, sz) * shrink
 
     # ── possession-impact pillar (pure RAPM z — "HoopWAR big in there") ──────

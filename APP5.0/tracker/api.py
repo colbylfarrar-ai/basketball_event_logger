@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import sqlite3
 import sys
 from pathlib import Path
@@ -36,6 +37,7 @@ import helpers.event_log as EL
 import helpers.game_events as GE
 import helpers.entitlement as ENT
 import helpers.identity as IDN
+import helpers.public_feed as PF
 import helpers.seasons as SEAS
 
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -254,7 +256,8 @@ def list_seasons():
 @api.get("/games/{game_id}")
 def game_detail(game_id: int):
     g = query("""
-        SELECT g.id, g.date, g.season, g.team1_id, g.team2_id, t1.name n1, t2.name n2
+        SELECT g.id, g.date, g.season, g.team1_id, g.team2_id, t1.name n1, t2.name n2,
+               g.is_public, g.share_token
         FROM games g JOIN teams t1 ON t1.id=g.team1_id
                      JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""", (game_id,))
     if not g:
@@ -304,6 +307,8 @@ def game_detail(game_id: int):
         "home": {"id": g["team1_id"], "name": g["n1"]},
         "away": {"id": g["team2_id"], "name": g["n2"]},
         "players": players, "officials": officials,
+        "public": {"on": bool(g["is_public"]),
+                   "url": f"/live/{g['share_token']}" if g["share_token"] else ""},
     }
 
 
@@ -594,6 +599,48 @@ def rescore(game_id: int, _: dict = Depends(require_full_user)):
         raise HTTPException(status_code=422, detail="game has no events")
     GE.bump_data_version()
     return {"home": scores[0], "away": scores[1], "live": _scoreboard(game_id)}
+
+
+# ── public "fan link" (no auth) + its coach-side toggle ─────────────────────────
+@api.post("/games/{game_id}/public")
+def toggle_public(game_id: int, user: dict = Depends(require_full_user)):
+    """Flip a game's public fan link on/off. Mints the share token the FIRST
+    time a game goes public and keeps it stable across off/on cycles, so a
+    link a coach already texted out survives a mid-game panic-toggle."""
+    g = query("SELECT id, is_public, share_token FROM games WHERE id=?", (game_id,))
+    if not g:
+        raise HTTPException(status_code=404, detail="no such game")
+    now_public = 0 if g[0]["is_public"] else 1
+    token = g[0]["share_token"] or ""
+    if now_public and not token:
+        while True:
+            token = secrets.token_urlsafe(8)
+            if not query("SELECT id FROM games WHERE share_token=?", (token,)):
+                break
+    execute("UPDATE games SET is_public=?, share_token=? WHERE id=?",
+            (now_public, token, game_id))
+    PF.clear_cache()
+    return {"public": bool(now_public), "token": token,
+            "url": f"/live/{token}" if token else ""}
+
+
+@app.get("/api/public/game/{token}")
+def public_game(token: str):
+    """UNAUTHENTICATED fan feed. Allowlisted payload only — shaped exclusively
+    by helpers/public_feed.py (jersey numbers, R/U1/U2 refs, no names, no
+    tags). Unknown token and non-public game 404 identically."""
+    state = PF.state_by_token(token)
+    if state is None:
+        raise HTTPException(status_code=404, detail="no such game")
+    return state
+
+
+@app.get("/live/{token}", include_in_schema=False)
+def live_page(token: str):
+    """The fan page shell — static for every token (the page reads its token
+    from the URL and asks /api/public). Invalid tokens still get the shell;
+    the page shows its own 'not available' state on the API's 404."""
+    return FileResponse(_STATIC / "live.html")
 
 
 # ── PWA shell (service worker + manifest live at root scope) ────────────────────

@@ -8,7 +8,7 @@
    - icons are cache-first; /api/* and /sw.js are never cached.
    The page reloads once when a NEW worker takes over (see index.html), so a reopen
    lands on the latest — no banner, no kill-and-reopen, no reinstall. */
-const CACHE = 'tracker-v39';
+const CACHE = 'tracker-v40';
 const ASSETS = [
   '/',
   '/static/app.js',
@@ -51,6 +51,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;        // passthrough cross-origin
   if (url.pathname.startsWith('/api/')) return;      // network only, never cached
+  if (url.pathname.startsWith('/live')) return;      // public fan pages: never ours
   if (url.pathname === '/sw.js') return;             // never cache the SW script
   if (e.request.method !== 'GET') return;
 

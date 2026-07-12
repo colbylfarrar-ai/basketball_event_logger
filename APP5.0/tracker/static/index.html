@@ -105,6 +105,17 @@ try {
       <p id="add-official-status" class="status"></p>
     </div>
   </div>
+  <!-- Public fan link: opt-in live viewer for parents/fans (score + basic box
+       only, jersey numbers, refs anonymized R/U1/U2 — see helpers/public_feed.py).
+       The link is minted once and survives off/on, so a shared text stays good. -->
+  <div class="lineup-group">
+    <h3>Fan link</h3>
+    <div class="lineup-actions">
+      <button id="btn-fan-link" class="btn ghost small" type="button">🔗 Fan link: OFF</button>
+      <button id="btn-fan-copy" class="btn ghost small" type="button" hidden>Copy link</button>
+    </div>
+    <p id="fan-link-status" class="status"></p>
+  </div>
   <button id="btn-start" class="btn primary big">Start tracking</button>
   <button id="btn-lineup-edit-log" class="btn ghost big" type="button">Edit log</button>
 </section>

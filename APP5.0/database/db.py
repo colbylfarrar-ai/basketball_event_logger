@@ -474,6 +474,17 @@ def initialize_database():
             # prod (which already ran this ALTER) and a trivial future re-add; no
             # code reads or writes it.
             "ALTER TABLE game_events     ADD COLUMN foul_type TEXT",
+            # Public "fan link" live viewer (helpers/public_feed.py). is_public
+            # is the ONLY gate the unauthenticated feed checks; share_token is
+            # the unguessable URL slug (minted once when the coach first flips
+            # the game public, stable across off/on so shared links survive).
+            "ALTER TABLE games ADD COLUMN is_public   INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE games ADD COLUMN share_token TEXT    NOT NULL DEFAULT ''",
+            "CREATE INDEX IF NOT EXISTS idx_games_share_token ON games(share_token)",
+            # Crew slot for the public feed's anonymized R/U1/U2 labels (1=R,
+            # 2=U1, 3=U2). NULL = fall back to first-seen (id) order, the
+            # default alignment most crews follow.
+            "ALTER TABLE game_lineup_officials ADD COLUMN slot INTEGER",
         ]
 
         for stmt in migrations:

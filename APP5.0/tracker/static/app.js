@@ -727,8 +727,43 @@ function lineupChip(label, selected, onTap) {
   return b;
 }
 
+/* ----- public fan link (opt-in live viewer; state rides on game detail) ----- */
+
+function renderFanLink() {
+  const pub = (S.game && S.game.public) || { on: false, url: '' };
+  $('btn-fan-link').textContent = '🔗 Fan link: ' + (pub.on ? 'ON' : 'OFF');
+  $('btn-fan-copy').hidden = !(pub.on && pub.url);
+  $('fan-link-status').textContent = pub.on && pub.url
+    ? location.origin + pub.url
+    : 'Share a live score + box page with fans (numbers only, refs hidden).';
+}
+
+async function toggleFanLink() {
+  if (!isOnline()) { toast('Needs connection'); return; }
+  try {
+    const res = await api('/api/games/' + S.gameId + '/public', { method: 'POST' });
+    if (!res.ok) { toast('Could not update fan link'); return; }
+    const d = await res.json();
+    S.game.public = { on: d.public, url: d.url };
+    lsSet(LS.roster(S.gameId), S.game);
+    renderFanLink();
+    if (d.public && d.url) copyFanLink();
+  } catch (e) { toast('Could not update fan link'); }
+}
+
+function copyFanLink() {
+  const pub = (S.game && S.game.public) || {};
+  if (!pub.url) return;
+  const full = location.origin + pub.url;
+  const done = function () { toast('Fan link copied — text it out!'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(full).then(done, function () { toast(full); });
+  } else { toast(full); }
+}
+
 function renderLineup() {
   if (!S.game) return;
+  renderFanLink();
   $('lineup-home-name').textContent = S.game.home.name + ' (' + S.lineup.home.length + '/5)';
   $('lineup-away-name').textContent = S.game.away.name + ' (' + S.lineup.away.length + '/5)';
   $('lineup-officials-name').textContent = 'Officials (' + S.lineup.officials.length + '/3)';
@@ -2030,6 +2065,8 @@ function bindUI() {
     enterTracker();
   });
   $('btn-lineup-edit-log').addEventListener('click', openEditor);
+  $('btn-fan-link').addEventListener('click', toggleFanLink);
+  $('btn-fan-copy').addEventListener('click', copyFanLink);
 
   // tracker header
   $('btn-subs').addEventListener('click', function () { toggleSubsPanel(); });
@@ -2110,7 +2147,7 @@ function bindUI() {
 // Controls whose endpoints a guest "assistant scorer" link can't call.
 const GUEST_HIDE_IDS = ['btn-new-game', 'btn-add-home', 'btn-add-away',
   'btn-add-official', 'btn-finish', 'btn-edit-log', 'btn-lineup-edit-log',
-  'btn-hands-home', 'btn-hands-away'];
+  'btn-hands-home', 'btn-hands-away', 'btn-fan-link', 'btn-fan-copy'];
 
 async function applyGuestMode() {
   // A guest link is log-only — hide create/finish/edit/add controls so the

@@ -169,9 +169,46 @@ coach.post(f"/api/games/{gid}/finish")
 st = client.get(f"/api/public/game/{tok}").json()
 ok(st["status"] == "final", "finish -> status final")
 
+print("scoreboard (landing feed)")
+today = query("SELECT date('now') d")[0]["d"]
+ok(client.get("/api/public/scoreboard?date=garbage").status_code == 422,
+   "bad date -> 422")
+# a second, NON-public in-progress game the same day must list as plain
+# upcoming — no score, no link, no hint it's being tracked
+gid2 = execute("INSERT INTO games (team1_id,team2_id,date,location) "
+               "VALUES (?,?, date('now'), 'Privacy Gym')", (t2, t1))
+coach.post(f"/api/games/{gid2}/events", json={"events": [
+    {"uuid": "sb-shot", "event_type": "shot", "quarter": 1, "time": "7:00",
+     "primary_player_id": away[0], "shot_result": "make",
+     "shot_x": 0.0, "shot_y": 8.0, "on_court": floor, "officials_on": []}]})
+sb = client.get(f"/api/public/scoreboard?date={today}").json()
+ok(sb["date"] == today and len(sb["games"]) == 2, "both games on today's slate")
+g1 = next(g for g in sb["games"] if g["home"] == "Claremore")
+g2 = next(g for g in sb["games"] if g["home"] == "Visitor Prep")
+ok(g1["status"] == "final" and g1["home_score"] == 5 and g1["url"] == f"/live/{tok}",
+   "public finished game: final + score + link")
+ok(g2["status"] == "upcoming" and "home_score" not in g2 and "url" not in g2,
+   "non-public in-progress game: upcoming, no score, no link")
+ok(sb["live"] == [], "no live section while nothing public is in progress")
+# flip game 2 public -> it becomes a LIVE card with a live score
+d2 = coach.post(f"/api/games/{gid2}/public").json()
+sb = client.get(f"/api/public/scoreboard?date={today}").json()
+ok(len(sb["live"]) == 1 and sb["live"][0]["home"] == "Visitor Prep"
+   and sb["live"][0]["home_pts"] == 2 and sb["live"][0]["url"] == d2["url"],
+   "public in-progress game becomes a LIVE card")
+g2 = next(g for g in sb["games"] if g["home"] == "Visitor Prep")
+ok(g2["status"] == "live" and g2["url"] == d2["url"], "slate row flips to live")
+blob = json.dumps(sb)
+for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
+    for part in name.split():
+        assert part not in blob, f"LEAK: '{part}' in scoreboard payload"
+ok(True, "scoreboard payload has no player/official names")
+
 print("fan page shell")
 res = client.get(f"/live/{tok}")
 ok(res.status_code == 200 and "HoopTracks" in res.text, "/live/<token> serves the page")
 ok("text/html" in res.headers.get("content-type", ""), "page is html")
+res = client.get("/live")
+ok(res.status_code == 200 and "SCHEDULE" in res.text, "/live serves the landing page")
 
 print(f"\nALL {PASS} CHECKS PASSED")

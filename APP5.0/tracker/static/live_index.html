@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12141e">
+<link rel="icon" href="/static/icon-192.png">
+<title>HoopTracks Live — Scores</title>
+<style>
+/* Landing for the public fan links — same self-contained brand look as live.html. */
+:root {
+  --bg: #12141e; --bg2: #1a1d2b; --bg3: #232738; --edge: #343a52;
+  --fg: #e8eaf0; --muted: #9aa0aa; --gold: #e6be64; --blue: #6ea8e0;
+  --green: #4caf7d; --red: #e05c5c;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 640px; margin: 0 auto; padding: 12px 12px 24px; }
+.brand { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.brand img { border-radius: 6px; }
+.brand .t { font-weight: 800; font-size: 1.05rem; }
+.brand .s { color: var(--muted); font-size: .75rem; margin-left: auto; }
+h3 { font-size: .95rem; margin: 18px 0 8px; color: var(--muted);
+  letter-spacing: .04em; }
+.livecard { display: block; text-decoration: none; color: var(--fg);
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 14px;
+  padding: 12px 14px; margin-bottom: 10px; }
+.livecard:active { filter: brightness(1.2); }
+.livecard .top { display: flex; align-items: center; gap: 8px;
+  color: var(--muted); font-size: .72rem; margin-bottom: 8px; }
+.chip { font-size: .68rem; font-weight: 700; padding: 2px 9px;
+  border-radius: 999px; letter-spacing: .06em; }
+.chip.live { color: #fff; background: var(--red);
+  animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+.livecard .row { display: grid; grid-template-columns: 1fr auto; gap: 8px;
+  align-items: baseline; }
+.livecard .team { font-weight: 700; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.livecard .pts { font-size: 1.3rem; font-weight: 800; }
+.datebar { display: flex; gap: 8px; align-items: center; margin: 8px 0 10px; }
+.datebar button, .datebar input {
+  font: inherit; color: var(--fg); background: var(--bg3);
+  border: 1px solid var(--edge); border-radius: 10px; min-height: 42px;
+  padding: 6px 12px; cursor: pointer; }
+.datebar input { flex: 1; text-align: center; color-scheme: dark; }
+.filter { width: 100%; font: inherit; color: var(--fg); background: var(--bg3);
+  border: 1px solid var(--edge); border-radius: 10px; min-height: 42px;
+  padding: 6px 12px; margin-bottom: 8px; }
+ul.slate { list-style: none; margin: 0; padding: 0; border: 1px solid var(--edge);
+  border-radius: 12px; background: var(--bg2); overflow: hidden; }
+ul.slate li { border-bottom: 1px solid var(--edge); }
+ul.slate li:last-child { border-bottom: 0; }
+ul.slate .g { display: grid; grid-template-columns: 1fr auto; gap: 10px;
+  align-items: center; padding: 10px 12px; color: var(--fg);
+  text-decoration: none; }
+a.g:active { background: var(--bg3); }
+.g .who { min-width: 0; }
+.g .who .m { font-size: .88rem; font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.g .who .sub { color: var(--muted); font-size: .7rem; margin-top: 2px; }
+.g .right { text-align: right; font-size: .8rem; color: var(--muted);
+  white-space: nowrap; }
+.g .right .sc { color: var(--fg); font-weight: 700; font-size: .95rem; }
+.g .right .live { color: var(--red); font-weight: 700; }
+.g .right .link { color: var(--gold); font-weight: 600; }
+.empty { padding: 22px 12px; text-align: center; color: var(--muted);
+  font-size: .85rem; }
+.footer { margin-top: 22px; text-align: center; color: var(--muted);
+  font-size: .75rem; }
+.footer a { color: var(--gold); text-decoration: none; font-weight: 600; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <img src="/static/icon-192.png" alt="" width="24" height="24">
+    <span class="t">HoopTracks Live</span>
+    <span class="s">live scores &amp; schedules</span>
+  </div>
+
+  <div id="live-sec" hidden>
+    <h3>LIVE NOW</h3>
+    <div id="live-list"></div>
+  </div>
+
+  <h3>SCHEDULE</h3>
+  <div class="datebar">
+    <button id="d-prev" aria-label="Previous day">&lsaquo;</button>
+    <input id="d-pick" type="date" aria-label="Pick a date">
+    <button id="d-next" aria-label="Next day">&rsaquo;</button>
+  </div>
+  <input id="filter" class="filter" type="search" placeholder="Filter by team…"
+         autocomplete="off" hidden>
+  <ul class="slate" id="slate"></ul>
+
+  <div class="footer">
+    Live stats by <a href="https://hooptracks.com" rel="noopener">HoopTracks</a><br>
+    <span>Coaches: track your team and share your own fan link.</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var data = null, timer = null, filterTxt = '';
+
+  function localISO(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  }
+  var params = new URLSearchParams(location.search);
+  var cur = /^\d{4}-\d{2}-\d{2}$/.test(params.get('d') || '')
+    ? params.get('d') : localISO(new Date());
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function qlabel(q) { return q > 4 ? 'OT' + (q - 4) : 'Q' + q; }
+
+  function renderLive() {
+    var box = $('live-list');
+    box.innerHTML = '';
+    (data.live || []).forEach(function (g) {
+      var a = document.createElement('a');
+      a.className = 'livecard';
+      a.href = g.url;
+      a.innerHTML =
+        '<div class="top"><span class="chip live">LIVE</span>' +
+        '<span>' + esc(g.gender) + ' · ' + qlabel(g.quarter) + ' ' + esc(g.clock) + '</span></div>' +
+        '<div class="row"><span class="team">' + esc(g.home) + '</span>' +
+        '<span class="pts">' + g.home_pts + '</span></div>' +
+        '<div class="row"><span class="team">' + esc(g.away) + '</span>' +
+        '<span class="pts">' + g.away_pts + '</span></div>';
+      box.appendChild(a);
+    });
+    $('live-sec').hidden = !(data.live || []).length;
+  }
+
+  function renderSlate() {
+    var ul = $('slate');
+    ul.innerHTML = '';
+    var rows = data.games || [];
+    $('filter').hidden = rows.length <= 15;
+    var f = filterTxt.toLowerCase();
+    rows.forEach(function (g) {
+      if (f && (g.home + ' ' + g.away).toLowerCase().indexOf(f) < 0) return;
+      var li = document.createElement('li');
+      var el = document.createElement(g.url ? 'a' : 'div');
+      el.className = 'g';
+      if (g.url) el.href = g.url;
+      var right;
+      if (g.status === 'live') {
+        right = '<span class="live">LIVE</span>';
+      } else if (g.status === 'final') {
+        right = '<span class="sc">' + g.home_score + '&ndash;' + g.away_score +
+          '</span> Final' + (g.url ? ' · <span class="link">Box</span>' : '');
+      } else {
+        right = 'Upcoming';
+      }
+      el.innerHTML =
+        '<span class="who"><span class="m">' + esc(g.home) + ' vs ' + esc(g.away) +
+        '</span><span class="sub">' + esc(g.gender) +
+        (g.location ? ' · ' + esc(g.location) : '') + '</span></span>' +
+        '<span class="right">' + right + '</span>';
+      li.appendChild(el);
+      ul.appendChild(li);
+    });
+    if (!ul.children.length) {
+      ul.innerHTML = '<li><div class="empty">No games on this date</div></li>';
+    }
+  }
+
+  function load() {
+    fetch('/api/public/scoreboard?date=' + encodeURIComponent(cur))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d) { data = d; renderLive(); renderSlate(); }
+      })
+      .catch(function () { /* keep last render */ })
+      .then(function () {
+        clearTimeout(timer);
+        timer = setTimeout(load, 20000);
+      });
+  }
+
+  function setDate(iso) {
+    cur = iso;
+    $('d-pick').value = iso;
+    history.replaceState(null, '', '?d=' + iso);
+    load();
+  }
+
+  function shift(days) {
+    var p = cur.split('-');
+    var d = new Date(+p[0], +p[1] - 1, +p[2] + days);
+    setDate(localISO(d));
+  }
+
+  $('d-pick').value = cur;
+  $('d-pick').addEventListener('change', function () {
+    if (this.value) setDate(this.value);
+  });
+  $('d-prev').addEventListener('click', function () { shift(-1); });
+  $('d-next').addEventListener('click', function () { shift(1); });
+  $('filter').addEventListener('input', function () {
+    filterTxt = this.value.trim();
+    renderSlate();
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

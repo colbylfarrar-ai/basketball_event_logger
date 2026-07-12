@@ -635,6 +635,23 @@ def public_game(token: str):
     return state
 
 
+@app.get("/api/public/scoreboard")
+def public_scoreboard(date: str):
+    """UNAUTHENTICATED landing feed: live public games + one date's slate.
+    Shaped exclusively by helpers/public_feed.scoreboard (allowlist)."""
+    sb = PF.scoreboard(date)
+    if sb is None:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+    return sb
+
+
+@app.get("/live", include_in_schema=False)
+def live_index():
+    """Public landing: pick a live game / browse the calendar. Also the root
+    of live.hooptracks.com (Caddy rewrites that host's / to /live)."""
+    return FileResponse(_STATIC / "live_index.html")
+
+
 @app.get("/live/{token}", include_in_schema=False)
 def live_page(token: str):
     """The fan page shell — static for every token (the page reads its token

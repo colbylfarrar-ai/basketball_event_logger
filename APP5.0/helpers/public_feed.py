@@ -19,9 +19,11 @@ cache: N fans on one game cost ~1 DB read per TTL window.
 """
 from __future__ import annotations
 
+import re
 import time
 
 from database.db import query
+import helpers.event_log as EL
 
 CACHE_TTL = 3.0          # seconds; fan polling is decoupled from DB reads
 _CACHE: dict[str, tuple[float, dict]] = {}
@@ -32,6 +34,72 @@ _SLOT_LABELS = ("R", "U1", "U2", "U3", "U4")
 
 def clear_cache() -> None:
     _CACHE.clear()
+    _SB_CACHE.clear()
+
+
+_SB_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def scoreboard(date_str: str) -> dict | None:
+    """Public landing payload: every public game LIVE right now (last ~day so a
+    late tip survives the UTC date line) + one calendar date's slate. Same
+    allowlist discipline as the game feed — team names, finals' scores, live
+    public games' scores; a non-public in-progress game lists as a plain
+    upcoming row (no score, no link, no hint it's being tracked). Returns None
+    on a malformed date (router turns that into a 422)."""
+    date_str = (date_str or "").strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        return None
+    hit = _SB_CACHE.get(date_str)
+    now = time.monotonic()
+    if hit and now - hit[0] < CACHE_TTL:
+        return hit[1]
+
+    live_rows = query(
+        "SELECT g.id, g.share_token, g.date, g.location, "
+        "       t1.name AS hn, t2.name AS an, t1.gender AS gd "
+        "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+        "             JOIN teams t2 ON t2.id=g.team2_id "
+        "WHERE g.is_public=1 AND g.tracked=0 AND g.share_token<>'' "
+        "  AND g.date >= date('now','-1 day') "
+        "  AND EXISTS (SELECT 1 FROM game_events e WHERE e.game_id=g.id) "
+        "ORDER BY g.date DESC, g.id DESC LIMIT 50")
+    live, live_ids = [], set()
+    for r in live_rows:
+        hp, ap = EL.score_from_events(r["id"]) or (0, 0)
+        last = query("SELECT quarter, time FROM game_events WHERE game_id=? "
+                     "ORDER BY id DESC LIMIT 1", (r["id"],))
+        live_ids.add(r["id"])
+        live.append({"home": r["hn"], "away": r["an"],
+                     "gender": "Girls" if r["gd"] == "F" else "Boys",
+                     "home_pts": hp, "away_pts": ap,
+                     "quarter": last[0]["quarter"], "clock": last[0]["time"],
+                     "date": r["date"], "url": f"/live/{r['share_token']}"})
+
+    rows = query(
+        "SELECT g.id, g.tracked, g.home_score, g.away_score, g.is_public, "
+        "       g.share_token, g.location, "
+        "       t1.name AS hn, t2.name AS an, t1.gender AS gd "
+        "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+        "             JOIN teams t2 ON t2.id=g.team2_id "
+        "WHERE g.date=? ORDER BY t1.name, g.id LIMIT 300", (date_str,))
+    games = []
+    for r in rows:
+        final = bool(r["tracked"]) or (r["home_score"] is not None
+                                       and r["away_score"] is not None)
+        status = "live" if r["id"] in live_ids else ("final" if final else "upcoming")
+        g = {"home": r["hn"], "away": r["an"],
+             "gender": "Girls" if r["gd"] == "F" else "Boys",
+             "status": status, "location": r["location"] or ""}
+        if status == "final":
+            g["home_score"], g["away_score"] = r["home_score"], r["away_score"]
+        if r["is_public"] and r["share_token"]:
+            g["url"] = f"/live/{r['share_token']}"
+        games.append(g)
+
+    payload = {"date": date_str, "live": live, "games": games}
+    _SB_CACHE[date_str] = (now, payload)
+    return payload
 
 
 def state_by_token(token: str) -> dict | None:

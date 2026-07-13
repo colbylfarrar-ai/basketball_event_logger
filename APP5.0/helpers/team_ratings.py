@@ -432,6 +432,56 @@ def form_ratings(gender=None, half_life=FORM_HALF_LIFE, game_ids=None,
                          season=season, **kw)
 
 
+# points-scale fields blended between the season and form ratings. All live on the
+# same neutral-floor points scale in BOTH engines (same SRS, same league_avg), so a
+# convex blend is meaningful. Power is NOT here — it is re-derived from the blended
+# Rating below (each engine standardizes Power to its OWN field, so blending the
+# 0-100 numbers directly would be apples-to-oranges).
+_BLEND_FIELDS = ("Rating", "AdjNet", "ClassAdj", "SOS", "SOR",
+                 "PPG", "oPPG", "MOV", "xPPG", "xoPPG")
+
+
+def blended_ratings(gender=None, form_weight=0.0, game_ids=None, season="Current",
+                    **kw):
+    """Season score_ratings blended toward form_ratings by `form_weight` in [0,1]:
+    every points-scale field becomes (1-w)*season + w*form. This is the ONE dict a
+    form-aware War Room feeds to the predictor and every simulation — they read a
+    `scored` dict and never care how it was built, so blending here factors current
+    form into matchups, win probabilities, season sims and bracket seeding with no
+    change to those engines.
+
+    `form_weight=0` returns the season ratings UNCHANGED (identity — the byte-for-
+    byte default), so a page that leaves the knob at 0 behaves exactly as before.
+    Power is recomputed and Rank reassigned on the blended Rating so a form-weighted
+    bracket/prediction seeds off the blend. Non-strength fields (name/class/GP/W/L/
+    state) come straight from the season row; each blended row also carries
+    `SeasonPower` / `FormPower` for a hot-cold display.
+    """
+    w = max(0.0, min(1.0, form_weight))
+    season_r = score_ratings(gender=gender, game_ids=game_ids, season=season, **kw)
+    if w <= 0 or not season_r:
+        return season_r
+    form_r = form_ratings(gender=gender, game_ids=game_ids, season=season, **kw)
+
+    out = {}
+    for t, s in season_r.items():
+        b = dict(s)
+        f = form_r.get(t)
+        if f:
+            for k in _BLEND_FIELDS:
+                if k in s and k in f:
+                    b[k] = round((1 - w) * s[k] + w * f[k], 2)
+            b["SeasonPower"] = s["Power"]
+            b["FormPower"] = f["Power"]
+        out[t] = b
+
+    power = _power_scale({t: out[t]["Rating"] for t in out})
+    for t in out:
+        out[t]["Power"] = round(power[t], 1)
+    _assign_ranks(out)
+    return out
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  TRACKED VERSION  (advanced, tracked games only)
 # ══════════════════════════════════════════════════════════════════════════════

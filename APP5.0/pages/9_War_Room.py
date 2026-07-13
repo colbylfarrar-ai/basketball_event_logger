@@ -65,6 +65,17 @@ n = cc[1].select_slider(
     format_func=lambda v: f"{v // 1000}k sims",
     help="More sims = smoother odds, slightly slower. 20k is plenty for HS fields.")
 
+# Form weight — how much every prediction/sim/bracket-seed leans on recency-
+# weighted CURRENT FORM vs the full-season résumé. 0% = season only (the classic
+# ranking); higher chases who's hot right now. Blends the ratings dict once, up
+# front, so the predictor + all sims inherit it for free.
+_form_pct = cc[1].slider(
+    "Form weight", 0, 100, 35, step=5, format="%d%%",
+    help="How much predictions & sims lean on recent form (recency-weighted) vs "
+         "the full-season rating. 0% = season only. 35% = résumé leads, form is a "
+         "real thumb on the scale — the recommended balance for short HS records.")
+form_w = _form_pct / 100.0
+
 # Season picker — run the War Room on a past/archived season (its ratings, its
 # schedule, its players). Only appears once a season has been rolled over; the
 # active season is the default so the page is byte-identical with no archive.
@@ -96,8 +107,12 @@ else:
 # `season` on each fetcher scopes to the page's selected season ('Current' =
 # live default, byte-identical when no archive is picked).
 @st.cache_data(ttl=600, show_spinner=False)
-def _scored(g, season="Current"):
-    return TR.score_ratings(gender=g, season=season)
+def _scored(g, season="Current", form_w=0.0):
+    # form_w in [0,1] blends the season ratings toward recency-weighted form; 0.0
+    # returns the pure season ratings unchanged (byte-identical to the old path).
+    # THE single ratings dict the predictor + every sim below consume, so this one
+    # blend factors current form into matchups, win-prob, season sims and brackets.
+    return TR.blended_ratings(gender=g, season=season, form_weight=form_w)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -119,23 +134,24 @@ def _war_map(g, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_game(g, a, b, home, n, season="Current"):
-    return SIM.simulate_game(_scored(g, season), a, b, home=home, n=n)
+def _sim_game(g, a, b, home, n, season="Current", form_w=0.0):
+    return SIM.simulate_game(_scored(g, season, form_w), a, b, home=home, n=n)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_season(g, n, season="Current"):
-    return SIM.simulate_season(_scored(g, season),
+def _sim_season(g, n, season="Current", form_w=0.0):
+    return SIM.simulate_season(_scored(g, season, form_w),
                                SIM.schedule_from_results(g, season=season), n=n)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_bracket(g, field, n, reseed=True, size=None, season="Current"):
+def _sim_bracket(g, field, n, reseed=True, size=None, season="Current", form_w=0.0):
     # bracket_tree returns BOTH the per-team odds (same shape simulate_tournament
     # gave) AND the render-ready probabilistic tree — one sim pass for both.
     # reseed=False → `field` is an explicit seed order (None = a bye slot).
-    return SIM.bracket_tree(_scored(g, season), list(field), n=n, reseed=reseed,
-                            size=size)
+    # form_w blends the seeding ratings toward current form (see _scored).
+    return SIM.bracket_tree(_scored(g, season, form_w), list(field), n=n,
+                            reseed=reseed, size=size)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -176,7 +192,7 @@ def _vis_tuple(ident, team_id):
     return None if _v is None else tuple(sorted(_v))
 
 
-scored = _scored(gender, season_pick)
+scored = _scored(gender, season_pick, form_w)
 tracked = _tracked(gender, season_pick)
 
 if not scored:
@@ -521,6 +537,25 @@ def _render_matchup():
                 f"{wb:.0f}% win</div></div></div>",
                 unsafe_allow_html=True)
 
+            # form-tilt read — WHY the blended number leans the way it does. Only
+            # when the Form-weight knob is engaged and both rows carry form power.
+            _A, _B = scored.get(ta, {}), scored.get(tb, {})
+            if form_w > 0 and "FormPower" in _A and "FormPower" in _B:
+                def _fchip(row, clr):
+                    d = row["FormPower"] - row["SeasonPower"]
+                    arrow = "▲" if d > 1 else "▼" if d < -1 else "▬"
+                    tone = "#3fb950" if d > 1 else "#e74c3c" if d < -1 else "#8b949e"
+                    return (f"<span style='color:{clr};font-weight:700'>"
+                            f"{team_short(row['name'])}</span> "
+                            f"<span style='color:{tone};font-weight:700'>{arrow} "
+                            f"{d:+.1f}</span>")
+                st.markdown(
+                    f"<div style='font-size:12px;color:#8b949e;margin:-6px 0 12px'>"
+                    f"⚖️ <b>Form-weighted {_form_pct}%</b> — ratings leaned toward "
+                    f"current form · {_fchip(_A, ca)} &nbsp; {_fchip(_B, cb)} "
+                    f"<span style='color:#6e7681'>(form power vs season)</span></div>",
+                    unsafe_allow_html=True)
+
             # win-probability split bar (team-coloured)
             wp = go.Figure()
             wp.add_trace(go.Bar(
@@ -656,7 +691,7 @@ def _render_matchup():
             with _eng("Simulating matchup…",
                       [f"{n:,} Monte-Carlo games", "Sampling possession outcomes",
                        "Aggregating margins & win share"]):
-                sim = _sim_game(gender, ta, tb, home_arg, n, season_pick)
+                sim = _sim_game(gender, ta, tb, home_arg, n, season_pick, form_w)
             margins = np.asarray(sim["margins"])
             edges = np.linspace(float(margins.min()), float(margins.max()), 41)
             centers = (edges[:-1] + edges[1:]) / 2
@@ -819,7 +854,7 @@ def _render_season():
     with _eng("Simulating season…",
               [f"{n:,} season replays", "Re-playing every scheduled game",
                "Tallying wins, seeds & finish odds"]):
-        sea = _sim_season(gender, n, season_pick)
+        sea = _sim_season(gender, n, season_pick, form_w)
     if not sea:
         empty_state("No finished games to simulate",
                     "Enter at least one final score in the Input Hub and the season "
@@ -960,7 +995,8 @@ def _render_bracket():
         with _eng("Simulating bracket…",
                   [f"{n:,} tournament runs", "Advancing winners round by round",
                    "Computing each team's title odds"]):
-            res = _sim_bracket(gender, tuple(seed_list), n, reseed, size, season_pick)
+            res = _sim_bracket(gender, tuple(seed_list), n, reseed, size,
+                               season_pick, form_w)
         if not res:
             empty_state("Not enough rated teams in the field",
                         "Add more rated teams to simulate the bracket.")

@@ -19,9 +19,10 @@
 .welcome .w-steps { margin: 10px 0 0; padding-left: 18px; font-size: .82rem;
   color: #c9cdd6; line-height: 1.7; }
 .status.ok { color: #4caf7d; } .status.err { color: #e05c5c; }
-.track-tip { display: flex; align-items: center; gap: 10px; margin: 8px 0 0;
+.track-tip { display: none; align-items: center; gap: 10px; margin: 8px 0 0;
   background: #232738; border: 1px solid #343a52; border-radius: 10px;
   padding: 9px 12px; font-size: .82rem; color: #c9cdd6; }
+.track-tip:not([hidden]) { display: flex; }
 .track-tip button { margin-left: auto; background: transparent; border: 0;
   color: #9aa0aa; font-size: 1rem; cursor: pointer; padding: 4px 6px; }
 </style>

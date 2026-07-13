@@ -346,6 +346,18 @@ def _score_ratings(g, season="Current"):
     return _score_ratings_fp(g, season, TR.results_fingerprint())
 
 
+@st.cache_resource(show_spinner=False)
+def _form_ratings_fp(g, season, _fp):
+    # Recency-weighted "current form" ratings (TR.form_ratings). Same shape as the
+    # score ratings; cached on the same results fingerprint so it recomputes only
+    # when a score moves. Feeds the Overview "Form Pwr / Δ" columns + Team card.
+    return TR.form_ratings(gender=g, season=season)
+
+
+def _form_ratings(g, season="Current"):
+    return _form_ratings_fp(g, season, TR.results_fingerprint())
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _tracked_ratings(g, vis=None, season="Current"):
     # `vis` (tuple of game ids, or None) is the AXIS-2 read-filter: the whole
@@ -428,6 +440,7 @@ _VIS = ENT.visible_tracked_game_ids(AUTH.current_user(), season=season_pick)
 _VISK = None if _VIS is None else tuple(sorted(_VIS))
 
 scored = _score_ratings(gender, season_pick)
+formed = _form_ratings(gender, season_pick)
 tracked = _tracked_ratings(gender, _VISK, season_pick)
 form_stats = _form_stats(gender, season_pick)
 
@@ -663,6 +676,13 @@ if _view == "Overview":
                           for t in ov_tids]
         except Exception:
             pass
+        # Recency-weighted "current form" power (TR.form_ratings — recent games
+        # count more) and its swing vs the flat season Power. Positive Δ = playing
+        # ABOVE their season body of work right now (hot), negative = fading.
+        _fp = [formed.get(t, {}).get("Power", scored[t]["Power"]) for t in ov_tids]
+        df["Form Pwr"] = [round(p, 1) for p in _fp]
+        df["Form Δ"] = [round(p - scored[t]["Power"], 1)
+                        for p, t in zip(_fp, ov_tids)]
         # Advanced composites (was a separate "Advanced standings" table) folded
         # in as a column set — one team table, you pick which stats to see.
         for _ck, _src, _rnd in [("Dominance", "Dominance", None),
@@ -680,6 +700,7 @@ if _view == "Overview":
                       "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]
         if "Form" in df.columns:
             _core_cols.append("Form")
+        _core_cols += ["Form Pwr", "Form Δ"]
         _comp_cols = ["Rank", "Team", "Class", "Power", "MOV", "Dominance",
                       "Consistency", "Clutch", "Momentum", "Volatility",
                       "Pyth W", "Luck (W)"]
@@ -722,6 +743,16 @@ if _view == "Overview":
                 "Form": st.column_config.LineChartColumn(
                     "Margin trend", y_min=-30, y_max=30,
                     help="Scoring margin over the last 7 games (oldest → newest)."),
+                "Form Pwr": st.column_config.NumberColumn(
+                    "Form Pwr", format="%.1f",
+                    help="Recency-weighted power (recent games count more) — how "
+                         "strong the team is playing RIGHT NOW (50 ≈ average). "
+                         "Season Power is the full-season résumé; this is current "
+                         "form."),
+                "Form Δ": st.column_config.NumberColumn(
+                    "Form Δ", format="%.1f",
+                    help="Form Pwr − season Power. Positive = playing above their "
+                         "season level (hot); negative = fading."),
                 "Dominance": st.column_config.ProgressColumn(
                     "Dominance", format="%.0f", min_value=0, max_value=100,
                     help="How decisively they beat the teams they should."),
@@ -818,6 +849,23 @@ def _fx_team():
             ("Adj D (xoPPG)", r["xoPPG"], "score-based defense"),
             ("vs Top 5", f"{t5_w}-{t5_l}", "Top 10/25 on the card")]):
         col.markdown(CD.glass(lbl, val, sub), unsafe_allow_html=True)
+
+    # Current form — recency-weighted power vs the flat season power (who's hot).
+    _fr = formed.get(pick)
+    if _fr:
+        _fdelta = _fr["Power"] - r["Power"]
+        _fclr = "#3fb950" if _fdelta > 1 else "#e74c3c" if _fdelta < -1 else "#8b949e"
+        _farrow = "▲" if _fdelta > 1 else "▼" if _fdelta < -1 else "▬"
+        fx = st.columns(3)
+        fx[0].markdown(CD.glass("Form Power", f"{_fr['Power']:.1f}",
+                                "recency-weighted (recent games count more)", _fclr),
+                       unsafe_allow_html=True)
+        fx[1].markdown(CD.glass("Form Δ", f"{_farrow} {_fdelta:+.1f}",
+                                "vs season power · hot / cold", _fclr),
+                       unsafe_allow_html=True)
+        fx[2].markdown(CD.glass("Form rank", f"#{_fr['Rank']}",
+                                f"of {len(formed)} · season #{r['Rank']}"),
+                       unsafe_allow_html=True)
 
     # ── advanced profile (results-only composites + form) ────────────────────
     f = form_stats.get(pick, {})

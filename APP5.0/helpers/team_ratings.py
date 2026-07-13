@@ -87,6 +87,16 @@ DEFAULT_SOS_WEIGHT = 0.8   # schedule-strength nudge, in RATING POINTS PER
                            # so the churn-based 0.8 stands — no evidence to move.
 
 
+FORM_HALF_LIFE = 8.0       # games: recency half-life for form_ratings. A game this
+                           # many games back counts half as much as a team's latest.
+                           # Chosen gentle (not 3-4) on purpose: HS records are short
+                           # (median ~24 GP, many teams <8) and already shrunk by REG
+                           # phantom games, so an aggressive half-life would starve the
+                           # effective sample and go noisy. At 8, a ~20-game team's
+                           # oldest games still carry ~15-18% weight — a real "who's
+                           # hot NOW" tilt without throwing the body of work away.
+
+
 _safe = S._safe   # shared definition lives in helpers.stats
 
 
@@ -126,7 +136,8 @@ def _finished_games(gender=None, tracked_only=False, game_ids=None,
         params.extend(game_ids)
     rows = query(
         f"""SELECT g.id, g.team1_id AS home_id, g.team2_id AS away_id,
-                   g.home_score AS home_pts, g.away_score AS away_pts, g.tracked
+                   g.home_score AS home_pts, g.away_score AS away_pts,
+                   g.tracked, g.date AS date
             FROM games g
             JOIN teams t1 ON t1.id = g.team1_id
             JOIN teams t2 ON t2.id = g.team2_id
@@ -160,17 +171,35 @@ def _team_meta(gender=None, season=None):
     return meta
 
 
-def _per_team_games(games):
+def _per_team_games(games, half_life=None):
     """
-    Reshape game rows into {team_id: [ {opp, pts_for, pts_against, won}, ... ]}.
+    Reshape game rows into {team_id: [ {opp, pts_for, pts_against, won, w}, ... ]}.
     Each game contributes one entry to each side.
+
+    `half_life` (games): when set, attach a recency weight `w` to each entry so a
+    game HALF_LIFE games back counts half as much as the team's latest game
+    (w = 0.5 ** (games_ago / half_life), newest = 1.0). Weights are TEAM-RELATIVE
+    (each team's own game order) and drive the weighted means in _adjust /
+    _sos_sor / score_ratings — this is the "current form" knob. Left None (default)
+    every w is 1.0, so the whole engine is byte-identical to the flat season rating.
     """
     out = defaultdict(list)
     for g in games:
         h, a = g["home_id"], g["away_id"]
         hp, ap = g["home_pts"], g["away_pts"]
-        out[h].append({"opp": a, "pts_for": hp, "pts_against": ap, "won": hp > ap})
-        out[a].append({"opp": h, "pts_for": ap, "pts_against": hp, "won": ap > hp})
+        d = g.get("date") or ""
+        gid = g["id"]
+        out[h].append({"opp": a, "pts_for": hp, "pts_against": ap, "won": hp > ap,
+                       "date": d, "gid": gid, "w": 1.0})
+        out[a].append({"opp": h, "pts_for": ap, "pts_against": hp, "won": ap > hp,
+                       "date": d, "gid": gid, "w": 1.0})
+    if half_life and half_life > 0:
+        for gl in out.values():
+            gl.sort(key=lambda e: (e["date"], e["gid"]))   # oldest → newest
+            n = len(gl)
+            for j, e in enumerate(gl):
+                games_ago = (n - 1) - j
+                e["w"] = 0.5 ** (games_ago / half_life)
     return out
 
 
@@ -197,21 +226,24 @@ def _adjust(team_games, value_for, value_against, league_avg,
     """
     adjO = dict(value_for)
     adjD = dict(value_against)
+    # per-team weight totals (all 1.0 → == len(gl), i.e. the flat season case)
+    wsum = {t: sum(g.get("w", 1.0) for g in gl) for t, gl in team_games.items()}
     for _ in range(iters):
         newO, newD = {}, {}
         for t, gl in team_games.items():
             o_acc = d_acc = 0.0
             for g in gl:
                 opp = g["opp"]
+                w = g.get("w", 1.0)
                 # opponent defense relative to average (how easy/hard they are)
                 opp_def_edge = adjD.get(opp, league_avg) - league_avg
                 opp_off_edge = adjO.get(opp, league_avg) - league_avg
-                o_acc += g["pts_for"] - opp_def_edge
-                d_acc += g["pts_against"] - opp_off_edge
+                o_acc += w * (g["pts_for"] - opp_def_edge)
+                d_acc += w * (g["pts_against"] - opp_off_edge)
             # phantom average-games regress thin records toward the mean
             o_acc += reg * league_avg
             d_acc += reg * league_avg
-            denom = len(gl) + reg
+            denom = wsum[t] + reg
             newO[t] = _safe(o_acc, denom)
             newD[t] = _safe(d_acc, denom)
         adjO, adjD = newO, newD
@@ -265,14 +297,17 @@ def _sos_sor(team_games, adj_net):
             continue
         opp_net = 0.0
         resume = 0.0
+        wtot = 0.0
         for g in gl:
+            w = g.get("w", 1.0)
+            wtot += w
             on = adj_net.get(g["opp"], 0.0)
-            opp_net += on
+            opp_net += w * on
             margin = g["pts_for"] - g["pts_against"]
             margin = max(-_SOR_MARGIN_CAP, min(_SOR_MARGIN_CAP, margin))
-            resume += on + margin
-        sos[t] = opp_net / len(gl)
-        sor[t] = resume / len(gl)
+            resume += w * (on + margin)
+        sos[t] = opp_net / wtot if wtot else 0.0
+        sor[t] = resume / wtot if wtot else 0.0
     return sos, sor
 
 
@@ -310,7 +345,7 @@ def results_fingerprint():
 
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
                   reg=DEFAULT_REG, sos_weight=DEFAULT_SOS_WEIGHT, game_ids=None,
-                  season="Current"):
+                  season="Current", half_life=None):
     """
     Results-only power ratings for every team in `gender` (None = all).
     Returns {team_id: {...}} with, per team:
@@ -325,25 +360,29 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
         Rank                                1 = best (by Rating, within gender)
     `sos_weight` is the points-per-SD schedule-strength nudge folded into Rating
     (standardized; see DEFAULT_SOS_WEIGHT); 0 reproduces pure AdjNet+Class.
+    `half_life` (games) recency-weights each team's games — see form_ratings; None
+    (default) is the flat, all-games-equal season rating.
     """
     games = _finished_games(gender=gender, game_ids=game_ids, season=season)
     meta = _team_meta(gender=gender, season=season)
-    tg = _per_team_games(games)
+    tg = _per_team_games(games, half_life=half_life)
     if not tg:
         return {}
 
-    # raw per-game offense / defense
+    # raw per-game offense / defense (recency-weighted when half_life is set; the
+    # league average stays the flat, unweighted league scoring level — the stable
+    # neutral floor the phantom-game shrinkage regresses toward). GP / W / L stay
+    # true counts regardless of weighting.
     ppg, oppg, gp, wins = {}, {}, {}, {}
     tot_pts = tot_games = 0
     for t, gl in tg.items():
-        pf = sum(g["pts_for"] for g in gl)
-        pa = sum(g["pts_against"] for g in gl)
         n = len(gl)
-        ppg[t] = pf / n
-        oppg[t] = pa / n
+        wtot = sum(g["w"] for g in gl)
+        ppg[t] = _safe(sum(g["w"] * g["pts_for"] for g in gl), wtot)
+        oppg[t] = _safe(sum(g["w"] * g["pts_against"] for g in gl), wtot)
         gp[t] = n
         wins[t] = sum(1 for g in gl if g["won"])
-        tot_pts += pf
+        tot_pts += sum(g["pts_for"] for g in gl)
         tot_games += n
     league_avg = _safe(tot_pts, tot_games)  # avg points scored per team-game
 
@@ -374,6 +413,23 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
         }
     _assign_ranks(out)
     return out
+
+
+def form_ratings(gender=None, half_life=FORM_HALF_LIFE, game_ids=None,
+                 season="Current", **kw):
+    """Recency-weighted "current form" ratings: the SAME results-only engine as
+    score_ratings, but each team's games are exponentially decayed by recency
+    (see FORM_HALF_LIFE), so Power / Rating read "how good is this team RIGHT NOW"
+    instead of over the whole season. Identical {team_id: {...}} shape and its own
+    Rank (1 = hottest), so a page can drop it in beside score_ratings.
+
+    Use it ALONGSIDE score_ratings, not instead of it. score_ratings is the résumé
+    / source-of-truth ranking (SOS, SOR, seeding and predictions want the full body
+    of work); form_ratings answers the different question of who is peaking now. A
+    team's (Form Power − season Power) is the hot/cold signal.
+    """
+    return score_ratings(gender=gender, half_life=half_life, game_ids=game_ids,
+                         season=season, **kw)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

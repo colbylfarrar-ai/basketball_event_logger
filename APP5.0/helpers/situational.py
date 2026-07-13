@@ -268,6 +268,235 @@ def team_situational(team_id, events, gender=None, min_poss=SIT_MIN_POSS):
     }
 
 
+# ── After-outcome response splits ───────────────────────────────────────────────
+# How a team plays AFTER the previous possession's result — made basket vs missed
+# shot vs turnover — on both ends. A different question from team_situational's
+# quarter/score/run lenses: those are symmetric (a quarter applies to offense AND
+# defense equally); these are one-sided per event ("after opp scores" is an
+# offensive possession only), so they get their own replay + build path.
+#
+# Possession boundaries are EXACT, not inferred: a missed-shot event carries
+# rebounder_team_id (see helpers/breakdown.py), so an offensive rebound (same team)
+# continues the possession and a defensive rebound ends it. Possessions strictly
+# alternate owners, so "the immediately prior possession" is always the opponent's
+# for our offense and always ours for the opponent's offense.
+AFTER_MIN_POSS = 10        # a bucket topline reads as stable at this many poss
+                           # (broad splits fill faster than the tagged play cells)
+_AFTER_KEYS = ("score", "miss", "tov")
+_TRANS_LABELS = {"score": "After opponent scores",
+                 "miss": "After a defensive rebound",
+                 "tov": "After a takeaway"}
+_HOT_LABELS = {"score": "After we score", "miss": "After we miss",
+               "tov": "After we turn it over"}
+_AFTER_DEF_LABELS = {"score": "D after we score", "miss": "D after we miss",
+                     "tov": "D after our turnover"}
+
+
+def _ends_poss(e):
+    """(outcome, ends) for a possession-ending event, from the shooting team's view.
+    make/miss/tov end a possession; an offensive rebound (miss rebounded by the
+    shooting team) does NOT — the possession continues. FTs / fouls never bound a
+    possession (mirrors poss = FGA + TOV)."""
+    et = e.get("event_type")
+    if et == "turnover":
+        return "tov", True
+    if et == "shot":
+        if e.get("shot_result") == "make":
+            return "make", True
+        rt = e.get("rebounder_team_id")
+        if rt is not None and rt == e.get("shooter_team_id"):
+            return None, False          # offensive rebound → same possession
+        return "miss", True             # defensive rebound (or unknown) → ends
+    return None, False
+
+
+def annotate_after(events, team_id):
+    """Tag every event in place with ``e['_after'] = {trans, hot, def}`` — the bucket
+    key ('score'/'miss'/'tov' or None) its possession falls in for each lens, from
+    ``team_id``'s perspective. One chronological pass per game (resets at each game
+    boundary). Returns the same list (mutated)."""
+    order = sorted(events, key=lambda e: (e.get("game_id") or 0, _elapsed(e)))
+    prev_outcome = prev_owner = None    # immediately-prior ended possession
+    team_last = {}                      # team_id -> its last OWN ended outcome
+    _cur_game = _UNSET
+    buf = []                            # events of the in-progress possession
+    for e in order:
+        gid = e.get("game_id")
+        if gid != _cur_game:            # new game → reset the possession replay
+            _cur_game = gid
+            prev_outcome = prev_owner = None
+            team_last = {}
+            buf = []
+        buf.append(e)
+        outcome, ends = _ends_poss(e)
+        if not ends:
+            continue
+        owner = e.get("shooter_team_id")
+        if owner == team_id:            # our offensive possession
+            trans = (prev_outcome if (prev_owner is not None
+                                      and prev_owner != team_id) else None)
+            tag = {"trans": trans, "hot": team_last.get(team_id), "def": None}
+        elif owner is not None:         # opponent's possession = our defense
+            tag = {"trans": None, "hot": None, "def": team_last.get(team_id)}
+        else:
+            tag = {"trans": None, "hot": None, "def": None}
+        for be in buf:
+            be["_after"] = tag
+        oc = "score" if outcome == "make" else outcome
+        prev_owner, prev_outcome = owner, oc
+        if owner is not None:
+            team_last[owner] = oc
+        buf = []
+    for be in buf:                      # trailing events (possession never ended)
+        be.setdefault("_after", {"trans": None, "hot": None, "def": None})
+    return events
+
+
+def _def_totals(evs, team_id):
+    """Opponent's offensive totals over a slice = what ``team_id``'s DEFENSE allowed
+    (PPP allowed, opp eFG, opp possession length). Mirror of ``_off_totals`` on the
+    other team."""
+    FGA = FGM = FG3M = FTM = TOV = PTS = 0
+    secs_sum = secs_n = 0
+    for e in evs:
+        t = e.get("shooter_team_id")
+        if t is None or t == team_id:
+            continue
+        et = e.get("event_type")
+        if et == "shot":
+            FGA += 1
+            if e.get("shot_result") == "make":
+                FGM += 1
+                if e.get("shot_type") == 3:
+                    FG3M += 1
+                    PTS += 3
+                else:
+                    PTS += 2
+        elif et == "free_throw":
+            if e.get("shot_result") == "make":
+                FTM += 1
+                PTS += 1
+        elif et == "turnover":
+            TOV += 1
+        if et in ("shot", "turnover"):
+            _ps = e.get("possession_secs") or 0
+            if _ps > 0:
+                secs_sum += _ps
+                secs_n += 1
+    poss = FGA + TOV
+    return {
+        "poss": poss, "PTS": PTS, "FGA": FGA,
+        "PPP": (PTS / poss) if poss else 0.0,
+        "eFG": ((FGM + 0.5 * FG3M) / FGA) if FGA else 0.0,
+        "FG%": (FGM / FGA) if FGA else 0.0,
+        "secs": (secs_sum / secs_n) if secs_n else None,
+        "timed_poss": secs_n,
+    }
+
+
+def _slice_after(events, field, key):
+    out = []
+    for e in events:
+        a = e.get("_after")
+        if a and a.get(field) == key:
+            out.append(e)
+    return out
+
+
+def team_after_outcome(team_id, events, gender=None, min_poss=AFTER_MIN_POSS):
+    """Per-bucket offense/defense breakdown by the PRIOR possession's outcome.
+
+    ``events`` = fetch_events() rows for the team's tracked games (already
+    entitlement-scoped by the caller). Returns ``None`` when there are no
+    possessions, else::
+
+        {
+          'transition': [ {key,label,poss,PPP,eFG,'FG%',secs,plays,top_play,
+                           tagged_poss,stable}, ... ],   # our O, keyed on opp's last
+          'hot_hand':   [ ... same shape ... ],          # our O, keyed on our own last
+          'defense':    [ {key,label,poss,dPPP,eFG,'FG%',secs,defenses,top_def,
+                           tagged_poss,stable}, ... ],   # our D, keyed on our own last
+          'concentration': [ {play_label,bucket_label,share_here,share_overall,
+                              lift,poss}, ... ],
+          'off_poss_total': int, 'def_poss_total': int,
+        }
+    """
+    if not events:
+        return None
+    annotate_after(events, team_id)
+
+    off_total = _off_totals(events, team_id)["poss"]
+    def_total = _def_totals(events, team_id)["poss"]
+    if off_total == 0 and def_total == 0:
+        return None
+
+    base_plays = _rows_from_cells(
+        factors_by_tag(events, team_id, "play_type", _PLAY_KEYS,
+                       offense=True, min_poss=min_poss), _PLAY_LABELS)
+    base_share = {p["key"]: p["share"] for p in base_plays}
+    concentration = []
+
+    def _build_off(field, labels):
+        rows = []
+        for key in _AFTER_KEYS:
+            evs = _slice_after(events, field, key)
+            off = _off_totals(evs, team_id)
+            if off["poss"] == 0:
+                continue
+            plays = _rows_from_cells(
+                factors_by_tag(evs, team_id, "play_type", _PLAY_KEYS,
+                               offense=True, min_poss=min_poss), _PLAY_LABELS)
+            rows.append({
+                "key": key, "label": labels[key], "poss": off["poss"],
+                "PPP": off["PPP"], "eFG": off["eFG"], "FG%": off["FG%"],
+                "secs": off["secs"], "plays": plays,
+                "top_play": plays[0] if plays else None,
+                "tagged_poss": sum(p["poss"] for p in plays),
+                "stable": off["poss"] >= min_poss,
+            })
+            for p in plays:             # usage spike vs overall = a situational set
+                ov = base_share.get(p["key"], 0.0)
+                if p["poss"] >= 5 and p["share"] >= 0.20 and ov > 0 \
+                        and p["share"] / ov >= 1.6:
+                    concentration.append({
+                        "play_label": p["label"], "bucket_label": labels[key],
+                        "share_here": p["share"], "share_overall": ov,
+                        "lift": p["share"] / ov, "poss": p["poss"]})
+        return rows
+
+    def _build_def(labels):
+        rows = []
+        for key in _AFTER_KEYS:
+            evs = _slice_after(events, "def", key)
+            d = _def_totals(evs, team_id)
+            if d["poss"] == 0:
+                continue
+            defs = _rows_from_cells(
+                factors_by_tag(evs, team_id, "defense", _DEF_KEYS,
+                               offense=False, min_poss=min_poss), _DEF_LABELS)
+            rows.append({
+                "key": key, "label": labels[key], "poss": d["poss"],
+                "dPPP": d["PPP"], "eFG": d["eFG"], "FG%": d["FG%"],
+                "secs": d["secs"], "defenses": defs,
+                "top_def": defs[0] if defs else None,
+                "tagged_poss": sum(x["poss"] for x in defs),
+                "stable": d["poss"] >= min_poss,
+            })
+        return rows
+
+    transition = _build_off("trans", _TRANS_LABELS)
+    hot_hand = _build_off("hot", _HOT_LABELS)
+    defense = _build_def(_AFTER_DEF_LABELS)
+    if not (transition or hot_hand or defense):
+        return None
+    concentration.sort(key=lambda c: -c["lift"])
+    return {
+        "transition": transition, "hot_hand": hot_hand, "defense": defense,
+        "concentration": concentration[:6],
+        "off_poss_total": off_total, "def_poss_total": def_total,
+    }
+
+
 # ── Per-player situational edge (auto-insight feed) ─────────────────────────────
 # Quarter-based ONLY (team-agnostic, no margin perspective needed across players):
 # does a player's scoring spike or crater in the 4th vs their overall? Feeds

@@ -1153,6 +1153,15 @@ def _situational_view(g, tid, game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _after_outcome_view(g, tid, game_ids=None):
+    """How the team plays AFTER a make / miss / turnover on both ends — the
+    after-outcome response splits (helpers/situational.py team_after_outcome).
+    `game_ids` scopes a season's tracked games; None = current via _team_game_ids."""
+    gids = list(game_ids) if game_ids is not None else S._team_game_ids(tid)
+    return SIT.team_after_outcome(tid, S.fetch_events(gids), gender=g)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _runs_view(g, tid, game_ids=None):
     """Scoring-run profile + raw run list for one team's tracked games
     (helpers/runs.py). `game_ids` scopes an archive season; None = current."""
@@ -1400,6 +1409,7 @@ if _tdview == "Charts":
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
             PURPLE=PURPLE, PINK=PINK,
             situational=_TMBIND(_situational_view),
+            after_outcome=_TMBIND(_after_outcome_view),
             runs=_TMBIND(_runs_view),
             by_game_type=(_by_game_type if _is_cur_season
                           else _partial(_by_game_type, season=season_pick)),

@@ -525,11 +525,102 @@ def _t_pv_leak(tid, ts, fm, pools, d):
             "n": n}
 
 
+# ── after-outcome generators (read the `after` extra = situational.team_after_outcome)
+# All ABSOLUTE-threshold reads (fire below the 5-team pool min live sits at), each
+# self-gated on the bucket's possession count so a thin split never headlines.
+def _abkt(rows, key):
+    for r in rows or []:
+        if r.get("key") == key:
+            return r
+    return None
+
+
+def _t_after_push(tid, ts, fm, pools, d):
+    """Transition: do they punish you in the open floor (after a rebound / takeaway)
+    vs grind in the half-court (after an opponent score)?"""
+    a = d.get("after")
+    if not a:
+        return None
+    tr = a.get("transition", [])
+    setb = _abkt(tr, "score")                       # after opp scores = half-court
+    live = max([b for b in (_abkt(tr, "miss"), _abkt(tr, "tov")) if b],
+               key=lambda b: b["poss"], default=None)   # rebound / takeaway = push
+    if not setb or not live or setb["poss"] < 12 or live["poss"] < 12:
+        return None
+    dppp = live["PPP"] - setb["PPP"]
+    pace_gap = (setb["secs"] - live["secs"]
+                if setb.get("secs") is not None and live.get("secs") is not None
+                else None)                          # positive = live is quicker
+    if abs(dppp) < 0.12 and (pace_gap is None or abs(pace_gap) < 2.5):
+        return None
+    z = abs(dppp) / 0.10 if abs(dppp) >= 0.12 else abs(pace_gap) / 2.0
+    lbl = live["label"].lower()
+    if dppp > 0:
+        pace_bit = (f" and {pace_gap:.0f}s quicker per trip"
+                    if pace_gap and pace_gap >= 2.5 else "")
+        txt = (f"**They run in transition** — **{live['PPP']:.2f} PPP** {lbl} "
+               f"vs {setb['PPP']:.2f} in the half-court{pace_bit}; get back and "
+               f"make them play 5-on-5.")
+    else:
+        txt = (f"**Half-court team** — only **{live['PPP']:.2f} PPP** {lbl} vs "
+               f"{setb['PPP']:.2f} in the set; they don't punish you in the open "
+               f"floor, so pressure up and live with the break.")
+    return {"text": txt, "score": z, "z": z, "metric": "Transition",
+            "n": live["poss"]}
+
+
+def _t_after_cold(tid, ts, fm, pools, d):
+    """Hot-hand: does their offense ride a make, or bounce back off a miss?"""
+    a = d.get("after")
+    if not a:
+        return None
+    h = a.get("hot_hand", [])
+    sc, ms = _abkt(h, "score"), _abkt(h, "miss")
+    if not sc or not ms or sc["poss"] < 12 or ms["poss"] < 12:
+        return None
+    diff = sc["PPP"] - ms["PPP"]                     # positive = ride the make
+    if abs(diff) < 0.15:
+        return None
+    z = abs(diff) / 0.12
+    if diff > 0:
+        txt = (f"**Momentum offense** — **{sc['PPP']:.2f} PPP the trip after "
+               f"they score** vs {ms['PPP']:.2f} after a miss; when they get "
+               f"rolling they keep it going — a timeout on the 2nd straight "
+               f"bucket breaks the rhythm.")
+    else:
+        txt = (f"**Bounce-back offense** — **{ms['PPP']:.2f} PPP right after a "
+               f"miss** vs {sc['PPP']:.2f} after a make; forcing one stop "
+               f"doesn't slow them, so no let-up.")
+    return {"text": txt, "score": z, "z": z, "metric": "Momentum",
+            "n": sc["poss"] + ms["poss"]}
+
+
+def _t_after_scramble(tid, ts, fm, pools, d):
+    """Transition defense: do they leak after their own live-ball turnovers?"""
+    a = d.get("after")
+    if not a:
+        return None
+    df = a.get("defense", [])
+    setb, tov = _abkt(df, "score"), _abkt(df, "tov")   # set D vs D after a giveaway
+    if not setb or not tov or setb["poss"] < 12 or tov["poss"] < 10:
+        return None
+    leak = tov["dPPP"] - setb["dPPP"]                # positive = they get run on
+    if leak < 0.15:
+        return None
+    z = leak / 0.12
+    txt = (f"**Leaky after live-ball turnovers** — when they cough it up, "
+           f"opponents score **{tov['dPPP']:.2f} PPP in transition** vs "
+           f"{setb['dPPP']:.2f} against their set defense; force turnovers and "
+           f"get out to run.")
+    return {"text": txt, "score": z, "z": z, "metric": "Transition D",
+            "n": tov["poss"]}
+
+
 _TEAM_GENERATORS = [_t_luck, _t_close, _t_volatility, _t_momentum,
                     _t_off_leak, _t_def_leak, _t_three_dep, _t_quarter,
                     _t_lineup, _t_forced_tov, _t_frontrunner, _t_chemistry,
                     _t_keys, _t_vs_scheme, _t_runs, _t_rest, _t_predictable,
-                    _t_pv_leak]
+                    _t_pv_leak, _t_after_push, _t_after_cold, _t_after_scramble]
 
 
 # ── extras builders (per-team feeds the league pools don't need) ──────────────
@@ -690,6 +781,21 @@ def pv_extra(team_id, events=None, game_ids=None):
     return {"pv": led} if led else {}
 
 
+def after_extra(team_id, events=None, game_ids=None):
+    """{'after': team_after_outcome} for the after-outcome generators — how the team
+    plays after a make / miss / turnover on both ends (situational.team_after_outcome).
+    {} until there are possessions to split."""
+    try:
+        import helpers.situational as SIT
+        if events is None and game_ids:
+            import helpers.stats as S
+            events = S.fetch_events(list(game_ids))
+        res = SIT.team_after_outcome(team_id, events or [])
+    except Exception:
+        return {}
+    return {"after": res} if res else {}
+
+
 def team_extras(team_id, gender=None, game_ids=None, season="Current"):
     """One team's full extras bundle for the miner — merges every per-team feed
     (lineup / chemistry / keys / scheme / runs / rest / predictability /
@@ -712,6 +818,7 @@ def team_extras(team_id, gender=None, game_ids=None, season="Current"):
     out.update(rest_extra(team_id, season=season))
     out.update(predict_extra(team_id, events=events))
     out.update(pv_extra(team_id, events=events, game_ids=game_ids))
+    out.update(after_extra(team_id, events=events, game_ids=game_ids))
     return out
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import plotly.graph_objects as go
 import streamlit as st
 
+import helpers.situational as SIT
 from helpers.cards import glass, dense_table
 from helpers.ui import empty_state, style_fig
 
@@ -300,3 +301,101 @@ def render(ctx):
         st.caption("Darker/gold = a bigger share of that situation's tagged "
                    "defensive possessions. Read across a row to see when they run "
                    "each scheme.")
+
+    # ── §F — after-outcome response splits (how they play after make/miss/TO) ─
+    after = (ctx.after_outcome(g, tid)
+             if getattr(ctx, "after_outcome", None) else None)
+    if after and (after.get("transition") or after.get("hot_hand")
+                  or after.get("defense")):
+        st.divider()
+        st.markdown("<div class='pl-hdr'>After the play — how they respond to the "
+                    "last basket</div>", unsafe_allow_html=True)
+        st.caption(
+            "The prior possession changes everything: after an opponent make they "
+            "inbound against a set defense; after a defensive rebound they can push; "
+            "after a takeaway they sprint. **Poss len** = avg possession length "
+            "(pace). Compare a row's PPP and pace to the others — the split *is* the "
+            f"read. ⚠ = under {SIT.AFTER_MIN_POSS} possessions, thin.")
+
+        def _off_after_table(rows, hdr):
+            if not rows:
+                return
+            st.markdown(f"**{hdr}**")
+            st.markdown(dense_table([{
+                "After": r["label"] + ("" if r["stable"] else " ⚠"),
+                "Poss": r["poss"],
+                "Poss len": (f"{r['secs']:.1f} s"
+                             if r.get("secs") is not None else None),
+                "PPP": f"{r['PPP']:.2f}", "eFG%": f"{r['eFG'] * 100:.0f}%",
+                "FG%": f"{r['FG%'] * 100:.0f}%",
+                "Go-to set": _fmt_top(r.get("top_play")),
+            } for r in rows],
+                num_cols=("Poss", "Poss len", "PPP", "eFG%", "FG%")),
+                unsafe_allow_html=True)
+
+        _off_after_table(after.get("transition"),
+                         "Offense by the last possession (opponent's)")
+        _off_after_table(after.get("hot_hand"),
+                         "Offense by their own last possession (hot hand)")
+        if after.get("defense"):
+            st.markdown("**Defense — what they give up after each**")
+            st.markdown(dense_table([{
+                "After": r["label"] + ("" if r["stable"] else " ⚠"),
+                "Poss": r["poss"],
+                "Poss len": (f"{r['secs']:.1f} s"
+                             if r.get("secs") is not None else None),
+                "PPP allowed": f"{r['dPPP']:.2f}",
+                "Opp eFG%": f"{r['eFG'] * 100:.0f}%",
+                "Defense run": _fmt_top(r.get("top_def")),
+            } for r in after["defense"]],
+                num_cols=("Poss", "Poss len", "PPP allowed", "Opp eFG%")),
+                unsafe_allow_html=True)
+
+        # drill-in: play mix (offense buckets) / scheme mix (defense bucket)
+        _opts, _map = [], {}
+        for fam, rows, kind in (
+                ("Transition", after.get("transition", []), "off"),
+                ("Hot hand", after.get("hot_hand", []), "off"),
+                ("Defense", after.get("defense", []), "def")):
+            for r in rows:
+                lab = f"{fam} · {r['label']}"
+                _opts.append(lab)
+                _map[lab] = (kind, r)
+        if _opts:
+            pick = st.selectbox("Drill into a response bucket", _opts,
+                                key="after_drill")
+            kind, r = _map[pick]
+            items = r.get("plays") if kind == "off" else r.get("defenses")
+            _unit = "PPP" if kind == "off" else "PPP allowed"
+            if items:
+                afig = go.Figure(go.Bar(
+                    x=[p["label"] for p in items],
+                    y=[round(p["share"] * 100) for p in items],
+                    marker_color=[_PALETTE[i % len(_PALETTE)]
+                                  for i in range(len(items))],
+                    marker_line_width=0,
+                    text=[f"{p['share'] * 100:.0f}%" for p in items],
+                    textposition="outside",
+                    hovertext=[f"{p['label']}: {p['poss']} poss · "
+                               f"{p['PPP']:.2f} {_unit}" for p in items],
+                    hoverinfo="text"))
+                afig.update_yaxes(title="Share of tagged (%)")
+                style_fig(afig, 280)
+                st.plotly_chart(afig, width="stretch", key="after_bar")
+            else:
+                st.caption("No tagged sets in this bucket yet — the scoring split "
+                           "above still reads without tags.")
+
+        conc = after.get("concentration", [])
+        if conc:
+            st.markdown("<div class='pl-hdr'>Situational sets — called far more "
+                        "after one outcome</div>", unsafe_allow_html=True)
+            st.caption("A set whose usage share spikes after a specific outcome vs "
+                       "its overall rate — the play they save for the moment.")
+            ccols = st.columns(min(3, len(conc)))
+            for i, c in enumerate(conc):
+                ccols[i % len(ccols)].markdown(glass(
+                    c["play_label"], f"{c['lift']:.1f}× usage",
+                    f"{c['bucket_label'].lower()} · {c['share_here'] * 100:.0f}% "
+                    f"(vs {c['share_overall'] * 100:.0f}% overall) · {c['poss']}p"),
+                    unsafe_allow_html=True)

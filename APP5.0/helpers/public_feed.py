@@ -30,6 +30,7 @@ from datetime import date as _date
 
 from database.db import execute, query
 import helpers.event_log as EL
+import helpers.excitement as EX
 import helpers.stats as ST
 import helpers.team_ratings as TR
 import helpers.win_probability as WP
@@ -51,6 +52,53 @@ def clear_cache() -> None:
 _SB_CACHE: dict[str, tuple[float, dict]] = {}
 
 
+def _data_version() -> int:
+    """Global mutation counter (app_settings.data_version), bumped on every
+    undo / finish / edit / delete (helpers.game_events.bump_data_version). Folded
+    into the public `version` field so the fan page can never miss an update: a
+    plain last-event-id key collides when SQLite REUSES a rowid (undo the newest
+    event, then log another — the new row takes the freed id, so id-only versions
+    match two DIFFERENT box states and the client skips the redraw)."""
+    r = query("SELECT value FROM app_settings WHERE key='data_version'")
+    try:
+        return int(r[0]["value"]) if r else 0
+    except (ValueError, TypeError):
+        return 0
+
+
+def _live_gei(game_id: int, t1: int, t2: int, hp: int, ap: int,
+              scored: dict) -> float:
+    """Stakes-adjusted Game Excitement Index for a game IN PROGRESS, from its
+    scoring timeline (same pipeline as Rankings / Hall of Fame). Sorts the
+    landing's LIVE-now rail so the best game on the slate floats to the top.
+    Cheap-fails to 0.0 (thin games sink) — the caller keeps a stable order."""
+    scoring = query(
+        "SELECT ge.event_type, ge.shot_type, ge.quarter, ge.time, p.team_id AS tid "
+        "FROM game_events ge JOIN players p ON p.id=ge.primary_player_id "
+        "WHERE ge.game_id=? AND ge.shot_result='make' "
+        "  AND ge.event_type IN ('shot','free_throw') ORDER BY ge.quarter, ge.id",
+        (game_id,))
+    if len(scoring) < 4:
+        return 0.0
+    times, margins, h, a = [0.0], [0.0], 0, 0
+    for e in scoring:
+        pts = e["shot_type"] if e["event_type"] == "shot" else 1
+        if e["tid"] == t1:
+            h += pts
+        elif e["tid"] == t2:
+            a += pts
+        times.append(ST.elapsed(e["quarter"], e["time"]))
+        margins.append(h - a)
+    end_t = times[-1] or WP.GAME_SECONDS
+    times.append(end_t)
+    margins.append(h - a)
+    curve = WP.wp_curve(list(zip(times, margins)), total_secs=end_t)
+    if len(curve) < 2:
+        return 0.0
+    raw = WP.summarize(curve)["gei"]
+    return EX.adj_gei(raw, scored, t1, t2, hp, ap)
+
+
 def scoreboard(date_str: str) -> dict | None:
     """Public landing payload: every public game LIVE right now (last ~day so a
     late tip survives the UTC date line) + one calendar date's slate. Same
@@ -67,7 +115,8 @@ def scoreboard(date_str: str) -> dict | None:
         return hit[1]
 
     live_rows = query(
-        "SELECT g.id, g.share_token, g.date, g.location, "
+        "SELECT g.id, g.share_token, g.date, g.location, g.season, "
+        "       g.team1_id, g.team2_id, "
         "       t1.name AS hn, t2.name AS an, t1.gender AS gd "
         "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
         "             JOIN teams t2 ON t2.id=g.team2_id "
@@ -75,17 +124,35 @@ def scoreboard(date_str: str) -> dict | None:
         "  AND g.date >= date('now','-1 day') "
         "  AND EXISTS (SELECT 1 FROM game_events e WHERE e.game_id=g.id) "
         "ORDER BY g.date DESC, g.id DESC LIMIT 50")
+    # ranks for the stakes lift, memoized per (gender, season) — most live games
+    # on a night share one, so this is ~1 recompute, not one per game.
+    _scored: dict = {}
+
+    def _ranks(gender, season):
+        key = (gender, season)
+        if key not in _scored:
+            try:
+                _scored[key] = TR.score_ratings(gender=gender, season=season)
+            except Exception:
+                _scored[key] = {}
+        return _scored[key]
+
     live, live_ids = [], set()
     for r in live_rows:
         hp, ap = EL.score_from_events(r["id"]) or (0, 0)
         last = query("SELECT quarter, time FROM game_events WHERE game_id=? "
                      "ORDER BY id DESC LIMIT 1", (r["id"],))
         live_ids.add(r["id"])
+        gei = _live_gei(r["id"], r["team1_id"], r["team2_id"], hp, ap,
+                        _ranks(r["gd"], r["season"]))
         live.append({"home": r["hn"], "away": r["an"],
                      "gender": "Girls" if r["gd"] == "F" else "Boys",
                      "home_pts": hp, "away_pts": ap,
                      "quarter": last[0]["quarter"], "clock": last[0]["time"],
-                     "date": r["date"], "url": f"/live/{r['share_token']}"})
+                     "date": r["date"], "url": f"/live/{r['share_token']}",
+                     "gei": round(gei, 1)})
+    # hottest game first; ties keep the query's date/id order (Python sort stable)
+    live.sort(key=lambda g: -g["gei"])
 
     _slate_cols = (
         "SELECT g.id, g.date, g.tracked, g.home_score, g.away_score, g.is_public, "
@@ -351,10 +418,19 @@ def _num(pmap: dict, pid) -> str | None:
 
 def _play_text(ev: dict, pmap: dict) -> str | None:
     """One public play-by-play line, jersey numbers only."""
+    et = ev["event_type"]
+    if et == "foul":
+        # lead with the FOULER (secondary_player_id); primary is the fouled
+        # player, noted as who drew it when both jerseys resolve.
+        fouler = _num(pmap, ev["secondary_player_id"])
+        fouled = _num(pmap, ev["primary_player_id"])
+        who = fouler or fouled
+        if not who:
+            return None
+        return f"{fouler} foul (on {fouled})" if (fouler and fouled) else f"{who} foul"
     who = _num(pmap, ev["primary_player_id"])
     if not who:
         return None
-    et = ev["event_type"]
     if et == "shot":
         txt = f"{who} {ev['shot_type'] or 2}PT {'make' if ev['shot_result'] == 'make' else 'miss'}"
         if ev["shot_result"] == "make" and _num(pmap, ev["pass_from_id"]):
@@ -366,9 +442,6 @@ def _play_text(ev: dict, pmap: dict) -> str | None:
         return txt
     if et == "free_throw":
         return f"{who} FT {'make' if ev['shot_result'] == 'make' else 'miss'}"
-    if et == "foul":
-        on = _num(pmap, ev["secondary_player_id"])
-        return f"{who} foul" + (f" (on {on})" if on else "")
     if et == "turnover":
         stl = _num(pmap, ev["stolen_by_id"])
         return f"{who} turnover" + (f" (steal {stl})" if stl else "")
@@ -392,7 +465,9 @@ def _officials_detail(game_id: int, events: list, pmap: dict) -> list:
             continue
         s["fouls"] += 1
         s["q"][str(ev["quarter"])] = s["q"].get(str(ev["quarter"]), 0) + 1
-        side = pmap.get(ev["primary_player_id"], {}).get("team")
+        # charged side = the FOULER's team (secondary_player_id); primary is the
+        # player who was fouled.
+        side = pmap.get(ev["secondary_player_id"], {}).get("team")
         if side:
             s[side] += 1
     out = []
@@ -454,10 +529,11 @@ def _build_state(g: dict) -> dict:
                         "blk": 0, "tov": 0, "pf": 0, "on": False}
         return box[pid]
 
+    last_play = None
     for ev in events:
         side = pmap.get(ev["primary_player_id"], {}).get("team")
         et, make = ev["event_type"], ev["shot_result"] == "make"
-        if side:
+        if side and et in ("shot", "free_throw", "turnover"):
             ln = line(ev["primary_player_id"])
             if et == "shot":
                 three = ev["shot_type"] == 3
@@ -489,10 +565,18 @@ def _build_state(g: dict) -> dict:
                                         pts["home"] - pts["away"]))
             elif et == "turnover":
                 ln["tov"] += 1
-            elif et == "foul":
-                ln["pf"] += 1
+        elif et == "foul":
+            # PF and the team-foul tally are charged to the FOULER
+            # (secondary_player_id). primary_player_id is the player who was
+            # FOULED — crediting the foul there was the old bug (mismatched the
+            # main-app box score in helpers/stats.py, which charges the fouler).
+            fouler = ev["secondary_player_id"]
+            fside = pmap.get(fouler, {}).get("team")
+            if fouler in pmap:
+                line(fouler)["pf"] += 1
+            if fside:
                 tf = team_fouls.setdefault(str(ev["quarter"]), {"home": 0, "away": 0})
-                tf[side] += 1
+                tf[fside] += 1
         for col, stat in (("rebound_by_id", "reb"), ("pass_from_id", None),
                           ("blocked_by_id", "blk"), ("stolen_by_id", "stl")):
             pid = ev[col]
@@ -502,10 +586,21 @@ def _build_state(g: dict) -> dict:
                         line(pid)["ast"] += 1
                 elif stat:
                     line(pid)[stat] += 1
+        # the play's "actor" (team color) is the FOULER on a foul, else the
+        # primary player — matches the fouler-led play-by-play text
+        actor = (pmap.get(ev["secondary_player_id"], {}).get("team")
+                 if et == "foul" else side)
         txt = _play_text(ev, pmap)
         if txt:
-            plays.append({"q": ev["quarter"], "t": ev["time"],
-                          "team": side, "text": txt})
+            entry = {"q": ev["quarter"], "t": ev["time"],
+                     "team": actor, "text": txt}
+            plays.append(entry)
+            last_play = dict(entry)     # newest wins; carries shot dot below
+            if (et == "shot" and ev["shot_x"] is not None
+                    and ev["shot_y"] is not None):
+                last_play["shot"] = {
+                    "x": ev["shot_x"], "y": ev["shot_y"], "make": make,
+                    "type": 3 if ev["shot_type"] == 3 else 2, "team": side}
 
     # who's on the floor now = the last event's lineup snapshot
     if events:
@@ -531,8 +626,14 @@ def _build_state(g: dict) -> dict:
         "team_fouls": team_fouls,
         "box": {"home": home_box, "away": away_box},
         "plays": plays[-250:][::-1],   # newest first, capped
+        "last_play": last_play,        # newest single play (+ shot dot if a shot)
         "shots": shots,
         "officials": _officials_detail(gid, events, pmap),
         "wp": _wp_series(score_trace, status == "final"),
-        "version": (events[-1]["id"] if events else 0) * 10 + (1 if g["tracked"] else 0),
+        # id alone collides when SQLite reuses a rowid after an undo-then-relog,
+        # so the fan page skips a real redraw — fold in count + the global
+        # mutation counter so the key moves on every distinct state.
+        "version": (f"{events[-1]['id'] if events else 0}."
+                    f"{len(events)}.{_data_version()}."
+                    f"{1 if g['tracked'] else 0}"),
     }

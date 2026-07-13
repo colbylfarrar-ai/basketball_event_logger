@@ -38,6 +38,18 @@ html, body { margin: 0; background: var(--bg); color: var(--fg);
 .score .mid { text-align: center; color: var(--muted); font-size: .8rem; }
 .score .mid .q { font-size: 1.05rem; color: var(--fg); font-weight: 700; }
 .meta { text-align: center; color: var(--muted); font-size: .75rem; margin-top: 6px; }
+.lastplay { display: flex; align-items: center; gap: 9px; margin-top: 8px;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px;
+  padding: 9px 12px; font-size: .86rem; }
+.lastplay .lbl { font-size: .6rem; font-weight: 800; letter-spacing: .09em;
+  color: var(--muted); text-transform: uppercase; }
+.lastplay .qt { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+.lastplay .tx { font-weight: 600; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.lastplay .tx.home-side { color: var(--gold); }
+.lastplay .tx.away-side { color: var(--blue); }
+.dot.hl { animation: dotpulse 1.4s ease-in-out infinite; }
+@keyframes dotpulse { 50% { opacity: .25; } }
 table.qtrs { width: 100%; border-collapse: collapse; margin-top: 10px;
   background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px;
   overflow: hidden; font-size: .82rem; }
@@ -127,6 +139,7 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       <div class="team"><a class="n" id="away-name" style="color:inherit;text-decoration:none;display:block"></a><div class="p" id="away-pts">0</div></div>
     </div>
     <div class="meta" id="meta"></div>
+    <div class="lastplay" id="last-play" hidden></div>
     <table class="qtrs" id="qtrs" hidden></table>
 
     <div id="wp-sec" hidden>
@@ -240,6 +253,18 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
                          row(state.away.name, 'away', state.away.pts);
   }
 
+  function renderLastPlay() {
+    var lp = state.last_play, el = $('last-play');
+    // live-follow aid — the box + full PBP carry a finished game
+    if (!lp || state.status !== 'live') { el.hidden = true; return; }
+    el.hidden = false;
+    var q = lp.q > 4 ? 'OT' + (lp.q - 4) : 'Q' + lp.q;
+    el.innerHTML = '<span class="lbl">Last</span>' +
+      '<span class="qt">' + q + ' ' + esc(lp.t) + '</span>' +
+      '<span class="tx ' + (lp.team === 'away' ? 'away-side' : 'home-side') + '">' +
+      esc(lp.text) + '</span>';
+  }
+
   function renderShots() {
     var shots = state.shots || [];
     $('shots-sec').hidden = !shots.length;
@@ -262,6 +287,18 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       c.setAttribute('opacity', 0.9);
       dotLayer.appendChild(c);
     });
+    // ring the most-recent shot (the last play) so fans can spot it live
+    var lp = state.last_play;
+    if (lp && lp.shot && state.status === 'live' &&
+        (shotFilter === 'all' || lp.shot.team === shotFilter)) {
+      var col2 = lp.shot.team === 'home' ? 'var(--gold)' : 'var(--blue)';
+      var ring = document.createElementNS(NS, 'circle');
+      ring.setAttribute('class', 'dot hl');
+      ring.setAttribute('cx', lp.shot.x); ring.setAttribute('cy', lp.shot.y);
+      ring.setAttribute('r', 1.6); ring.setAttribute('fill', 'none');
+      ring.setAttribute('stroke', col2); ring.setAttribute('stroke-width', 0.42);
+      dotLayer.appendChild(ring);
+    }
   }
 
   function renderPbp() {
@@ -345,6 +382,7 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
     $('tab-away').textContent = state.away.name;
     var f = $('shot-filters').querySelectorAll('button');
     f[1].textContent = state.home.name; f[2].textContent = state.away.name;
+    renderLastPlay();
     renderQuarters(); renderWp(); renderBox(); renderShots(); renderPbp(); renderRefs();
     document.title = state.home.name + ' ' + state.home.pts + '–' +
       state.away.pts + ' ' + state.away.name + ' — HoopTracks';

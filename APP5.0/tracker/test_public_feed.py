@@ -107,7 +107,8 @@ ok(st["away"]["pts"] == 1, "away 1 pt (FT)")
 ok(st["quarter"] == 3 and st["clock"] == "7:00", "quarter/clock from last event")
 ok(st["quarters"] == {"1": {"home": 3, "away": 0}, "2": {"home": 0, "away": 1}},
    "quarter scores")
-ok(st["team_fouls"] == {"2": {"home": 1, "away": 0}}, "team fouls by quarter")
+ok(st["team_fouls"] == {"2": {"home": 0, "away": 1}},
+   "team fouls by quarter (charged to the FOULER's team = away)")
 
 hbox = {ln["jersey"]: ln for ln in st["box"]["home"]}
 abox = {ln["jersey"]: ln for ln in st["box"]["away"]}
@@ -115,7 +116,8 @@ ok(hbox[1]["pts"] == 3 and hbox[1]["fgm3"] == 1 and hbox[1]["stl"] == 1,
    "shooter line: 3 pts, 1/1 from 3, 1 steal")
 ok(hbox[2]["ast"] == 1, "assist credited to passer (#2)")
 ok(hbox[3]["blk"] == 1 and hbox[4]["reb"] == 1, "block + rebound credited")
-ok(hbox[5]["pf"] == 1, "foul on #5")
+ok(hbox[5]["pf"] == 0 and abox[11]["pf"] == 1,
+   "PF charged to the FOULER #11, not the fouled #5")
 ok(abox[11]["ftm"] == 1 and abox[11]["fta"] == 1, "FT line for #11")
 ok(abox[12]["tov"] == 1, "turnover on #12")
 ok(all(ln["on"] for ln in st["box"]["home"] if ln["jersey"] <= 5), "on-floor flags set")
@@ -125,11 +127,18 @@ ok(len(st["shots"]) == 2 and st["shots"][0]["team"] == "home"
    "shot chart dots with x/y")
 ok(any("#1 3PT make (assist #2)" == p["text"] for p in st["plays"]),
    "pbp is jersey-numbers-only text")
+ok(any("#11 foul (on #5)" == p["text"] for p in st["plays"]),
+   "foul pbp leads with the fouler (#11), notes the fouled (#5)")
+# last_play = newest event = the steal-turnover; jersey-only, no shot dot
+lp = st["last_play"]
+ok(lp["text"] == "#12 turnover (steal #1)" and lp["team"] == "away"
+   and lp["q"] == 3 and "shot" not in lp, "last_play = newest play (turnover)")
 offs = {o["slot"]: o for o in st["officials"]}
 ok(list(offs) == ["R", "U1", "U2"] and offs["R"]["fouls"] == 0
    and offs["U1"]["fouls"] == 1, "refs anonymized R/U1/U2 with foul counts")
-ok(offs["U1"]["home"] == 1 and offs["U1"]["away"] == 0
-   and offs["U1"]["q"] == {"2": 1}, "assigner detail: side + quarter splits")
+ok(offs["U1"]["home"] == 0 and offs["U1"]["away"] == 1
+   and offs["U1"]["q"] == {"2": 1},
+   "assigner detail: charged side (fouler=away) + quarter splits")
 
 print("privacy sweep")
 blob = json.dumps(st)
@@ -296,5 +305,29 @@ res = client.get("/live")
 ok(res.status_code == 200 and "SCHEDULE" in res.text, "/live serves the landing page")
 res = client.get(f"/live/team/{t1}")
 ok(res.status_code == 200 and "RESULTS" in res.text, "/live/team/<id> serves the team page")
+
+print("rowid-reuse version guard (undo then relog)")
+gid4 = execute("INSERT INTO games (team1_id,team2_id,date) "
+               "VALUES (?,?, date('now'))", (t1, t2))
+coach.post(f"/api/games/{gid4}/public")
+tok4 = query("SELECT share_token FROM games WHERE id=?", (gid4,))[0]["share_token"]
+coach.post(f"/api/games/{gid4}/events", json={"events": [
+    {"uuid": "c-a", "event_type": "shot", "quarter": 1, "time": "7:00",
+     "primary_player_id": home[0], "shot_result": "make",
+     "shot_x": 0.0, "shot_y": 8.0, "on_court": floor, "officials_on": []}]})
+va = client.get(f"/api/public/game/{tok4}").json()
+# undo the newest event (frees the MAX rowid) then log a DIFFERENT one — SQLite
+# reuses the freed rowid, so a last-id-only version key would collide and the fan
+# page would freeze on the stale box. The data_version fold-in must break the tie.
+coach.post(f"/api/games/{gid4}/undo")
+coach.post(f"/api/games/{gid4}/events", json={"events": [
+    {"uuid": "c-b", "event_type": "shot", "quarter": 1, "time": "6:30",
+     "primary_player_id": away[0], "shot_result": "make",
+     "shot_x": 0.0, "shot_y": 8.0, "on_court": floor, "officials_on": []}]})
+vb = client.get(f"/api/public/game/{tok4}").json()
+ok(vb["version"] != va["version"],
+   "version differs after undo+relog even when SQLite reuses the rowid")
+ok(vb["home"]["pts"] == 0 and vb["away"]["pts"] == 2,
+   "box reflects the swap (home make undone, away make added)")
 
 print(f"\nALL {PASS} CHECKS PASSED")

@@ -378,6 +378,7 @@ def undo(game_id: int):
     eid = GE.undo_last_event(game_id)
     if eid:
         GE.bump_data_version()
+        PF.clear_cache()   # fan feed reflects the undo on the very next poll
     return {"deleted_event_id": eid, "live": _scoreboard(game_id)}
 
 

@@ -768,13 +768,42 @@ def _g_form(row, pools, d):
             "metric": "Form", "n": n}
 
 
+def _g_onoff(row, pools, d):
+    """Team ON/OFF: the team's offensive rating with the player ON the floor vs
+    OFF it — the "when they play the offense hums (or stalls)" read. Reads
+    lineups.player_on_off (offensive points per 100 possessions). Hard-gated on
+    BOTH samples so it's a season-scale signal, not a single hot night."""
+    oo = d.get("onoff")
+    if not oo:
+        return None
+    onp, offp = oo.get("on_poss") or 0, oo.get("off_poss") or 0
+    if onp < 40 or offp < 40:            # need a real off-floor sample too
+        return None
+    diff = oo.get("off_diff")
+    if diff is None or abs(diff) < 8:    # < 8 pts/100 isn't worth a card
+        return None
+    on, off = oo["on_ortg"], oo["off_ortg"]
+    if diff >= 0:
+        txt = (f"**Offense hums with them on** — the team scores **{on:.0f} per 100 "
+               f"possessions** with them on the floor vs {off:.0f} without "
+               f"(**{diff:+.0f}**); a real offensive engine — protect their minutes "
+               f"and stagger their rest.")
+    else:
+        txt = (f"**Offense stalls with them on** — the team scores just **{on:.0f} "
+               f"per 100** with them on vs {off:.0f} without (**{diff:+.0f}**); the "
+               f"attack bogs down — rework the spacing around them or stagger their "
+               f"minutes with a creator.")
+    return {"text": txt, "score": min(3.0, abs(diff) / 8.0), "z": diff / 8.0,
+            "metric": "On/off offense", "n": onp + offp}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
                _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
                _g_clutchft, _g_pnr_role, _g_spacing,
                _g_rimdef, _g_perimdef, _g_rebound,
                _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish,
-               _g_usage, _g_garbage, _g_stints, _g_form]
+               _g_usage, _g_garbage, _g_stints, _g_form, _g_onoff]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -793,7 +822,8 @@ def _derive(row):
 def league_insights(table, *, guarded=None, q4=None, playtypes=None,
                     playstyles=None, situational=None, impact=None,
                     matchup=None, totypes=None, foulft=None, pnr=None,
-                    spacing=None, garbage=None, stints=None, form=None, top=3):
+                    spacing=None, garbage=None, stints=None, form=None,
+                    onoff=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
@@ -840,6 +870,8 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
             d["stints"] = stints[pid]
         if form and pid in form:
             d["form"] = form[pid]
+        if onoff and pid in onoff:
+            d["onoff"] = onoff[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -1159,6 +1191,31 @@ def form_edges(events, table):
     return out
 
 
+def onoff_edges(events):
+    """{pid: on/off split} — the team's offensive rating with the player ON the
+    floor vs OFF it (lineups.player_on_off), computed per team over the games in
+    `events` and merged. Needs the per-event lineup snapshots, so it lights up
+    only on tracked games with enough on- AND off-floor possessions."""
+    import helpers.lineups as LU
+    from database.db import query
+    gids = list({e["game_id"] for e in events if e.get("game_id") is not None})
+    if not gids:
+        return {}
+    ph = ",".join("?" * len(gids))
+    teams = set()
+    for r in query(f"SELECT team1_id, team2_id FROM games WHERE id IN ({ph})",
+                   tuple(gids)):
+        teams.add(r["team1_id"])
+        teams.add(r["team2_id"])
+    out = {}
+    for tid in teams:
+        try:
+            out.update(LU.player_on_off(tid, game_ids=gids, events=events))
+        except Exception:
+            pass
+    return out
+
+
 def build_feed(table, events, *, top=3, impact=None):
     """One-call insight feed: precomputes the event-derived splits (guarded-cliff,
     Q4, signature play_type, situational) and runs the miner. ``{pid: [insight,...]}``.
@@ -1215,12 +1272,17 @@ def build_feed(table, events, *, top=3, impact=None):
         sl = stint_edges(events)
     except Exception:
         pass
-    fm = None
+    fm = oo = None
     try:
         fm = form_edges(events, table)
+    except Exception:
+        pass
+    try:
+        oo = onoff_edges(events)
     except Exception:
         pass
     return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
                            playstyles=ps, situational=sit, impact=impact,
                            matchup=mu, totypes=tt, foulft=ff, pnr=pr,
-                           spacing=sp, garbage=gt, stints=sl, form=fm, top=top)
+                           spacing=sp, garbage=gt, stints=sl, form=fm,
+                           onoff=oo, top=top)

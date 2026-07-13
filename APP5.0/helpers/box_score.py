@@ -431,6 +431,21 @@ def render_box_score(game_id: int):
         st.dataframe(pd.DataFrame(line), hide_index=True, width="stretch",
                      key=f"bs{game_id}_linescore")
 
+        # ── post-game read: the "what happened" paragraph, engine-derived ──────
+        try:
+            import helpers.postgame as PG
+            _bul = PG.game_report(
+                game_id, events=events,
+                gei=((summ["gei"], summ["label"]) if summ else None))
+            if _bul:
+                with st.expander("📋 Post-game read", expanded=True):
+                    for _b in _bul:
+                        st.markdown("- " + _b)
+                    st.caption("Auto-generated from the four-factors, RATING and "
+                               "runs engines — the same numbers as the tabs below.")
+        except Exception:
+            pass
+
         c1, c2 = st.columns([3, 2])
         with c1:
             st.markdown("**Team comparison**")

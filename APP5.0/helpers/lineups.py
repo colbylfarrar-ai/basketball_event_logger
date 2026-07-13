@@ -345,3 +345,76 @@ def custom_unit(team_id, player_ids, game_ids=None, events=None):
     }
 
 
+def player_on_off(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS):
+    """Per-player ON/OFF splits for one team — the "when X plays, the offense hums
+    or stalls" read. For every player who took the floor, the team's OFFENSIVE
+    rating (points per 100 offensive possessions) while they were ON vs OFF the
+    floor, and the same on defense. Possession rule + FT exclusion identical to
+    unit_ratings / custom_unit (a possession ends on a shot or turnover; FT points
+    excluded), so these agree with the rest of the lineup math.
+
+    Returns {pid: {on_ortg, off_ortg, off_diff, on_poss, off_poss, on_drtg,
+    off_drtg, def_diff, net_diff, team_id}} — off/on ORtg diff is the headline; a
+    player is only included once they clear min_poss offensive possessions on BOTH
+    the on- and off-floor side (the split the read speaks to)."""
+    if events is None:
+        events = S.fetch_events(game_ids)
+    floor = _event_floor(game_ids)
+    roster = set()
+    for sets in floor.values():
+        five = sets.get(team_id)
+        if five:
+            roster |= five
+    if not roster:
+        return {}
+    agg = {pid: {"on_op": 0, "on_opts": 0, "off_op": 0, "off_opts": 0,
+                 "on_dp": 0, "on_dpts": 0, "off_dp": 0, "off_dpts": 0}
+           for pid in roster}
+    for e in events:
+        if e["event_type"] not in ("shot", "turnover"):
+            continue
+        off_team = e["shooter_team_id"]
+        if off_team is None:
+            continue
+        sets = floor.get(e["id"])
+        if not sets:
+            continue
+        five = sets.get(team_id)
+        if five is None:                 # this team wasn't snapshotted on this event
+            continue
+        pts = ((3 if e["shot_type"] == 3 else 2)
+               if (e["event_type"] == "shot" and e["shot_result"] == "make") else 0)
+        offense = off_team == team_id
+        for pid in roster:
+            a = agg[pid]
+            on = pid in five
+            if offense:
+                if on:
+                    a["on_op"] += 1; a["on_opts"] += pts
+                else:
+                    a["off_op"] += 1; a["off_opts"] += pts
+            else:
+                if on:
+                    a["on_dp"] += 1; a["on_dpts"] += pts
+                else:
+                    a["off_dp"] += 1; a["off_dpts"] += pts
+    out = {}
+    for pid, a in agg.items():
+        if a["on_op"] < min_poss or a["off_op"] < min_poss:
+            continue
+        on_o = 100 * _safe(a["on_opts"], a["on_op"])
+        off_o = 100 * _safe(a["off_opts"], a["off_op"])
+        on_d = 100 * _safe(a["on_dpts"], a["on_dp"])
+        off_d = 100 * _safe(a["off_dpts"], a["off_dp"])
+        out[pid] = {
+            "on_ortg": round(on_o, 1), "off_ortg": round(off_o, 1),
+            "off_diff": round(on_o - off_o, 1),
+            "on_poss": a["on_op"], "off_poss": a["off_op"],
+            "on_drtg": round(on_d, 1), "off_drtg": round(off_d, 1),
+            "def_diff": round(on_d - off_d, 1),
+            "net_diff": round((on_o - on_d) - (off_o - off_d), 1),
+            "team_id": team_id,
+        }
+    return out
+
+

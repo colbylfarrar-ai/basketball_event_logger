@@ -1,0 +1,19 @@
+[Unit]
+Description=APP5 calendar season rollover (auto New-Season at the Oct 1 boundary)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5/APP5.0
+Environment=APP5_DATA_DIR=/var/lib/app5
+# Idempotent + forward-only: no-ops every run until the calendar crosses Oct 1
+# into a season newer than the stored active one, then runs the same rollover as
+# the New Season button (auto graduate/return by grad_year). See
+# tools/auto_season_rollover.py + helpers/seasons.auto_advance_if_due.
+ExecStart=/home/app5/app5/APP5.0/.venv/bin/python tools/auto_season_rollover.py
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5

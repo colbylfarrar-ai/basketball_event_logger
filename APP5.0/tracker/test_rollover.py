@@ -84,3 +84,47 @@ def test_transfer_search_cross_team():
     assert 10 in keys and 12 not in keys           # other team in, this team excluded
     assert hits[0]["identity_key"] == 10 and hits[0]["score"] >= 0.9
     assert hits[0]["team"] == "Old High"
+
+
+def test_start_year():
+    assert SZ._start_year("2025-2026") == 2025
+    assert SZ._start_year("bad") is None
+    assert SZ._start_year(None) is None
+
+
+def test_auto_advance_forward_only():
+    """Calendar rollover is forward-only + idempotent: never drags the season
+    backward, no-ops when already on the calendar season, fires at the Oct 1
+    boundary carrying the auto-returners with outgoing = the old active label."""
+    import datetime as dt
+    calls = []
+    origA, origP, origE = SZ.active_label, SZ.rollover_plan, SZ.execute_rollover
+    SZ.rollover_plan = lambda outgoing_label=None: {
+        "returning": [{"id": 2}, {"id": 3}], "graduating": [{"id": 1}],
+        "grad_year": None, "label": outgoing_label}
+    SZ.execute_rollover = lambda new_label, carry, outgoing_label=None: (
+        calls.append((new_label, tuple(carry), outgoing_label)) or len(carry))
+    try:
+        SZ.active_label = lambda: "2026-2027"
+        # Jan-Sep resolves to the prior-opening season -> must NOT un-roll
+        r = SZ.auto_advance_if_due(today=dt.date(2026, 7, 15))
+        assert r["rolled"] is False and not calls
+        # at this year's Oct 1 boundary but already there -> no-op
+        r = SZ.auto_advance_if_due(today=dt.date(2026, 10, 1))
+        assert r["rolled"] is False and not calls
+        # one day before next boundary -> still no-op
+        r = SZ.auto_advance_if_due(today=dt.date(2027, 9, 30))
+        assert r["rolled"] is False and not calls
+        # next Oct 1 -> rolls forward, outgoing = old active, carries returners
+        r = SZ.auto_advance_if_due(today=dt.date(2027, 10, 1))
+        assert r["rolled"] is True and r["from"] == "2026-2027" and r["to"] == "2027-2028"
+        assert r["carried"] == 2 and r["graduated"] == 1
+        assert calls == [("2027-2028", (2, 3), "2026-2027")]
+        # missed a manual roll -> catches up one step on the next daily run
+        calls.clear()
+        SZ.active_label = lambda: "2025-2026"
+        r = SZ.auto_advance_if_due(today=dt.date(2026, 11, 1))
+        assert r["rolled"] is True and r["to"] == "2026-2027"
+        assert calls == [("2026-2027", (2, 3), "2025-2026")]
+    finally:
+        SZ.active_label, SZ.rollover_plan, SZ.execute_rollover = origA, origP, origE

@@ -279,3 +279,44 @@ def execute_rollover(new_label, carry_pids, outgoing_label=None):
     execute("INSERT OR REPLACE INTO app_settings (key, value) "
             "VALUES ('active_season', ?)", (new_label,))
     return len(carry)
+
+
+def _start_year(label) -> int | None:
+    """START calendar year of a season label ('2025-2026' -> 2025)."""
+    try:
+        return int(str(label).split("-")[0])
+    except (ValueError, AttributeError, IndexError):
+        return None
+
+
+def auto_advance_if_due(today=None) -> dict:
+    """Calendar-driven season rollover, safe to run every day (idempotent).
+
+    The 'current' season should be the one that OPENS this calendar year by the
+    Oct 1 cutoff (season_for_date of today). We advance to it ONLY when it is
+    strictly NEWER than the stored active season — forward-only, so:
+      * an EARLY manual roll is respected (already there -> no-op),
+      * running twice in a day / a week does nothing the second time,
+      * the clock never drags the season backward (Jan-Sep dates resolve to the
+        prior-opening season, which must never un-roll a season in progress).
+
+    When due it runs the SAME rollover as the New Season button
+    (execute_rollover) with the auto graduate/return split (grad_year-based;
+    unknown grad_year carries forward). Returns a small result dict for logging.
+    """
+    import datetime as _dt
+    today = today or _dt.date.today()
+    target = season_for_date(today.isoformat())      # season opening this year
+    active = active_label()
+    ty, ay = _start_year(target), _start_year(active)
+    if target is None or ty is None or ay is None:
+        return {"rolled": False, "reason": "unparseable", "active": active}
+    if ty <= ay:
+        return {"rolled": False, "reason": "up-to-date", "active": active,
+                "target": target}
+    # due: advance active -> target, carrying the auto-returners forward
+    plan = rollover_plan(outgoing_label=active)
+    carry_pids = [p["id"] for p in plan["returning"]]
+    carried = execute_rollover(target, carry_pids, outgoing_label=active)
+    return {"rolled": True, "from": active, "to": target,
+            "carried": carried, "graduated": len(plan["graduating"])}

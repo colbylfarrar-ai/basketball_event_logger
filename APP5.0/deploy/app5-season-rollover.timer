@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the APP5 season rollover check once a day
+
+[Timer]
+# Daily at 03:30 local time. Persistent=true → if the box was off at the Oct 1
+# boundary the check still runs on the next boot, so a rollover is never missed.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

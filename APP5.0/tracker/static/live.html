@@ -281,7 +281,10 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       var c = document.createElementNS(NS, 'circle');
       var col = s.team === 'home' ? 'var(--gold)' : 'var(--blue)';
       c.setAttribute('class', 'dot');
-      c.setAttribute('cx', s.x); c.setAttribute('cy', s.y); c.setAttribute('r', 0.7);
+      // shot_x is the canonical (un-mirrored) coord; the court group already
+      // mirrors x (screen -x), so feed it -s.x — same convention the tracker's
+      // input marker uses — else every shot lands on the opposite side.
+      c.setAttribute('cx', -s.x); c.setAttribute('cy', s.y); c.setAttribute('r', 0.7);
       c.setAttribute('fill', s.make ? col : 'none');
       c.setAttribute('stroke', col); c.setAttribute('stroke-width', 0.28);
       c.setAttribute('opacity', 0.9);
@@ -294,7 +297,7 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       var col2 = lp.shot.team === 'home' ? 'var(--gold)' : 'var(--blue)';
       var ring = document.createElementNS(NS, 'circle');
       ring.setAttribute('class', 'dot hl');
-      ring.setAttribute('cx', lp.shot.x); ring.setAttribute('cy', lp.shot.y);
+      ring.setAttribute('cx', -lp.shot.x); ring.setAttribute('cy', lp.shot.y);
       ring.setAttribute('r', 1.6); ring.setAttribute('fill', 'none');
       ring.setAttribute('stroke', col2); ring.setAttribute('stroke-width', 0.42);
       dotLayer.appendChild(ring);

@@ -27,6 +27,24 @@ html, body { margin: 0; background: var(--bg); color: var(--fg);
 .hero .sub { color: var(--muted); font-size: .8rem; margin-top: 4px; }
 .hero .rec { font-size: 1.05rem; font-weight: 700; margin-top: 8px;
   color: var(--gold); }
+.hero .rk { display: inline-block; margin-left: 8px; font-size: .72rem;
+  font-weight: 700; color: var(--blue); background: var(--bg3);
+  border: 1px solid var(--edge); border-radius: 999px; padding: 2px 9px;
+  vertical-align: 2px; letter-spacing: .03em; }
+.hero .form { display: inline-flex; gap: 4px; margin-top: 10px; }
+.hero .form b { width: 20px; height: 20px; border-radius: 5px; font-size: .68rem;
+  font-weight: 800; display: flex; align-items: center; justify-content: center;
+  color: #12141e; }
+.hero .form b.W { background: var(--green); }
+.hero .form b.L { background: var(--red); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin-top: 10px; }
+.stats .s { background: var(--bg2); border: 1px solid var(--edge);
+  border-radius: 12px; padding: 10px 6px; text-align: center; }
+.stats .s .v { font-size: 1.25rem; font-weight: 800; }
+.stats .s .v.pos { color: var(--green); } .stats .s .v.neg { color: var(--red); }
+.stats .s .k { font-size: .62rem; color: var(--muted); letter-spacing: .07em;
+  text-transform: uppercase; margin-top: 3px; }
 h3 { font-size: .95rem; margin: 18px 0 8px; color: var(--muted);
   letter-spacing: .04em; }
 ul.games { list-style: none; margin: 0; padding: 0; border: 1px solid var(--edge);
@@ -68,8 +86,10 @@ a.g:active { background: var(--bg3); }
     <div class="hero">
       <div class="nm" id="t-name"></div>
       <div class="sub" id="t-sub"></div>
-      <div class="rec" id="t-rec"></div>
+      <div class="rec"><span id="t-rec"></span><span id="t-rank" class="rk" hidden></span></div>
+      <div class="form" id="t-form" hidden></div>
     </div>
+    <div class="stats" id="t-stats" hidden></div>
     <h3>RESULTS &amp; SCHEDULE</h3>
     <ul class="games" id="games"></ul>
   </div>
@@ -99,12 +119,39 @@ a.g:active { background: var(--bg3); }
     });
   }
 
+  function tile(v, k) {
+    return '<div class="s"><div class="v">' + esc(v) +
+      '</div><div class="k">' + esc(k) + '</div></div>';
+  }
+
   function render(t) {
     $('loading').hidden = true;
     $('team').hidden = false;
     $('t-name').textContent = t.name;
     $('t-sub').textContent = [t.gender, t.class, t.season].filter(Boolean).join(' · ');
-    $('t-rec').textContent = t.wins + '–' + t.losses;
+    $('t-rec').textContent = t.wins + '–' + t.losses +
+      (t.streak ? '  ·  ' + t.streak : '');
+    if (t.rank && t.rank_of) {
+      $('t-rank').textContent = '#' + t.rank + ' of ' + t.rank_of;
+      $('t-rank').hidden = false;
+    }
+    // last-5 form pips (newest first)
+    var fm = $('t-form');
+    if (t.form && t.form.length) {
+      fm.innerHTML = t.form.map(function (w) {
+        return '<b class="' + (w === 'W' ? 'W' : 'L') + '">' + w + '</b>';
+      }).join('');
+      fm.hidden = false;
+    }
+    // results-only stat tiles (public final scores only)
+    if (t.ppg != null) {
+      var mv = t.mov;
+      $('t-stats').innerHTML =
+        tile(t.ppg, 'PPG') + tile(t.oppg, 'OPP PPG') +
+        '<div class="s"><div class="v ' + (mv > 0 ? 'pos' : (mv < 0 ? 'neg' : '')) +
+        '">' + (mv > 0 ? '+' : '') + mv + '</div><div class="k">Margin</div></div>';
+      $('t-stats').hidden = false;
+    }
     document.title = t.name + ' — HoopTracks Live';
     var ul = $('games');
     ul.innerHTML = '';

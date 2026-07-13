@@ -177,8 +177,14 @@ st = client.get(f"/api/public/game/{tok}").json()
 ok(st["version"] != v1, "version moves on a new event")
 ok(st["home"]["pts"] == 5, "score updates live")
 coach.post(f"/api/games/{gid}/finish")
+# Auto-close at final: the fan link goes private so tracked depth (box/PBP/
+# shot chart) can't be mined for scouting post-game. Token is preserved.
+ok(client.get(f"/api/public/game/{tok}").status_code == 404,
+   "finish auto-closes the fan link (deep feed goes private)")
+# re-open to inspect the final payload (same stable token)
+coach.post(f"/api/games/{gid}/public")
 st = client.get(f"/api/public/game/{tok}").json()
-ok(st["status"] == "final", "finish -> status final")
+ok(st["status"] == "final", "re-opened finished game -> status final")
 
 print("win probability strip")
 wp = st["wp"]

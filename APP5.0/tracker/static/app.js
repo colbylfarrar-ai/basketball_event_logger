@@ -273,7 +273,16 @@ function showScreen(name) {
     $('screen-' + n).hidden = (n !== name);
   });
   lsSet(LS.state, { screen: name, gameId: S.gameId });
-  if (name === 'tracker') acquireWakeLock();
+  if (name === 'tracker') {
+    acquireWakeLock();
+    // one-time courtside hint (first tracker entry ever)
+    const tip = $('track-tip');
+    if (tip) {
+      let seen = false;
+      try { seen = !!localStorage.getItem('tracker_tip_seen'); } catch (e) {}
+      tip.hidden = seen || S.isGuest;
+    }
+  }
 }
 
 /* ----- setup screen ----- */
@@ -460,6 +469,14 @@ async function selectGame(gid) {
 
   S.gameId = gid;
   S.game = roster;
+  // Auto-publish the fan link on open (public-by-design): the game goes live for
+  // fans the moment the coach opens it — no extra tap. Skipped for a finished
+  // game (the finish endpoint auto-closes it; don't reopen), a guest scorer link
+  // (can't publish), offline, or a game already public. Fire-and-forget.
+  if (!roster.tracked && !S.isGuest && isOnline()
+      && !(roster.public && roster.public.on)) {
+    ensureFanLinkOn(gid);
+  }
   const prefs = lsGet(LS.game(gid), {});
   S.lineup = prefs.lineup || { home: [], away: [], officials: [] };
   S.quarter = prefs.quarter || 1;
@@ -766,6 +783,22 @@ async function toggleFanQr() {
     $('fan-qr-img').src = URL.createObjectURL(blob);
     box.hidden = false;
   } catch (e) { toast('QR unavailable'); }
+}
+
+async function ensureFanLinkOn(gid) {
+  // Idempotent set-on (never a blind toggle) so opening an already-live game
+  // can't flip it off. Silent on failure — offline/transient just leaves it OFF
+  // and the manual Fan link button still works.
+  try {
+    const res = await api('/api/games/' + gid + '/public',
+      { method: 'POST', body: JSON.stringify({ on: true }) });
+    if (!res.ok) return;
+    const d = await res.json();
+    if (S.gameId !== gid || !S.game) return;   // coach moved on meanwhile
+    S.game.public = { on: d.public, url: d.url, fans: d.fans || 0 };
+    lsSet(LS.roster(gid), S.game);
+    renderFanLink();
+  } catch (e) { /* stays off; manual button remains */ }
 }
 
 function copyFanLink() {
@@ -2033,17 +2066,63 @@ async function acquireWakeLock() {
 
 /* ---------- init / restore ---------- */
 
+function setupStatus(msg, kind) {
+  const s = $('setup-status');
+  if (!s) return;
+  s.textContent = msg || '';
+  s.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+// First-run welcome: shown until a token is present. Auto-opens the token box
+// so a brand-new coach isn't staring at a collapsed "Tracker token" summary.
+function showWelcome(on) {
+  const w = $('welcome'), box = $('token-box');
+  if (w) w.hidden = !on;
+  if (box && on) box.open = true;
+}
+
 function bindUI() {
   // token
   try { $('token-input').value = localStorage.getItem(LS.token) || ''; } catch (e) {}
-  $('token-save').addEventListener('click', function () {
+  showWelcome(!(localStorage.getItem(LS.token) || '').trim());
+  $('token-save').addEventListener('click', async function () {
     const v = $('token-input').value.trim();
     try {
       if (v) localStorage.setItem(LS.token, v);
       else localStorage.removeItem(LS.token);
     } catch (e) {}
-    toast(v ? 'Token saved' : 'Token cleared');
-    loadGames();
+    if (!v) { setupStatus('Token cleared'); showWelcome(true); return; }
+    // Verify against /api/me so a wrong token gives a clear message instead of
+    // a silent empty game list (the old 401 read "enter your token" even after
+    // you had).
+    setupStatus('Checking token…');
+    try {
+      const r = await api('/api/me');
+      if (r.ok) {
+        const me = await r.json().catch(function () { return {}; });
+        setupStatus('Token verified ✓' + (me.email ? ' · ' + me.email : ''), 'ok');
+        showWelcome(false);
+        $('token-box').open = false;
+        loadGames();
+      } else if (r.status === 401) {
+        setupStatus('Token not recognized — check it and paste again.', 'err');
+      } else if (r.status === 403) {
+        setupStatus('That token is on a Free plan — the tracker needs a Paid plan.', 'err');
+      } else {
+        setupStatus('Couldn’t verify token (server error). Try again.', 'err');
+      }
+    } catch (e) {
+      // offline: keep the token, verify on next connection
+      setupStatus('Saved — will verify when you’re back online.');
+      loadGames();
+    }
+  });
+
+  // one-time courtside hint
+  const tipX = $('track-tip-x');
+  if (tipX) tipX.addEventListener('click', function () {
+    $('track-tip').hidden = true;
+    try { localStorage.setItem('tracker_tip_seen', '1'); } catch (e) {}
   });
 
   // setup: new game / new team

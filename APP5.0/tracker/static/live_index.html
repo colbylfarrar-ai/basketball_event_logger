@@ -92,12 +92,35 @@ a.g:active { background: var(--bg3); }
   border-color: var(--gold); font-weight: 700; }
 ul.teams { list-style: none; margin: 0; padding: 0; border: 1px solid var(--edge);
   border-radius: 12px; background: var(--bg2); overflow: hidden; }
-ul.teams li { border-bottom: 1px solid var(--edge); }
+ul.teams li { border-bottom: 1px solid var(--edge); display: flex;
+  align-items: stretch; }
 ul.teams li:last-child { border-bottom: 0; }
-ul.teams a { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px;
+ul.teams a { flex: 1; min-width: 0; display: grid;
+  grid-template-columns: 44px 1fr auto; gap: 8px;
   align-items: center; padding: 10px 12px; color: var(--fg);
   text-decoration: none; }
 ul.teams a:active { background: var(--bg3); }
+.star { flex: 0 0 auto; width: 46px; font-size: 1.2rem; line-height: 1;
+  color: var(--muted); background: transparent; border: 0;
+  border-left: 1px solid var(--edge); cursor: pointer; }
+.star.on { color: var(--gold); }
+/* Following section (Scores view) — localStorage-only, no accounts */
+ul.follow { list-style: none; margin: 0 0 4px; padding: 0;
+  border: 1px solid var(--edge); border-radius: 12px; background: var(--bg2);
+  overflow: hidden; }
+ul.follow li { border-bottom: 1px solid var(--edge); }
+ul.follow li:last-child { border-bottom: 0; }
+ul.follow .f { display: grid; grid-template-columns: 1fr auto; gap: 10px;
+  align-items: center; padding: 10px 12px; color: var(--fg);
+  text-decoration: none; }
+a.f:active { background: var(--bg3); }
+ul.follow .nm { min-width: 0; font-weight: 600; font-size: .9rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ul.follow .st { text-align: right; font-size: .8rem; color: var(--muted);
+  white-space: nowrap; }
+ul.follow .st .live { color: var(--red); font-weight: 700; }
+ul.follow .st .sc { color: var(--fg); font-weight: 700; }
+ul.follow .st .link { color: var(--gold); font-weight: 600; }
 ul.teams .rk { color: var(--gold); font-weight: 800; font-size: .9rem; }
 ul.teams .rk.un { color: var(--muted); font-weight: 400; }
 ul.teams .nm { min-width: 0; }
@@ -130,6 +153,11 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
   </div>
 
   <div id="view-scores">
+    <div id="follow-sec" hidden>
+      <h3>FOLLOWING</h3>
+      <ul class="follow" id="follow-list"></ul>
+    </div>
+
     <div id="live-sec" hidden>
       <h3>LIVE NOW</h3>
       <div id="live-list"></div>
@@ -196,6 +224,58 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
   }
 
   function qlabel(q) { return q > 4 ? 'OT' + (q - 4) : 'Q' + q; }
+
+  // ── Following: localStorage only, no accounts, no server writes ──────────
+  var FOLLOW_KEY = 'hooptracks_follow';
+  function followList() {
+    try { return JSON.parse(localStorage.getItem(FOLLOW_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+  function isFollowing(id) {
+    return followList().some(function (t) { return t.id === id; });
+  }
+  function toggleFollow(t) {
+    var on = isFollowing(t.id);
+    var l = followList().filter(function (x) { return x.id !== t.id; });
+    if (!on) l.push({ id: t.id, name: t.name, gender: t.gender });
+    try { localStorage.setItem(FOLLOW_KEY, JSON.stringify(l)); } catch (e) {}
+    renderFollowing();
+  }
+
+  function renderFollowing() {
+    var l = followList(), sec = $('follow-sec'), box = $('follow-list');
+    if (!l.length) { sec.hidden = true; return; }
+    sec.hidden = false;
+    box.innerHTML = '';
+    l.forEach(function (t) {
+      // enrich from today's slate (rows carry team ids); newest render wins
+      var g = ((data && data.games) || []).filter(function (x) {
+        return x.home_id === t.id || x.away_id === t.id;
+      })[0];
+      var st, href = '/live/team/' + t.id;
+      if (g && g.status === 'live') {
+        st = '<span class="live">LIVE</span>' +
+          (g.url ? ' · <span class="link">Watch</span>' : '');
+        if (g.url) href = g.url;
+      } else if (g && g.status === 'final') {
+        st = '<span class="sc">' + g.home_score + '&ndash;' + g.away_score +
+          '</span> Final' + (g.url ? ' · <span class="link">Box</span>' : '');
+        if (g.url) href = g.url;
+      } else if (g) {
+        st = 'Today';
+      } else {
+        st = '<span class="link">Team page</span>';
+      }
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.className = 'f';
+      a.href = href;
+      a.innerHTML = '<span class="nm">' + esc(t.name) + '</span>' +
+        '<span class="st">' + st + '</span>';
+      li.appendChild(a);
+      box.appendChild(li);
+    });
+  }
 
   function renderLive() {
     var box = $('live-list');
@@ -305,7 +385,8 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
     fetch('/api/public/scoreboard?date=' + encodeURIComponent(cur))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
-        if (d) { data = d; renderLive(); renderRecent(); renderChips(); renderSlate(); }
+        if (d) { data = d; renderLive(); renderRecent(); renderChips();
+          renderSlate(); renderFollowing(); }
       })
       .catch(function () { /* keep last render */ })
       .then(function () {
@@ -445,6 +526,18 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
         '<span class="rec">' + (t.gp ? t.wins + '&ndash;' + t.losses : '') +
         '</span>';
       li.appendChild(a);
+      var star = document.createElement('button');
+      var fol = isFollowing(t.id);
+      star.className = 'star' + (fol ? ' on' : '');
+      star.innerHTML = fol ? '★' : '☆';
+      star.setAttribute('aria-label', (fol ? 'Unfollow ' : 'Follow ') + t.name);
+      star.addEventListener('click', function () {
+        toggleFollow(t);
+        var now = isFollowing(t.id);
+        star.className = 'star' + (now ? ' on' : '');
+        star.innerHTML = now ? '★' : '☆';
+      });
+      li.appendChild(star);
       ul.appendChild(li);
     });
     if (!ul.children.length) {
@@ -501,6 +594,7 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
   $('v-teams').addEventListener('click', function () { setView('teams'); });
   if (view === 'teams') setView('teams');
 
+  renderFollowing();   // show followed teams instantly (before the slate loads)
   load();
 })();
 </script>

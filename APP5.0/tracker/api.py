@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -194,6 +194,13 @@ class HandednessUpdate(BaseModel):
     handedness: str
 
 
+class PublicToggle(BaseModel):
+    # None -> flip current state (the manual "Fan link" button). True/False ->
+    # set explicitly (the tracker's auto-publish-on-open sends {on: true},
+    # which must never accidentally turn an already-live game off).
+    on: bool | None = None
+
+
 class NewOfficial(BaseModel):
     name: str
     official_id: int
@@ -258,7 +265,7 @@ def list_seasons():
 def game_detail(game_id: int):
     g = query("""
         SELECT g.id, g.date, g.season, g.team1_id, g.team2_id, t1.name n1, t2.name n2,
-               g.is_public, g.share_token
+               g.is_public, g.share_token, g.tracked
         FROM games g JOIN teams t1 ON t1.id=g.team1_id
                      JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?""", (game_id,))
     if not g:
@@ -304,7 +311,7 @@ def game_detail(game_id: int):
     # existing foul; the client filters archived out of the lineup picker.
     officials = query("SELECT id, name, archived FROM officials ORDER BY name")
     return {
-        "id": g["id"], "date": g["date"],
+        "id": g["id"], "date": g["date"], "tracked": bool(g["tracked"]),
         "home": {"id": g["team1_id"], "name": g["n1"]},
         "away": {"id": g["team2_id"], "name": g["n2"]},
         "players": players, "officials": officials,
@@ -394,6 +401,12 @@ def finish(game_id: int, user: dict = Depends(require_full_user)):
         # tracked_by may have been set just now — re-derive the pooled flag from
         # this coach's Co-op toggle so the read-path sees it without delay.
         ENT.recompute_game_pool(game_id)
+    # Auto-close the public fan link at final: the game is public LIVE for fans,
+    # then the deep box/PBP/shot-chart goes private so tracked depth can't be
+    # mined for scouting post-game. The share_token is KEPT (so re-opening the
+    # link reuses it); the final SCORE stays public on the scoreboard/team page.
+    execute("UPDATE games SET is_public=0 WHERE id=?", (game_id,))
+    PF.clear_cache()
     GE.bump_data_version()
     return {"ok": True, "home": hp, "away": ap}
 
@@ -606,14 +619,20 @@ def rescore(game_id: int, _: dict = Depends(require_full_user)):
 
 # ── public "fan link" (no auth) + its coach-side toggle ─────────────────────────
 @api.post("/games/{game_id}/public")
-def toggle_public(game_id: int, user: dict = Depends(require_full_user)):
-    """Flip a game's public fan link on/off. Mints the share token the FIRST
+def toggle_public(game_id: int, body: PublicToggle | None = Body(None),
+                  user: dict = Depends(require_full_user)):
+    """Set (or flip) a game's public fan link. Mints the share token the FIRST
     time a game goes public and keeps it stable across off/on cycles, so a
-    link a coach already texted out survives a mid-game panic-toggle."""
+    link a coach already texted out survives a mid-game panic-toggle. Body
+    {on: true|false} sets explicitly (auto-publish on game open); no body flips
+    the current state (the manual Fan link button)."""
     g = query("SELECT id, is_public, share_token FROM games WHERE id=?", (game_id,))
     if not g:
         raise HTTPException(status_code=404, detail="no such game")
-    now_public = 0 if g[0]["is_public"] else 1
+    if body is not None and body.on is not None:
+        now_public = 1 if body.on else 0
+    else:
+        now_public = 0 if g[0]["is_public"] else 1
     token = g[0]["share_token"] or ""
     if now_public and not token:
         while True:

@@ -278,6 +278,8 @@ def team_profile(team_id: int) -> dict | None:
                 "ORDER BY date DESC, id DESC LIMIT 1", (team_id, team_id))
     season = szn[0]["season"] if szn else None
     games, wins, losses = [], 0, 0
+    pts_for = pts_against = 0          # totals over finals -> PPG / oPPG / margin
+    results = []                       # won-bools in date DESC order (streak/form)
     if season:
         rows = query(
             "SELECT g.id, g.date, g.location, g.tracked, g.home_score, "
@@ -303,14 +305,51 @@ def team_profile(team_id: int) -> dict | None:
                 g["won"] = us > them
                 wins += 1 if us > them else 0
                 losses += 1 if us < them else 0
+                pts_for += us
+                pts_against += them
+                if us != them:            # ties don't extend a W/L streak
+                    results.append(us > them)
             if r["is_public"] and r["share_token"]:
                 g["url"] = f"/live/{r['share_token']}"
             games.append(g)
+
+    # Results-only aggregates (same public final scores the scoreboard shows —
+    # NO adjusted/rating numbers cross the fence). Rank ordinal is pulled from
+    # the already-cached team directory, so no extra rating-engine run here.
+    gp = wins + losses
+    ppg = round(pts_for / gp, 1) if gp else None
+    oppg = round(pts_against / gp, 1) if gp else None
+    mov = round((pts_for - pts_against) / gp, 1) if gp else None
+    # current streak: consecutive same result from the most recent game
+    streak = ""
+    if results:
+        top = results[0]
+        n = 0
+        for w in results:
+            if w == top:
+                n += 1
+            else:
+                break
+        streak = f"{'W' if top else 'L'}{n}"
+    form = ["W" if w else "L" for w in results[:5]]   # last 5, newest first
+
+    rank = rank_of = None
+    try:
+        for td in teams_directory().get("teams", []):
+            if td["id"] == team_id:
+                rank, rank_of = td.get("rank"), td.get("of")
+                break
+    except Exception:
+        pass
+
     payload = {"id": t["id"], "name": t["name"],
                "class": t["class"] if t["class"] != "N/A" else "",
                "gender": "Girls" if t["gender"] == "F" else "Boys",
                "season": season if season and season != "Current" else "",
                "wins": wins, "losses": losses,
+               "ppg": ppg, "oppg": oppg, "mov": mov,
+               "streak": streak, "form": form,
+               "rank": rank, "rank_of": rank_of,
                "games": games}
     _TEAM_CACHE[team_id] = (now, payload)
     return payload

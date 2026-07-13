@@ -10,6 +10,21 @@
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <link rel="stylesheet" href="/static/style.css">
 <title>HoopTracks</title>
+<style>
+/* First-run onboarding — shown only until a token is verified / tip dismissed. */
+.welcome { background: #1a1d2b; border: 1px solid #343a52; border-radius: 14px;
+  padding: 14px 14px 12px; margin: 4px 0 12px; }
+.welcome .w-lead { font-size: 1.05rem; font-weight: 800; margin: 0 0 6px; }
+.welcome .w-sub { font-size: .85rem; color: #9aa0aa; line-height: 1.45; margin: 0; }
+.welcome .w-steps { margin: 10px 0 0; padding-left: 18px; font-size: .82rem;
+  color: #c9cdd6; line-height: 1.7; }
+.status.ok { color: #4caf7d; } .status.err { color: #e05c5c; }
+.track-tip { display: flex; align-items: center; gap: 10px; margin: 8px 0 0;
+  background: #232738; border: 1px solid #343a52; border-radius: 10px;
+  padding: 9px 12px; font-size: .82rem; color: #c9cdd6; }
+.track-tip button { margin-left: auto; background: transparent; border: 0;
+  color: #9aa0aa; font-size: 1rem; cursor: pointer; padding: 4px 6px; }
+</style>
 <script>
 /* Self-heal: an earlier build cached the entire schedule (13k+ games) in
    localStorage, which froze the game picker on render. Clear an oversize cache
@@ -34,6 +49,16 @@ try {
     <h1><img src="/static/icon-192.png" alt="" width="26" height="26" style="border-radius:6px;vertical-align:-5px;margin-right:8px">HoopTracks</h1>
     <span id="net-dot" class="dot"></span>
   </header>
+  <div id="welcome" class="welcome" hidden>
+    <p class="w-lead">Courtside game tracker</p>
+    <p class="w-sub">Tap to log every shot, foul, rebound and sub — works fully
+      offline and syncs when you're back on wifi.</p>
+    <ol class="w-steps">
+      <li>Paste your tracker token below (from HoopTracks → Settings).</li>
+      <li>Pick or create the game, set the lineups.</li>
+      <li>Tap <b>Start tracking</b> — you're courtside.</li>
+    </ol>
+  </div>
   <details id="token-box">
     <summary>Tracker token</summary>
     <div class="token-row">
@@ -160,6 +185,12 @@ try {
     <button class="btn mode" data-mode="ft">FT</button>
     <button class="btn mode" data-mode="foul">FOUL</button>
     <button class="btn mode" data-mode="tov">TOV</button>
+  </div>
+
+  <!-- One-time first-game hint (dismiss persists in localStorage) -->
+  <div id="track-tip" class="track-tip" hidden>
+    <span>👆 Tap the court to log a shot, then pick the shooter and make/miss. Switch to FT / FOUL / TOV above.</span>
+    <button id="track-tip-x" type="button" aria-label="Dismiss tip">✕</button>
   </div>
 
   <!-- Sticky "current defense" the opponent is in — set it once and every event

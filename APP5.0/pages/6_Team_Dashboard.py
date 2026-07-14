@@ -668,13 +668,17 @@ def _gender_tracked_ids(g, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _avg_player_ratings(g, season):
-    """{player_id: season-average per-game RATING (0-10)} over the gender's tracked
-    season. One pool calibration (game_rating.season_game_ratings) so grades are
-    mutually comparable; season-aware (no 'Current' hardcode — reads the archive
-    pool when a past season is picked). Empty dict when nothing is tracked."""
+def _avg_player_ratings(tracked_ids):
+    """{player_id: average per-game RATING (0-10)} over the given tracked GAME ids.
+
+    Takes the bundle's already-resolved `tracked_ids` (season + entitlement correct)
+    rather than re-querying by a season LABEL — the label path silently returns
+    nothing when the active-season sentinel ('Current') and the season the tracked
+    data is actually stored under (e.g. an archived '2025-2026' after a rollover)
+    disagree, which left every RTG blank. Calibrated over these games' player-games
+    (both teams) so grades read relative to this pool. Empty when nothing tracked."""
     import helpers.game_rating as GR
-    gids = _gender_tracked_ids(g, season)
+    gids = list(tracked_ids)
     if not gids:
         return {}
     agg = {}
@@ -4562,7 +4566,7 @@ if _tdview == "Roster":
         DPLAY.render(_players_ctx)
     elif _rv == "Impact & Splits":
         import helpers.advanced_ratings as ADV
-        _avg_rtg = _avg_player_ratings(gender, season_pick) if has_tracked else {}
+        _avg_rtg = _avg_player_ratings(tuple(bundle["tracked_ids"])) if has_tracked else {}
         ADV.leaderboard(players, has_tracked, key="td", ratings=_avg_rtg)
     else:
         DPROF.render(_prof_ctx)

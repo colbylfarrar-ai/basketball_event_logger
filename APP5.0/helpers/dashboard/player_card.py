@@ -442,8 +442,11 @@ def render_card(ctx):
             return P.get(key) if P.get(key) is not None else d
 
         # 4th column = the shot maps IN the fold (phase E) — basketball's edge
-        # over the OOTP page: the spatial read sits beside the ratings.
-        g1, g2, g3, g4 = st.columns([0.9, 1.15, 0.9, 1.05])
+        # over the OOTP page: the spatial read sits beside the ratings. The court
+        # is a LANDSCAPE 1.3 aspect locked by scaleanchor, so it's width-driven —
+        # g4 gets the widest share (stolen from the text cols) so the map grows to
+        # match the ratings-stack height instead of reading as a small strip.
+        g1, g2, g3, g4 = st.columns([0.8, 1.05, 0.75, 1.5])
 
         # ── col 1: per-game line + career highs ──────────────────────────────
         with g1:
@@ -540,7 +543,9 @@ def render_card(ctx):
         with g4:
             if located:
                 sfig, _sn = _shot_map(located, "")
-                sfig.update_layout(height=250,
+                # height tracks the wider g4 so the landscape court fills the
+                # column with no letterbox (col_width/1.3 ≈ this on a normal card)
+                sfig.update_layout(height=300,
                                    margin=dict(l=0, r=0, t=6, b=0),
                                    showlegend=False)
                 st.markdown(

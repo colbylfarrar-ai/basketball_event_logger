@@ -45,11 +45,23 @@ def _has_any(rows, keys):
     return any(r.get(k) is not None for r in rows for k in keys)
 
 
-def leaderboard(rows, paid, key="adv"):
+def leaderboard(rows, paid, key="adv", ratings=None):
     """Pool-wide 'Impact & Splits' tab body. `rows` = player_stat_table values
     (list or dict-values); `paid` gates the event-derived numbers; `key` namespaces
-    the widgets so several instances (Players + Scout + TD) never collide."""
-    rows = list(rows.values()) if isinstance(rows, dict) else list(rows)
+    the widgets so several instances (Players + Scout + TD) never collide.
+
+    `ratings` (optional) = {player_id: season-average per-game RATING (0-10)} — when
+    given, an "RTG" column + leader tile are added (the soccer-style per-game grade
+    averaged over tracked games; season-scoped by the caller). Callers that don't
+    pass it are byte-identical to before."""
+    # keep pid alongside each row so an optional per-pid map (ratings) can merge;
+    # dict input is keyed by pid, list input may carry it as "id" (else None).
+    if isinstance(rows, dict):
+        items = list(rows.items())
+    else:
+        items = [(r.get("id"), r) for r in rows]
+    rows = [r for _pid, r in items]
+    ratings = ratings or {}
     if not paid:
         st.info(LOCK_MSG)
         return
@@ -66,11 +78,15 @@ def leaderboard(rows, paid, key="adv"):
         "read playmaking depth. **Conf** flags how much game evidence backs the "
         "number — *(box)* means mostly hand-entered box scores, not tracked film.")
 
+    show_rtg = bool(ratings)
     df = pd.DataFrame([{
         "Rank": r.get("Rank"), "Player": r.get("name"),
         "Team": C.team_short(r.get("team", "")), "Cls": r.get("class"),
         "GP": r.get("GP"), "Box": r.get("ManualGP", 0) or 0,
         "Conf": r.get("Confidence"),
+        # season-average per-game RATING (0-10) — added only when the caller
+        # supplies the {pid: avg} map (Team Dashboard roster).
+        **({"RTG": ratings.get(pid)} if show_rtg else {}),
         "Impact": r.get("Impact"),
         # full rating set — the five headlines + the two offense sub-ratings +
         # the split defense / rebounding sub-ratings, all 0-100.
@@ -85,7 +101,7 @@ def leaderboard(rows, paid, key="adv"):
         # detail leaves behind the ratings
         "AST%": r.get("AST%"), "PassFG%": r.get("PassFG%"),
         "PassOpen%": r.get("PassOpen%"),
-    } for r in rows])
+    } for pid, r in items])
     df = df.sort_values("OVERALL", ascending=False, na_position="last")
 
     prog = ["OVERALL", "OFFENSE", "Shooting", "Finishing", "DEFENSE",
@@ -95,6 +111,10 @@ def leaderboard(rows, paid, key="adv"):
     cfg["Impact"] = st.column_config.NumberColumn(
         "Impact", format="%.1f", help="Pure RAPM — points/100 vs an average "
         "player (opponent + teammate adjusted).")
+    if show_rtg:
+        cfg["RTG"] = st.column_config.NumberColumn(
+            "RTG", format="%.1f", help="Average per-game RATING (0-10, soccer-"
+            "style match grade) over this player's tracked games.")
     for c in ("AST%", "PassFG%", "PassOpen%"):
         cfg[c] = st.column_config.NumberColumn(c, format="%.1f")
     cfg["Box"] = st.column_config.NumberColumn(
@@ -114,13 +134,22 @@ def leaderboard(rows, paid, key="adv"):
                        color=C.tier(r["OVERALL"])[0] if r.get("OVERALL") else "var(--text)")
 
     st.markdown("<div class='pl-hdr'>Leaders</div>", unsafe_allow_html=True)
+    lead_html = []
+    # RTG leader first (best season-average per-game grade), when available.
+    if show_rtg:
+        best = max((p for p, _ in items if ratings.get(p) is not None),
+                   key=lambda p: ratings[p], default=None)
+        if best is not None:
+            _br = next((r for p, r in items if p == best), {})
+            lead_html.append(C.glass(
+                "RTG", f"{ratings[best]:.1f}", _br.get("name", "—"),
+                color=C.tier(_br["OVERALL"])[0] if _br.get("OVERALL") else "var(--text)"))
     tiles = [("Impact", "{:+.1f}"), ("RimDef", "{:.1f}"), ("PerimDef", "{:.1f}"),
              ("OREBrtg", "{:.1f}"), ("DREBrtg", "{:.1f}"), ("AST%", "{:.1f}%")]
-    cols = st.columns(len(tiles))
-    for col, (name, fmt) in zip(cols, tiles):
-        h = _lead(name, fmt)
-        if h:
-            col.markdown(h, unsafe_allow_html=True)
+    lead_html += [h for h in (_lead(n, f) for n, f in tiles) if h]
+    cols = st.columns(len(lead_html)) if lead_html else []
+    for col, h in zip(cols, lead_html):
+        col.markdown(h, unsafe_allow_html=True)
 
 
 def _bar(label, val, hue=None):

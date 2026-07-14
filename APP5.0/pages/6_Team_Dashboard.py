@@ -668,6 +668,25 @@ def _gender_tracked_ids(g, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _avg_player_ratings(g, season):
+    """{player_id: season-average per-game RATING (0-10)} over the gender's tracked
+    season. One pool calibration (game_rating.season_game_ratings) so grades are
+    mutually comparable; season-aware (no 'Current' hardcode — reads the archive
+    pool when a past season is picked). Empty dict when nothing is tracked."""
+    import helpers.game_rating as GR
+    gids = _gender_tracked_ids(g, season)
+    if not gids:
+        return {}
+    agg = {}
+    for gm in GR.season_game_ratings(game_ids=gids).values():
+        for pid, info in gm.items():
+            r = info.get("rating")
+            if r is not None:
+                agg.setdefault(pid, []).append(r)
+    return {pid: sum(v) / len(v) for pid, v in agg.items() if v}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _located_team(tid, gids):
     """Tap-captured x/y shots for one team over its tracked games (shots FOR)."""
     return S.located_shots(game_ids=list(gids), team_id=tid)
@@ -4543,6 +4562,7 @@ if _tdview == "Roster":
         DPLAY.render(_players_ctx)
     elif _rv == "Impact & Splits":
         import helpers.advanced_ratings as ADV
-        ADV.leaderboard(players, has_tracked, key="td")
+        _avg_rtg = _avg_player_ratings(gender, season_pick) if has_tracked else {}
+        ADV.leaderboard(players, has_tracked, key="td", ratings=_avg_rtg)
     else:
         DPROF.render(_prof_ctx)

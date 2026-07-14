@@ -583,6 +583,25 @@ MIN_POOL_FOR_RESTD = 8
 # (g^1.5+k^1.5): 1 GP 0.16, 3 GP 0.50, 8 GP 0.81, 23 GP 0.96 — was 0.82).
 RATING_K_GAMES = 3
 
+# ── team-prior anchor (partial pooling of thin player samples) ────────────────
+# A thin-sample player is normally shrunk toward flat 50 (league average). This
+# instead shrinks their OVERALL toward an anchor derived from their OWN team's
+# results-only Power (team_ratings.score_ratings, 0-100, 50=avg — the SAME scale as
+# the player rating, so the map is 1:1). Rationale: "good teams have good players"
+# is a valid group-level (partial-pooling) prior; on a small sample the team's own
+# résumé is a better guess than the grand mean. The pull is deliberately damped:
+#   anchor = 50 + LAMBDA · team_confidence · (teamPower − 50)
+# LAMBDA caps how far the anchor can drift from 50 (keeps a benchwarmer on an elite
+# team from reading as a star); team_confidence = teamGP/(teamGP+K) so a team whose
+# OWN Power rests on 2 lucky games can't over-anchor its players (honest: strong
+# lift needs a real team résumé, not a fluke). LAMBDA=0 → anchor≡50 → byte-identical
+# to the pre-feature engine. Symmetric: a thin player on a weak team also regresses
+# slightly below 50 (set BOOST_ONLY=True for lift-only). Applies to OVERALL only.
+TEAM_PRIOR_LAMBDA     = 0.35    # 0 = off; ship value chosen via tools/team_prior_diff.py
+TEAM_PRIOR_K_GAMES    = 6.0     # team-confidence prior weight (games-equivalent)
+TEAM_PRIOR_BOUNDS     = (35.0, 65.0)   # clamp the anchor to a sane band
+TEAM_PRIOR_BOOST_ONLY = False   # True = never anchor below 50 (good-team lift only)
+
 
 def _restandardize(zmap):
     """Re-z a composite z-vector across the pool so it regains unit SD.
@@ -736,6 +755,37 @@ def _opponent_strength(profiles, gender, game_ids, season, opp_ratings=None):
     return {pid: s / w for pid, (s, w) in acc.items() if w > 0}
 
 
+def _team_prior_anchors(profiles, gender, season, opp_ratings=None):
+    """{player_id: OVERALL shrink anchor} from each player's OWN team Power.
+
+    Partial-pooling prior: instead of regressing a thin sample toward flat 50,
+    regress toward 50 + LAMBDA·team_confidence·(teamPower − 50). teamPower is the
+    results-only score_ratings Power (0-100, 50=avg — identical scale to the player
+    rating). team_confidence = teamGP/(teamGP+TEAM_PRIOR_K_GAMES) so a team whose
+    Power rests on a tiny sample can't over-anchor its players. LAMBDA=0 → every
+    anchor is exactly 50 (byte-identical to the pre-feature engine). Unknown team →
+    50 (neutral). Clamped to TEAM_PRIOR_BOUNDS; optionally boost-only."""
+    lam = TEAM_PRIOR_LAMBDA
+    if not lam:
+        return {p: 50.0 for p in profiles}          # identity fast-path
+    if opp_ratings is None:
+        opp_ratings = _score_ratings_cached(gender, season)
+    lo, hi = TEAM_PRIOR_BOUNDS
+    out = {}
+    for p, prof in profiles.items():
+        tr = opp_ratings.get(prof.get("team_id")) if opp_ratings else None
+        if not tr or tr.get("Power") is None:
+            out[p] = 50.0
+            continue
+        gp = tr.get("GP", 0) or 0
+        conf = gp / (gp + TEAM_PRIOR_K_GAMES) if (gp + TEAM_PRIOR_K_GAMES) > 0 else 0.0
+        anchor = 50.0 + lam * conf * (tr["Power"] - 50.0)
+        if TEAM_PRIOR_BOOST_ONLY and anchor < 50.0:
+            anchor = 50.0
+        out[p] = max(lo, min(hi, anchor))
+    return out
+
+
 def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                    stabilize=True, profiles=None, season="Current",
                    opp_adjust=True, opp_ratings=None,
@@ -866,12 +916,17 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                          "rebounding": rebounding_z, "physical": physical_z,
                          "oppadj": oppadj_z})
 
-    def _rate(z, g):
-        """0-100 rating from a z-score, regressed toward 50 by EVIDENCE games (a
-        box-heavy player already reads thinner, so it regresses harder)."""
+    # per-player OVERALL shrink anchor from their own team Power (partial pooling)
+    team_anchor = _team_prior_anchors(profiles, gender, season, opp_ratings)
+
+    def _rate(z, g, anchor=50.0):
+        """0-100 rating from a z-score, regressed toward `anchor` (50 = league
+        average) by EVIDENCE games. OVERALL passes a team-derived anchor; every
+        other rating keeps the flat-50 anchor (a box-heavy player already reads
+        thinner, so it regresses harder)."""
         v = _scale100(z)
         if stabilize:
-            v = SHR.stabilize_index(v, g, k_games=RATING_K_GAMES)
+            v = SHR.stabilize_index(v, g, k_games=RATING_K_GAMES, anchor=anchor)
         return _round(v)
 
     out = {}
@@ -882,7 +937,7 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         out[p] = {
             "name": prof["name"], "number": prof["number"],
             "team": prof["team"], "team_id": prof["team_id"], "GP": prof["GP"],
-            "OVERALL":    _rate(overall_z[p], eg),
+            "OVERALL":    _rate(overall_z[p], eg, anchor=team_anchor.get(p, 50.0)),
             "OFFENSE":    _rate(offense_z[p], eg),
             "DEFENSE":    _rate(defense_z[p], eg),
             "PLAYMAKING": _rate(playmaking_z[p], eg),

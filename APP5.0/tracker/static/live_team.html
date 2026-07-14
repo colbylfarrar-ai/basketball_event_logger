@@ -56,6 +56,7 @@ ul.games li:last-child { border-bottom: 0; }
   text-decoration: none; }
 a.g:active { background: var(--bg3); }
 .g .m { font-size: .88rem; font-weight: 600; }
+.g .m .orank { color: var(--blue); font-weight: 800; margin: 0 3px 0 1px; }
 .g .sub { display: block; color: var(--muted); font-size: .7rem; margin-top: 2px; }
 .g .right { text-align: right; font-size: .8rem; color: var(--muted);
   white-space: nowrap; }
@@ -132,7 +133,8 @@ a.g:active { background: var(--bg3); }
     $('t-rec').textContent = t.wins + '–' + t.losses +
       (t.streak ? '  ·  ' + t.streak : '');
     if (t.rank && t.rank_of) {
-      $('t-rank').textContent = '#' + t.rank + ' of ' + t.rank_of;
+      $('t-rank').textContent = '#' + t.rank + ' of ' + t.rank_of +
+        (t.class_rank ? '  ·  ' + (t.class ? t.class + ' ' : '') + '#' + t.class_rank : '');
       $('t-rank').hidden = false;
     }
     // last-5 form pips (newest first)
@@ -170,10 +172,15 @@ a.g:active { background: var(--bg3); }
       } else {
         right = 'Upcoming' + (g.url ? ' · <span class="link">Watch</span>' : '');
       }
+      var orank = g.opp_rank ? '<span class="orank">#' + esc(g.opp_rank) + '</span>' : '';
+      var ocls = g.opp_class_rank
+        ? (g.opp_class_lbl ? esc(g.opp_class_lbl) + ' ' : '') + '#' + esc(g.opp_class_rank)
+        : '';
       el.innerHTML =
-        '<span><span class="m">' + esc(g.home_away) + ' ' + esc(g.opp) + '</span>' +
+        '<span><span class="m">' + esc(g.home_away) + ' ' + orank + esc(g.opp) + '</span>' +
         '<span class="sub">' + esc(g.date) +
-        (g.location ? ' · ' + esc(g.location) : '') + '</span></span>' +
+        (g.location ? ' · ' + esc(g.location) : '') +
+        (ocls ? ' · ' + ocls : '') + '</span></span>' +
         '<span class="right">' + right + '</span>';
       li.appendChild(el);
       ul.appendChild(li);

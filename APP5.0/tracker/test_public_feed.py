@@ -247,6 +247,10 @@ ok(tp["wins"] == 1 and tp["losses"] == 0, "record from finals")
 fin = next(g for g in tp["games"] if g["status"] == "final")
 ok(fin["won"] is True and fin["us"] == 5 and fin["them"] == 1
    and fin["url"] == f"/live/{tok}", "result row: W 5-1 + fan link")
+ok(fin["opp_rank"] == 2, "schedule row carries opponent ordinal rank (#2)")
+ok(fin["opp_class_rank"] == 2 and fin["opp_class_lbl"] == "5A",
+   "schedule row carries opponent class rank (5A #2)")
+ok(tp["class_rank"] == 1 and tp["class_of"] == 2, "hero carries own class rank")
 blob = json.dumps(tp)
 for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
     for part in name.split():

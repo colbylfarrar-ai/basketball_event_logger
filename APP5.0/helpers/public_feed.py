@@ -277,6 +277,18 @@ def team_profile(team_id: int) -> dict | None:
     szn = query("SELECT season FROM games WHERE team1_id=? OR team2_id=? "
                 "ORDER BY date DESC, id DESC LIMIT 1", (team_id, team_id))
     season = szn[0]["season"] if szn else None
+
+    # Ordinal ranks (gender-wide) keyed by team id, from the already-cached
+    # public directory — powers both this team's hero rank and the #rank shown
+    # against each opponent on the schedule. Out-of-league / unranked opponents
+    # (out-of-state, no games) just come back None and render without a rank.
+    dir_by_id: dict[int, dict] = {}
+    try:
+        for td in teams_directory().get("teams", []):
+            dir_by_id[td["id"]] = td
+    except Exception:
+        pass
+
     games, wins, losses = [], 0, 0
     pts_for = pts_against = 0          # totals over finals -> PPG / oPPG / margin
     results = []                       # won-bools in date DESC order (streak/form)
@@ -284,7 +296,7 @@ def team_profile(team_id: int) -> dict | None:
         rows = query(
             "SELECT g.id, g.date, g.location, g.tracked, g.home_score, "
             "       g.away_score, g.is_public, g.share_token, g.team1_id, "
-            "       t1.name AS hn, t2.name AS an "
+            "       g.team2_id, t1.name AS hn, t2.name AS an "
             "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
             "             JOIN teams t2 ON t2.id=g.team2_id "
             "WHERE (g.team1_id=? OR g.team2_id=?) AND g.season=? "
@@ -292,11 +304,16 @@ def team_profile(team_id: int) -> dict | None:
             (team_id, team_id, season))
         for r in rows:
             is_home = r["team1_id"] == team_id
+            opp_id = r["team2_id"] if is_home else r["team1_id"]
             final = bool(r["tracked"]) or (r["home_score"] is not None
                                            and r["away_score"] is not None)
             us = r["home_score"] if is_home else r["away_score"]
             them = r["away_score"] if is_home else r["home_score"]
+            _od = dir_by_id.get(opp_id, {})
             g = {"date": r["date"], "opp": r["an"] if is_home else r["hn"],
+                 "opp_rank": _od.get("rank"),
+                 "opp_class_rank": _od.get("class_rank"),
+                 "opp_class_lbl": _od.get("class_lbl"),
                  "home_away": "vs" if is_home else "at",
                  "status": "final" if final else "upcoming",
                  "location": r["location"] or ""}
@@ -333,14 +350,9 @@ def team_profile(team_id: int) -> dict | None:
         streak = f"{'W' if top else 'L'}{n}"
     form = ["W" if w else "L" for w in results[:5]]   # last 5, newest first
 
-    rank = rank_of = None
-    try:
-        for td in teams_directory().get("teams", []):
-            if td["id"] == team_id:
-                rank, rank_of = td.get("rank"), td.get("of")
-                break
-    except Exception:
-        pass
+    _own = dir_by_id.get(team_id, {})
+    rank, rank_of = _own.get("rank"), _own.get("of")
+    class_rank, class_of = _own.get("class_rank"), _own.get("class_of")
 
     payload = {"id": t["id"], "name": t["name"],
                "class": t["class"] if t["class"] != "N/A" else "",
@@ -350,6 +362,7 @@ def team_profile(team_id: int) -> dict | None:
                "ppg": ppg, "oppg": oppg, "mov": mov,
                "streak": streak, "form": form,
                "rank": rank, "rank_of": rank_of,
+               "class_rank": class_rank, "class_of": class_of,
                "games": games}
     _TEAM_CACHE[team_id] = (now, payload)
     return payload

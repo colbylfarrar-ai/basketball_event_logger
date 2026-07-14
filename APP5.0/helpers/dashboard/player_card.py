@@ -249,17 +249,36 @@ def _projection(gender, season="Current", game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _game_rtg_bundle(gender, game_ids=None):
+def _game_rtg_bundle(gender, game_ids=None, season="Current"):
     """Per-game 0-10 player ratings for the gender's tracked pool, calibrated once
     so a player's game-log grades are mutually comparable. {game_id: {pid: {...}}}.
-    Cached per gender/pool like the other league fetchers here."""
+    Cached per gender/pool like the other league fetchers here.
+
+    When `game_ids` is None the pool is the gender's tracked games for `season`.
+    Post-rollover the active-season sentinel ('Current') can hold zero tracked
+    games (all data archived under a year label), which blanked every RTG — so an
+    empty sentinel pool falls back to the gender's most recent tracked season."""
     import helpers.game_rating as _GR
-    import helpers.playtypes as _PT
-    gids = list(game_ids) if game_ids is not None else _PT._tracked_game_ids(gender)
-    if game_ids is not None and not gids:
-        # empty visible set must STAY empty — `gids or None` would re-leak the
-        # whole tracked corpus (the empty-filter trap; see gating taxonomy).
-        return {}
+    from database.db import query as _q
+    if game_ids is not None:
+        gids = list(game_ids)
+        if not gids:
+            # empty visible set must STAY empty — `gids or None` would re-leak the
+            # whole tracked corpus (the empty-filter trap; see gating taxonomy).
+            return {}
+    else:
+        gids = [r["id"] for r in _q(
+            "SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id "
+            "WHERE g.tracked=1 AND g.season=? AND t.gender=?", (season, gender))]
+        if not gids:            # sentinel season empty (rollover) → newest tracked season
+            row = _q("SELECT g.season FROM games g JOIN teams t ON t.id=g.team1_id "
+                     "WHERE g.tracked=1 AND t.gender=? ORDER BY g.date DESC LIMIT 1",
+                     (gender,))
+            if row:
+                gids = [r["id"] for r in _q(
+                    "SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id "
+                    "WHERE g.tracked=1 AND g.season=? AND t.gender=?",
+                    (row[0]["season"], gender))]
     try:
         return _GR.season_game_ratings(game_ids=gids or None)
     except Exception:
@@ -1181,7 +1200,7 @@ def render_card(ctx):
     name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
     # RTG (per-game 0-10) is event-delta — tracked depth, so Paid only. The box
     # game log itself (PTS/REB/… + GS) is box-derivable and stays Free.
-    _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp) if paid else {}
+    _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp, _szn) if paid else {}
     log = []
     _boxes = pgb.get(pid, {})
     for g in sorted(games, key=lambda x: x["date"]):

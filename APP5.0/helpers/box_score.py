@@ -192,16 +192,22 @@ def _score_ratings_fp(gender, _fp):
 
 
 @st.cache_resource(show_spinner=False)
-def _game_ratings_fp(gender, _fp):
+def _game_ratings_fp(gender, season, _fp):
     """Per-game 0-10 player RATINGS for a gender's tracked season, cached on the
     results fingerprint (recomputes when a game score moves). One pool calibration
     across the whole gender season so the grades are mutually comparable.
     cache_resource survives the app's cache_data.clear() (same rationale as the
-    header power rating above)."""
+    header power rating above).
+
+    `season` is the season the shown game lives in — NOT a hardcoded 'Current'.
+    Post-rollover the active-season sentinel ('Current') can hold zero tracked
+    games while all tracked data sits under an archived year label, so a 'Current'
+    query returned an empty bundle and blanked the RTG column. Scoping to the
+    game's own season always includes that game's tracked pool."""
     import helpers.game_rating as GR
     gids = [r["id"] for r in query(
         "SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id "
-        "WHERE g.tracked=1 AND g.season='Current' AND t.gender=?", (gender,))]
+        "WHERE g.tracked=1 AND g.season=? AND t.gender=?", (season, gender))]
     return GR.season_game_ratings(game_ids=gids or None)
 
 
@@ -1210,7 +1216,8 @@ def render_box_score(game_id: int):
         if ws is None or wpp is None:
             st.caption("Win-probability data unavailable for this game.")
         try:
-            _grt = _game_ratings_fp(g["gender"], TR.results_fingerprint()).get(game_id, {})
+            _grt = _game_ratings_fp(g["gender"], g["season"],
+                                    TR.results_fingerprint()).get(game_id, {})
         except Exception:
             _grt = {}
         rows = []

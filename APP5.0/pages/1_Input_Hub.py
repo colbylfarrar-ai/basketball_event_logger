@@ -389,6 +389,19 @@ _hubview = _seg("Section", _HUB_TABS, default="Teams", key="hub_section") or "Te
 # ══════════════════════════════════════════════════════════════════════════════
 if _hubview == "Teams":
     st.caption(EDITOR_HELP)
+    # Empty-current-season trap: the table below edits the LIVE (current-season)
+    # class, but if the active season has no games yet, every ranking/dashboard
+    # the coach views is scoped to the most recent ARCHIVE, whose class is read
+    # from team_class_history — so a table edit "does nothing." Point them to the
+    # Retroactive editor (and auto-open it) when that's the situation.
+    _cur_games = query("SELECT COUNT(*) AS n FROM games WHERE season=?", (SZ.ACTIVE,))
+    _cur_empty = (_cur_games[0]["n"] if _cur_games else 0) == 0 and bool(SZ.archived_labels())
+    if _cur_empty:
+        st.info(
+            f"The current season (**{SZ.active_label()}**) has no games yet, so your "
+            "rankings and dashboards are still showing last season's archive. The "
+            "**Class** column below sets the *current-season* class — to change the "
+            "class shown in those archive views, use **🗄️ Retroactive class** below.")
     orig = get_orig("_teams_orig", load_teams)
     orig = _sortable(orig, "teams_editor", ["name", "class", "gender", "state"])
     display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(columns=["name","class","gender","state"])
@@ -443,7 +456,8 @@ if _hubview == "Teams":
     # touching the current one. Appears only once a season has been archived.
     _past = SZ.archived_labels()
     if _past:
-        with st.expander("🗄️ Retroactive class — change a team's class for a past season"):
+        with st.expander("🗄️ Retroactive class — change a team's class for a past season",
+                         expanded=_cur_empty):
             st.caption("Classes re-align each year, so this edits the class a team "
                        "played in during a PAST season only — the current-season "
                        "class stays as set in the table above.")

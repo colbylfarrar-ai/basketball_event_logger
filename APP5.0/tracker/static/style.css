@@ -153,6 +153,24 @@ button {
 }
 .chips.scroll .chip { flex: none; white-space: nowrap; }
 
+/* ---- officials crew: R / U1 / U2 role dropdowns ---- */
+.officials-slots { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 2px; }
+.official-slot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px;
+}
+.official-slot-lbl {
+  flex: none; min-width: 34px;
+  font-weight: 700; font-size: 0.9rem; color: var(--muted);
+}
+.official-select {
+  flex: 1; min-height: 44px;
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--bg3); border: 1px solid var(--edge); color: inherit;
+  font-size: 0.95rem;
+}
+
 .lineup-group { margin-bottom: 8px; }
 
 /* ---- inline add forms (lineup quick-add, new team) ---- */

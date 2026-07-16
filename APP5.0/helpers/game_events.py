@@ -45,9 +45,16 @@ def possession_secs(game_id: int, quarter: int, t: str) -> float:
 
 
 def _snapshot_and_apply_pm(game_id, event_id, on_court, on_officials,
-                           scoring_team_id=None, pts: int = 0):
+                           scoring_team_id=None, pts: int = 0,
+                           on_official_slots=()):
     """Snapshot the floor into game_event_lineup, ensure everyone has a
-    game_lineup_players row, credit +/- on scoring events, record officials."""
+    game_lineup_players row, credit +/- on scoring events, record officials.
+
+    on_official_slots: iterable of (official_id, slot) where slot is the crew
+    role (1=R, 2=U1, 3=U2 — see helpers/public_feed._SLOT_LABELS). Assigned from
+    the tracker's role dropdowns; upserts the slot so a mid-game role change
+    sticks, while plain on_officials rows (e.g. a foul's calling ref not on the
+    assigned crew) keep a NULL slot."""
     # Dedupe by player — a pid listed twice would be credited +/- twice
     # (permanent stat corruption). Keep the first (pid, tid) per player.
     deduped: dict = {}
@@ -65,10 +72,15 @@ def _snapshot_and_apply_pm(game_id, event_id, on_court, on_officials,
     for oid in on_officials:
         execute("INSERT OR IGNORE INTO game_lineup_officials (game_id, official_id) VALUES (?,?)",
                 (game_id, oid))
+    for oid, slot in on_official_slots:
+        execute("INSERT INTO game_lineup_officials (game_id, official_id, slot) "
+                "VALUES (?,?,?) "
+                "ON CONFLICT(game_id, official_id) DO UPDATE SET slot=excluded.slot",
+                (game_id, oid, slot))
 
 
 def log_event(game_id: int, ev: dict, on_court, on_officials=(),
-              client_uuid: str | None = None) -> int:
+              client_uuid: str | None = None, on_official_slots=()) -> int:
     """Append one live event and return its game_events.id.
 
     ev keys: event_type (required), quarter (int), time ('M:SS'), plus the
@@ -166,7 +178,8 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
             row = query("SELECT team_id FROM players WHERE id=?", (pid,))
             scoring_tid = row[0]["team_id"] if row else None
     _snapshot_and_apply_pm(game_id, eid, on_court, on_officials,
-                           scoring_tid if pts else None, pts)
+                           scoring_tid if pts else None, pts,
+                           on_official_slots=on_official_slots)
     return eid
 
 

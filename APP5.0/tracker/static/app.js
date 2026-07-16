@@ -151,7 +151,39 @@ function qDelete(uuids) {
 const SERVER_FIELDS = ['uuid', 'event_type', 'quarter', 'time', 'primary_player_id', 'shot_result',
   'shot_x', 'shot_y', 'shot_type', 'zone', 'pass_from_id', 'shot_created_by_id', 'rebound_by_id',
   'blocked_by_id', 'guarded_by_id', 'secondary_player_id', 'official_id', 'stolen_by_id',
-  'play_type', 'defense', 'on_court', 'officials_on'];
+  'play_type', 'defense', 'on_court', 'officials_on', 'official_slots'];
+
+// Crew roles in assigning order (slot column is 1-based; mirrors
+// helpers/public_feed._SLOT_LABELS on the read side).
+const OFFICIAL_SLOTS = [[1, 'R'], [2, 'U1'], [3, 'U2']];
+
+// S.lineup.officialSlots {1,2,3}->officialId is the source of truth for roles;
+// S.lineup.officials is kept as the derived flat id list every other reader uses.
+function ensureOfficialSlots() {
+  if (!S.lineup.officialSlots) {
+    const arr = S.lineup.officials || [];
+    S.lineup.officialSlots = {
+      1: arr[0] != null ? arr[0] : null,
+      2: arr[1] != null ? arr[1] : null,
+      3: arr[2] != null ? arr[2] : null
+    };
+  }
+  syncOfficialsArray();
+}
+
+function syncOfficialsArray() {
+  const s = S.lineup.officialSlots || {};
+  S.lineup.officials = [s[1], s[2], s[3]].filter(function (x) { return x != null; });
+}
+
+function officialSlotsPayload() {
+  const s = S.lineup.officialSlots || {};
+  const out = [];
+  [1, 2, 3].forEach(function (n) {
+    if (s[n] != null) out.push({ official_id: s[n], slot: n });
+  });
+  return out;
+}
 
 function toServer(item) {
   const o = {};
@@ -816,6 +848,7 @@ function renderLineup() {
   renderFanLink();
   $('lineup-home-name').textContent = S.game.home.name + ' (' + S.lineup.home.length + '/5)';
   $('lineup-away-name').textContent = S.game.away.name + ' (' + S.lineup.away.length + '/5)';
+  ensureOfficialSlots();
   $('lineup-officials-name').textContent = 'Officials (' + S.lineup.officials.length + '/3)';
 
   ['home', 'away'].forEach(function (side) {
@@ -831,15 +864,47 @@ function renderLineup() {
       });
   });
 
-  const ob = $('chips-officials');
+  const ob = $('officials-slots');
   ob.innerHTML = '';
   // archived refs can't be assigned — editor pickers still resolve them via oLabel
-  (S.game.officials || []).filter(function (o) { return !o.archived; })
-    .forEach(function (o) {
-      ob.appendChild(lineupChip(o.name,
-        S.lineup.officials.indexOf(o.id) >= 0,
-        function () { toggleSel(S.lineup.officials, o.id, 3, 'officials'); }));
+  const availOffs = (S.game.officials || []).filter(function (o) { return !o.archived; });
+  OFFICIAL_SLOTS.forEach(function (pair) {
+    const slotNum = pair[0], roleLbl = pair[1];
+    const row = document.createElement('label');
+    row.className = 'official-slot';
+    const lbl = document.createElement('span');
+    lbl.className = 'official-slot-lbl';
+    lbl.textContent = roleLbl;
+    const sel = document.createElement('select');
+    sel.className = 'official-select';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '—';
+    sel.appendChild(none);
+    availOffs.forEach(function (o) {
+      const opt = document.createElement('option');
+      opt.value = String(o.id);
+      opt.textContent = o.name;
+      if (S.lineup.officialSlots[slotNum] === o.id) opt.selected = true;
+      sel.appendChild(opt);
     });
+    sel.addEventListener('change', function () {
+      const v = sel.value ? parseInt(sel.value, 10) : null;
+      // one official can't work two roles — vacate any slot that held them
+      if (v != null) {
+        [1, 2, 3].forEach(function (n) {
+          if (n !== slotNum && S.lineup.officialSlots[n] === v) S.lineup.officialSlots[n] = null;
+        });
+      }
+      S.lineup.officialSlots[slotNum] = v;
+      syncOfficialsArray();
+      savePrefs();
+      renderLineup();
+    });
+    row.appendChild(lbl);
+    row.appendChild(sel);
+    ob.appendChild(row);
+  });
 
   renderHands('home');
   renderHands('away');
@@ -1528,7 +1593,8 @@ function baseEvent(type) {
     secondary_player_id: null, official_id: null, stolen_by_id: null,
     defense: S.defense,                          // sticky current defense (see DEFENSES)
     on_court: onCourtIds(),
-    officials_on: S.lineup.officials.slice()
+    officials_on: S.lineup.officials.slice(),
+    official_slots: officialSlotsPayload()
   };
 }
 

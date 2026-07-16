@@ -111,6 +111,13 @@ api = APIRouter(prefix="/api", dependencies=[Depends(current_api_user)])
 
 
 # ── request models ──────────────────────────────────────────────────────────────
+class OfficialSlot(BaseModel):
+    """A crew assignment: which official works which role (1=R, 2=U1, 3=U2 —
+    see helpers/public_feed._SLOT_LABELS). Sent by the tracker's role dropdowns."""
+    official_id: int
+    slot: int
+
+
 class EventIn(BaseModel):
     uuid: str
     event_type: str
@@ -135,6 +142,7 @@ class EventIn(BaseModel):
     turnover_type: str | None = None
     on_court: list[int] = Field(default_factory=list)
     officials_on: list[int] = Field(default_factory=list)
+    official_slots: list[OfficialSlot] = Field(default_factory=list)
 
 
 class EventBatch(BaseModel):
@@ -345,7 +353,8 @@ def post_events(game_id: int, batch: EventBatch,
             continue
         existed = query("SELECT id FROM game_events WHERE client_uuid=?", (ev.uuid,))
         on_court = [(pid, pid2team[pid]) for pid in ev.on_court if pid in pid2team]
-        payload = ev.model_dump(exclude={"uuid", "on_court", "officials_on"})
+        payload = ev.model_dump(
+            exclude={"uuid", "on_court", "officials_on", "official_slots"})
         # A free throw is a dead-ball possession — never a set the offense ran or
         # a defensive scheme. Strip any play_type/defense the client's sticky bar
         # may have ridden along on the tap; the server is the authoritative gate.
@@ -355,7 +364,9 @@ def post_events(game_id: int, batch: EventBatch,
         try:
             eid = GE.log_event(
                 game_id, payload,
-                on_court, ev.officials_on, client_uuid=ev.uuid)
+                on_court, ev.officials_on, client_uuid=ev.uuid,
+                on_official_slots=[(s.official_id, s.slot)
+                                   for s in ev.official_slots])
         except sqlite3.IntegrityError:
             # A second device won the client_uuid race after the dup-check above
             # (offline-first PWAs replay the same tap on reconnect). The unique

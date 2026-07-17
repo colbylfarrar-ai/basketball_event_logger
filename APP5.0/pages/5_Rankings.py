@@ -39,7 +39,11 @@ from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, rank_chip, grid as _grid,
                         page_header, lab_hero as _lab_hero, empty_state,
-                        seg as _rkseg, HEAT, DIVERGE)
+                        seg as _rkseg, HEAT, DIVERGE, PALETTE)
+
+# The style-mix stacked bars cycle the app's own categorical palette rather than
+# a second one — a set-call block keeps the colour it has everywhere else.
+_MIXPAL = PALETTE
 import helpers.cards as CD
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
@@ -392,6 +396,18 @@ def _tracked_pack(g, _tracked, vis=None, season="Current"):
     return LA.team_tracked_pack(gender=g, tracked=_tracked,
                                 game_ids=(set(vis) if vis is not None else None),
                                 season=season)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _style_pack(g, _tracked, vis=None, season="Current"):
+    """Per-team play-style / defensive-scheme bundle (LA.team_style_pack) over
+    the viewer's pool — the style twin of _tracked_pack, same AXIS-2 scope. The
+    style engines are single-team, so this is the one place that pays for the
+    league-wide loop; it threads ONE event pass through every team and caches
+    the result, so the Play Style / Scheme stories cost a single fetch."""
+    return LA.team_style_pack(gender=g, tracked=_tracked,
+                              game_ids=(set(vis) if vis is not None else None),
+                              season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1413,10 +1429,12 @@ def _fx_chart():
                     "for this league.",
                     cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     else:
-        st.caption("How teams score, how they win, and who can shoot — across all "
-                   "tracked games in this league. Built from per-game team boxes, "
-                   "so defensive splits (opp eFG%, ORB%) are included. Use the "
-                   "team filter to take teams out of every graph below.")
+        st.caption("How teams score, how they win, how they play and what they "
+                   "guard — across all tracked games in this league. Built from "
+                   "per-game team boxes plus the one-tap set-call / defense tags, "
+                   "so both the box splits (opp eFG%, ORB%) and the style reads "
+                   "are included. Use the team filter to take teams out of every "
+                   "graph below; tables always show the full league.")
 
         # per-team advanced bundle — the single shared box pass from
         # helpers/league_analytics.team_tracked_pack (computed once, cached, and
@@ -1451,7 +1469,33 @@ def _fx_chart():
             st.markdown(f"**{title}**")
             st.plotly_chart(fig, width="stretch", key=key)
 
+        # crosshair scatter helper (mean lines, optional reversed y). Hoisted to
+        # the top of the fragment: the story dispatch below means the block that
+        # used to define it inline may not run before the block that calls it.
+        def _scatter(xk, yk, xt, yt, title, color="#58a6ff",
+                     yreverse=False, height=400):
+            xs = [ts[t][xk] for t in teams]
+            ys = [ts[t][yk] for t in teams]
+            fig = go.Figure(go.Scatter(
+                x=xs, y=ys, mode="markers+text", text=labels,
+                textposition="top center", textfont=dict(size=9),
+                marker=dict(size=12, color=color,
+                            line=dict(width=1, color="#30363d"))))
+            if xs:
+                fig.add_vline(x=sum(xs) / len(xs),
+                              line=dict(color="#30363d", dash="dot"))
+                fig.add_hline(y=sum(ys) / len(ys),
+                              line=dict(color="#30363d", dash="dot"))
+            fig.update_xaxes(title=xt)
+            fig.update_yaxes(title=yt, autorange="reversed" if yreverse else None)
+            _style(fig, height)
+            st.markdown(f"**{title}**")
+            st.plotly_chart(fig, width="stretch")
+
         # ════════════════ EVERY HEADLINE STAT — SORTED BARS ════════════════
+        # Stays ABOVE the story dispatch: it's the universal explorer (offense,
+        # defense and efficiency keys all live in the same picker), so it doesn't
+        # belong to any one story.
         st.markdown("<div class='section-hdr'>Every headline team stat</div>",
                     unsafe_allow_html=True)
         st.caption("Pick a headline stat to chart as a sorted bar — one bar per "
@@ -1497,299 +1541,565 @@ def _fx_chart():
                     _hbar(_mk, _ti, _ax, pct=_pc, asc=_as, n=_nn,
                           key=f"galw_{_mk}")
 
-        # ════════════════ SCORING ════════════════
-        st.markdown("<div class='section-hdr'>Scoring</div>",
-                    unsafe_allow_html=True)
-        st.markdown("**How teams score** — points per game by source")
-        two = [own[t]["2PM"] * 2 / max(gp[t], 1) for t in teams]
-        thr = [own[t]["3PM"] * 3 / max(gp[t], 1) for t in teams]
-        ftp = [own[t]["FTM"] / max(gp[t], 1) for t in teams]
-        sfig = go.Figure()
-        sfig.add_trace(go.Bar(x=labels, y=two, name="2-pt", marker_color=ACCENT))
-        sfig.add_trace(go.Bar(x=labels, y=thr, name="3-pt", marker_color="#58a6ff"))
-        sfig.add_trace(go.Bar(x=labels, y=ftp, name="FT", marker_color="#8b949e"))
-        sfig.update_layout(barmode="stack")
-        sfig.update_yaxes(title="Points / game")
-        _style(sfig, 380)
-        st.plotly_chart(sfig, width="stretch")
+        # ══════════════════════════════════════════════════════════════════
+        #  STORY DISPATCH — the Team Dashboard's Charts skeleton, ported.
+        #  Same story names and nesting as pages/6_Team_Dashboard.py so the two
+        #  pages navigate alike, but every BODY here is cross-team (one bar per
+        #  team) where the dashboard's is one-team-deep (percentile cards). The
+        #  chart code genuinely can't be shared — only the shape ports.
+        #  Segmented, not st.tabs: st.tabs computes every body on every rerun and
+        #  the style pack is a full event pass.
+        # ══════════════════════════════════════════════════════════════════
+        _story = _rkseg("Story",
+                        ["Offense", "Play Style", "Defense", "Quarters & Pace"],
+                        default="Offense", key="rk_chart_story") or "Offense"
 
-        c1, c2 = st.columns(2)
-        with c1:
-            _hbar("TS", "True shooting %", "TS%", pct=True)
-        with c2:
-            _hbar("paint_pg", "Paint scoring — points / game", "Paint pts/g")
+        # ── shared style-pack loader: only the style stories pay for it ──────
+        def _load_style():
+            sp = _style_pack(gender, tracked, _VISK, season_pick)
+            if not sp["teams"]:
+                st.info("No tagged set-call or defense events in this pool yet — "
+                        "style charts fill in as games get tagged in the tracker.")
+                return None
+            return sp
 
-        # ════════════════ HOW TEAMS WIN ════════════════
-        st.markdown("<div class='section-hdr'>How teams win</div>",
-                    unsafe_allow_html=True)
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown("**Offense vs defense** (bubble = pace)")
-            ortg = [tracked[t]["ORtg"] for t in teams]
-            drtg = [tracked[t]["DRtg"] for t in teams]
-            pace = [tracked[t]["Pace"] for t in teams]
-            wfig = go.Figure(go.Scatter(
-                x=ortg, y=drtg, mode="markers+text", text=labels,
-                textposition="top center", textfont=dict(size=9),
-                marker=dict(size=[max(8, p / 2) for p in pace], color=ortg,
-                            colorscale=HEAT, showscale=False,
-                            line=dict(width=1, color="#30363d"))))
-            if ortg:
-                wfig.add_vline(x=sum(ortg) / len(ortg),
-                               line=dict(color="#30363d", dash="dot"))
-                wfig.add_hline(y=sum(drtg) / len(drtg),
-                               line=dict(color="#30363d", dash="dot"))
-            wfig.update_xaxes(title="Offensive rating →")
-            wfig.update_yaxes(title="← Defensive rating (lower better)",
-                              autorange="reversed")
-            _style(wfig, 400)
-            st.plotly_chart(wfig, width="stretch")
-        with c4:
-            st.markdown("**Ball movement** — assists vs turnovers per game")
-            mfig = go.Figure(go.Scatter(
-                x=[ts[t]["tov_pg"] for t in teams],
-                y=[ts[t]["ast_pg"] for t in teams],
-                mode="markers+text", text=labels, textposition="top center",
-                textfont=dict(size=9),
-                marker=dict(size=12, color=[ts[t]["ast_per_fgm"] for t in teams],
-                            colorscale=HEAT, showscale=True,
-                            colorbar=dict(title="AST/<br>FGM", thickness=10),
-                            line=dict(width=1, color="#30363d"))))
-            mfig.update_xaxes(title="Turnovers / game →")
-            mfig.update_yaxes(title="Assists / game →")
-            _style(mfig, 400)
-            st.plotly_chart(mfig, width="stretch")
-
-        # Four Factors table (Dean Oliver — offense + defensive eFG%)
-        st.markdown("**Four factors** — eFG%, turnover %, offensive-rebound %, "
-                    "free-throw rate (plus opponent eFG%)")
-        ff = pd.DataFrame([{
-            "Team": name_of.get(t, str(t)),
-            "eFG%": round(ts[t]["eFG"], 1),
-            "TOV%": round(ts[t]["TOVpct"], 1),
-            "ORB%": round(ts[t]["ORBpct"], 1),
-            "FT Rate": round(ts[t]["FTr"], 3),
-            "Opp eFG%": round(ts[t]["oeFG"], 1),
-            "DRB%": round(ts[t]["DRBpct"], 1),
-        } for t in teams])
-        st.dataframe(
-            ff, hide_index=True, width="stretch",
-            height=min(560, 60 + 35 * len(ff)),
-            column_config={
-                "eFG%": st.column_config.ProgressColumn(
-                    "eFG%", format="%.1f", min_value=0, max_value=70),
-                "Opp eFG%": st.column_config.ProgressColumn(
-                    "Opp eFG%", format="%.1f", min_value=0, max_value=70),
-                "ORB%": st.column_config.NumberColumn("ORB%", format="%.1f"),
-                "DRB%": st.column_config.NumberColumn("DRB%", format="%.1f"),
-                "TOV%": st.column_config.NumberColumn("TOV%", format="%.1f"),
-            })
-
-        # ════════════════ SHOOTING & STYLE ════════════════
-        st.markdown("<div class='section-hdr'>Shooting & style</div>",
-                    unsafe_allow_html=True)
-        c5, c6 = st.columns(2)
-        with c5:
-            st.markdown("**Who can shoot** — eFG% & 3P%")
-            srt = sorted(teams, key=lambda t: tracked[t]["eFG"])
-            efg = [tracked[t]["eFG"] * 100 for t in srt]
-            tp = [tracked[t]["TPpct"] * 100 for t in srt]
-            slab = [name_of.get(t, str(t)) for t in srt]
-            shfig = go.Figure()
-            shfig.add_trace(go.Bar(y=slab, x=efg, name="eFG%", orientation="h",
-                                   marker_color=ACCENT))
-            shfig.add_trace(go.Bar(y=slab, x=tp, name="3P%", orientation="h",
-                                   marker_color="#58a6ff"))
-            shfig.update_layout(barmode="group")
-            shfig.update_xaxes(title="%")
-            _style(shfig, max(360, 26 * len(srt)))
-            st.plotly_chart(shfig, width="stretch")
-        with c6:
-            st.markdown("**Shot diet** — 3-point reliance vs 3P% (bubble = FGA/g)")
-            dfig = go.Figure(go.Scatter(
-                x=[ts[t]["TPAr"] for t in teams],
-                y=[ts[t]["TPpct"] for t in teams],
-                mode="markers+text", text=labels, textposition="top center",
-                textfont=dict(size=9),
-                marker=dict(size=[max(8, ts[t]["fga_pg"] / 4) for t in teams],
-                            color="#58a6ff", line=dict(width=1, color="#30363d"))))
-            dfig.update_xaxes(title="3PA rate (% of FGA) →")
-            dfig.update_yaxes(title="3P% →")
-            _style(dfig, 400)
-            st.plotly_chart(dfig, width="stretch")
-
-        c7, c8 = st.columns(2)
-        with c7:
-            _hbar("fga_pg", "Shot volume — FGA / game", "FGA/g", n=1)
-        with c8:
-            _hbar("TOVpct", "Turnover % (lower better)", "TOV%", pct=True,
-                  asc=True)
-
-        # crosshair scatter helper (mean lines, optional reversed y)
-        def _scatter(xk, yk, xt, yt, title, color="#58a6ff",
-                     yreverse=False, height=400):
-            xs = [ts[t][xk] for t in teams]
-            ys = [ts[t][yk] for t in teams]
-            fig = go.Figure(go.Scatter(
-                x=xs, y=ys, mode="markers+text", text=labels,
-                textposition="top center", textfont=dict(size=9),
-                marker=dict(size=12, color=color,
-                            line=dict(width=1, color="#30363d"))))
-            if xs:
-                fig.add_vline(x=sum(xs) / len(xs),
-                              line=dict(color="#30363d", dash="dot"))
-                fig.add_hline(y=sum(ys) / len(ys),
-                              line=dict(color="#30363d", dash="dot"))
-            fig.update_xaxes(title=xt)
-            fig.update_yaxes(title=yt, autorange="reversed" if yreverse else None)
+        def _mix_stack(share_of, keys, klabel, title, caption, height=380):
+            """Stacked share-of-possessions bar, one column per team."""
+            srt = [t for t in teams if share_of.get(t)]
+            if not srt:
+                st.caption("Nothing tagged for the selected teams yet.")
+                return
+            fig = go.Figure()
+            for i, k in enumerate(keys):
+                fig.add_trace(go.Bar(
+                    x=[name_of.get(t, str(t)) for t in srt],
+                    y=[100 * (share_of[t].get(k) or 0) for t in srt],
+                    name=klabel.get(k, k),
+                    marker_color=_MIXPAL[i % len(_MIXPAL)]))
+            fig.update_layout(barmode="stack")
+            fig.update_yaxes(title="% of tagged possessions")
+            fig.update_xaxes(tickangle=-40)
             _style(fig, height)
             st.markdown(f"**{title}**")
             st.plotly_chart(fig, width="stretch")
+            st.caption(caption)
 
-        c11, c12 = st.columns(2)
-        with c11:
-            _scatter("eFG", "TS", "eFG% →", "TS% →",
-                     "Shooting map — eFG% vs TS% (crosshairs = league avg)")
-        with c12:
-            _scatter("paint_pg", "paint3_pg", "Paint pts/g →", "3PT pts/g →",
-                     "Inside vs outside — paint vs 3PT scoring", color="#f0a500")
+        def _cell_bar(cells, key, title, axis, asc=False, minposs=PT.MIN_POSS,
+                      color=ACCENT, chart_key=None):
+            """Sorted bar of one metric for one set call / scheme across teams.
 
-        # assisted vs self-created (Ast% of made FGs)
-        st.markdown("**Ball movement** — assisted vs self-created field goals")
-        srt = sorted(teams, key=lambda t: ts[t]["Astpct"], reverse=True)
-        slab = [name_of.get(t, str(t)) for t in srt]
-        afig = go.Figure()
-        afig.add_trace(go.Bar(x=slab, y=[ts[t]["Astpct"] for t in srt],
-                              name="Assisted %", marker_color="#1a9850"))
-        afig.add_trace(go.Bar(x=slab, y=[100 - ts[t]["Astpct"] for t in srt],
-                              name="Self-created %", marker_color=AWAY))
-        afig.update_layout(barmode="stack")
-        afig.update_yaxes(title="% of made FGs")
-        afig.update_xaxes(tickangle=-40)
-        _style(afig, 360)
-        st.plotly_chart(afig, width="stretch")
-        st.caption("Assisted% = made FGs off a pass (AST/FGM). High = ball-movement "
-                   "offense; low = isolation / self-creation.")
+            `cells` = {tid: {tagkey: row}}. A team under `minposs` on this tag is
+            DROPPED, not zeroed — a thin sample must not plot as the league's
+            worst."""
+            have = [(t, cells.get(t, {}).get(key)) for t in teams]
+            have = [(t, r) for t, r in have
+                    if r and r["poss"] >= minposs and r["PPP"] is not None]
+            if not have:
+                st.caption(f"No team has {minposs}+ tagged possessions here yet.")
+                return
+            have.sort(key=lambda x: x[1]["PPP"], reverse=not asc)
+            fig = go.Figure(go.Bar(
+                y=[name_of.get(t, str(t)) for t, _ in have],
+                x=[r["PPP"] for _, r in have], orientation="h",
+                marker_color=color, marker_line_width=0,
+                text=[f"{r['PPP']:.2f} ({r['poss']} poss)" for _, r in have],
+                textposition="auto",
+                hovertemplate="<b>%{y}</b><br>" + axis + ": %{x:.2f}<extra></extra>"))
+            fig.update_xaxes(title=axis)
+            _style(fig, max(300, 26 * len(have)))
+            st.markdown(f"**{title}**")
+            st.plotly_chart(fig, width="stretch", key=chart_key)
+            st.caption(f"Teams with fewer than {minposs} tagged possessions on "
+                       "this tag are left out rather than shown at zero.")
 
-        # ════════════════ DEFENSE ════════════════
-        st.markdown("<div class='section-hdr'>Defense</div>",
-                    unsafe_allow_html=True)
-        d1, d2 = st.columns(2)
-        with d1:
-            _hbar("oeFG", "Opponent eFG% (lower better)", "Opp eFG%",
-                  pct=True, asc=True)
-        with d2:
-            _scatter("blk_r", "stl_r", "Block rate (per 100) →",
-                     "Steal rate (per 100) →",
-                     "Rim vs perimeter D — blocks vs steals", color="#9b59b6")
+        def _cell_table(cells, taglist, label_of, ppp_label="PPP"):
+            """Full-league table (ignores the team filter, per the tab contract):
+            one row per team, one column per tag, PPP with the possession count."""
+            rows = []
+            for t in all_teams:
+                c = cells.get(t) or {}
+                if not c:
+                    continue
+                row = {"Team": name_of.get(t, str(t))}
+                for k in taglist:
+                    r = c.get(k)
+                    # poss > 0, not "PPP is not None": stats._safe returns 0.0 on
+                    # a zero denominator, and the engine legitimately keeps rows
+                    # with poss == 0 when a set only ever drew a foul. Those carry
+                    # PPP 0.0 — printing that would show a set the team never ran
+                    # a possession of as its worst.
+                    row[label_of[k]] = (f"{r['PPP']:.2f} ({r['poss']})"
+                                        if r and r["poss"] > 0 else "—")
+                rows.append(row)
+            if not rows:
+                st.caption("Nothing tagged in this pool yet.")
+                return
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
+                         height=min(560, 60 + 35 * len(rows)))
+            st.caption(f"{ppp_label} with tagged possessions in parentheses. "
+                       "Full league — the team filter above only trims the "
+                       "graphs. A dash means nothing tagged for that team.")
 
-        # ════════════════ POSSESSIONS & EFFICIENCY ════════════════
-        st.markdown("<div class='section-hdr'>Possessions & efficiency</div>",
-                    unsafe_allow_html=True)
-        st.caption("A possession ends on a shot or a turnover (FGA + TOV); "
-                   "free throws and fouls don't count. Pace is possessions per "
-                   "game; PPP is points per possession.")
-        c9, c10 = st.columns(2)
-        with c9:
-            _hbar("Pace", "Pace — possessions / game", "Poss/g", n=1)
-        with c10:
-            st.markdown("**Efficiency** — points per possession (own vs allowed)")
-            srt = sorted(teams, key=lambda t: ts[t]["PPP"] - ts[t]["oPPP"])
-            slab = [name_of.get(t, str(t)) for t in srt]
-            efig = go.Figure()
-            efig.add_trace(go.Bar(y=slab, x=[ts[t]["PPP"] for t in srt],
-                                  name="PPP (off)", orientation="h",
-                                  marker_color=ACCENT))
-            efig.add_trace(go.Bar(y=slab, x=[ts[t]["oPPP"] for t in srt],
-                                  name="Opp PPP (def)", orientation="h",
-                                  marker_color=AWAY))
-            efig.update_layout(barmode="group")
-            efig.update_xaxes(title="Points / possession")
-            _style(efig, max(360, 26 * len(srt)))
-            st.plotly_chart(efig, width="stretch")
+        # ══════════════════ STORY — OFFENSE ══════════════════
+        if _story == "Offense":
+            _o_sc, _o_sh, _o_pm = st.tabs(["Scoring", "Shooting", "Playmaking"])
 
-        # net efficiency margin per possession
-        _hbar2_metric = {t: ts[t]["PPP"] - ts[t]["oPPP"] for t in teams}
-        st.markdown("**Net points per possession** (PPP − opponent PPP)")
-        srt = sorted(teams, key=lambda t: _hbar2_metric[t], reverse=True)
-        vals = [_hbar2_metric[t] for t in srt]
-        nfig = go.Figure(go.Bar(
-            x=[name_of.get(t, str(t)) for t in srt], y=vals,
-            marker_color=[ACCENT if v >= 0 else AWAY for v in vals],
-            text=[f"{v:+.3f}" for v in vals], textposition="outside",
-            marker_line_width=0))
-        nfig.add_hline(y=0, line=dict(color="#30363d", width=1))
-        nfig.update_yaxes(title="Net PPP")
-        _style(nfig, 340)
-        st.plotly_chart(nfig, width="stretch")
+            with _o_sc:
+                st.markdown("**How teams score** — points per game by source")
+                two = [own[t]["2PM"] * 2 / max(gp[t], 1) for t in teams]
+                thr = [own[t]["3PM"] * 3 / max(gp[t], 1) for t in teams]
+                ftp = [own[t]["FTM"] / max(gp[t], 1) for t in teams]
+                sfig = go.Figure()
+                sfig.add_trace(go.Bar(x=labels, y=two, name="2-pt",
+                                      marker_color=ACCENT))
+                sfig.add_trace(go.Bar(x=labels, y=thr, name="3-pt",
+                                      marker_color="#58a6ff"))
+                sfig.add_trace(go.Bar(x=labels, y=ftp, name="FT",
+                                      marker_color="#8b949e"))
+                sfig.update_layout(barmode="stack")
+                sfig.update_yaxes(title="Points / game")
+                _style(sfig, 380)
+                st.plotly_chart(sfig, width="stretch")
 
-        # ════════════════ GAME FLOW (quarter data) ════════════════
-        st.markdown("<div class='section-hdr'>Game flow — quarter data</div>",
-                    unsafe_allow_html=True)
-        allq = sorted({q for t in teams for q in qfor[t]} |
-                      {q for t in teams for q in qagn[t]})
-        qlabels = [_q_label(q) for q in allq]
+                c1, c2 = st.columns(2)
+                with c1:
+                    _hbar("TS", "True shooting %", "TS%", pct=True)
+                with c2:
+                    _hbar("paint_pg", "Paint scoring — points / game", "Paint pts/g")
 
-        f1, f2 = st.columns(2)
-        with f1:
-            st.markdown("**Points scored by quarter** (top 8)")
-            qfig = go.Figure()
+                st.markdown("**Offense vs defense** (bubble = pace)")
+                ortg = [tracked[t]["ORtg"] for t in teams]
+                drtg = [tracked[t]["DRtg"] for t in teams]
+                pace = [tracked[t]["Pace"] for t in teams]
+                wfig = go.Figure(go.Scatter(
+                    x=ortg, y=drtg, mode="markers+text", text=labels,
+                    textposition="top center", textfont=dict(size=9),
+                    marker=dict(size=[max(8, p / 2) for p in pace], color=ortg,
+                                colorscale=HEAT, showscale=False,
+                                line=dict(width=1, color="#30363d"))))
+                if ortg:
+                    wfig.add_vline(x=sum(ortg) / len(ortg),
+                                   line=dict(color="#30363d", dash="dot"))
+                    wfig.add_hline(y=sum(drtg) / len(drtg),
+                                   line=dict(color="#30363d", dash="dot"))
+                wfig.update_xaxes(title="Offensive rating →")
+                wfig.update_yaxes(title="← Defensive rating (lower better)",
+                                  autorange="reversed")
+                _style(wfig, 400)
+                st.plotly_chart(wfig, width="stretch")
+
+                # Four Factors table (Dean Oliver — offense + defensive eFG%)
+                st.markdown("**Four factors** — eFG%, turnover %, offensive-rebound "
+                            "%, free-throw rate (plus opponent eFG%)")
+                ff = pd.DataFrame([{
+                    "Team": name_of.get(t, str(t)),
+                    "eFG%": round(ts[t]["eFG"], 1),
+                    "TOV%": round(ts[t]["TOVpct"], 1),
+                    "ORB%": round(ts[t]["ORBpct"], 1),
+                    "FT Rate": round(ts[t]["FTr"], 3),
+                    "Opp eFG%": round(ts[t]["oeFG"], 1),
+                    "DRB%": round(ts[t]["DRBpct"], 1),
+                } for t in all_teams])
+                st.dataframe(
+                    ff, hide_index=True, width="stretch",
+                    height=min(560, 60 + 35 * len(ff)),
+                    column_config={
+                        "eFG%": st.column_config.ProgressColumn(
+                            "eFG%", format="%.1f", min_value=0, max_value=70),
+                        "Opp eFG%": st.column_config.ProgressColumn(
+                            "Opp eFG%", format="%.1f", min_value=0, max_value=70),
+                        "ORB%": st.column_config.NumberColumn("ORB%", format="%.1f"),
+                        "DRB%": st.column_config.NumberColumn("DRB%", format="%.1f"),
+                        "TOV%": st.column_config.NumberColumn("TOV%", format="%.1f"),
+                    })
+                st.caption("Full league — the team filter trims the graphs, not "
+                           "the tables.")
+
+            with _o_sh:
+                c5, c6 = st.columns(2)
+                with c5:
+                    st.markdown("**Who can shoot** — eFG% & 3P%")
+                    srt = sorted(teams, key=lambda t: tracked[t]["eFG"])
+                    efg = [tracked[t]["eFG"] * 100 for t in srt]
+                    tp = [tracked[t]["TPpct"] * 100 for t in srt]
+                    slab = [name_of.get(t, str(t)) for t in srt]
+                    shfig = go.Figure()
+                    shfig.add_trace(go.Bar(y=slab, x=efg, name="eFG%",
+                                           orientation="h", marker_color=ACCENT))
+                    shfig.add_trace(go.Bar(y=slab, x=tp, name="3P%",
+                                           orientation="h", marker_color="#58a6ff"))
+                    shfig.update_layout(barmode="group")
+                    shfig.update_xaxes(title="%")
+                    _style(shfig, max(360, 26 * len(srt)))
+                    st.plotly_chart(shfig, width="stretch")
+                with c6:
+                    st.markdown("**Shot diet** — 3-point reliance vs 3P% "
+                                "(bubble = FGA/g)")
+                    dfig = go.Figure(go.Scatter(
+                        x=[ts[t]["TPAr"] for t in teams],
+                        y=[ts[t]["TPpct"] for t in teams],
+                        mode="markers+text", text=labels, textposition="top center",
+                        textfont=dict(size=9),
+                        marker=dict(size=[max(8, ts[t]["fga_pg"] / 4) for t in teams],
+                                    color="#58a6ff",
+                                    line=dict(width=1, color="#30363d"))))
+                    dfig.update_xaxes(title="3PA rate (% of FGA) →")
+                    dfig.update_yaxes(title="3P% →")
+                    _style(dfig, 400)
+                    st.plotly_chart(dfig, width="stretch")
+
+                c7, c8 = st.columns(2)
+                with c7:
+                    _hbar("fga_pg", "Shot volume — FGA / game", "FGA/g", n=1)
+                with c8:
+                    _hbar("TOVpct", "Turnover % (lower better)", "TOV%", pct=True,
+                          asc=True)
+
+                c11, c12 = st.columns(2)
+                with c11:
+                    _scatter("eFG", "TS", "eFG% →", "TS% →",
+                             "Shooting map — eFG% vs TS% (crosshairs = league avg)")
+                with c12:
+                    _scatter("paint_pg", "paint3_pg", "Paint pts/g →", "3PT pts/g →",
+                             "Inside vs outside — paint vs 3PT scoring",
+                             color="#f0a500")
+
+            with _o_pm:
+                st.markdown("**Ball movement** — assists vs turnovers per game")
+                mfig = go.Figure(go.Scatter(
+                    x=[ts[t]["tov_pg"] for t in teams],
+                    y=[ts[t]["ast_pg"] for t in teams],
+                    mode="markers+text", text=labels, textposition="top center",
+                    textfont=dict(size=9),
+                    marker=dict(size=12,
+                                color=[ts[t]["ast_per_fgm"] for t in teams],
+                                colorscale=HEAT, showscale=True,
+                                colorbar=dict(title="AST/<br>FGM", thickness=10),
+                                line=dict(width=1, color="#30363d"))))
+                mfig.update_xaxes(title="Turnovers / game →")
+                mfig.update_yaxes(title="Assists / game →")
+                _style(mfig, 400)
+                st.plotly_chart(mfig, width="stretch")
+
+                st.markdown("**Assisted vs self-created field goals**")
+                srt = sorted(teams, key=lambda t: ts[t]["Astpct"], reverse=True)
+                slab = [name_of.get(t, str(t)) for t in srt]
+                afig = go.Figure()
+                afig.add_trace(go.Bar(x=slab, y=[ts[t]["Astpct"] for t in srt],
+                                      name="Assisted %", marker_color="#1a9850"))
+                afig.add_trace(go.Bar(x=slab, y=[100 - ts[t]["Astpct"] for t in srt],
+                                      name="Self-created %", marker_color=AWAY))
+                afig.update_layout(barmode="stack")
+                afig.update_yaxes(title="% of made FGs")
+                afig.update_xaxes(tickangle=-40)
+                _style(afig, 360)
+                st.plotly_chart(afig, width="stretch")
+                st.caption("Assisted% = made FGs off a pass (AST/FGM). High = "
+                           "ball-movement offense; low = isolation / "
+                           "self-creation.")
+
+        # ══════════════════ STORY — PLAY STYLE ══════════════════
+        # The cross-team twin of the dashboard's Play Style tab: what each team
+        # actually CALLS and how well each call works, from the one-tap play_type
+        # tag plus the inferred tempo / shot-creation lenses.
+        elif _story == "Play Style":
+            sp = _load_style()
+            if sp:
+                _sets = sp["sets"]
+                _setlbl = dict(PT.NAMED_PLAY_TYPES)
+
+                st.markdown("<div class='section-hdr'>Efficiency by set call</div>",
+                            unsafe_allow_html=True)
+                st.caption("Points per possession running each tagged set — "
+                           "sorted, one bar per team. A possession is a tagged "
+                           "shot or a tagged turnover, so PPP is a true "
+                           "per-possession rate. Free throws are excluded (the "
+                           "app-wide PPP convention).")
+                _present = [k for k, _ in PT.NAMED_PLAY_TYPES
+                            if any((_sets.get(t, {}).get(k) or {}).get("poss", 0)
+                                   >= PT.MIN_POSS for t in all_teams)]
+                if not _present:
+                    st.info("No set call has a chartable sample yet — tag set "
+                            "calls in the tracker and this fills in.")
+                else:
+                    _spick = st.pills("Set call",
+                                      [_setlbl[k] for k in _present],
+                                      default=_setlbl[_present[0]], key="cs_set")
+                    if _spick:
+                        _sk = next(k for k in _present if _setlbl[k] == _spick)
+                        _cell_bar(_sets, _sk,
+                                  f"{_spick} — points per possession",
+                                  "PPP", chart_key=f"cs_set_{_sk}")
+
+                st.markdown("<div class='section-hdr'>Style mix</div>",
+                            unsafe_allow_html=True)
+                _mix_stack({t: {k: (r or {}).get("share")
+                                for k, r in (_sets.get(t) or {}).items()}
+                            for t in teams},
+                           _present or [k for k, _ in PT.NAMED_PLAY_TYPES],
+                           _setlbl,
+                           "What each team runs — share of tagged possessions "
+                           "by set call",
+                           "Each column is one team's tagged possessions split by "
+                           "set call. Tall blocks are that team's identity; this "
+                           "is usage, not efficiency.", height=420)
+
+                # the two INFERRED lenses (tempo + creation) — no tagging needed,
+                # they read possession_secs and the pass/screen fields, so they
+                # light up even on games nobody tagged.
+                _lens = sp["lens"]
+                st.markdown("<div class='section-hdr'>Tempo & shot creation</div>",
+                            unsafe_allow_html=True)
+                st.caption("These two lenses are INFERRED from logged tempo and "
+                           "shot creation, not from the set-call tag — so they "
+                           "read on every tracked game, tagged or not. A shot "
+                           "lands in one tempo bucket and one creation bucket; "
+                           "the lenses sit side by side and don't sum together.")
+                _tempo_keys = [k for k, _l, ax, _b in PT.PLAY_TYPES if ax == "tempo"]
+                _crea_keys = [k for k, _l, ax, _b in PT.PLAY_TYPES if ax == "creation"]
+                _ptlbl = {k: l for k, l, _ax, _b in PT.PLAY_TYPES}
+                _lens_share = {t: {k: (_lens.get(t, {}).get(k) or {}).get("share")
+                                   for k, _l, _ax, _b in PT.PLAY_TYPES}
+                               for t in teams}
+                _mix_stack(_lens_share, _tempo_keys, _ptlbl,
+                           "Tempo mix — when the shot goes up",
+                           "Transition ≤6s · Early 7-14s · Half-court 15s+. "
+                           "Untimed possessions (no clock logged) drop out.")
+                _mix_stack(_lens_share, _crea_keys, _ptlbl,
+                           "Shot-creation mix — how the shot was made",
+                           "Self = no pass, no screen · Spot-up = pass only · "
+                           "Off a screen = screen only · Screen + pass = both.")
+
+                st.markdown("<div class='section-hdr'>Set-call table</div>",
+                            unsafe_allow_html=True)
+                _cell_table(_sets, [k for k, _ in PT.NAMED_PLAY_TYPES], _setlbl)
+
+        # ══════════════════ STORY — DEFENSE ══════════════════
+        elif _story == "Defense":
+            _d_td, _d_sch, _d_gl = st.tabs(["Team Defense", "Scheme", "Glass"])
+
+            with _d_td:
+                d1, d2 = st.columns(2)
+                with d1:
+                    _hbar("oeFG", "Opponent eFG% (lower better)", "Opp eFG%",
+                          pct=True, asc=True)
+                with d2:
+                    _scatter("blk_r", "stl_r", "Block rate (per 100) →",
+                             "Steal rate (per 100) →",
+                             "Rim vs perimeter D — blocks vs steals",
+                             color="#9b59b6")
+                c1, c2 = st.columns(2)
+                with c1:
+                    _hbar("DRtg", "Defensive rating (lower better)", "DRtg",
+                          asc=True, n=1, key="cd_drtg")
+                with c2:
+                    _hbar("oPPP", "Opponent points per possession (lower better)",
+                          "Opp PPP", asc=True, n=3, key="cd_oppp")
+
+            # The one-tap `defense` deep dive — the cross-team twin of the
+            # dashboard's Defense → Scheme tab. Two reads off the same tag:
+            # what a team RUNS (PPP allowed) and what it FACES (PPP scored).
+            with _d_sch:
+                sp = _load_style()
+                if sp:
+                    _sch, _faced = sp["schemes"], sp["faced"]
+                    _dlbl = {k: l for k, l, _f in DEF.DEFENSES}
+
+                    st.markdown("<div class='section-hdr'>Schemes they run — "
+                                "points allowed</div>", unsafe_allow_html=True)
+                    st.caption("PPP the team ALLOWS while sitting in each scheme "
+                               "— lower is better, so the bars sort fewest-first. "
+                               "This is the scout headline: which of their looks "
+                               "actually gets stops.")
+                    _dpres = [k for k, _l, _f in DEF.DEFENSES
+                              if any((_sch.get(t, {}).get(k) or {}).get("poss", 0)
+                                     >= PT.MIN_POSS for t in all_teams)]
+                    if not _dpres:
+                        st.info("No scheme has a chartable sample yet — set the "
+                                "sticky defense tag in the tracker and this "
+                                "fills in.")
+                    else:
+                        _dpick = st.pills("Scheme", [_dlbl[k] for k in _dpres],
+                                          default=_dlbl[_dpres[0]], key="cs_dfn")
+                        if _dpick:
+                            _dk = next(k for k in _dpres if _dlbl[k] == _dpick)
+                            _cell_bar(_sch, _dk,
+                                      f"{_dpick} — points allowed per possession",
+                                      "Opp PPP", asc=True, color="#9b59b6",
+                                      chart_key=f"cs_dfn_{_dk}")
+
+                    st.markdown("<div class='section-hdr'>Scheme mix</div>",
+                                unsafe_allow_html=True)
+                    _mix_stack({t: {k: (r or {}).get("share")
+                                    for k, r in (_sch.get(t) or {}).items()}
+                                for t in teams},
+                               _dpres or [k for k, _l, _f in DEF.DEFENSES], _dlbl,
+                               "What each team runs — share of tagged defensive "
+                               "possessions",
+                               "Defensive identity at a glance: a single tall "
+                               "block is a man-only team, a split column is a "
+                               "multiple-defense team.", height=420)
+
+                    st.markdown("<div class='section-hdr'>Schemes they face — "
+                                "points scored</div>", unsafe_allow_html=True)
+                    st.caption("The game-plan headline, flipped: PPP the team "
+                               "SCORES against each scheme it faces. Higher is "
+                               "better here — this is what to avoid playing them "
+                               "in.")
+                    _fpres = [k for k, _l, _f in DEF.DEFENSES
+                              if any((_faced.get(t, {}).get(k) or {}).get("poss", 0)
+                                     >= PT.MIN_POSS for t in all_teams)]
+                    if _fpres:
+                        _fpick = st.pills("Scheme faced",
+                                          [_dlbl[k] for k in _fpres],
+                                          default=_dlbl[_fpres[0]], key="cs_faced")
+                        if _fpick:
+                            _fk = next(k for k in _fpres if _dlbl[k] == _fpick)
+                            _cell_bar(_faced, _fk,
+                                      f"Attacking {_fpick} — points per possession",
+                                      "PPP", color="#f0a500",
+                                      chart_key=f"cs_faced_{_fk}")
+                    else:
+                        st.caption("No scheme faced has a chartable sample yet.")
+
+                    st.markdown("<div class='section-hdr'>Scheme table — "
+                                "points allowed</div>", unsafe_allow_html=True)
+                    _cell_table(_sch, [k for k, _l, _f in DEF.DEFENSES], _dlbl,
+                                ppp_label="PPP allowed")
+
+            with _d_gl:
+                g1, g2 = st.columns(2)
+                with g1:
+                    _hbar("DRBpct", "Defensive-rebound %", "DRB%", pct=True,
+                          key="cg_drb")
+                with g2:
+                    _hbar("ORBpct", "Offensive-rebound %", "ORB%", pct=True,
+                          key="cg_orb")
+                _scatter("ORBpct", "DRBpct", "Off-rebound % →",
+                         "Def-rebound % →",
+                         "The glass — crashing vs closing (crosshairs = league avg)",
+                         color="#1a9850")
+                st.caption("Top-right owns both boards. Bottom-right closes its "
+                           "own glass but doesn't crash; top-left crashes but "
+                           "gives up second chances. The per-team rebound shot "
+                           "maps (where boards come from, by set call and by "
+                           "scheme) live on the Team Dashboard.")
+
+        # ══════════════════ STORY — QUARTERS & PACE ══════════════════
+        # Kept from the pre-story chart wall (possession/efficiency + game flow).
+        # These already shipped as cross-team charts, so the story port preserves
+        # them rather than dropping them on the floor.
+        else:
+            st.markdown("<div class='section-hdr'>Possessions & efficiency</div>",
+                        unsafe_allow_html=True)
+            st.caption("A possession ends on a shot or a turnover (FGA + TOV); "
+                       "free throws and fouls don't count. Pace is possessions "
+                       "per game; PPP is points per possession.")
+            c9, c10 = st.columns(2)
+            with c9:
+                _hbar("Pace", "Pace — possessions / game", "Poss/g", n=1)
+            with c10:
+                st.markdown("**Efficiency** — points per possession "
+                            "(own vs allowed)")
+                srt = sorted(teams, key=lambda t: ts[t]["PPP"] - ts[t]["oPPP"])
+                slab = [name_of.get(t, str(t)) for t in srt]
+                efig = go.Figure()
+                efig.add_trace(go.Bar(y=slab, x=[ts[t]["PPP"] for t in srt],
+                                      name="PPP (off)", orientation="h",
+                                      marker_color=ACCENT))
+                efig.add_trace(go.Bar(y=slab, x=[ts[t]["oPPP"] for t in srt],
+                                      name="Opp PPP (def)", orientation="h",
+                                      marker_color=AWAY))
+                efig.update_layout(barmode="group")
+                efig.update_xaxes(title="Points / possession")
+                _style(efig, max(360, 26 * len(srt)))
+                st.plotly_chart(efig, width="stretch")
+
+            # net efficiency margin per possession
+            _hbar2_metric = {t: ts[t]["PPP"] - ts[t]["oPPP"] for t in teams}
+            st.markdown("**Net points per possession** (PPP − opponent PPP)")
+            srt = sorted(teams, key=lambda t: _hbar2_metric[t], reverse=True)
+            vals = [_hbar2_metric[t] for t in srt]
+            nfig = go.Figure(go.Bar(
+                x=[name_of.get(t, str(t)) for t in srt], y=vals,
+                marker_color=[ACCENT if v >= 0 else AWAY for v in vals],
+                text=[f"{v:+.3f}" for v in vals], textposition="outside",
+                marker_line_width=0))
+            nfig.add_hline(y=0, line=dict(color="#30363d", width=1))
+            nfig.update_yaxes(title="Net PPP")
+            _style(nfig, 340)
+            st.plotly_chart(nfig, width="stretch")
+
+            # ════════════════ GAME FLOW (quarter data) ════════════════
+            st.markdown("<div class='section-hdr'>Game flow — quarter data</div>",
+                        unsafe_allow_html=True)
+            allq = sorted({q for t in teams for q in qfor[t]} |
+                          {q for t in teams for q in qagn[t]})
+            qlabels = [_q_label(q) for q in allq]
+
+            f1, f2 = st.columns(2)
+            with f1:
+                st.markdown("**Points scored by quarter** (top 8)")
+                qfig = go.Figure()
+                for t in teams[:8]:
+                    ys = [qfor[t].get(q, 0) / max(gp[t], 1) for q in allq]
+                    qfig.add_trace(go.Scatter(
+                        x=qlabels, y=ys, mode="lines+markers",
+                        name=name_of.get(t, str(t))))
+                qfig.update_yaxes(title="Points / game")
+                _style(qfig, 360)
+                st.plotly_chart(qfig, width="stretch")
+            with f2:
+                st.markdown("**Points allowed by quarter** (top 8)")
+                afig = go.Figure()
+                for t in teams[:8]:
+                    ys = [qagn[t].get(q, 0) / max(gp[t], 1) for q in allq]
+                    afig.add_trace(go.Scatter(
+                        x=qlabels, y=ys, mode="lines+markers",
+                        name=name_of.get(t, str(t))))
+                afig.update_yaxes(title="Points / game")
+                _style(afig, 360)
+                st.plotly_chart(afig, width="stretch")
+            if len(teams) > 8:
+                st.caption("Quarter lines show the top 8 teams to stay readable.")
+
+            # league-average quarter shape: scored, allowed, net
+            st.markdown("**League quarter shape** — average points scored & allowed")
+            lf = [sum(qfor[t].get(q, 0) for t in teams) /
+                  max(sum(gp[t] for t in teams), 1) for q in allq]
+            la = [sum(qagn[t].get(q, 0) for t in teams) /
+                  max(sum(gp[t] for t in teams), 1) for q in allq]
+            lfig = go.Figure()
+            lfig.add_trace(go.Bar(x=qlabels, y=lf, name="Scored",
+                                  marker_color=ACCENT,
+                                  text=[f"{v:.1f}" for v in lf],
+                                  textposition="outside"))
+            lfig.add_trace(go.Bar(x=qlabels, y=la, name="Allowed",
+                                  marker_color=AWAY,
+                                  text=[f"{v:.1f}" for v in la],
+                                  textposition="outside"))
+            lfig.update_layout(barmode="group")
+            lfig.update_yaxes(title="Points / game (per team)")
+            _style(lfig, 320)
+            st.plotly_chart(lfig, width="stretch")
+
+            # points per possession by quarter (league + per team), from quarter boxes
+            st.markdown("**Points per possession by quarter** (top 8)")
+            ppp_fig = go.Figure()
             for t in teams[:8]:
-                ys = [qfor[t].get(q, 0) / max(gp[t], 1) for q in allq]
-                qfig.add_trace(go.Scatter(
-                    x=qlabels, y=ys, mode="lines+markers",
+                ys = []
+                for q in allq:
+                    bx = tqbox[t].get(q)
+                    poss = S.estimate_possessions(bx) if bx else 0
+                    ys.append(round(bx["PTS"] / poss, 3) if poss > 0 else None)
+                ppp_fig.add_trace(go.Scatter(
+                    x=qlabels, y=ys, mode="lines+markers", connectgaps=True,
                     name=name_of.get(t, str(t))))
-            qfig.update_yaxes(title="Points / game")
-            _style(qfig, 360)
-            st.plotly_chart(qfig, width="stretch")
-        with f2:
-            st.markdown("**Points allowed by quarter** (top 8)")
-            afig = go.Figure()
-            for t in teams[:8]:
-                ys = [qagn[t].get(q, 0) / max(gp[t], 1) for q in allq]
-                afig.add_trace(go.Scatter(
-                    x=qlabels, y=ys, mode="lines+markers",
-                    name=name_of.get(t, str(t))))
-            afig.update_yaxes(title="Points / game")
-            _style(afig, 360)
-            st.plotly_chart(afig, width="stretch")
-        if len(teams) > 8:
-            st.caption("Quarter lines show the top 8 teams to stay readable.")
-
-        # league-average quarter shape: scored, allowed, net
-        st.markdown("**League quarter shape** — average points scored & allowed")
-        lf = [sum(qfor[t].get(q, 0) for t in teams) /
-              max(sum(gp[t] for t in teams), 1) for q in allq]
-        la = [sum(qagn[t].get(q, 0) for t in teams) /
-              max(sum(gp[t] for t in teams), 1) for q in allq]
-        lfig = go.Figure()
-        lfig.add_trace(go.Bar(x=qlabels, y=lf, name="Scored", marker_color=ACCENT,
-                              text=[f"{v:.1f}" for v in lf], textposition="outside"))
-        lfig.add_trace(go.Bar(x=qlabels, y=la, name="Allowed", marker_color=AWAY,
-                              text=[f"{v:.1f}" for v in la], textposition="outside"))
-        lfig.update_layout(barmode="group")
-        lfig.update_yaxes(title="Points / game (per team)")
-        _style(lfig, 320)
-        st.plotly_chart(lfig, width="stretch")
-
-        # points per possession by quarter (league + per team), from quarter boxes
-        st.markdown("**Points per possession by quarter** (top 8)")
-        ppp_fig = go.Figure()
-        for t in teams[:8]:
-            ys = []
-            for q in allq:
-                bx = tqbox[t].get(q)
-                poss = S.estimate_possessions(bx) if bx else 0
-                ys.append(round(bx["PTS"] / poss, 3) if poss > 0 else None)
-            ppp_fig.add_trace(go.Scatter(
-                x=qlabels, y=ys, mode="lines+markers", connectgaps=True,
-                name=name_of.get(t, str(t))))
-        ppp_fig.update_yaxes(title="Points / possession")
-        _style(ppp_fig, 360)
-        st.plotly_chart(ppp_fig, width="stretch")
-        st.caption("Quarter PPP uses each team's per-quarter box "
-                   "(FGA + TOV possessions — shots + turnovers).")
-
+            ppp_fig.update_yaxes(title="Points / possession")
+            _style(ppp_fig, 360)
+            st.plotly_chart(ppp_fig, width="stretch")
+            st.caption("Quarter PPP uses each team's per-quarter box "
+                       "(FGA + TOV possessions — shots + turnovers).")
 
 # _fx_chart() is now rendered under the merged "League landscape" view (below),
 # not its own top-level view — see the League-landscape gate near the page tail.

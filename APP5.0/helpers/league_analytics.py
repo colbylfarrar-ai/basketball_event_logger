@@ -721,6 +721,83 @@ def team_style_tags(game_ids=None):
     return out
 
 
+def team_style_pack(gender=None, tracked=None, game_ids=None, season="Current"):
+    """
+    The per-team STYLE bundle — the play-style / defensive-scheme twin of
+    `team_tracked_pack`, assembled ONCE so every cross-team style chart reads the
+    same numbers.
+
+    The style engines (helpers/playtypes, helpers/defenses) are all single-team,
+    so a league view is N teams x a heavy engine. They each accept an `events`
+    param, so this does ONE event fetch and threads the same list through every
+    team — the whole reason this lives here instead of in the page.
+
+    `game_ids` is the entitlement read-filter, same contract as
+    `team_tracked_pack`: a League-wide surface passes the pooled set so only
+    pooled games feed it.
+
+    Returns a dict:
+      teams    [team_id, ...] ordered by tracked Power rank
+      sets     {tid: {play_type_key: row}}  own offense by the one-tap set call
+      schemes  {tid: {defense_key: row}}    the schemes the team RUNS (PPP allowed)
+      faced    {tid: {defense_key: row}}    the schemes it FACES (PPP scored)
+      lens     {tid: {play_type_key: cell}} inferred tempo + creation lenses
+      name_of, class_of  label maps
+
+    `sets` / `schemes` / `faced` rows carry the engines' own row dicts (key,
+    label, poss, PPP, share, eFG, TO%, ...). A team with nothing tagged simply
+    has an empty dict — never a zero — so an untagged team drops out of a chart
+    rather than plotting as the league's worst.
+    """
+    if tracked is None:
+        tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids, season=season)
+    games = TR._finished_games(gender=gender, tracked_only=True, game_ids=game_ids,
+                               season=season)
+    if not tracked or not games:
+        return {"teams": [], "sets": {}, "schemes": {}, "faced": {}, "lens": {},
+                "name_of": {}, "class_of": {}}
+
+    import helpers.playtypes as PT
+    import helpers.defenses as DF
+
+    events = S.fetch_events([g["id"] for g in games])
+    meta = TR._team_meta(gender=gender)
+    teams = sorted(tracked, key=lambda t: tracked[t]["Rank"])
+
+    sets, schemes, faced, lens = {}, {}, {}, {}
+    for t in teams:
+        # Each engine is independently guarded: a team with no tagged events of
+        # one kind must not blank the other three lenses.
+        try:
+            sets[t] = {r["key"]: r for r in
+                       PT.team_named_playtypes(t, events=events,
+                                               offense=True)["rows"]}
+        except Exception:
+            sets[t] = {}
+        try:
+            schemes[t] = {r["key"]: r for r in
+                          DF.team_defenses(t, events=events,
+                                           offense=False)["rows"]}
+        except Exception:
+            schemes[t] = {}
+        try:
+            faced[t] = {r["key"]: r for r in
+                        DF.team_defenses(t, events=events, offense=True)["rows"]}
+        except Exception:
+            faced[t] = {}
+        try:
+            lens[t] = PT.team_playtypes(t, events=events, offense=True)
+        except Exception:
+            lens[t] = {}
+
+    return {
+        "teams": teams,
+        "sets": sets, "schemes": schemes, "faced": faced, "lens": lens,
+        "name_of": {t: meta.get(t, {}).get("name", str(t)) for t in tracked},
+        "class_of": {t: meta.get(t, {}).get("class", "N/A") for t in tracked},
+    }
+
+
 def similar_teams(team_id, pack, n=5, tags=None):
     """Most stylistically similar tracked teams to `team_id`.
 

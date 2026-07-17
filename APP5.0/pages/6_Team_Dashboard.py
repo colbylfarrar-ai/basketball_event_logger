@@ -48,6 +48,7 @@ from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
                            gauge_dial as _pp_gauge, bar_h,
+                           verdict_card as _verdict_card,
                            scoring_donut as _donut)
 from helpers.court import (shot_chart as _shot_chart, hot_zones as _hot_zones,
                            shot_map as _shot_map, shot_hexbin as _shot_hexbin,
@@ -772,17 +773,10 @@ def _ord(n):
 
 
 def _verdict_lines(lines):
-    """Insights-style plain-word read box. `lines` = [(badge, n, html_text)]
-    — the same badge + n=sample + sentence pattern as the Insights feed, so
-    a coach gets the takeaway before the wall of evidence below it."""
-    body = "".join(
-        "<div style='margin-top:4px'>"
-        f"<span class='badge accent'>{b}</span> "
-        + (f"<span style='color:var(--subtext);font-size:10px'>n={n}</span> "
-           if n else "")
-        + f"{t}</div>" for b, n, t in lines)
-    st.markdown(f"<div class='gloss-card'>{body}</div>",
-                unsafe_allow_html=True)
+    """Insights-style plain-word read box. `lines` = [(badge, n, html_text)].
+    Thin wrapper over cards.verdict_card — the tab modules render the same box
+    from the same place, so the two can't drift."""
+    st.markdown(_verdict_card(lines), unsafe_allow_html=True)
 
 
 def _lg_delta(v, pool, *, pct=False, dec=1, inverse=False, neutral=False):
@@ -1200,6 +1194,20 @@ def _named_leaders_view(g, offense, game_ids=None):
                                             game_ids=game_ids)
 
 
+# ── SITUATIONAL scheme / set usage (helpers/scheme_situational.py) ───────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _scheme_sit_view(g, tid, side, game_ids=None):
+    """Where this team's scheme (side='defense') or set-call (side='offense')
+    usage spikes off its OWN season baseline — "zone to stop a run", "man on a
+    BLOB". Needs the raw event stream, so it does its own scoped fetch."""
+    import helpers.scheme_situational as SS
+    gids = (list(game_ids) if game_ids is not None
+            else SEAS.game_pool(season=SEAS.ACTIVE, gender=g, tracked_only=True))
+    if not gids:
+        return {"available": False, "cuts": []}
+    return SS.scheme_situational(tid, S.fetch_events(gids), side=side)
+
+
 # ── DEFENSE-SCHEME views (helpers/defenses.py — the Defense super-tab) ────────────
 @st.cache_data(ttl=600, show_spinner=False)
 def _def_view(g, tid, offense, game_ids=None):
@@ -1498,6 +1506,7 @@ if _tdview == "Charts":
             def_players_faced=_LGBIND(_def_players_faced),
             factors=_LGBIND(_def_factors),
             defender_profiles=_LGBIND(_defender_profiles),
+            scheme_sit=_LGBIND(_scheme_sit_view),
             is_current=_is_cur_season)
         DDEFENSE.render(_def_ctx)
 
@@ -1525,6 +1534,7 @@ if _tdview == "Charts":
             set_profiles_all=_LGBIND(_set_profiles_all),
             factors=_LGBIND(_pt_factors),
             turnover_types=_LGBIND(_tov_types_view),
+            scheme_sit=_LGBIND(_scheme_sit_view),
             is_current=_is_cur_season)
         DPLAYSTYLE.render(_ps_ctx)
 

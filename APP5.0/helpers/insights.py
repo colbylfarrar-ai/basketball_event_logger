@@ -797,13 +797,46 @@ def _g_onoff(row, pools, d):
             "metric": "On/off offense", "n": onp + offp}
 
 
+def _g_onoff_def(row, pools, d):
+    """Team ON/OFF on DEFENSE: points allowed per 100 with the player ON the floor
+    vs OFF it — the twin of _g_onoff, off the same lineups.player_on_off pass
+    (which has always computed the defensive half and thrown it away).
+
+    Sign flips: `def_diff` is on-minus-off of points ALLOWED, so NEGATIVE is the
+    good direction — the opposite of `off_diff`. Gated on the DEFENSIVE
+    possession counts, not the offensive ones."""
+    oo = d.get("onoff")
+    if not oo:
+        return None
+    onp, offp = oo.get("on_dposs") or 0, oo.get("off_dposs") or 0
+    if onp < 40 or offp < 40:            # need a real off-floor sample too
+        return None
+    diff = oo.get("def_diff")
+    if diff is None or abs(diff) < 8:    # < 8 pts/100 isn't worth a card
+        return None
+    on, off = oo["on_drtg"], oo["off_drtg"]
+    if diff <= 0:
+        txt = (f"**Defense tightens with them on** — the team allows just **{on:.0f} "
+               f"per 100 possessions** with them on the floor vs {off:.0f} without "
+               f"(**{diff:+.0f}**); a real defensive anchor — their minutes are "
+               f"load-bearing.")
+    else:
+        txt = (f"**Defense leaks with them on** — the team allows **{on:.0f} per 100** "
+               f"with them on vs {off:.0f} without (**{diff:+.0f}**); stops dry up — "
+               f"hide them on the weakest matchup or stagger their minutes with a "
+               f"stopper.")
+    # score/z are good-oriented like every other generator, so the sign inverts.
+    return {"text": txt, "score": min(3.0, abs(diff) / 8.0), "z": -diff / 8.0,
+            "metric": "On/off defense", "n": onp + offp}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
                _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
                _g_clutchft, _g_pnr_role, _g_spacing,
                _g_rimdef, _g_perimdef, _g_rebound,
                _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish,
-               _g_usage, _g_garbage, _g_stints, _g_form, _g_onoff]
+               _g_usage, _g_garbage, _g_stints, _g_form, _g_onoff, _g_onoff_def]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────

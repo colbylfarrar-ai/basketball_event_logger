@@ -230,6 +230,27 @@ def dense_table(rows, columns=None, *, highlight=None, num_cols=None):
             f"<thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>")
 
 
+# ── Insights-style verdict box ────────────────────────────────────────────────
+def verdict_card(lines):
+    """Insights-style plain-word read box (HTML string).
+
+    `lines` = [(badge, n, html_text)] — the badge + n=sample + sentence pattern
+    of the Insights feed, so a coach gets the takeaway before the wall of
+    evidence under it. `n` falsy hides the sample chip.
+
+    `html_text` is trusted markup (callers compose <b>/<span>); badges are
+    escaped. Single home for the pattern so the page and the tab modules can't
+    drift apart.
+    """
+    body = "".join(
+        "<div style='margin-top:4px'>"
+        f"<span class='badge accent'>{html.escape(str(b))}</span> "
+        + (f"<span style='color:var(--subtext);font-size:10px'>n={n}</span> "
+           if n else "")
+        + f"{t}</div>" for b, n, t in lines)
+    return f"<div class='gloss-card'>{body}</div>"
+
+
 # ── glass KPI tile + on/off comparison card ───────────────────────────────────
 def glass(label, value, sub="", color="var(--text)"):
     """Glassmorphism KPI tile (HTML string; uses the .pl-glass-* classes)."""

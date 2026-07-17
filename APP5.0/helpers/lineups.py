@@ -411,6 +411,11 @@ def player_on_off(team_id, game_ids=None, events=None, min_poss=DEFAULT_MIN_POSS
             "off_diff": round(on_o - off_o, 1),
             "on_poss": a["on_op"], "off_poss": a["off_op"],
             "on_drtg": round(on_d, 1), "off_drtg": round(off_d, 1),
+            # DEFENSIVE possession counts, so a defensive read can gate on its
+            # OWN sample instead of borrowing the offensive one. `def_diff` is
+            # on-minus-off of points ALLOWED, so unlike `off_diff` a NEGATIVE
+            # def_diff is the good direction.
+            "on_dposs": a["on_dp"], "off_dposs": a["off_dp"],
             "def_diff": round(on_d - off_d, 1),
             "net_diff": round((on_o - on_d) - (off_o - off_d), 1),
             "team_id": team_id,

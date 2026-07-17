@@ -37,6 +37,8 @@ import helpers.stats as S
 import helpers.court as court
 from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
+import helpers.dashboard.scheme_section as _scheme_section
+
 
 # Identity palette per family for the distribution donut (kept separate from the
 # tier colours, which encode performance, not which scheme it is).
@@ -222,6 +224,14 @@ def render(ctx):
                     "Track a game and set the **Defense** in the tracker to unlock "
                     "the defensive-scheme deep dive.", icon="🛡️")
         return
+
+    # ── §A0 — WHEN the scheme changes (verdict-first, above the wall) ────────
+    _scheme_section.render(
+        ctx, "defense", "When the scheme changes",
+        "Season share says what they run; this says WHEN. Each line is a "
+        "situation where a scheme spikes off this team's own baseline — the "
+        "“go zone to stop a run”, “sit in man on a BLOB”, “press when down” "
+        "reads a flat percentage averages away.")
 
     # ── §A — side toggle (drives the court below AND every table) ────────────
     _side = seg("Side of the ball", ["Our defense", "Vs defenses we face"],

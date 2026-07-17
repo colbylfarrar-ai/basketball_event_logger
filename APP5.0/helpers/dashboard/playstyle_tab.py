@@ -34,6 +34,7 @@ import helpers.team_analytics as TA
 import helpers.court as court
 from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
+import helpers.dashboard.scheme_section as _scheme_section
 
 _PTL = dict(PT.NAMED_PLAY_TYPES)
 _ZL = TA.ZONE_LABELS
@@ -271,6 +272,14 @@ def render(ctx):
                     "Track a game in the Game Tracker and tag shots with a Play "
                     "type to unlock the play-style deep dive.", icon="🎬")
         return
+
+    # ── §A0 — WHEN the set call changes (verdict-first, above the wall) ──────
+    # Shares the renderer with the Defense tab so the two sections read alike.
+    _scheme_section.render(
+        ctx, "offense", "When the set call changes",
+        "Season share says what you run; this says WHEN. Each line is a "
+        "situation where a set spikes off your own baseline — what you go to "
+        "with a run going, out of a dead ball, or with the game tight.")
 
     # ── §A — side toggle + coverage ──────────────────────────────────────────
     _off = (seg("Side of the ball", ["Offense", "Defense"], key="ps_side")

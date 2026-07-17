@@ -439,6 +439,67 @@ else:
     if bc2.button("End Game", type="primary", width="stretch"):
         _confirm_end(game_id, t1name, t2name)
 
+# ── the buzzer moment: post-game read + share/recap, right where the game ended
+# (Tier 2 item 10). The coach who just tapped End Game gets the "what happened"
+# paragraph and the two shareables WITHOUT hunting for the box score page. Paid
+# depth (event-derived read + full-depth performer panels on the card), same
+# gate as the live command center's depth.
+if is_tracked and _paid_view:
+    @st.cache_data(ttl=600, show_spinner=False)
+    def _pg_read(gid):
+        import helpers.postgame as PG
+        try:
+            return PG.game_report(gid)
+        except Exception:
+            return []
+
+    _bul = _pg_read(game_id)
+    if _bul:
+        with st.expander("📋 Post-game read — what happened", expanded=True):
+            for _b in _bul:
+                st.markdown("- " + _b)
+            st.caption("Auto-generated from the four-factors, RATING and runs "
+                       "engines — the full breakdown lives in the box score "
+                       "(Schedule → this game).")
+
+    with st.expander("📣 Share the result"):
+        # own team on top of the card when the coach staffs one of the two
+        _my = [t for t in (_ident.get("team_ids") or []) if t in (t1id, t2id)]
+        _card_tid = _my[0] if _my else t1id
+        _grow = query("SELECT gender FROM teams WHERE id=?", (_card_tid,))
+        _cgender = _grow[0]["gender"] if _grow else None
+
+        @st.cache_data(ttl=600, show_spinner=False)
+        def _gt_result_card(gid, tid, g, season):
+            import helpers.social_cards as SCARD
+            import helpers.settings_utils as SU
+            _ca = SU.get_setting(f"team_color:{tid}", SCARD.default_team_color(tid))
+            return SCARD.game_result_png(gid, tid, color_a=_ca, gender=g,
+                                         season=season)
+
+        try:
+            _png = _gt_result_card(game_id, _card_tid, _cgender, _gszn)
+        except Exception:
+            _png = None
+        if _png:
+            _pc1, _pc2 = st.columns([2, 1])
+            _pc1.image(_png, width="stretch")
+            _pc2.download_button(
+                "⬇ Result card (PNG)", _png,
+                file_name=f"result_{game_id}.png", mime="image/png",
+                type="primary", key=f"gt{game_id}_card")
+            _pc2.caption("1080×1080 — post-ready. More card styles on the Team "
+                         "Dashboard → Share tab.")
+        try:
+            import helpers.reports as RP
+            from helpers.ui import pdf_or_html_download
+            pdf_or_html_download(
+                "Game recap", RP.game_recap_html(game_id),
+                f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
+                key=f"gt{game_id}_recap")
+        except Exception:
+            st.caption("Recap unavailable for this game.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  COMMAND CENTER  — auto-refreshing while the game is live
 # ══════════════════════════════════════════════════════════════════════════════

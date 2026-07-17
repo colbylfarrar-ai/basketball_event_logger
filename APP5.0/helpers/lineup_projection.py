@@ -209,6 +209,15 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
     wl = IT.winloss_alignment(team_id, gender=gender, game_ids=gids)
     sig_available = bool(wl.get("available"))
     goals = wl.get("goals", []) if sig_available else []
+    # The signature pool is wider than the box score (tempo, shot creation, run
+    # differential — see insights_team._style_line). Those are real signature
+    # stats for the dashboard's tiles, but a minutes allocation can't produce
+    # them: you cannot derive a team's run differential from who's on the floor.
+    # Keeping them here would make every lineup miss them forever and quietly
+    # turn the "goals hit" read into a lie. `observed` IS this module's stat
+    # line, so it defines projectable without a second list to keep in sync.
+    goals = [g for g in goals if g["key"] in observed]
+    sig_available = sig_available and bool(goals)
     d_by_key = {r["key"]: r["d"] for r in wl.get("rows", [])} if sig_available else {}
 
     # stars = top-2 by observed minutes (for the stagger constraint)

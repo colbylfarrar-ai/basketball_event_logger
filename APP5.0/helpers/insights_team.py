@@ -360,7 +360,8 @@ def winloss_splits(team_id, gender=None, game_ids=None, events=None):
 # most teams have ~4 stats that visibly track their win/loss expectancy, and
 # they're different stats for every team — this finds each team's own set.
 _WL_SPEC = [
-    # key, label, higher-is-what-wins-look-like?, pct format?
+    # key, label, format ("pct" = render as a percentage)
+    # ── box-score core ──────────────────────────────────────────────────────
     ("PPP",    "Points / possession",   "{:.2f}"),
     ("eFG",    "eFG%",                  "pct"),
     ("3P%",    "3P%",                   "pct"),
@@ -373,7 +374,97 @@ _WL_SPEC = [
     ("oeFG",   "Opp eFG%",              "pct"),
     ("forced", "Forced TO rate",        "pct"),
     ("pace",   "Possessions",           "{:.0f}"),
+    # ── style / creation / tempo — a signature stat is ANY stat, not just a
+    #    box-score metric. These read off the same event pass (tempo from
+    #    possession_secs, creation from pass_from_id / shot_created_by_id), so
+    #    they cost nothing extra and light up without any tagging.
+    ("AST/TOV",   "Assist / turnover",     "{:.2f}"),
+    ("SC%",       "Shots created rate",    "pct"),
+    ("selfmade",  "Self-created rate",     "pct"),
+    ("transition", "Transition rate",      "pct"),
+    ("hc_PPP",    "Half-court PPP",        "{:.2f}"),
+    ("trans_PPP", "Transition PPP",        "{:.2f}"),
+    ("o_transition", "Transition allowed rate", "pct"),
+    ("run_diff",  "Run differential",      "{:+.0f}"),
 ]
+
+
+def _style_line(team_id, events):
+    """The STYLE half of a team's per-game stat line — tempo, shot creation and
+    runs, derived from the same event pass the box half already walks.
+
+    None (not 0) whenever a rate has no denominator: winloss_alignment skips a
+    None rather than averaging it, so a game with no transition possessions
+    doesn't drag a team's transition PPP toward zero. All rates except run_diff,
+    so they read at any point in a game like the rest of the line.
+    """
+    sf = lambda a, b_: (a / b_) if b_ else None
+    own_fga = own_sc = own_self = 0
+    trans_n = trans_pts = hc_n = hc_pts = timed = 0
+    opp_trans = opp_timed = 0
+    for e in events:
+        et = e.get("event_type")
+        if et not in ("shot", "turnover"):
+            continue
+        st_ = e.get("shooter_team_id")
+        if st_ is None:
+            continue
+        mine = st_ == team_id
+        secs = e.get("possession_secs") or 0
+        pts = ((3 if e.get("shot_type") == 3 else 2)
+               if (et == "shot" and e.get("shot_result") == "make") else 0)
+        if mine:
+            if et == "shot":
+                own_fga += 1
+                # creation reads the two fields the tracker always logs: a
+                # screen (shot_created_by_id) and/or a pass (pass_from_id).
+                if e.get("shot_created_by_id") is not None:
+                    own_sc += 1
+                if (e.get("pass_from_id") is None
+                        and e.get("shot_created_by_id") is None):
+                    own_self += 1
+            # ~16% of possessions carry no clock; untimed ones can't be bucketed
+            # by tempo, so they leave the denominator rather than counting as
+            # half-court.
+            if secs > 0:
+                timed += 1
+                if secs <= 6:
+                    trans_n += 1
+                    trans_pts += pts
+                elif secs >= 15:
+                    hc_n += 1
+                    hc_pts += pts
+        else:
+            if secs > 0:
+                opp_timed += 1
+                if secs <= 6:
+                    opp_trans += 1
+
+    out = {
+        "SC%": sf(own_sc, own_fga),
+        "selfmade": sf(own_self, own_fga),
+        "transition": sf(trans_n, timed),
+        "hc_PPP": sf(hc_pts, hc_n),
+        "trans_PPP": sf(trans_pts, trans_n),
+        "o_transition": sf(opp_trans, opp_timed),
+    }
+
+    # run differential: runs landed minus runs given up, this game. A run is a
+    # within-game concept, so it's a count, not a rate.
+    try:
+        import helpers.runs as RN
+        mine_n = opp_n = 0
+        for r in RN.detect_runs(events):
+            if r.get("garbage"):
+                continue
+            if r["team_id"] == team_id:
+                mine_n += 1
+            else:
+                opp_n += 1
+        out["run_diff"] = float(mine_n - opp_n)
+    except Exception:
+        out["run_diff"] = None
+    return out
 
 
 def team_stat_line(team_id, game_id, events=None):
@@ -395,7 +486,9 @@ def team_stat_line(team_id, game_id, events=None):
     if not poss:
         return None
     sf = lambda a, b_: (a / b_) if b_ else None
+    style = _style_line(team_id, events)
     return {
+        **style,
         "PPP":  sf(tb.get("PTS", 0), poss),
         "eFG":  S.efg(tb) if tb.get("FGA") else None,
         "3P%":  sf(tb.get("3PM", 0), tb.get("3PA", 0)),
@@ -405,11 +498,57 @@ def team_stat_line(team_id, game_id, events=None):
         "ORBpct": sf(tb.get("ORB", 0),
                      (tb.get("ORB", 0) or 0) + (ob.get("DRB", 0) or 0)),
         "AST%": sf(tb.get("AST", 0), tb.get("FGM", 0)),
+        "AST/TOV": sf(tb.get("AST", 0), tb.get("TOV", 0)),
         "oPPP": sf(ob.get("PTS", 0), opos) if opos else None,
         "oeFG": S.efg(ob) if ob.get("FGA") else None,
         "forced": sf(ob.get("TOV", 0), opos) if opos else None,
         "pace": float(poss),
     }
+
+
+# Two stats correlating this hard across the team's games are telling one story;
+# the weaker one is dropped so the tiles aren't four flavours of "we shot well".
+MAX_ABS_R = 0.8
+
+
+def _pearson(xs, ys):
+    """Pearson r over paired samples; None when undefined (n<3 or no spread)."""
+    pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
+    n = len(pairs)
+    if n < 3:
+        return None
+    mx = sum(p[0] for p in pairs) / n
+    my = sum(p[1] for p in pairs) / n
+    sxy = sum((p[0] - mx) * (p[1] - my) for p in pairs)
+    sxx = sum((p[0] - mx) ** 2 for p in pairs)
+    syy = sum((p[1] - my) ** 2 for p in pairs)
+    if sxx <= 0 or syy <= 0:
+        return None
+    return sxy / ((sxx * syy) ** 0.5)
+
+
+def _decorrelate(ranked, lines, result, top, max_r=MAX_ABS_R):
+    """Take the `top` strongest signature stats that tell DIFFERENT stories.
+
+    Effect-size ranking alone fills the tiles with one story told four ways: PPP,
+    eFG, TS and 3P% all move together, so a team that wins by shooting well gets
+    four tiles that say "we shot well". This walks the ranked list and keeps a
+    stat only when it isn't already explained by a stronger one — |r| over max_r
+    across the team's own per-game series, either sign (a mirror-image negative
+    correlation is the same story told upside down).
+    """
+    gids = list(lines)
+    kept = []
+    for cand in ranked:
+        series = [lines[g].get(cand["key"]) for g in gids]
+        if any(_r is not None and abs(_r) >= max_r
+               for _r in (_pearson(series, [lines[g].get(k["key"]) for g in gids])
+                          for k in kept)):
+            continue
+        kept.append(cand)
+        if len(kept) >= top:
+            break
+    return kept
 
 
 def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
@@ -482,7 +621,7 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
         out_rows.append({"key": key, "label": label, "win": mw, "loss": ml,
                          "d": d, "fmt": fmt})
     out_rows.sort(key=lambda r: -abs(r["d"]))
-    top_rows = out_rows[:top]
+    top_rows = _decorrelate(out_rows, lines, result, top)
 
     # ── goals-hit record: per game, how many of the top signature-stat GOALS it
     # hit, then the W-L record grouped by that count. Each goal's threshold is the

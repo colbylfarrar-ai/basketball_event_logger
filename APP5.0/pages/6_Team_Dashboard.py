@@ -763,6 +763,14 @@ def _reb_map(shots, title, key):
     st.plotly_chart(fig, width="stretch", key=key)
 
 
+def _ord(n):
+    """1 → '1st', 43 → '43rd', 11 → '11th'. Teens are all -th."""
+    n = int(round(n))
+    suf = ("th" if 11 <= n % 100 <= 13
+           else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th"))
+    return f"{n}{suf}"
+
+
 def _verdict_lines(lines):
     """Insights-style plain-word read box. `lines` = [(badge, n, html_text)]
     — the same badge + n=sample + sentence pattern as the Insights feed, so
@@ -3761,6 +3769,47 @@ def _fx_chadv():
             avg_o = sum(pool_o) / len(pool_o)
             avg_d = sum(pool_d) / len(pool_d)
 
+            # ── DNA percentiles up front — the verdict card and the radar
+            #    both read them ────────────────────────────────────────────────
+            lff = _league_ff(gender, season_pick)
+            offp = {k: [v["off"][k] for v in lff.values()]
+                    for k in ["eFG", "TOV", "ORB", "FTR"]}
+            defp = {k: [v["def"][k] for v in lff.values()]
+                    for k in ["eFG", "TOV"]}
+
+            def _pc(val, pool, hb=True):
+                return TA.percentile(val, pool, higher_better=hb) or 0
+
+            axes = [
+                ("Offense", _pc(sc_track["ORtg"], pool_o, True)),
+                ("Defense", _pc(sc_track["DRtg"], pool_d, False)),
+                ("Shooting", _pc(ff["off"]["eFG"], offp["eFG"], True)),
+                ("Ball Security", _pc(ff["off"]["TOV"], offp["TOV"], False)),
+                ("Off. Rebound", _pc(ff["off"]["ORB"], offp["ORB"], True)),
+                ("FT Rate", _pc(ff["off"]["FTR"], offp["FTR"], True)),
+                ("Forces TOs", _pc(ff["def"]["TOV"], defp["TOV"], True)),
+                ("Shot Defense", _pc(ff["def"]["eFG"], defp["eFG"], False)),
+            ]
+
+            # plain-word read first (Insights pattern) — the charts below are
+            # the evidence, not the message
+            _opct, _dpct = axes[0][1], axes[1][1]
+            _bal = ("a real two-way team" if _opct >= 65 and _dpct >= 65 else
+                    "the offense carries it" if _opct - _dpct >= 25 else
+                    "the defense carries it" if _dpct - _opct >= 25 else
+                    "below the league bar on both ends"
+                    if _opct <= 35 and _dpct <= 35 else
+                    "a balanced profile")
+            _sk = sorted(axes[2:], key=lambda a: a[1])
+            _verdict_lines([
+                ("identity", len(bundle["tracked_ids"]),
+                 f"Offense sits at the <b>{_ord(_opct)}</b> league percentile, "
+                 f"defense at the <b>{_ord(_dpct)}</b> — {_bal}."),
+                ("dna", None,
+                 f"Sharpest tool: <b>{_sk[-1][0]}</b> ({_ord(_sk[-1][1])} pct) · "
+                 f"biggest gap: <b>{_sk[0][0]}</b> ({_ord(_sk[0][1])})."),
+            ])
+
             # ── KenPom-style efficiency quadrant ────────────────────────────
             st.markdown("<div class='lab-hdr'>Efficiency Landscape</div>",
                         unsafe_allow_html=True)
@@ -3818,25 +3867,6 @@ def _fx_chadv():
             # ── team DNA radar (8 percentile axes vs league) ────────────────
             st.markdown("<div class='lab-hdr'>Team DNA — league percentiles</div>",
                         unsafe_allow_html=True)
-            lff = _league_ff(gender, season_pick)
-            offp = {k: [v["off"][k] for v in lff.values()]
-                    for k in ["eFG", "TOV", "ORB", "FTR"]}
-            defp = {k: [v["def"][k] for v in lff.values()]
-                    for k in ["eFG", "TOV"]}
-
-            def _pc(val, pool, hb=True):
-                return TA.percentile(val, pool, higher_better=hb) or 0
-
-            axes = [
-                ("Offense", _pc(sc_track["ORtg"], pool_o, True)),
-                ("Defense", _pc(sc_track["DRtg"], pool_d, False)),
-                ("Shooting", _pc(ff["off"]["eFG"], offp["eFG"], True)),
-                ("Ball Security", _pc(ff["off"]["TOV"], offp["TOV"], False)),
-                ("Off. Rebound", _pc(ff["off"]["ORB"], offp["ORB"], True)),
-                ("FT Rate", _pc(ff["off"]["FTR"], offp["FTR"], True)),
-                ("Forces TOs", _pc(ff["def"]["TOV"], defp["TOV"], True)),
-                ("Shot Defense", _pc(ff["def"]["eFG"], defp["eFG"], False)),
-            ]
             ar, ag, ab = _rgb(ACCENT)
             theta = [a[0] for a in axes] + [axes[0][0]]
             rvals = [a[1] for a in axes] + [axes[0][1]]
@@ -3870,6 +3900,44 @@ def _fx_chadv():
         power_by = {tid2: r.get("Power") for tid2, r in scored.items()}
         rank_by = {tid2: r.get("Rank") for tid2, r in scored.items()}
         sos = TA.strength_of_schedule(log, power_by, rank_by, len(scored))
+
+        # plain-word read first — schedule difficulty, then current form
+        _rs_lines = []
+        _aop = sos["avg_opp_power"]
+        _sched = ("a brutal slate" if _aop >= 60 else
+                  "a tough slate" if _aop >= 55 else
+                  "a soft slate" if _aop <= 40 else
+                  "a below-average slate" if _aop <= 45 else
+                  "a roughly league-average slate")
+        _rs_lines.append((
+            "schedule", len(log),
+            f"Average opponent power <b>{_aop:.0f}</b> (50 = league average) — "
+            f"{_sched}, with <b>{sos['quality_wins']}</b> "
+            f"win{'' if sos['quality_wins'] == 1 else 's'} over "
+            f"top-quarter opponents."))
+        _cl = strk["close"]
+        _cln = _cl["w"] + _cl["l"]
+        if _cln >= 3:
+            _clw = _cl["w"] / _cln
+            _clv = ("wins the tight ones" if _clw >= 0.6 else
+                    "loses the tight ones" if _clw <= 0.4 else
+                    "splits the tight ones")
+            _rs_lines.append((
+                "clutch", _cln,
+                f"<b>{_cl['w']}-{_cl['l']}</b> in games decided by five or "
+                f"fewer — this team {_clv}."))
+        _l5 = strk["last5"]
+        if _l5["w"] + _l5["l"] >= 3:
+            _fw = _l5["w"] / (_l5["w"] + _l5["l"])
+            _sw = sum(1 for g in log if g["won"]) / max(len(log), 1)
+            _form = ("heating up" if _fw - _sw >= 0.2 else
+                     "cooling off" if _sw - _fw >= 0.2 else
+                     "holding steady")
+            _rs_lines.append((
+                "form", _l5["w"] + _l5["l"],
+                f"Last five: <b>{_l5['w']}-{_l5['l']}</b> against a season rate "
+                f"of <b>{_sw*100:.0f}%</b> — {_form}."))
+        _verdict_lines(_rs_lines)
 
         st.markdown("<div class='lab-hdr'>Strength of Schedule</div>",
                     unsafe_allow_html=True)
@@ -4002,6 +4070,38 @@ def _fx_chadv():
             pts = flow["points"]
             xs = [p["t"] for p in pts]
             mg = [p["margin"] for p in pts]
+
+            # plain-word read of THIS game's shape — the curve below is the
+            # evidence. Time-led is weighted by the gap between scoring plays,
+            # not by play count, so a long stall doesn't vanish.
+            _fl_lines = []
+            _span = xs[-1] if xs else 0
+            if _span > 0:
+                _led = sum((xs[i + 1] - xs[i]) for i in range(len(xs) - 1)
+                           if mg[i] > 0)
+                _tied = sum((xs[i + 1] - xs[i]) for i in range(len(xs) - 1)
+                            if mg[i] == 0)
+                _lsh = _led / _span
+                _shape = ("led wire to wire" if _lsh >= 0.9 else
+                          "controlled it" if _lsh >= 0.65 else
+                          "played from behind" if _lsh <= 0.35 else
+                          "traded blows")
+                _tsh = _tied / _span
+                _fl_lines.append((
+                    "shape", None,
+                    f"Led for <b>{_lsh*100:.0f}%</b> of the clock"
+                    + (f" · tied {_tsh*100:.0f}%" if _tsh >= 0.005 else "")
+                    + f" — {team['name']} {_shape}."))
+            _sw = flow["lead"]["max"] - flow["lead"]["min"]
+            _fl_lines.append((
+                "swing", None,
+                f"Swing of <b>{_sw}</b> points from a "
+                f"<b>+{flow['lead']['max']}</b> high to a "
+                f"<b>{flow['lead']['min']}</b> low · biggest run "
+                f"<b>{flow['runs']['team']}-0</b> ours vs "
+                f"<b>0-{flow['runs']['opp']}</b> theirs."))
+            _verdict_lines(_fl_lines)
+
             fl = go.Figure()
             # quarter boundary lines (8-min Q, 4-min OT)
             last_q = max((p["q"] for p in pts), default=4)
@@ -4089,6 +4189,34 @@ if _tdview == "Lab":
             rows_r = sorted([v for pid, v in rap.items() if pid in my_pids],
                             key=lambda v: v["RAPM"], reverse=True)
             if rows_r:
+                # plain-word read first — who the possession data actually
+                # separates, gated on the `sig` flag so a noisy leader on 40
+                # possessions doesn't get announced as the best player.
+                _il_lines = []
+                _sig_r = [v for v in rows_r if v.get("sig")]
+                if _sig_r:
+                    _top = _sig_r[0]
+                    _il_lines.append((
+                        "impact", _top["poss"],
+                        f"<b>{_top['name']}</b> is the clearest positive — "
+                        f"<b>{_top['RAPM']:+.1f}</b> points per 100 possessions "
+                        f"vs an average player, and clear of the noise band."))
+                    if len(_sig_r) > 1:
+                        _wrst = _sig_r[-1]
+                        if _wrst["RAPM"] < 0:
+                            _il_lines.append((
+                                "cost", _wrst["poss"],
+                                f"<b>{_wrst['name']}</b> is the clearest "
+                                f"negative at <b>{_wrst['RAPM']:+.1f}</b> — "
+                                "worth a look at who they share the floor with."))
+                else:
+                    _il_lines.append((
+                        "sample", sum(v["poss"] for v in rows_r),
+                        "No player separates from league average yet — the "
+                        "possession book is too short to call anyone apart. "
+                        "Read the order below as directional only."))
+                _verdict_lines(_il_lines)
+
                 rc1, rc2 = st.columns([3, 2])
                 with rc1:
                     # Two-way quadrant: O-RAPM (x) vs D-RAPM (y), size = poss,

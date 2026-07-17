@@ -118,6 +118,64 @@ def _render_factors(ff, unit):
             f"{r['label']} {r['poss']}" for r in thin[:6]))
 
 
+def _render_charges(ctx, g, tid):
+    """Charges drawn / committed — team headline + the per-player split.
+
+    A charge is a foul tagged play_type='other' AND defense='other' (see
+    helpers/charges.py for why that pair, and not timestamp-pairing to the
+    turnover, is the only valid discriminator). Drawn = the defender, committed
+    = the offensive player who ran them over.
+    """
+    fn = getattr(ctx, "charges", None)
+    if fn is None:
+        return
+    try:
+        res = fn(g, tid)
+    except Exception:
+        return
+    team = res.get("team")
+    if not team:
+        return
+
+    st.markdown("<div class='pl-hdr'>Charges</div>", unsafe_allow_html=True)
+    if not team["drawn"] and not team["committed"]:
+        st.caption(
+            "No charges logged yet. A charge is recorded by tagging the foul "
+            "with **Play type = Other** and **Defense = Other** in the tracker — "
+            "that pair is what marks it. This section, and the charge credit in "
+            "the defensive rating, fill in from there.")
+        return
+
+    cc = st.columns(3)
+    cc[0].markdown(glass("Charges drawn", team["drawn"],
+                         f"{team['drawn_pg']:.2f} / game · {team['games']} games",
+                         color="var(--good)"), unsafe_allow_html=True)
+    cc[1].markdown(glass("Charges committed", team["committed"],
+                         f"{team['committed_pg']:.2f} / game",
+                         color="var(--bad)"), unsafe_allow_html=True)
+    cc[2].markdown(glass("Net", f"{team['drawn'] - team['committed']:+d}",
+                         f"{team['net_pg']:+.2f} / game"), unsafe_allow_html=True)
+
+    roster = getattr(ctx, "players", {}) or {}
+    pc = res.get("players") or {}
+    rows = []
+    for pid, v in pc.items():
+        if pid not in roster:
+            continue
+        rows.append({"Player": roster[pid].get("name", str(pid)),
+                     "Drawn": v["drawn"], "Committed": v["committed"],
+                     "Net": v["drawn"] - v["committed"]})
+    if rows:
+        rows.sort(key=lambda r: (-r["Drawn"], r["Committed"]))
+        st.markdown(dense_table(rows, num_cols=("Drawn", "Committed", "Net")),
+                    unsafe_allow_html=True)
+    st.caption(
+        "**Drawn** is the defender who took it — that's the defensive play, and "
+        "it feeds the defensive rating. **Committed** is the offensive player: "
+        "they already take the turnover and the personal foul (a charge IS a "
+        "foul on them), so the rating adds no third penalty on top.")
+
+
 def _render_scheme_fingerprint(ctx, g, tid, off, drows, prof):
     """Scheme fingerprint — the headline 'what each scheme gives up' board: one row
     per scheme with possession-correct PPP, the four factors (eFG · OREB% · TOV%)
@@ -306,6 +364,9 @@ def render(ctx):
         elif n_untagged:
             st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — set "
                        "the defense in the tracker to sharpen the by-scheme court.")
+
+    # ── charges — the discrete defensive play ────────────────────────────────
+    _render_charges(ctx, g, tid)
 
     # ── where the boards come from, by scheme ────────────────────────────────
     # `shots` already follows the side toggle: on "Our defense" they're the

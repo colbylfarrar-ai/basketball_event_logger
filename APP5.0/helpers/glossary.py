@@ -173,6 +173,16 @@ STAT_DEFS = [
     ("STOCKS","Stocks",           "Defense", "STL + BLK",
      "Steals plus blocks — a single 'disruption' number.",
      "Higher = more defensive events.", False),
+    ("CHG",  "Charges drawn",     "Defense", "fouls tagged Other / Other",
+     "Charges this player took. A charge is logged by tagging the foul with "
+     "Play type = Other AND Defense = Other — that pair is what marks it, and "
+     "the player fouled is the defender who drew it. Drawing one is a defensive "
+     "play, so it feeds the DEFENSE rating; the offensive player who committed "
+     "it already takes the turnover and the personal foul, so no extra penalty "
+     "is applied there. Players on teams that don't tag charges have no charge "
+     "input at all rather than a zero, so a tagging gap never reads as bad "
+     "defense.",
+     "Higher = more charges taken.", False),
     ("DSHOT%","Defended FG%",      "Defense", "opp FG% when guarded by player",
      "Field-goal % opponents shoot when this player is the listed defender.",
      "Lower is better — tighter on-ball defense.", False),

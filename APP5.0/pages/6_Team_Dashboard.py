@@ -1194,6 +1194,20 @@ def _named_leaders_view(g, offense, game_ids=None):
                                             game_ids=game_ids)
 
 
+# ── CHARGES (helpers/charges.py) ─────────────────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _charges_view(g, tid, game_ids=None):
+    """Charges drawn / committed for one team + its players. A charge is a foul
+    tagged play_type='other' AND defense='other' (see helpers/charges.py)."""
+    import helpers.charges as CHG
+    gids = (list(game_ids) if game_ids is not None
+            else SEAS.game_pool(season=SEAS.ACTIVE, gender=g, tracked_only=True))
+    if not gids:
+        return {"team": None, "players": {}}
+    ev = S.fetch_events(gids)
+    return {"team": CHG.team_charges(tid, ev), "players": CHG.player_charges(ev)}
+
+
 # ── SITUATIONAL scheme / set usage (helpers/scheme_situational.py) ───────────────
 @st.cache_data(ttl=600, show_spinner=False)
 def _scheme_sit_view(g, tid, side, game_ids=None):
@@ -1507,6 +1521,7 @@ if _tdview == "Charts":
             factors=_LGBIND(_def_factors),
             defender_profiles=_LGBIND(_defender_profiles),
             scheme_sit=_LGBIND(_scheme_sit_view),
+            charges=_LGBIND(_charges_view),
             is_current=_is_cur_season)
         DDEFENSE.render(_def_ctx)
 

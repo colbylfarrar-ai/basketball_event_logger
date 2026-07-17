@@ -330,6 +330,11 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     asr = S.assist_rate(game_ids, events=events)  # AST% (on-court teammate FGM share)
     wtov = S.playmaking_weighted_tov(events=events)  # type-weighted TOs (playmaking)
     rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
+    import helpers.charges as CHG
+    # {pid: charges drawn per game}. Only players on teams that TAG charges are
+    # keyed; everyone else is absent so the leaf drops out of their mean instead
+    # of scoring a tagging gap as bad defense (see charges.charge_rate_map).
+    chg = CHG.charge_rate_map(events)
     import helpers.fouls as FL
     ftp = FL.player_foul_ft(events=events)       # clutch FT + and-1 detail
     meta = _player_meta(gender=gender)
@@ -454,6 +459,11 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "And1M": ftp.get(pid, {}).get("and1_made", 0),
             "DRtg":  ddr.get(pid),   # Oliver individual DRtg (per-100, lower=better)
             "PF/G":  cper_g(cb["PF"]),                   # box (combined)
+            # charges DRAWN per game (event-only). None for a player whose team
+            # doesn't tag charges at all — a genuine 0 would otherwise score a
+            # tagging gap as bad defense, and the None-drops-out protection does
+            # not fire on a real zero.
+            "CHG/G": chg.get(pid),
             # ── PLAYMAKING ──────────────────────────────────────────
             "AST/G": cper_g(cb["AST"]),                  # box (combined)
             "AST%":  asr.get(pid),                       # event-only (on-court)
@@ -518,10 +528,16 @@ _RIMDEF    = [("RimProt", 1.5, False), ("RimD_pct", 0.75, True), ("BLK/G", 1.0, 
 _PERIMDEF  = [("PerimD", 1.5, False), ("PerimD_pct", 0.75, True),
               ("STL/G", 1.0, False), ("Guarded%", 0.6, False)]
 # DEFENSE (headline) = rim + perimeter defense components, plus the overall
-# contest signal (DSHOT%), Oliver DRtg, and foul discipline. The rim/perim split
-# is surfaced as its own sub-ratings; here it re-blends into one number.
+# contest signal (DSHOT%), Oliver DRtg, foul discipline, and charges drawn. The
+# rim/perim split is surfaced as its own sub-ratings; here it re-blends into one
+# number.
+# CHG/G sits HERE rather than inside _RIMDEF/_PERIMDEF on purpose: taking a
+# charge is a discrete defensive event like a steal or a block, and it's a
+# help-side play that belongs to neither rim protection nor on-ball containment.
+# Small weight — it's a real skill but a rare event, and it must not swamp the
+# per-possession signals that cover every possession.
 _DEFENSE_PARTS = [("rimdef", 1.0), ("perimdef", 1.0), ("DSHOT%z", 1.0),
-                  ("DRtgz", 0.75), ("PF/Gz", 0.4)]
+                  ("DRtgz", 0.75), ("PF/Gz", 0.4), ("CHG/Gz", 0.4)]
 _PLAYMAKING = [("AST%", 1.25, False),   # on-court assist rate (share of teammate FGM)
                ("AST/G", 0.75, False),
                # AST/TOV + TOV% enter through their TYPE-WEIGHTED twins: a bad
@@ -863,11 +879,13 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     dshot_z = zcol_signed("AdjDFG%", True)
     drtg_z  = zcol_signed("DRtg", True)
     pf_z    = zcol_signed("PF/G", True)
+    chg_z   = zcol_signed("CHG/G", False)   # more charges drawn = better
     rebpct_z = zcol_signed("REB%", False)
 
     defense_z = combine(_DEFENSE_PARTS,
                         {"rimdef": rimdef_z, "perimdef": perimdef_z,
-                         "DSHOT%z": dshot_z, "DRtgz": drtg_z, "PF/Gz": pf_z})
+                         "DSHOT%z": dshot_z, "DRtgz": drtg_z, "PF/Gz": pf_z,
+                         "CHG/Gz": chg_z})
     rebounding_z = combine(_REBOUNDING_PARTS,
                            {"oreb": oreb_z, "dreb": dreb_z, "REB%z": rebpct_z})
     offense_z = combine(_OFFENSE_PARTS,

@@ -438,6 +438,18 @@ def _runs_table(g, vis=None, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _team_insight_lines(g, season="Current"):
+    """League-wide team auto-scout feed (helpers/team_insights) for the Team
+    deep dive — 3-line surface cap (the TD Insights tab is the deep-dive home).
+    Cached once per (gender, season); the view looks the picked team up."""
+    import helpers.team_insights as TIN
+    try:
+        return TIN.team_insight_feed(gender=g, season=season, top=3)
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _team_stat_rows(g, _tracked, _pack, _form, vis=None, season="Current"):
     # Every-team-stat table (the Tracked tab's full stat grid). `_tracked/_pack/
     # _form` are passed-in caches (underscore = not hashed); the key is
@@ -882,6 +894,28 @@ def _fx_team():
         fx[2].markdown(CD.glass("Form rank", f"#{_fr['Rank']}",
                                 f"of {len(formed)} · season #{r['Rank']}"),
                        unsafe_allow_html=True)
+
+    # ── auto-scout — the team's most surprising tracked reads (the same
+    # league-relative feed the Team Dashboard Insights tab shows, capped at the
+    # 3-line surface limit). Tracked depth → rides the viewer's entitlement for
+    # THIS team, exactly like the tracked card fields above.
+    if _see_trk:
+        _til = _team_insight_lines(gender, season_pick).get(pick, [])
+        if _til:
+            import re as _re_ins
+            from helpers.cards import conf_dot as _conf_dot
+            st.markdown("<div class='section-hdr'>Auto-scout — what the data "
+                        "says</div>", unsafe_allow_html=True)
+            _tibody = "".join(
+                f"<div style='margin-top:4px;font-size:12px'>"
+                f"<span class='badge accent'>{ln['metric']}</span> "
+                f"{_conf_dot(ln.get('n'), k=8) if isinstance(ln.get('n'), (int, float)) else ''}"
+                f"<span style='color:var(--subtext);font-size:10px'>"
+                f"n={ln.get('n')}</span> "
+                + _re_ins.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", ln["text"])
+                + "</div>" for ln in _til)
+            st.markdown(f"<div class='gloss-card'>{_tibody}</div>",
+                        unsafe_allow_html=True)
 
     # ── advanced profile (results-only composites + form) ────────────────────
     f = form_stats.get(pick, {})

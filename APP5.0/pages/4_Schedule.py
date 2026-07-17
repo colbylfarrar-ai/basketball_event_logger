@@ -427,7 +427,20 @@ def _day_section():
     st.markdown("<div class='section-hdr'>Game of the Day</div>",
                 unsafe_allow_html=True)
 
-    gotd = max(scored, key=lambda g: g["home_score"] + g["away_score"])
+    # The MARQUEE matchup: lowest average ranking of the two teams (founder rule
+    # 2026-07-17 — works for every scored game; GEI would cover only tracked
+    # ones). Unranked teams read as back-of-field; ties break to the closer
+    # final, then the higher-scoring one.
+    rank_of = _rank_of()
+    _unranked = len(rank_of) + 1
+
+    def _marquee_key(g):
+        avg_rank = (rank_of.get(g["team1_id"], _unranked)
+                    + rank_of.get(g["team2_id"], _unranked)) / 2
+        return (avg_rank, abs(g["home_score"] - g["away_score"]),
+                -(g["home_score"] + g["away_score"]))
+
+    gotd = min(scored, key=_marquee_key)
     hs, as_ = gotd["home_score"], gotd["away_score"]
     h_win = hs >= as_
     badge = ("<div class='gotd-badge'>Tracked · full box inside</div>"
@@ -445,7 +458,7 @@ def _day_section():
     st.markdown(f"""
     <div class="game-hero">
         <div style="font-size:12px;color:#8b949e;margin-bottom:8px">
-            {gotd['location'] or 'Highest-scoring game of the day'}
+            {gotd['location'] or 'Marquee matchup — the day’s best-ranked pairing'}
         </div>
         <table style="width:100%;border:none"><tr>
           <td style="width:42%;text-align:center">
@@ -475,7 +488,6 @@ def _day_section():
     st.markdown("<div class='section-hdr'>Upset Alert</div>",
                 unsafe_allow_html=True)
 
-    rank_of = _rank_of()
     best = None
     for g in scored:
         if g["home_score"] == g["away_score"]:

@@ -1073,6 +1073,30 @@ function syncHeaderInputs() {
   if (S.game) {
     $('score-home-name').textContent = S.game.home.name;
     $('score-away-name').textContent = S.game.away.name;
+    $('btn-to-home').textContent = 'TO · ' + S.game.home.name;
+    $('btn-to-away').textContent = 'TO · ' + S.game.away.name;
+  }
+}
+
+/* ---------- timeout markers ---------- */
+// One tap per huddle → a game_timeouts row (quarter + clock), feeding the
+// after-timeout read. Online-only by design: a timeout is rare (~5/game) and
+// idempotent on its uuid, so a failed send just asks for one more tap.
+async function logTimeout(side) {
+  if (!S.game || !S.gameId) return;
+  const body = {
+    team_id: S.game[side].id,
+    quarter: S.quarter,
+    time: clockStr(),
+    uuid: uuid()
+  };
+  try {
+    const res = await api('/api/games/' + S.gameId + '/timeouts',
+                          { method: 'POST', body: JSON.stringify(body) });
+    if (res.ok) toast('Timeout — ' + S.game[side].name);
+    else toast('Timeout not saved — server said no');
+  } catch (e) {
+    toast('Offline — timeout not saved, tap again when back');
   }
 }
 
@@ -2279,6 +2303,8 @@ function bindUI() {
     b.addEventListener('click', function () { setMode(b.dataset.mode); });
   });
   $('btn-undo').addEventListener('click', undo);
+  $('btn-to-home').addEventListener('click', function () { logTimeout('home'); });
+  $('btn-to-away').addEventListener('click', function () { logTimeout('away'); });
   $('btn-edit-log').addEventListener('click', openEditor);
   $('btn-leave').addEventListener('click', leaveGame);
   $('btn-finish').addEventListener('click', finishGame);

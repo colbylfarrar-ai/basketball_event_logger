@@ -212,6 +212,13 @@ try {
 
   <div id="flow"></div>
 
+  <!-- Timeout markers (game_timeouts): one tap per huddle so the after-timeout
+       read lights up. Online-only v1 — a rare event (~5/game), not queued. -->
+  <div id="to-row">
+    <button id="btn-to-home" class="btn ghost">TO Home</button>
+    <button id="btn-to-away" class="btn ghost">TO Away</button>
+  </div>
+
   <div id="action-row">
     <button id="btn-undo" class="btn warn">Undo</button>
     <button id="btn-edit-log" class="btn ghost">Edit log</button>

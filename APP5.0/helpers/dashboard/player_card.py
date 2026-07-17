@@ -20,6 +20,7 @@ ctx fields (SimpleNamespace built per page):
 """
 from __future__ import annotations
 
+import re as _re
 from html import escape as html_escape
 
 import pandas as pd
@@ -246,6 +247,24 @@ def _projection(gender, season="Current", game_ids=None):
                 for pid in table}
     except Exception:
         return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _insight_feed(gender, season="Current", game_ids=None):
+    """League insight feed (helpers/insights.build_feed) for the card's "What
+    the data says" lines — computed once per (gender, season), NOT per player;
+    the card looks its pid up in the result. top=3 = the surface cap (the
+    Insights tab is the deep-dive home with every line)."""
+    import helpers.insights as IN
+    gids = (list(game_ids) if game_ids is not None
+            else PT._tracked_game_ids(gender))
+    table = PR.player_stat_table(
+        gender=gender, min_games=1,
+        game_ids=(set(gids) if game_ids is not None else None))
+    if not table:
+        return {}
+    ev = S.fetch_events(gids) if gids else []
+    return IN.build_feed(table, ev, top=3)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1645,3 +1664,29 @@ def render_card(ctx):
             f"color:#f0a500;margin-bottom:10px'>Areas to watch</div>"
             f"{_bullets(weaknesses, 'No clear weaknesses in this sample yet.')}</div>",
             unsafe_allow_html=True)
+
+    # ── What the data says — this player's auto-mined insight lines ───────────
+    # The same league-relative feed as the Team Dashboard Insights tab, capped
+    # at 3 lines (the surface cap; the tab stays the deep-dive home). Paid: the
+    # feed reads tracked splits. Fails silent — the card renders without it.
+    if paid:
+        try:
+            _g = getattr(ctx, "gender", None) or P.get("gender") or "F"
+            _ins = _insight_feed(_g, _szn, _gp).get(pid, [])
+        except Exception:
+            _ins = []
+        if _ins:
+            from helpers.cards import conf_dot as _conf_dot
+            st.markdown("<div class='pl-hdr'>What the data says</div>",
+                        unsafe_allow_html=True)
+            _body = "".join(
+                f"<div style='margin-top:4px;font-size:12px'>"
+                f"<span class='badge accent'>{ln['metric']}</span> "
+                f"{_conf_dot(ln.get('n'), k=8) if isinstance(ln.get('n'), (int, float)) else ''}"
+                f"<span style='color:var(--subtext);font-size:10px'>n={ln.get('n')}"
+                f"</span> "
+                + _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", ln["text"])
+                + "</div>"
+                for ln in _ins)
+            st.markdown(f"<div class='gloss-card'>{_body}</div>",
+                        unsafe_allow_html=True)

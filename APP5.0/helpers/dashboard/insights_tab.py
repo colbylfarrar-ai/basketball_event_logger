@@ -23,12 +23,77 @@ import helpers.insights as IN
 import helpers.insights_team as INT
 import helpers.playtypes as PT
 import helpers.wpa as WPA
-from helpers.cards import dense_table
+from helpers.cards import dense_table, conf_dot
 
 
 def _b(t):
     """Markdown **bold** → <b> for raw-HTML cards."""
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
+
+
+# ── insight line → the Team Dashboard VIEW holding its evidence ───────────────
+# Every insight names its `metric`; this maps each metric to the top-level view
+# where the underlying chart/table lives, so a line can offer a real jump
+# instead of dead-ending. View-level only (st.tabs can't be selected
+# programmatically — same constraint as the page's _jump helper).
+_EVIDENCE_VIEW = {
+    # player metrics → view
+    "POE": "Charts", "Selection": "Charts", "3P%": "Charts",
+    "Rim finish": "Charts", "HandGap": "Charts", "Spacing": "Charts",
+    "Shot creation": "Charts", "Q4": "Charts", "Situational": "Charts",
+    "Garbage time": "Charts", "Form": "Charts", "Consistency": "Charts",
+    "PlayType": "Charts", "PlayStyle": "Charts", "PnR role": "Charts",
+    "TO type": "Charts", "GuardCliff": "Charts",
+    "Impact": "Lab", "On/off offense": "Lab", "On/off defense": "Lab",
+    "Matchup": "Lab", "Defense": "Lab", "Rim D": "Lab", "Perim D": "Lab",
+    "Disruption": "Lab", "Stint length": "Lab",
+    "Usage": "Roster", "Playmaking": "Roster", "Rebounding": "Roster",
+    "Fouls drawn": "Roster", "Clutch FT": "Roster",
+    # team metrics → view
+    "Quarters": "Charts", "Transition": "Charts", "Transition D": "Charts",
+    "Runs": "Charts", "Momentum": "Charts", "Game script": "Charts",
+    "Scheme": "Charts", "3PT diet": "Charts",
+    "Lineups": "Lab", "Chemistry": "Lab", "Off engine": "Lab",
+    "Def engine": "Lab",
+    "Luck": "Schedule", "Close games": "Schedule", "Volatility": "Schedule",
+    "Rest": "Schedule",
+    "Keys": "Scout", "Scoutability": "Scout", "Ball security": "Scout",
+    "Takeaways": "Scout",
+}
+
+# How firmly a line's n= backs it, on the insight scale (n is shots/poss/games
+# depending on the generator — k=8 reads games-scale lines as directional and
+# attempt-scale lines as stable, which matches how a coach should hold them).
+_CONF_K = 8
+
+
+def _line_html(ln):
+    """One insight line: metric badge + confidence dot + n + the sentence."""
+    n = ln.get("n")
+    dot = conf_dot(n, k=_CONF_K) if isinstance(n, (int, float)) else ""
+    return (f"<div style='margin-top:4px;font-size:12px'>"
+            f"<span class='badge accent'>{ln['metric']}</span> {dot}"
+            f"<span style='color:var(--subtext);font-size:10px'>n={n}</span> "
+            f"{_b(ln['text'])}</div>")
+
+
+def _evidence_jumps(lines, key):
+    """Row of view-jump buttons for the evidence behind a card's lines. Sets the
+    page's top-level View switcher and forces a FULL rerun (this tab is a
+    fragment — a fragment-scoped rerun would never repaint the switcher)."""
+    views = []
+    for ln in lines:
+        v = _EVIDENCE_VIEW.get(ln.get("metric"))
+        if v and v not in views:
+            views.append(v)
+    if not views:
+        return
+    cols = st.columns(3)
+    for i, v in enumerate(views[:3]):
+        if cols[i].button(f"{v} →", key=f"{key}_{v}",
+                          help=f"Open {v} — the charts behind these reads"):
+            st.session_state["td_view"] = v
+            st.rerun(scope="app")
 
 
 def _data_fp():
@@ -257,13 +322,10 @@ def render(ctx):
     if _tlines:
         st.markdown("<div class='lab-hdr'>Auto-scout — team read</div>",
                     unsafe_allow_html=True)
-        _tbody = "".join(
-            f"<div style='margin-top:4px'><span class='badge accent'>"
-            f"{ln['metric']}</span> <span style='color:var(--subtext);"
-            f"font-size:10px'>n={ln['n']}</span> {_b(ln['text'])}</div>"
-            for ln in _tlines)
+        _tbody = "".join(_line_html(ln) for ln in _tlines)
         st.markdown(f"<div class='gloss-card'>{_tbody}</div>",
                     unsafe_allow_html=True)
+        _evidence_jumps(_tlines, key="insj_team")
 
     # ── per-player auto-scout (the team-by-team feed) — 2-col boxed grid so a
     #    full roster's reads fit on ~half the page length ──────────────────────
@@ -275,17 +337,16 @@ def render(ctx):
         if not lines:
             continue
         nm = table[pid]["name"]
-        body = "".join(
-            f"<div style='margin-top:4px;font-size:12px'>"
-            f"<span class='badge accent'>{ln['metric']}</span> "
-            f"<span style='color:var(--subtext);font-size:10px'>n={ln['n']}</span> "
-            f"{_b(ln['text'])}</div>" for ln in lines)
+        body = "".join(_line_html(ln) for ln in lines)
         _cards.append(
-            f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>{body}</div>")
+            (pid, lines,
+             f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>{body}</div>"))
     if _cards:
         _pcols = st.columns(2)
-        for i, c in enumerate(_cards):
-            _pcols[i % 2].markdown(c, unsafe_allow_html=True)
+        for i, (pid, lines, c) in enumerate(_cards):
+            with _pcols[i % 2]:
+                st.markdown(c, unsafe_allow_html=True)
+                _evidence_jumps(lines, key=f"insj_{pid}")
     else:
         st.caption("No standout signals yet — this roster reads close to league "
                    "average on the tracked splits, or needs more games.")

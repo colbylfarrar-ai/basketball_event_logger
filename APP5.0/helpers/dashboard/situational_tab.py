@@ -450,3 +450,38 @@ def render(ctx):
                     f"{c['bucket_label'].lower()} · {c['share_here'] * 100:.0f}% "
                     f"(vs {c['share_overall'] * 100:.0f}% overall) · {c['poss']}p"),
                     unsafe_allow_html=True)
+
+    # ── §G — after-timeout (ATO): does the drawn-up play work? ────────────────
+    # Lights up once timeouts are logged from the phone tracker's TO buttons
+    # (game_timeouts markers). Only the FIRST possession after a timeout counts.
+    ato = ctx.ato(g, tid) if getattr(ctx, "ato", None) else None
+    if ato:
+        st.divider()
+        st.markdown("<div class='pl-hdr'>Out of a timeout — the drawn-up play"
+                    "</div>", unsafe_allow_html=True)
+        st.caption(
+            f"{ato['timeouts']} timeouts logged. **ATO** = the first possession "
+            "coming out of the huddle only — the play that was drawn up, not the "
+            "flow after it. Compared to the same team's overall PPP. "
+            f"⚠ = under {SIT.ATO_MIN_POSS} possessions, directional.")
+        _ac1, _ac2 = st.columns(2)
+        _ours = ato.get("ours")
+        if _ours:
+            _d = _ours["PPP"] - _ours["base_PPP"]
+            _ac1.markdown(glass(
+                "Our offense after OUR timeout" + ("" if _ours["stable"] else " ⚠"),
+                f"{_ours['PPP']:.2f} PPP",
+                f"{_d:+.2f} vs the {_ours['base_PPP']:.2f} baseline · "
+                f"{_ours['poss']} ATO poss",
+                color=("var(--good)" if _d >= 0 else "var(--bad)")),
+                unsafe_allow_html=True)
+        _th = ato.get("theirs")
+        if _th:
+            _d = _th["dPPP"] - _th["base_dPPP"]
+            _ac2.markdown(glass(
+                "Our defense after THEIR timeout" + ("" if _th["stable"] else " ⚠"),
+                f"{_th['dPPP']:.2f} PPP allowed",
+                f"{_d:+.2f} vs the {_th['base_dPPP']:.2f} allowed baseline · "
+                f"{_th['poss']} ATO poss",
+                color=("var(--bad)" if _d > 0 else "var(--good)")),
+                unsafe_allow_html=True)

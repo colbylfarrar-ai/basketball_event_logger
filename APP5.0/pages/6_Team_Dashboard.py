@@ -1306,6 +1306,18 @@ def _after_outcome_view(g, tid, game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _ato_view(g, tid, game_ids=None):
+    """After-timeout read: our first possession after OUR timeout vs baseline,
+    and our defense on their first possession after THEIRS (situational.
+    timeout_splits over game_timeouts markers). None until timeouts are logged."""
+    gids = list(game_ids) if game_ids is not None else S._team_game_ids(tid)
+    tos = SIT.fetch_timeouts(gids)
+    if not tos:
+        return None
+    return SIT.timeout_splits(tid, S.fetch_events(gids), tos)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _runs_view(g, tid, game_ids=None):
     """Scoring-run profile + raw run list for one team's tracked games
     (helpers/runs.py). `game_ids` scopes an archive season; None = current."""
@@ -1564,6 +1576,7 @@ if _tdview == "Charts":
             PURPLE=PURPLE, PINK=PINK,
             situational=_TMBIND(_situational_view),
             after_outcome=_TMBIND(_after_outcome_view),
+            ato=_TMBIND(_ato_view),
             runs=_TMBIND(_runs_view),
             game_log=log,          # rest & fatigue (score-based, date+margin)
             by_game_type=(_by_game_type if _is_cur_season
@@ -5119,7 +5132,7 @@ def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
     # play-type mix, spacing, on/off) reads that season's pool.
     _gp = _prof_gp
     render_card(SimpleNamespace(
-        P=P, pid=pid, rows=rows, paid=True, accent=ACCENT,
+        P=P, pid=pid, rows=rows, paid=True, accent=ACCENT, gender=gender,
         zsplits=zsplits, zguard=zguard, hsplits=hsplits,
         badges=_badges(gender, _gp).get(pid, []),
         archetype=_archetypes(gender, _gp).get(pid),

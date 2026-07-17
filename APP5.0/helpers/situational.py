@@ -590,6 +590,83 @@ def player_margin_scoring(events, min_pts=12):
     return out
 
 
+# ── After-timeout (ATO) read ──────────────────────────────────────────────────
+# The one situational marker the event stream can't carry: game_timeouts rows
+# (see database/db.py) are clock markers, not possessions. The read follows the
+# coach's two questions: does OUR drawn-up play score coming out of OUR timeout,
+# and do we defend the set THEY draw up out of THEIRS. Only the FIRST possession
+# after a timeout counts as ATO (that's the drawn-up play); a later possession
+# is just flow. Same possession rule as everywhere: ends on make / TOV /
+# defensive rebound (an offensive rebound continues it).
+ATO_MIN_POSS = 5           # timeouts are rare (~5/game) — read is directional
+
+
+def fetch_timeouts(game_ids):
+    """game_timeouts rows for a set of games (chronology fields only)."""
+    if not game_ids:
+        return []
+    from database.db import query
+    ph = ",".join("?" * len(game_ids))
+    return query(f"SELECT game_id, team_id, quarter, time FROM game_timeouts "
+                 f"WHERE game_id IN ({ph})", tuple(game_ids))
+
+
+def timeout_splits(team_id, events, timeouts, min_poss=ATO_MIN_POSS):
+    """ATO offense/defense vs baseline. Returns ``None`` when nothing to read::
+
+        {'ours':   {poss, PPP, base_PPP},    # our O on the 1st poss after OUR TO
+         'theirs': {poss, dPPP, base_dPPP},  # our D on the 1st poss after THEIR TO
+         'timeouts': int}                    # markers seen in these games
+    """
+    if not events or not timeouts:
+        return None
+    # merge timeouts into the per-game chronology as zero-width markers
+    marks = [{"game_id": t["game_id"], "quarter": t["quarter"],
+              "time": t.get("time") or "", "_to_team": t["team_id"]}
+             for t in timeouts]
+    order = sorted(list(events) + marks,
+                   key=lambda e: (e.get("game_id") or 0, _elapsed(e),
+                                  0 if "_to_team" in e else 1))
+    ours_evs, theirs_evs = [], []
+    pending = None                       # team that called the pending TO
+    buf = []
+    _cur_game = _UNSET
+    for e in order:
+        gid = e.get("game_id")
+        if gid != _cur_game:
+            _cur_game = gid
+            pending = None
+            buf = []
+        if "_to_team" in e:              # timeout marker: arm the next possession
+            pending = e["_to_team"]      # (stacked TOs: the last caller wins)
+            buf = []                     # the drawn-up play starts fresh
+            continue
+        buf.append(e)
+        outcome, ends = _ends_poss(e)
+        if not ends:
+            continue
+        if pending is not None:
+            owner = e.get("shooter_team_id")
+            if owner == team_id and pending == team_id:
+                ours_evs.extend(buf)
+            elif owner is not None and owner != team_id and pending != team_id:
+                theirs_evs.extend(buf)
+            pending = None               # only the first possession is ATO
+        buf = []
+    out = {"timeouts": len(marks)}
+    o = _off_totals(ours_evs, team_id)
+    if o["poss"]:
+        out["ours"] = {"poss": o["poss"], "PPP": o["PPP"],
+                       "base_PPP": _off_totals(events, team_id)["PPP"],
+                       "stable": o["poss"] >= min_poss}
+    d = _def_totals(theirs_evs, team_id)
+    if d["poss"]:
+        out["theirs"] = {"poss": d["poss"], "dPPP": d["PPP"],
+                         "base_dPPP": _def_totals(events, team_id)["PPP"],
+                         "stable": d["poss"] >= min_poss}
+    return out if ("ours" in out or "theirs" in out) else None
+
+
 def player_situational_edges(events, min_poss=PLAYER_SIT_MIN):
     """{pid: {situation, ppp_here, ppp_overall, poss, label}} — each player's most
     notable QUARTER-based scoring swing (4th-quarter clutch vs overall). Quarter is

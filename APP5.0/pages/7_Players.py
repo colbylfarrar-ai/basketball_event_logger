@@ -1401,7 +1401,7 @@ def _fx_prof():
     from types import SimpleNamespace
     from helpers.dashboard.player_card import render_card
     render_card(SimpleNamespace(
-        P=P, pid=pid, rows=rows, paid=_PAID, accent=ACCENT,
+        P=P, pid=pid, rows=rows, paid=_PAID, accent=ACCENT, gender=gender,
         zsplits=zsplits, zguard=zguard, hsplits=hsplits,
         badges=_lab_badges(gender, _vis_key).get(pid, []),
         archetype=_lab_clusters(gender, _vis_key)["players"].get(pid, {}).get("archetype"),

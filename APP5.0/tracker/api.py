@@ -400,6 +400,50 @@ def undo(game_id: int):
     return {"deleted_event_id": eid, "live": _scoreboard(game_id)}
 
 
+class TimeoutIn(BaseModel):
+    team_id: int
+    quarter: int = Field(ge=1, le=10)
+    time: str = ""
+    uuid: str | None = None
+
+
+@api.post("/games/{game_id}/timeouts")
+def post_timeout(game_id: int, t: TimeoutIn):
+    """Log a timeout marker (the clock event the play-by-play can't carry —
+    see the game_timeouts migration note in database/db.py). Idempotent on the
+    client uuid, same contract as event posts."""
+    g = query("SELECT team1_id, team2_id FROM games WHERE id=?", (game_id,))
+    if not g:
+        raise HTTPException(status_code=404, detail="no such game")
+    if t.team_id not in (g[0]["team1_id"], g[0]["team2_id"]):
+        raise HTTPException(status_code=400, detail="team not in this game")
+    if t.uuid:
+        row = query("SELECT id FROM game_timeouts WHERE client_uuid=?", (t.uuid,))
+        if row:
+            return {"timeout_id": row[0]["id"], "status": "duplicate"}
+    try:
+        tid = execute(
+            "INSERT INTO game_timeouts (game_id, team_id, quarter, time, "
+            "client_uuid) VALUES (?,?,?,?,?)",
+            (game_id, t.team_id, t.quarter, t.time, t.uuid or None))
+    except sqlite3.IntegrityError:
+        row = query("SELECT id FROM game_timeouts WHERE client_uuid=?", (t.uuid,))
+        return {"timeout_id": row[0]["id"] if row else None,
+                "status": "duplicate"}
+    return {"timeout_id": tid, "status": "inserted"}
+
+
+@api.post("/games/{game_id}/timeouts/undo")
+def undo_timeout(game_id: int):
+    """Delete the most recent timeout of the game (the PWA's mis-tap escape)."""
+    row = query("SELECT id FROM game_timeouts WHERE game_id=? "
+                "ORDER BY id DESC LIMIT 1", (game_id,))
+    if not row:
+        return {"deleted_timeout_id": None}
+    execute("DELETE FROM game_timeouts WHERE id=?", (row[0]["id"],))
+    return {"deleted_timeout_id": row[0]["id"]}
+
+
 @api.post("/games/{game_id}/finish")
 def finish(game_id: int, user: dict = Depends(require_full_user)):
     if not query("SELECT id FROM games WHERE id=?", (game_id,)):

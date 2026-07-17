@@ -36,7 +36,7 @@ def set_audit_actor(email) -> None:
 _AUDIT_SKIP_TABLES = {
     "app_settings", "change_requests", "audit_log",
     "game_event_lineup", "game_lineup_players", "game_lineup_officials",
-    "fan_views",
+    "fan_views", "game_timeouts",
 }
 _AUDIT_RE = re.compile(
     r"^\s*(INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
@@ -494,6 +494,33 @@ def initialize_database():
             " game_id INTEGER NOT NULL, day TEXT NOT NULL,"
             " viewers INTEGER NOT NULL DEFAULT 0,"
             " PRIMARY KEY (game_id, day))",
+            # Timeout capture. Deliberately a SEPARATE table, not a new
+            # game_events.event_type: the event_type CHECK constraint is baked
+            # into every existing DB's CREATE TABLE and SQLite can't alter a
+            # CHECK without a full table rebuild. A timeout also isn't a
+            # possession event (no player, no lineup snapshot) — it's a game
+            # clock marker. client_uuid mirrors game_events' offline-sync
+            # idempotency key. Feeds the after-timeout (ATO) read in
+            # helpers/situational.py.
+            "CREATE TABLE IF NOT EXISTS game_timeouts ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,"
+            " team_id INTEGER NOT NULL REFERENCES teams(id),"
+            " quarter INTEGER NOT NULL,"
+            " time TEXT NOT NULL DEFAULT '',"
+            " client_uuid TEXT,"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now')))",
+            "CREATE INDEX IF NOT EXISTS idx_gto_game ON game_timeouts(game_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uidx_gto_client_uuid "
+            "ON game_timeouts(client_uuid) WHERE client_uuid IS NOT NULL",
+            # Date indexes: the Schedule calendar + every game-log ORDER BY date
+            # were the last unindexed hot paths.
+            "CREATE INDEX IF NOT EXISTS idx_games_date    ON games(date)",
+            "CREATE INDEX IF NOT EXISTS idx_schedule_date ON schedule(date)",
+            # Audit-log retention: the moderation trail only needs a season of
+            # look-back; unbounded growth was bloating the DB. Runs every boot
+            # (cheap — indexed on ts).
+            "DELETE FROM audit_log WHERE ts < datetime('now','-12 months')",
         ]
 
         for stmt in migrations:

@@ -47,7 +47,7 @@ from helpers.ui import (page_chrome, page_header, masthead, rgb as _rgb,
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
-                           gauge_dial as _pp_gauge, gauge_range, bar_h,
+                           gauge_dial as _pp_gauge, bar_h,
                            scoring_donut as _donut)
 from helpers.court import (shot_chart as _shot_chart, hot_zones as _hot_zones,
                            shot_map as _shot_map, shot_hexbin as _shot_hexbin,
@@ -358,13 +358,6 @@ def _zone_pair_bars(zmap_a, zmap_b, name_a, name_b, value_fn, yaxis,
     fig.update_xaxes(tickangle=-25)
     _style(fig, height)
     return fig
-
-
-def _gauge(value, vmin, vmax, label, suffix="", good_high=True, ref=None,
-           height=210):
-    """League-range gauge (helpers.cards.gauge_range) with the page accent bar."""
-    return gauge_range(value, vmin, vmax, label, suffix=suffix, good_high=good_high,
-                       ref=ref, height=height, accent=ACCENT)
 
 
 def _poss_sankey(po, accent, height=460):
@@ -3810,30 +3803,17 @@ def _fx_chadv():
             _style(kp, 460)
             st.plotly_chart(kp, width="stretch", key="adv_kenpom")
 
-            # ── performance gauges ──────────────────────────────────────────
-            st.markdown("<div class='lab-hdr'>Performance Gauges</div>",
-                        unsafe_allow_html=True)
-            st.caption("Needle vs the league range; cyan line marks the league "
-                       "average and the delta shows the gap to it.")
+            # ── headline ratings vs league (tiles, not gauges — the quadrant
+            #    above already shows where these sit in the league range) ─────
             g1, g2, g3, g4 = st.columns(4)
-            with g1:
-                st.plotly_chart(_gauge(
-                    sc_track["ORtg"], min(pool_o), max(pool_o), "Off Rating",
-                    good_high=True, ref=avg_o), width="stretch", key="adv_g_o")
-            with g2:
-                st.plotly_chart(_gauge(
-                    sc_track["DRtg"], min(pool_d), max(pool_d), "Def Rating",
-                    good_high=False, ref=avg_d), width="stretch", key="adv_g_d")
-            with g3:
-                st.plotly_chart(_gauge(
-                    sc_track["NetRtg"], min(pool_n), max(pool_n), "Net Rating",
-                    good_high=True, ref=sum(pool_n) / len(pool_n)),
-                    width="stretch", key="adv_g_n")
-            with g4:
-                st.plotly_chart(_gauge(
-                    sc_track["Pace"], min(pool_p), max(pool_p), "Pace",
-                    good_high=True, ref=sum(pool_p) / len(pool_p)),
-                    width="stretch", key="adv_g_p")
+            g1.metric("Off Rating", f"{sc_track['ORtg']:.1f}",
+                      **_lg_delta(sc_track["ORtg"], pool_o))
+            g2.metric("Def Rating", f"{sc_track['DRtg']:.1f}",
+                      **_lg_delta(sc_track["DRtg"], pool_d, inverse=True))
+            g3.metric("Net Rating", f"{sc_track['NetRtg']:+.1f}",
+                      **_lg_delta(sc_track["NetRtg"], pool_n))
+            g4.metric("Pace", f"{sc_track['Pace']:.1f}",
+                      **_lg_delta(sc_track["Pace"], pool_p, neutral=True))
 
             # ── team DNA radar (8 percentile axes vs league) ────────────────
             st.markdown("<div class='lab-hdr'>Team DNA — league percentiles</div>",

@@ -2011,6 +2011,15 @@ def located_shots(game_ids=None, events=None, player_id=None, team_id=None,
             "dist": CG.shot_distance(x, y),
             "play_type": e.get("play_type"),
             "defense": e.get("defense"),
+            # Rebound of THIS attempt, for the "where do boards come from" maps.
+            # reb_off is True when the rebounder was on the shooter's team (an
+            # offensive board), False for a defensive board, and None when no
+            # rebounder was logged or either team is unknown — never guessed.
+            "reb_by": e.get("rebound_by_id"),
+            "reb_off": (None if (e.get("rebound_by_id") is None
+                                 or e.get("rebounder_team_id") is None
+                                 or e.get("shooter_team_id") is None)
+                        else e.get("rebounder_team_id") == e.get("shooter_team_id")),
         })
     return out
 

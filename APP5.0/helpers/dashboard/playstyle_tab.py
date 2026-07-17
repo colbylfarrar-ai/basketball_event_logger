@@ -35,6 +35,7 @@ import helpers.court as court
 from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
+import helpers.dashboard.rebound_map as _rebound_map
 
 _PTL = dict(PT.NAMED_PLAY_TYPES)
 _ZL = TA.ZONE_LABELS
@@ -387,6 +388,12 @@ def render(ctx):
         if n_untagged:
             st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — "
                        "tag them in the tracker to sharpen the by-set views.")
+
+    # ══ where the boards come from, by set call ══════════════════════════════
+    # `shots` is our OWN attempts (located_team), and is emptied on the defense
+    # side above — the renderer self-gates on an empty list.
+    _rebound_map.render(shots, "play_type", _PTL, unit="set call",
+                        own_side=True, key_prefix="ps")
 
     # ══ §C — tagged set-call PPP percentile bars + table ═════════════════════
     st.markdown("<div class='pl-hdr'>Set-call efficiency — ranked vs the league"

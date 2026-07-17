@@ -38,6 +38,7 @@ import helpers.court as court
 from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
+import helpers.dashboard.rebound_map as _rebound_map
 
 
 # Identity palette per family for the distribution donut (kept separate from the
@@ -305,6 +306,12 @@ def render(ctx):
         elif n_untagged:
             st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — set "
                        "the defense in the tracker to sharpen the by-scheme court.")
+
+    # ── where the boards come from, by scheme ────────────────────────────────
+    # `shots` already follows the side toggle: on "Our defense" they're the
+    # attempts we ALLOWED (tagged with the scheme WE ran), so own_side is _off.
+    _rebound_map.render(shots, "defense", _DEF_LABEL, unit="scheme",
+                        own_side=_off, key_prefix="def")
 
     # ── coverage line for the analytical sections below ──────────────────────
     dv = ctx.def_view(g, tid, _off)

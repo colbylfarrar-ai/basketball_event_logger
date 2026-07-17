@@ -51,7 +51,11 @@ from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            scoring_donut as _donut)
 from helpers.court import (shot_chart as _shot_chart, hot_zones as _hot_zones,
                            shot_map as _shot_map, shot_hexbin as _shot_hexbin,
-                           zone_leader_map as _zone_leader_map)
+                           zone_leader_map as _zone_leader_map,
+                           # court frame primitives for the rebound-geography
+                           # maps (same geometry/theme as every shot chart)
+                           _draw_court as _court_draw,
+                           _court_layout as _court_frame)
 from helpers.glossary import glossary_tab
 import helpers.team_analytics as TA
 import helpers.team_ratings as TR
@@ -704,6 +708,82 @@ def _located_allowed(tid, gids):
     attempt; its `defense` tag is the scheme THIS team was running."""
     return [s for s in S.located_shots(game_ids=list(gids))
             if s.get("team_id") != tid]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _reb_geography(tid, gids):
+    """Located missed shots with a logged rebounder, split by which basket:
+    'own' = this team's misses (second-chance creation), 'opp' = opponent
+    misses (the defensive glass). Each shot carries reb='Ours'|'Theirs'."""
+    out = {"own": [], "opp": []}
+    for e in S.fetch_events(list(gids)):
+        if e["event_type"] != "shot" or e.get("shot_result") == "make":
+            continue
+        x, y = e.get("shot_x"), e.get("shot_y")
+        rt, stid = e.get("rebounder_team_id"), e.get("shooter_team_id")
+        if x is None or y is None or rt is None or stid is None:
+            continue
+        rec = {"x": x, "y": y, "make": False,
+               "value": 3 if e.get("shot_type") == 3 else 2,
+               "reb": "Ours" if rt == tid else "Theirs"}
+        out["own" if stid == tid else "opp"].append(rec)
+    return out
+
+
+def _reb_map(shots, title, key):
+    """Half-court map of missed-shot origins, colored by who got the board."""
+    fig = go.Figure()
+    _court_draw(fig)
+    for name, clr in (("Ours", GOOD), ("Theirs", BAD)):
+        pts = [s for s in shots if s["reb"] == name]
+        if not pts:
+            continue
+        fig.add_trace(go.Scatter(
+            x=[s["x"] for s in pts], y=[s["y"] for s in pts],
+            mode="markers", name=f"{name} ({len(pts)})",
+            marker=dict(symbol="x", size=8, color=clr,
+                        line=dict(width=1, color=clr)),
+            hoverinfo="skip"))
+    _court_frame(fig, title, 420)
+    fig.update_layout(showlegend=True,
+                      legend=dict(orientation="h", y=1.02, x=0,
+                                  bgcolor="rgba(0,0,0,0)",
+                                  font=dict(size=11, color="#c9d1d9")))
+    st.plotly_chart(fig, width="stretch", key=key)
+
+
+def _verdict_lines(lines):
+    """Insights-style plain-word read box. `lines` = [(badge, n, html_text)]
+    — the same badge + n=sample + sentence pattern as the Insights feed, so
+    a coach gets the takeaway before the wall of evidence below it."""
+    body = "".join(
+        "<div style='margin-top:4px'>"
+        f"<span class='badge accent'>{b}</span> "
+        + (f"<span style='color:var(--subtext);font-size:10px'>n={n}</span> "
+           if n else "")
+        + f"{t}</div>" for b, n, t in lines)
+    st.markdown(f"<div class='gloss-card'>{body}</div>",
+                unsafe_allow_html=True)
+
+
+def _lg_delta(v, pool, *, pct=False, dec=1, inverse=False, neutral=False):
+    """st.metric delta kwargs for `v` vs the league-pool average. `inverse`
+    for lower-is-better stats, `neutral` for stats with no good direction
+    (pace). Empty pool (nobody else tracked) → no delta."""
+    pool = [p for p in pool if p is not None]
+    if not pool:
+        return {}
+    d = (v - sum(pool) / len(pool)) * (100 if pct else 1)
+    return {"delta": f"{d:+.{dec}f}{'pp' if pct else ''} vs lg",
+            "delta_color": ("off" if neutral else
+                            "inverse" if inverse else "normal")}
+
+
+def _jump(view, label, key):
+    """Cross-link button: flips the top-level View switcher on next rerun.
+    Only for VIEW-level links (st.tabs can't be selected programmatically)."""
+    st.button(label, key=key,
+              on_click=lambda v=view: st.session_state.update(td_view=v))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1473,12 +1553,58 @@ if _tdview == "Charts":
         trend = bundle["trend"]
         tx = [f"{e['date'][5:]} {e['opp'][:7]}" for e in trend]
 
+        # League pools for tile deltas + verdict lines (own team included in
+        # the average — one team out of a pool barely moves it, and it keeps
+        # the math honest on tiny leagues).
+        _lgff = _league_ff(gender, season_pick)
+        _lg_pace = [r.get("Pace") for r in tracked.values()]
+        _lg_drtg = [r.get("DRtg") for r in tracked.values()]
+        _lg_ppp = [r["ORtg"] / 100 for r in tracked.values()
+                   if r.get("ORtg") is not None]
+        _lg_efg = [v["off"]["eFG"] for v in _lgff.values()]
+        _lg_oefg = [v["def"]["eFG"] for v in _lgff.values()]
+        _lg_ftov = [v["def"]["TOV"] for v in _lgff.values()]
+        _lg_orb = [v["off"]["ORB"] for v in _lgff.values()]
+        _lg_dreb = [1 - v["def"]["ORB"] for v in _lgff.values()]
+
         # ───────────────────────────────────────────── SCORING ──────────────
         with ch_sc:
+            # plain-word read first (Insights pattern) — the numbers below are
+            # the evidence, not the message
+            _sc_lines = []
+            _sc_pts = soff["pts2"] + soff["pts3"] + soff["ptsft"]
+            if _sc_pts:
+                _p3 = soff["pts3"] / _sc_pts
+                _idw = ("an inside-first offense"
+                        if soff["pct_paint"] >= 0.45 else
+                        "a three-happy offense" if _p3 >= 0.35 else
+                        "a balanced scoring diet")
+                _sc_lines.append((
+                    "identity", None,
+                    f"<b>{soff['pct_paint']*100:.0f}%</b> of points come in the "
+                    f"paint · <b>{_p3*100:.0f}%</b> from three — {_idw}."))
+            _sc_tim = [r for r in (plen or [])
+                       if r["label"] != "Untimed" and r["FGA"] >= 10]
+            if _sc_tim:
+                _sc_best = max(_sc_tim, key=lambda r: _ppp(r, ppf, ftpf) or 0)
+                _sc_bp = _ppp(_sc_best, ppf, ftpf)
+                if _sc_bp:
+                    _sc_lines.append((
+                        "possessions", _sc_best["FGA"],
+                        "Most efficient shooting "
+                        f"<b>{_sc_best['label'].lower()}</b> into the possession "
+                        f"— <b>{_sc_bp:.2f} points per possession</b>."))
+            if _sc_lines:
+                _verdict_lines(_sc_lines)
+
             pmcols = st.columns(4)
             pmcols[0].metric("Pace", f"{summ.get('POSS_pg', 0):.1f}",
-                             help="Possessions per game.")
-            pmcols[1].metric("Pts / poss", f"{S._safe(tb['PTS'], poss):.2f}")
+                             help="Possessions per game.",
+                             **_lg_delta(summ.get("POSS_pg", 0), _lg_pace,
+                                         neutral=True))
+            pmcols[1].metric("Pts / poss", f"{S._safe(tb['PTS'], poss):.2f}",
+                             **_lg_delta(S._safe(tb["PTS"], poss), _lg_ppp,
+                                         dec=2))
             pmcols[2].metric("Pts / game", f"{rec['PF_pg']:.1f}")
             pmcols[3].metric("Paint pts %", _pctf(soff["pct_paint"]))
 
@@ -1564,6 +1690,42 @@ if _tdview == "Charts":
             _shp, _shc, _shm = st.tabs(
                 ["Shot Profile", "Contest", "Creation & Shot-making"])
             with _shp:
+                # plain-word read first — shot-making vs the looks created
+                # (the full SMOE breakdown lives in Shot Lab further down)
+                _sv_zo = zones["off"]
+                _sv_zx = bundle["zone_xfg"]
+                _sv_fga = sum(_sv_zo[z]["FGA"] for z in TA.ZONES)
+                _sv_lines = []
+                if _sv_fga >= 25:
+                    _sv_exp = sum(_sv_zo[z]["FGA"] * _sv_zx[z]["xFG%"]
+                                  for z in TA.ZONES)
+                    _sv_act = sum(_sv_zo[z]["FGM"] for z in TA.ZONES)
+                    _sv_moe = (_sv_act - _sv_exp) / _sv_fga * 100
+                    _sv_w = ("finishes <b>better than the looks it creates</b>"
+                             if _sv_moe >= 1 else
+                             "finishes about what its looks are worth"
+                             if _sv_moe > -1 else
+                             "<b>leaves points on good looks</b>")
+                    _sv_lines.append((
+                        "shot-making", _sv_fga,
+                        f"This team {_sv_w} — {_sv_moe:+.1f}pp FG% vs expected "
+                        f"(made {_sv_act:.0f}, looks said {_sv_exp:.0f})."))
+                    _sv_zd = [(TA.ZONE_LABELS[z].split("/")[0].strip(),
+                               (_sv_zo[z]["FG%"] - _sv_zx[z]["xFG%"]) * 100,
+                               _sv_zo[z]["FGA"])
+                              for z in TA.ZONES if _sv_zo[z]["FGA"] >= 10]
+                    if len(_sv_zd) >= 2:
+                        _sv_hot = max(_sv_zd, key=lambda d: d[1])
+                        _sv_cold = min(_sv_zd, key=lambda d: d[1])
+                        _sv_lines.append((
+                            "zones", None,
+                            f"Hottest vs expected: <b>{_sv_hot[0]}</b> "
+                            f"({_sv_hot[1]:+.0f}pp on {_sv_hot[2]} FGA) · "
+                            f"coldest: <b>{_sv_cold[0]}</b> "
+                            f"({_sv_cold[1]:+.0f}pp on {_sv_cold[2]} FGA)."))
+                if _sv_lines:
+                    _verdict_lines(_sv_lines)
+
                 # ── floor-spacing index (located-shot x,y blend vs league) ────
                 _sp = _spacing(gender, team_id, _vis_key)
                 if _sp.get("index") is not None:
@@ -1585,7 +1747,8 @@ if _tdview == "Charts":
                     st.caption(_sp["note"] + f"  ·  {_sp['n']} located shots over a "
                                f"{_sp['pool_n']}-team pool.")
                 sm = st.columns(7)
-                sm[0].metric("eFG%", _pctf(S.efg(tb)))
+                sm[0].metric("eFG%", _pctf(S.efg(tb)),
+                             **_lg_delta(S.efg(tb), _lg_efg, pct=True))
                 sm[1].metric("TS%", _pctf(S.ts(tb)))
                 sm[2].metric("FG%", _pctf(S.fg_pct(tb)))
                 sm[3].metric("3P%", _pctf(S.fg3_pct(tb)))
@@ -1766,10 +1929,36 @@ if _tdview == "Charts":
 
             with _shc:
                 # guarded vs unguarded — overall, then split by 2/3, zone & creation
-                st.markdown("<div class='lab-hdr'>Guarded vs unguarded</div>",
-                            unsafe_allow_html=True)
                 gd = bundle["guarded_detail"]
                 g, u = guarded["guarded"], guarded["unguarded"]
+
+                # plain-word read first — what contests actually cost this team
+                _ct_n = g["FGA"] + u["FGA"]
+                if _ct_n >= 25:
+                    _ct_gap = (u["eFG"] - g["eFG"]) * 100
+                    _ct_lines = [(
+                        "contest", _ct_n,
+                        f"Open looks are worth <b>{_ct_gap:+.1f}pp eFG%</b> to "
+                        f"this team; <b>{_pctf(guarded['guard_share'])}</b> of "
+                        "attempts are contested.")]
+                    _ct_pz = [(TA.ZONE_LABELS[z].split("/")[0].strip(),
+                               (gd["by_zone"][z]["unguarded"]["eFG"]
+                                - gd["by_zone"][z]["guarded"]["eFG"]) * 100,
+                               gd["by_zone"][z]["guarded"]["FGA"])
+                              for z in TA.ZONES
+                              if gd["by_zone"][z]["guarded"]["FGA"] >= 8
+                              and gd["by_zone"][z]["unguarded"]["FGA"] >= 4]
+                    if _ct_pz:
+                        _ct_worst = max(_ct_pz, key=lambda d: d[1])
+                        _ct_lines.append((
+                            "pressure point", None,
+                            f"A hand up hurts most at <b>{_ct_worst[0]}</b> — "
+                            f"{_ct_worst[1]:+.0f}pp eFG% swing open vs guarded "
+                            f"({_ct_worst[2]} guarded FGA)."))
+                    _verdict_lines(_ct_lines)
+
+                st.markdown("<div class='lab-hdr'>Guarded vs unguarded</div>",
+                            unsafe_allow_html=True)
                 st.dataframe(pd.DataFrame([
                     _shot_row("Guarded", g, ppf, ftpf),
                     _shot_row("Unguarded", u, ppf, ftpf),
@@ -1868,12 +2057,35 @@ if _tdview == "Charts":
                            "contesting hurts them most and where they punish open looks.")
 
             with _shm:
-                # shot-creation breakdown
-                st.markdown("<div class='lab-hdr'>Shot-creation breakdown</div>",
-                            unsafe_allow_html=True)
                 cmap = {"both": "Pass + screen", "pass": "Off a pass",
                         "created": "Off a screen", "self": "Self-created"}
                 order = ["both", "pass", "created", "self"]
+
+                # plain-word read first — which creation type actually pays
+                _cr_tot = crb["total"]["FGA"]
+                if _cr_tot >= 25:
+                    _cr_cands = [(cmap[k], crb[k]) for k in order
+                                 if crb[k]["FGA"] >= 10]
+                    _cr_lines = []
+                    if _cr_cands:
+                        _cr_best = max(_cr_cands, key=lambda it: it[1]["PPS"])
+                        _cr_lines.append((
+                            "creation", _cr_best[1]["FGA"],
+                            f"Best looks come <b>{_cr_best[0].lower()}</b> — "
+                            f"{_cr_best[1]['PPS']:.2f} points per shot."))
+                    _cr_selfsh = S._safe(crb["self"]["FGA"], _cr_tot)
+                    _cr_lines.append((
+                        "mix", _cr_tot,
+                        f"<b>{_cr_selfsh*100:.0f}%</b> of attempts are "
+                        "self-created (no pass, no screen) — "
+                        + ("a lot of hero ball." if _cr_selfsh >= 0.4 else
+                           "a healthy dose of ball movement." if _cr_selfsh <= 0.25
+                           else "a normal mix.")))
+                    _verdict_lines(_cr_lines)
+
+                # shot-creation breakdown
+                st.markdown("<div class='lab-hdr'>Shot-creation breakdown</div>",
+                            unsafe_allow_html=True)
                 st.dataframe(pd.DataFrame(
                     [_shot_row(cmap[k], crb[k], ppf, ftpf) for k in order]
                     + [_shot_row("TOTAL", crb["total"], ppf, ftpf)]),
@@ -2079,15 +2291,39 @@ if _tdview == "Charts":
 
         # ───────────────────────────────────────────── REBOUNDING ───────────
         with ch_rb:
+            # plain-word read first — where this team's glass actually ranks
+            _rb_dreb = S._safe(tb["DRB"], tb["DRB"] + ob["ORB"])
+            _rb_opct = TA.percentile(ff["off"]["ORB"], _lg_orb,
+                                     higher_better=True)
+            _rb_dpct = TA.percentile(_rb_dreb, _lg_dreb, higher_better=True)
+            if _rb_opct is not None and _rb_dpct is not None:
+                _rb_w = ("owns both ends of the glass"
+                         if _rb_opct >= 60 and _rb_dpct >= 60 else
+                         "crashes hard but leaks boards on defense"
+                         if _rb_opct >= 60 and _rb_dpct < 45 else
+                         "cleans its own glass but rarely crashes"
+                         if _rb_dpct >= 60 and _rb_opct < 45 else
+                         "is getting outworked on the boards"
+                         if _rb_opct < 40 and _rb_dpct < 40 else
+                         "holds its own on the boards")
+                _verdict_lines([(
+                    "glass", None,
+                    f"Offensive glass sits at the <b>{_rb_opct:.0f}th "
+                    f"percentile</b>, defensive glass the <b>{_rb_dpct:.0f}th"
+                    f"</b> — this team {_rb_w}.")])
+
             rm = st.columns(6)
             rm[0].metric("OREB%", _pctf(ff["off"]["ORB"]),
-                         help="Share of own misses rebounded.")
-            rm[1].metric("DREB%",
-                         _pctf(S._safe(tb["DRB"], tb["DRB"] + ob["ORB"])),
-                         help="Share of opponent misses rebounded.")
+                         help="Share of own misses rebounded.",
+                         **_lg_delta(ff["off"]["ORB"], _lg_orb, pct=True))
+            rm[1].metric("DREB%", _pctf(_rb_dreb),
+                         help="Share of opponent misses rebounded.",
+                         **_lg_delta(_rb_dreb, _lg_dreb, pct=True))
             rm[2].metric("Opp OREB%", _pctf(ff["def"]["ORB"]),
                          help="Opponent's offensive-rebound rate — lower is "
-                              "better work on the defensive glass.")
+                              "better work on the defensive glass.",
+                         **_lg_delta(ff["def"]["ORB"], _lg_orb, pct=True,
+                                     inverse=True))
             rm[3].metric("REB / game", f"{tb['TRB'] / ng:.1f}")
             rm[4].metric("OREB / game", f"{tb['ORB'] / ng:.1f}")
             rm[5].metric("DREB / game", f"{tb['DRB'] / ng:.1f}")
@@ -2146,13 +2382,95 @@ if _tdview == "Charts":
                 _style(rbf, 320)
                 st.plotly_chart(rbf, width="stretch", key="rb_players")
 
+            # ── rebound geography — where the misses (and boards) live ───────
+            st.markdown("<div class='lab-hdr'>Rebound geography — where the "
+                        "misses land</div>", unsafe_allow_html=True)
+            _rg = _reb_geography(team_id, tuple(bundle["tracked_ids"]))
+            _rg_n = len(_rg["own"]) + len(_rg["opp"])
+            if _rg_n < 10:
+                st.caption("Needs tap-captured shot locations with a logged "
+                           "rebounder — fills in as located tracked games build.")
+            else:
+                _rg_own_pct = (sum(1 for s in _rg["own"] if s["reb"] == "Ours")
+                               / max(len(_rg["own"]), 1) * 100)
+                _rg_opp_pct = (sum(1 for s in _rg["opp"] if s["reb"] == "Theirs")
+                               / max(len(_rg["opp"]), 1) * 100)
+                _verdict_lines([(
+                    "second chances", _rg_n,
+                    f"We rebound <b>{_rg_own_pct:.0f}%</b> of our own located "
+                    f"misses and give back <b>{_rg_opp_pct:.0f}%</b> of theirs "
+                    "— each ✕ below is the shot the board came from.")])
+                rg1, rg2 = st.columns(2)
+                with rg1:
+                    _reb_map(_rg["own"], "Our misses — who got the board",
+                             key="rb_geo_own")
+                with rg2:
+                    _reb_map(_rg["opp"], "Their misses — who got the board",
+                             key="rb_geo_opp")
+                st.caption("Missed shots at their tap-captured origin — green ✕ "
+                           "= we secured the rebound, red ✕ = they did. Left "
+                           "court: second chances we create. Right court: red "
+                           "clusters are where we leak offensive boards.")
+
+            # putbacks — the shot IS roughly where the offensive board happened
+            _pb = [s for s in _td_shots if s.get("play_type") == "putback"]
+            if len(_pb) >= 5:
+                st.markdown("<div class='lab-hdr'>Putbacks — where second-chance "
+                            "shots go up</div>", unsafe_allow_html=True)
+                _pbf, _pbn = _shot_map(_pb, title="")
+                st.plotly_chart(_pbf, width="stretch", key="rb_putback")
+                _pbm = sum(1 for s in _pb if s["make"])
+                st.caption(f"{_pbm}/{_pbn} putbacks made — a putback attempt "
+                           "sits at the spot of the offensive board, so this "
+                           "doubles as an OREB location map. Small sample: "
+                           "directional.")
+
         # ───────────────────────────────────────────── DEFENSE ──────────────
         with ch_df:
+            # plain-word read first — where the defense ranks + where it leaks
+            _df_lines = []
+            _df_dpct = TA.percentile(summ.get("DRtg"), _lg_drtg,
+                                     higher_better=False) \
+                if summ.get("DRtg") is not None else None
+            _df_tpct = TA.percentile(ff["def"]["TOV"], _lg_ftov,
+                                     higher_better=True)
+            if _df_dpct is not None and _df_tpct is not None:
+                _df_lines.append((
+                    "defense", None,
+                    f"Defense sits at the <b>{_df_dpct:.0f}th percentile</b> "
+                    f"league-wide; it forces turnovers at the "
+                    f"<b>{_df_tpct:.0f}th</b>."))
+            # opponents' most valuable look vs us — points per attempt so 2s
+            # and 3s compare honestly
+            _df_zdt = bundle["zones_by_type"]["def"]
+            _df_cands = []
+            for _tk, _tv in (("2", 2), ("3", 3)):
+                for _z in TA.ZONES:
+                    _a = _df_zdt[_tk][_z]
+                    if _a["FGA"] >= 8:
+                        _df_cands.append(
+                            (f"{TA.ZONE_LABELS[_z].split('/')[0].strip()} "
+                             f"{_tk}s", _a["FG%"] * _tv, _a["FG%"], _a["FGA"]))
+            if _df_cands:
+                _df_worst = max(_df_cands, key=lambda d: d[1])
+                _df_lines.append((
+                    "leak", _df_worst[3],
+                    f"Opponents' best look against us: <b>{_df_worst[0]}</b> — "
+                    f"{_df_worst[2]*100:.0f}% for {_df_worst[1]:.2f} points "
+                    "per attempt."))
+            if _df_lines:
+                _verdict_lines(_df_lines)
+
             dm = st.columns(4)
             dm[0].metric("Def Rtg", f"{summ.get('DRtg', 0):.1f}",
-                         help="Points allowed / 100 poss. Lower is better.")
-            dm[1].metric("Opp eFG%", _pctf(ff["def"]["eFG"]))
-            dm[2].metric("Forced TOV%", _pctf(ff["def"]["TOV"]))
+                         help="Points allowed / 100 poss. Lower is better.",
+                         **_lg_delta(summ.get("DRtg", 0), _lg_drtg,
+                                     inverse=True))
+            dm[1].metric("Opp eFG%", _pctf(ff["def"]["eFG"]),
+                         **_lg_delta(ff["def"]["eFG"], _lg_oefg, pct=True,
+                                     inverse=True))
+            dm[2].metric("Forced TOV%", _pctf(ff["def"]["TOV"]),
+                         **_lg_delta(ff["def"]["TOV"], _lg_ftov, pct=True))
             dm[3].metric("Stocks / game", f"{(tb['STL'] + tb['BLK']) / ng:.1f}")
 
             dm2 = st.columns(5)
@@ -2271,6 +2589,18 @@ if _tdview == "Charts":
                 _md = pd.DataFrame(_mrows)
                 _md["Defender"] = ("#" + _md["def_#"].astype(str) + " "
                                    + _md["defender"])
+                # plain-word read — the roster's best contest numbers
+                _mu_agg = _md.groupby("Defender")[["FGM", "FGA"]].sum()
+                _mu_agg = _mu_agg[_mu_agg["FGA"] >= 10]
+                if len(_mu_agg):
+                    _mu_best = (_mu_agg["FGM"] / _mu_agg["FGA"]).idxmin()
+                    _mu_fga = int(_mu_agg.loc[_mu_best, "FGA"])
+                    _mu_fg = (_mu_agg.loc[_mu_best, "FGM"]
+                              / _mu_agg.loc[_mu_best, "FGA"] * 100)
+                    _verdict_lines([(
+                        "lockdown", _mu_fga,
+                        f"Best contest numbers on the roster: <b>{_mu_best}</b> "
+                        f"— shooters they covered hit just {_mu_fg:.0f}%.")])
                 _top = (_md.groupby("shooter")["FGA"].sum()
                         .sort_values(ascending=False).head(10).index.tolist())
                 _sub = _md[_md["shooter"].isin(_top)]
@@ -2326,6 +2656,19 @@ if _tdview == "Charts":
             if len(trend) < 2:
                 st.info("Need at least two tracked games for trend charts.")
             else:
+                # plain-word read first — which way is this team pointing
+                _fr_last = trend[-3:]
+                _fr_l3 = sum(e["NetRtg"] for e in _fr_last) / len(_fr_last)
+                _fr_all = sum(e["NetRtg"] for e in trend) / len(trend)
+                _fr_w = ("<b>trending up</b>" if _fr_l3 - _fr_all >= 3 else
+                         "<b>trending down</b>" if _fr_l3 - _fr_all <= -3 else
+                         "holding steady")
+                _verdict_lines([(
+                    "form", len(trend),
+                    f"Last {len(_fr_last)} tracked games: <b>{_fr_l3:+.1f}</b> "
+                    f"net rating vs <b>{_fr_all:+.1f}</b> on the season — "
+                    f"{_fr_w}.")])
+
                 # ── wins vs losses — moved up & expanded ────────────────────
                 wl = bundle["wl_splits"]
                 if wl["W"] and wl["L"]:
@@ -2391,6 +2734,7 @@ if _tdview == "Charts":
                                "(down for Pts against / Def Rtg / Opp eFG% / "
                                "turnovers). Effect-size-ranked signature stats → "
                                "**Insights** tab.")
+                    _jump("Insights", "Open Insights →", "tr_jump_ins")
 
                 # ── every team stat over the tracked games (straight, individual)
                 st.markdown("<div class='lab-hdr'>Every team stat over tracked "
@@ -2441,6 +2785,7 @@ if _tdview == "Charts":
                 # tracked-event trends — they live with the résumé now.)
                 st.caption("Game-margin dot plot & home/away splits → **Lab → "
                            "Advanced → Résumé & Form**.")
+                _jump("Lab", "Open Lab →", "tr_jump_lab")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

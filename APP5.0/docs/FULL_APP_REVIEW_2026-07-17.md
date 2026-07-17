@@ -755,10 +755,23 @@ already built (see corrected §13).
 **7. Migrations** *(db.py)*: `games(date)` + `schedule(date)` indexes;
 audit_log 12-month retention (runs each boot).
 
-**8. Season-rollover timer** — units were already Oct-1-aware
-(daily 03:30 check, `Persistent=true` so a missed boundary still fires);
-installed + enabled on the VPS during this deploy (see commit/deploy notes
-below).
+**8. Season-rollover timer** — units were already Oct-1-aware (daily 03:30
+check, `Persistent=true` so a missed boundary still fires). **Install is
+blocked on the VPS**: passwordless sudo covers `systemctl restart` but not
+`cp`/`enable`, so I could not place the unit files non-interactively. The
+script itself is verified working on the box (ran it as app5 — clean no-op,
+"active 2026-2027"). ONE manual step for you, with your password:
+
+```bash
+ssh app5@107.170.27.154
+sudo cp ~/app5/APP5.0/deploy/app5-season-rollover.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now app5-season-rollover.timer
+```
+
+(Note found while verifying: the VPS's active season label is already
+**2026-2027** — prod rolled over ahead of the laptop DB, which sits on
+2025-2026 archive + a nearly-empty Current. Expected if you rolled prod
+manually; flagging in case it wasn't intentional.)
 
 Verification: 12/12 new-engine asserts + existing situational tests pass;
 timeout API exercised end-to-end (insert / duplicate / bad-team 400 /
@@ -769,3 +782,9 @@ sections verified at engine level instead). NOTE: the laptop DB is
 post-rollover ('2025-2026' archive + a nearly empty 'Current'), which is why
 empty-season branches fire locally. Full script-test sweep ran before
 commit.
+
+**Deployed** (commit `2238e94`, pushed + pulled + app5-web/app5-tracker
+restarted, both active): migrations confirmed live on prod (`game_timeouts`
+table + `idx_games_date` / `idx_schedule_date` / `idx_gto_game` all present).
+PWA cache bumped to v45 so phones pick up the TO buttons on next open.
+Remaining for you: the one sudo command in item 8 above.

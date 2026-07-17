@@ -269,6 +269,20 @@ env on `app5-web.service` — small code change, not done here.)*
 
 ## Updates / operations
 
+**The box (provisioned):** `app5@107.170.27.154` — hostname `hooptracks`, serving
+`app.hooptracks.com` / `track.hooptracks.com` / `live.hooptracks.com` via Caddy.
+Auth is the laptop's `~/.ssh/id_ed25519` key (no password); the `app5` user has
+passwordless sudo for systemctl. One-shot deploy from the laptop:
+
+```bash
+git push origin main
+ssh app5@107.170.27.154 "cd ~/app5/APP5.0 && git pull --ff-only && sudo systemctl restart app5-web"
+# restart app5-tracker too only when tracker/ changed;
+# add `pip install -r requirements.txt` (in the venv) only when requirements changed
+```
+
+Full update sequence (deps changed, or in doubt):
+
 ```bash
 cd ~/app5/APP5.0 && git pull && . .venv/bin/activate && pip install -r requirements.txt
 sudo systemctl restart app5-web app5-tracker

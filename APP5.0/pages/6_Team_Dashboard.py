@@ -11,10 +11,10 @@ Pick one team and read everything about it across these tabs:
                  selector. (The lineup simulator now lives under Helper → Lineup.)
   • Schedule   — the full schedule, record vs each class, and any tracked game's
                  complete box score on demand.
-  • Charts     — the analytics wall (Scoring · Shooting · Rebounding · Defense ·
-                 Trends), plus three deeper sub-tabs folded in here: Quarters
-                 (every stat split by quarter), Advanced (the efficiency / DNA /
-                 résumé / playmaking / flow lab) and Build (a free-form chart lab).
+  • Charts     — the analytics wall, six stories: Offense (Scoring · Shooting ·
+                 Playmaking nested), Play Style, Defense (Team Defense · Scheme ·
+                 Glass nested), Situational, Trends and Quarters (every stat
+                 split by quarter, heatmap + drill).
   • Scout      — game-day scouting report: keys to guard / attack, four-factor
                  tendencies, the 2s-vs-3s breakeven, personnel cards, hot zones
                  and a printable sheet (folds in the old Scout Report page).
@@ -1244,7 +1244,8 @@ def _matchup_grid(g, tid, _ids):
 #       — created BEFORE tab_charts so the ch_* names exist for the with-blocks
 #       below; a `with ch_x:` routes output into whichever tab owns the object,
 #       no matter where the block physically sits in the file.
-#    with tab_charts:  creates the 7 game-prep sub-tabs (ch_sc sh rb df tr qt ps).
+#    with tab_charts:  creates the 6 top-level Charts tabs; Offense nests
+#       (ch_sc sh play) and Defense nests (ch_df dscheme rb).
 #       Scoring/Shooting/Rebounding/Defense/Trends render INSIDE this block —
 #       they SHARE one computed-once data batch (quarter, qs, cbg, poss, tb,
 #       ob…) and hold no widgets, which is why they are NOT fragmented. This
@@ -1346,7 +1347,8 @@ _sched_ctx = SimpleNamespace(bundle=bundle, rec=rec, log=log, scored=scored,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 4 — CHARTS  (5 sub-tabs: Scoring · Shooting · Rebounding · Defense · Trends)
+#  TAB 4 — CHARTS  (6 tabs: Offense · Play Style · Defense · Situational ·
+#                   Trends · Quarters; Offense + Defense carry nested sub-tabs)
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Schedule":
     DSCHED.render(_sched_ctx)
@@ -1361,17 +1363,22 @@ if _tdview == "Lab":
         ["Advanced", "Build", "Impact Lab"])
 
 if _tdview == "Charts":
-    # Order tells the story: offense identity → defense identity → context →
-    # time. Scoring→Shooting→Playmaking→Play Style is the offense block; then
-    # Rebounding→Defense→Defense Scheme mirrors it on D; Situational layers
-    # score/clock context; Trends (season arc) and Quarters (deepest time-slice)
-    # close as the nerd capstones. Tab objects are module globals referenced by
-    # the `with ch_*:` blocks scattered below — only THIS order/label list drives
-    # what the user sees, so reordering here is safe without moving the bodies.
-    (ch_sc, ch_sh, ch_play, ch_ps, ch_rb, ch_df, ch_dscheme, ch_sit,
-     ch_tr, ch_qt) = st.tabs(
-        ["Scoring", "Shooting", "Playmaking", "Play Style", "Rebounding",
-         "Defense", "Defense Scheme", "Situational", "Trends", "Quarters"])
+    # Six top-level stories instead of ten flat tabs: Offense and Defense carry
+    # nested sub-tabs. Scheme nests under Defense (it IS the defensive-identity
+    # deep dive, mirroring Play Style on offense); Rebounding folds in as Glass.
+    # Every ch_* object is still a module global referenced by the `with ch_*:`
+    # blocks scattered below — a `with ch_x:` routes output into whichever tab
+    # owns the object regardless of where the body sits in the file, so only
+    # THIS block drives what the user sees.
+    (tab_off, ch_ps, tab_def, ch_sit, ch_tr, ch_qt) = st.tabs(
+        ["Offense", "Play Style", "Defense", "Situational", "Trends",
+         "Quarters"])
+    with tab_off:
+        (ch_sc, ch_sh, ch_play) = st.tabs(
+            ["Scoring", "Shooting", "Playmaking"])
+    with tab_def:
+        (ch_df, ch_dscheme, ch_rb) = st.tabs(
+            ["Team Defense", "Scheme", "Glass"])
 
     # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
     # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
@@ -2085,7 +2092,8 @@ if _tdview == "Charts":
             rm[4].metric("OREB / game", f"{tb['ORB'] / ng:.1f}")
             rm[5].metric("DREB / game", f"{tb['DRB'] / ng:.1f}")
 
-            st.caption("Blocks, steals & forced turnovers → **Defense** tab. "
+            st.caption("Blocks, steals & forced turnovers → **Team Defense** "
+                       "sub-tab. "
                        "Quarter-by-quarter glass battle (OREB / DREB / margin "
                        "per period) → **Quarters** tab.")
 
@@ -2407,44 +2415,27 @@ if _tdview == "Charts":
                 _style(nr, 340)
                 st.plotly_chart(nr, width="stretch", key="tr_net")
 
-                st.markdown("<div class='lab-hdr'>Efficiency — per game"
-                            "</div>", unsafe_allow_html=True)
-                ortg = [e["ORtg"] for e in trend]
-                drtg = [e["DRtg"] for e in trend]
-                eff = _trend_line(
-                    tx, [("ORtg", ortg, ACCENT), ("DRtg", drtg, AWAY)],
-                    None, "tr_eff", height=320, yaxis="Pts / 100 poss")
-                st.plotly_chart(eff, width="stretch", key="tr_eff")
-
+                # Headliners only — pace / turnovers / assists / steals already
+                # have their own lines in the per-game stat grid above, so no
+                # standalone dups.
                 c1, c2 = st.columns(2)
                 with c1:
-                    efgv = [e["eFG"] * 100 for e in trend]
-                    avg = sum(efgv) / len(efgv)
-                    ef = _trend_line(
-                        tx, [("eFG%", efgv, ACCENT),
-                             ("Opp eFG%", [e["oeFG"] * 100 for e in trend], AWAY)],
-                        None, "tr_efg", height=300, yaxis="eFG%")
-                    st.plotly_chart(ef, width="stretch", key="tr_efg")
+                    st.markdown("<div class='lab-hdr'>Efficiency — per game"
+                                "</div>", unsafe_allow_html=True)
+                    ortg = [e["ORtg"] for e in trend]
+                    drtg = [e["DRtg"] for e in trend]
+                    eff = _trend_line(
+                        tx, [("ORtg", ortg, ACCENT), ("DRtg", drtg, AWAY)],
+                        None, "tr_eff", height=320, yaxis="Pts / 100 poss")
+                    st.plotly_chart(eff, width="stretch", key="tr_eff")
                 with c2:
-                    pc = _trend_line(
-                        tx, [("Pace", [e["Pace"] for e in trend], BLUE)],
-                        None, "tr_pace", height=300, yaxis="Possessions",
-                        avg=sum(e["Pace"] for e in trend) / len(trend))
-                    st.plotly_chart(pc, width="stretch", key="tr_pace")
-
-                c3, c4 = st.columns(2)
-                with c3:
-                    to = _trend_line(
-                        tx, [("Turnovers", [e["TOV"] for e in trend], AWAY),
-                             ("Steals", [e["STL"] for e in trend], GOOD)],
-                        None, "tr_to", height=300, yaxis="Count")
-                    st.plotly_chart(to, width="stretch", key="tr_to")
-                with c4:
-                    asf = _trend_line(
-                        tx, [("Assists", [e["AST"] for e in trend], PURPLE)],
-                        None, "tr_ast", height=300, yaxis="Assists",
-                        avg=sum(e["AST"] for e in trend) / len(trend))
-                    st.plotly_chart(asf, width="stretch", key="tr_ast")
+                    st.markdown("<div class='lab-hdr'>Shooting — per game"
+                                "</div>", unsafe_allow_html=True)
+                    ef = _trend_line(
+                        tx, [("eFG%", [e["eFG"] * 100 for e in trend], ACCENT),
+                             ("Opp eFG%", [e["oeFG"] * 100 for e in trend], AWAY)],
+                        None, "tr_efg", height=320, yaxis="eFG%")
+                    st.plotly_chart(ef, width="stretch", key="tr_efg")
 
                 # (Margin distribution + home/away splits are results-math, not
                 # tracked-event trends — they live with the résumé now.)
@@ -3276,7 +3267,8 @@ if _tdview == "Charts":
 def _fx_chadv():
     st.caption("The analytics lab — league-relative efficiency, team DNA, "
                "schedule résumé, the passing network and possession flow. (Shot "
-               "Lab now lives under Charts → Shooting.) Most panels need tracked "
+               "Lab now lives under Charts → Offense → Shooting.) Most panels "
+               "need tracked "
                "games; the résumé works from results alone.")
 
     adv_eff, adv_res, adv_flow = st.tabs(

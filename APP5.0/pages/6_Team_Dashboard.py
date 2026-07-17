@@ -1577,64 +1577,34 @@ if _tdview == "Charts":
                         st.markdown(_sph, unsafe_allow_html=True)
                     st.caption(_sp["note"] + f"  ·  {_sp['n']} located shots over a "
                                f"{_sp['pool_n']}-team pool.")
-                sm = st.columns(6)
+                sm = st.columns(7)
                 sm[0].metric("eFG%", _pctf(S.efg(tb)))
                 sm[1].metric("TS%", _pctf(S.ts(tb)))
                 sm[2].metric("FG%", _pctf(S.fg_pct(tb)))
                 sm[3].metric("3P%", _pctf(S.fg3_pct(tb)))
                 sm[4].metric("Paint FG%", _pctf(S.paint_fg_pct(tb)))
-                sm[5].metric("ScEff", f"{S.shot_efficiency(tb):.3f}",
+                sm[5].metric("FT%", _pctf(S.ft_pct(tb)))
+                sm[6].metric("ScEff", f"{S.shot_efficiency(tb):.3f}",
                              help="Scoring efficiency = (PTS − FT) / (2PA·2 + 3PA·3) "
                                   "— FG points as a share of the max possible.")
 
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("**Shot diet** — attempts by type")
-                    paint2 = tb["paint_FGA"]
-                    mid2 = tb["2PA"] - paint2
-                    sd = go.Figure(go.Bar(
-                        x=[paint2, mid2, tb["3PA"]],
-                        y=["Paint 2s", "Other 2s", "3s"], orientation="h",
-                        marker_color=[ACCENT, "#d29922", BLUE], marker_line_width=0,
-                        text=[paint2, mid2, tb["3PA"]], textposition="auto"))
-                    sd.update_xaxes(title="Attempts")
-                    _style(sd, 280)
-                    sd.update_layout(margin=dict(l=4, r=14, t=10, b=30))
-                    st.plotly_chart(sd, width="stretch", key="sh_diet")
-                with c2:
-                    st.markdown("**Make rate by type**")
-                    splits = [("FG%", S.fg_pct(tb)), ("2P%", S.fg2_pct(tb)),
-                              ("3P%", S.fg3_pct(tb)), ("Paint%", S.paint_fg_pct(tb)),
-                              ("FT%", S.ft_pct(tb)), ("eFG%", S.efg(tb)),
-                              ("TS%", S.ts(tb))]
-                    sf = go.Figure(go.Bar(
-                        x=[s[0] for s in splits], y=[s[1] * 100 for s in splits],
-                        marker_color=ACCENT, marker_line_width=0,
-                        text=[f"{s[1]*100:.0f}" for s in splits], textposition="auto"))
-                    sf.update_yaxes(title="%")
-                    _style(sf, 280)
-                    st.plotly_chart(sf, width="stretch", key="sh_splits")
+                st.markdown("**Shot diet** — attempts by type")
+                paint2 = tb["paint_FGA"]
+                mid2 = tb["2PA"] - paint2
+                sd = go.Figure(go.Bar(
+                    x=[paint2, mid2, tb["3PA"]],
+                    y=["Paint 2s", "Other 2s", "3s"], orientation="h",
+                    marker_color=[ACCENT, "#d29922", BLUE], marker_line_width=0,
+                    text=[paint2, mid2, tb["3PA"]], textposition="auto"))
+                sd.update_xaxes(title="Attempts")
+                _style(sd, 240)
+                sd.update_layout(margin=dict(l=4, r=14, t=10, b=30))
+                st.plotly_chart(sd, width="stretch", key="sh_diet")
 
-                # zone analysis — separated into 2s and 3s
-                st.markdown("<div class='lab-hdr'>Zone analysis — where they shoot "
-                            "(2s vs 3s)</div>", unsafe_allow_html=True)
+                # zone aggregates — feed the xFG table below and the legacy
+                # zone charts in the no-tap-data fallback branch
                 zo = zones["off"]
                 zbt = bundle["zones_by_type"]["off"]   # {'all','2','3': {zone: agg}}
-                zc1, zc2 = st.columns(2)
-                with zc1:
-                    st.markdown("**Attempts by zone**")
-                    st.plotly_chart(_zone_pair_bars(
-                        zbt["2"], zbt["3"], "2-pt", "3-pt",
-                        lambda a: a["FGA"], "Attempts",
-                        text_fn=lambda a: a["FGA"] or ""),
-                        width="stretch", key="sh_zfa_t")
-                with zc2:
-                    st.markdown("**FG% by zone**")
-                    st.plotly_chart(_zone_pair_bars(
-                        zbt["2"], zbt["3"], "2P%", "3P%",
-                        lambda a: a["FG%"] * 100, "FG%",
-                        text_fn=lambda a: f"{a['FG%']*100:.0f}%" if a["FGA"] else "—"),
-                        width="stretch", key="sh_zfg_t")
 
                 # ── hot zone maps (court layout, colored by FG%) — 2s and 3s ─────
                 ZPOS = {"LC": (-21, 4), "LW": (-15, 21), "C": (0, 8),
@@ -1713,6 +1683,26 @@ if _tdview == "Charts":
                     if _td_db:
                         st.caption("By length — " + S.distance_buckets_caption(_td_db))
                 else:
+                    # Legacy zone views — only when no tap-captured x/y shots
+                    # exist; the hexbin/dot charts supersede them otherwise.
+                    st.markdown("<div class='lab-hdr'>Zone analysis — where they "
+                                "shoot (2s vs 3s)</div>", unsafe_allow_html=True)
+                    zc1, zc2 = st.columns(2)
+                    with zc1:
+                        st.markdown("**Attempts by zone**")
+                        st.plotly_chart(_zone_pair_bars(
+                            zbt["2"], zbt["3"], "2-pt", "3-pt",
+                            lambda a: a["FGA"], "Attempts",
+                            text_fn=lambda a: a["FGA"] or ""),
+                            width="stretch", key="sh_zfa_t")
+                    with zc2:
+                        st.markdown("**FG% by zone**")
+                        st.plotly_chart(_zone_pair_bars(
+                            zbt["2"], zbt["3"], "2P%", "3P%",
+                            lambda a: a["FG%"] * 100, "FG%",
+                            text_fn=lambda a: f"{a['FG%']*100:.0f}%"
+                            if a["FGA"] else "—"),
+                            width="stretch", key="sh_zfg_t")
                     st.markdown("**Hot zone maps** — size = volume, color = FG%")
                     hz1, hz2 = st.columns(2)
                     with hz1:
@@ -2007,42 +1997,10 @@ if _tdview == "Charts":
                         f"{100*S._safe(ov_asst2['FGA'], tot_all):.0f}% off a pass. "
                         f"Bars = game margin (right axis).")
 
-                # shooting by quarter — FG%/2P%/3P%/eFG%/TS% + FT%
-                qbx_sh = bundle["quarter_boxes"]
-                qsb = sorted(qbx_sh)
-                if qsb:
-                    st.markdown("<div class='lab-hdr'>Shooting by quarter</div>",
-                                unsafe_allow_html=True)
-                    xq = [_q_label(q) for q in qsb]
-
-                    def _qrate(fn):
-                        return [fn(qbx_sh[q]["team"]) * 100 for q in qsb]
-
-                    sq1, sq2 = st.columns([2, 1])
-                    with sq1:
-                        qf = go.Figure()
-                        for nm, fn, clr in (("FG%", S.fg_pct, ACCENT),
-                                            ("2P%", S.fg2_pct, GOOD),
-                                            ("3P%", S.fg3_pct, BLUE),
-                                            ("eFG%", S.efg, PURPLE),
-                                            ("TS%", S.ts, "#d29922")):
-                            qf.add_trace(go.Scatter(
-                                x=xq, y=_qrate(fn), name=nm, mode="lines+markers",
-                                line=dict(color=clr, width=3), marker=dict(size=7)))
-                        qf.update_yaxes(title="%")
-                        _style(qf, 320)
-                        st.plotly_chart(qf, width="stretch", key="sh_qfg")
-                    with sq2:
-                        ftq = go.Figure(go.Bar(
-                            x=xq, y=_qrate(S.ft_pct), marker_color="#d29922",
-                            marker_line_width=0,
-                            text=[f"{v:.0f}" for v in _qrate(S.ft_pct)],
-                            textposition="auto"))
-                        ftq.update_yaxes(title="FT%")
-                        _style(ftq, 320)
-                        ftq.update_layout(title=dict(text="FT% by quarter",
-                                                     font=dict(size=13)))
-                        st.plotly_chart(ftq, width="stretch", key="sh_qft")
+                # (Shooting by quarter lived here as a byte-identical dup of the
+                # Quarters → Shooting lines — cut; Quarters owns time splits.)
+                st.caption("Shooting by quarter (FG% / eFG% / TS% / FT% lines per "
+                           "period) → **Quarters** tab.")
 
                 # ── Shot Lab (moved here from Advanced): shot-making vs expectation ──
                 st.markdown("<div class='lab-hdr'>Shot Lab — shot-making vs "
@@ -2114,27 +2072,21 @@ if _tdview == "Charts":
 
         # ───────────────────────────────────────────── REBOUNDING ───────────
         with ch_rb:
-            rm = st.columns(5)
+            rm = st.columns(6)
             rm[0].metric("OREB%", _pctf(ff["off"]["ORB"]),
                          help="Share of own misses rebounded.")
             rm[1].metric("DREB%",
                          _pctf(S._safe(tb["DRB"], tb["DRB"] + ob["ORB"])),
                          help="Share of opponent misses rebounded.")
-            rm[2].metric("REB / game", f"{tb['TRB'] / ng:.1f}")
-            rm[3].metric("OREB / game", f"{tb['ORB'] / ng:.1f}")
-            rm[4].metric("DREB / game", f"{tb['DRB'] / ng:.1f}")
+            rm[2].metric("Opp OREB%", _pctf(ff["def"]["ORB"]),
+                         help="Opponent's offensive-rebound rate — lower is "
+                              "better work on the defensive glass.")
+            rm[3].metric("REB / game", f"{tb['TRB'] / ng:.1f}")
+            rm[4].metric("OREB / game", f"{tb['ORB'] / ng:.1f}")
+            rm[5].metric("DREB / game", f"{tb['DRB'] / ng:.1f}")
 
-            rc2 = st.columns(4)
-            rc2[0].metric("Opp OREB%", _pctf(ff["def"]["ORB"]),
-                          help="Opponent's offensive-rebound rate — lower is "
-                               "better work on the defensive glass.")
-            rc2[1].metric("BLK rate", _pctf(S._safe(tb["BLK"], ob["2PA"])),
-                          help="Share of opponent 2-pt attempts blocked.")
-            rc2[2].metric("Forced TOV%", _pctf(ff["def"]["TOV"]),
-                          help="Turnover rate forced on the opponent.")
-            rc2[3].metric("STL / game", f"{tb['STL'] / ng:.1f}")
-
-            st.caption("Quarter-by-quarter glass battle (OREB / DREB / margin "
+            st.caption("Blocks, steals & forced turnovers → **Defense** tab. "
+                       "Quarter-by-quarter glass battle (OREB / DREB / margin "
                        "per period) → **Quarters** tab.")
 
             # ── game-by-game rebounding trend ───────────────────────────────
@@ -2383,38 +2335,54 @@ if _tdview == "Charts":
                     wm[3].metric("Avg margin W / L",
                                  f"+{strk['avg_win_margin']:.0f} / "
                                  f"{strk['avg_loss_margin']:.0f}")
+                    # One diverging bar per stat — the % swing from the loss
+                    # baseline, sorted by size. Margin/NetRtg excluded (their
+                    # loss baselines sit near zero, so % swings explode; the
+                    # metric tiles above already carry them).
                     WL_CATS = [("Pts for", "PF", False), ("Pts against", "PA", False),
-                               ("Margin", "MOV", False), ("Off Rtg", "ORtg", False),
-                               ("Def Rtg", "DRtg", False), ("Net Rtg", "NetRtg", False),
+                               ("Off Rtg", "ORtg", False),
+                               ("Def Rtg", "DRtg", False),
                                ("Pace", "Pace", False), ("eFG%", "eFG", True),
                                ("Opp eFG%", "oeFG", True), ("FG%", "FG", True),
                                ("3P%", "TP", True), ("TS%", "TS", True),
                                ("Turnovers", "TOV", False), ("OREB", "ORB", False),
                                ("DREB", "DRB", False), ("Assists", "AST", False),
                                ("Steals", "STL", False), ("Blocks", "BLK", False)]
-                    labels = [c[0] for c in WL_CATS]
-
-                    def _wlv(side, key, ispct):
-                        v = wl[side][key]
-                        return v * 100 if ispct else v
-                    wlf = go.Figure()
-                    wlf.add_trace(go.Bar(
-                        name="Wins", x=labels,
-                        y=[_wlv("W", k, p) for _, k, p in WL_CATS],
-                        marker_color=GOOD, marker_line_width=0))
-                    wlf.add_trace(go.Bar(
-                        name="Losses", x=labels,
-                        y=[_wlv("L", k, p) for _, k, p in WL_CATS],
-                        marker_color=BAD, marker_line_width=0))
-                    wlf.update_layout(barmode="group")
-                    wlf.update_yaxes(title="Per game (rates as %)")
-                    wlf.update_xaxes(tickangle=-35)
-                    _style(wlf, 380)
+                    # stats where the winning direction is DOWN
+                    WL_LOW_BETTER = {"PA", "DRtg", "oeFG", "TOV"}
+                    swings = []
+                    for lbl, k, ispct in WL_CATS:
+                        wv, lv = wl["W"][k], wl["L"][k]
+                        if not lv:
+                            continue
+                        chg = (wv - lv) / abs(lv) * 100
+                        winning_dir = chg <= 0 if k in WL_LOW_BETTER else chg >= 0
+                        fmt = (lambda v: f"{v * 100:.1f}%") if ispct \
+                            else (lambda v: f"{v:.1f}")
+                        swings.append((lbl, chg, winning_dir, fmt(wv), fmt(lv)))
+                    swings.sort(key=lambda s: abs(s[1]))
+                    wlf = go.Figure(go.Bar(
+                        x=[s[1] for s in swings], y=[s[0] for s in swings],
+                        orientation="h",
+                        marker_color=[GOOD if s[2] else BAD for s in swings],
+                        marker_line_width=0,
+                        text=[f"{s[1]:+.0f}%" for s in swings],
+                        textposition="auto",
+                        hovertext=[f"wins {s[3]} · losses {s[4]}" for s in swings],
+                        hovertemplate="%{y}: %{x:+.1f}% in wins<br>%{hovertext}"
+                                      "<extra></extra>"))
+                    wlf.add_vline(x=0, line=dict(color="#30363d"))
+                    wlf.update_xaxes(title="% change in wins (vs loss average)")
+                    _style(wlf, 460)
+                    wlf.update_layout(margin=dict(l=4, r=14, t=8, b=30))
                     st.plotly_chart(wlf, width="stretch", key="tr_wl")
-                    st.caption(f"Per-game averages in {wl['W']['n']} wins vs "
-                               f"{wl['L']['n']} losses — the statistical fingerprint "
-                               "of a win. Rate stats (eFG%, FG%, 3P%, TS%) shown as "
-                               "percentages.")
+                    st.caption(f"Each stat's per-game average in {wl['W']['n']} wins "
+                               f"vs {wl['L']['n']} losses, as the % swing from the "
+                               "loss baseline — longest bars change most when this "
+                               "team wins. Green = moved in the winning direction "
+                               "(down for Pts against / Def Rtg / Opp eFG% / "
+                               "turnovers). Effect-size-ranked signature stats → "
+                               "**Insights** tab.")
 
                 # ── every team stat over the tracked games (straight, individual)
                 st.markdown("<div class='lab-hdr'>Every team stat over tracked "
@@ -2478,32 +2446,10 @@ if _tdview == "Charts":
                         avg=sum(e["AST"] for e in trend) / len(trend))
                     st.plotly_chart(asf, width="stretch", key="tr_ast")
 
-                # margin distribution
-                st.markdown("<div class='lab-hdr'>Score-margin distribution"
-                            "</div>", unsafe_allow_html=True)
-                margins = [g["margin"] for g in log]
-                mh = go.Figure(go.Histogram(
-                    x=margins, nbinsx=15, marker_color=ACCENT,
-                    marker_line_width=0))
-                mh.add_vline(x=0, line=dict(color=GREY, dash="dot"))
-                mh.update_xaxes(title="Final margin")
-                mh.update_yaxes(title="Games")
-                _style(mh, 300)
-                st.plotly_chart(mh, width="stretch", key="tr_margin")
-
-                venue = bundle["venue"]
-                st.markdown("<div class='lab-hdr'>Home / away splits</div>",
-                            unsafe_allow_html=True)
-                vrows = []
-                for tag in ("Home", "Away"):
-                    v = venue[tag]
-                    vrows.append({"Venue": tag, "GP": v["n"],
-                                  "Record": f"{v['W']}-{v['L']}",
-                                  "PF/G": f"{v['PF']:.1f}",
-                                  "PA/G": f"{v['PA']:.1f}",
-                                  "MOV": f"{v['MOV']:+.1f}"})
-                st.dataframe(pd.DataFrame(vrows), hide_index=True,
-                             width="stretch")
+                # (Margin distribution + home/away splits are results-math, not
+                # tracked-event trends — they live with the résumé now.)
+                st.caption("Game-margin dot plot & home/away splits → **Lab → "
+                           "Advanced → Résumé & Form**.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3062,24 +3008,51 @@ def _fx_chqt():
                 ("Opp TS%", lambda d: S.ts(d["opp"]) * 100, "pct"),
                 ("Forced TOV%", lambda d: d["four_factors"]["def"]["TOV"] * 100, "pct"),
             ]
-            # heavy wall (37 charts) — a collapsed expander still renders its body,
-            # so gate it behind a real checkbox (page-load perf)
-            if st.checkbox(f"Load every stat by quarter ({len(QSPEC)} charts)",
-                           value=False, key="qgrid_load"):
-                st.caption("Every team stat the app tracks, each as its own per-quarter "
-                           "bar (pooled / averaged over tracked games).")
-                qcols = st.columns(2)
-                for i, (lbl, fn, kind) in enumerate(QSPEC):
-                    vals = [fn(qbx[q]) for q in qsq]
-                    tf = ((lambda v: f"{v:.0f}") if kind == "pct"
-                          else (lambda v: f"{v:.2f}") if kind == "f2"
-                          else (lambda v: f"{v:.1f}"))
-                    with qcols[i % 2]:
-                        st.markdown(f"**{lbl}**")
-                        st.plotly_chart(
-                            _q_bars(qsq, [(lbl, vals, ACCENT)], lbl, height=260,
-                                    text_fmt=tf),
-                            width="stretch", key=f"qgrid_{i}")
+            # One heatmap replaces the old 37-chart wall: rows = stats, cols =
+            # quarters, color = % deviation from that stat's own cross-quarter
+            # average. The selectbox below keeps the per-stat bar drill.
+            st.caption("Every team stat the app tracks, by quarter — color = how "
+                       "far that quarter sits from the stat's own average across "
+                       "quarters (not good/bad; e.g. a red Turnovers cell is a "
+                       "LOW-turnover quarter). Hover for the actual value; pick a "
+                       "stat below to drill into its bar chart.")
+
+            def _qfmt(kind):
+                return ((lambda v: f"{v:.0f}") if kind == "pct"
+                        else (lambda v: f"{v:.2f}") if kind == "f2"
+                        else (lambda v: f"{v:.1f}"))
+
+            _hm_z, _hm_txt, _hm_hov = [], [], []
+            for lbl, fn, kind in reversed(QSPEC):   # reversed: plotly y bottom-up
+                vals = [fn(qbx[q]) for q in qsq]
+                mean = sum(vals) / len(vals)
+                devs = [((v - mean) / abs(mean) * 100) if mean else 0
+                        for v in vals]
+                tf = _qfmt(kind)
+                _hm_z.append([max(-30, min(30, d)) for d in devs])
+                _hm_txt.append([tf(v) for v in vals])
+                _hm_hov.append([f"{tf(v)} ({d:+.0f}% vs avg)"
+                                for v, d in zip(vals, devs)])
+            hmf = go.Figure(go.Heatmap(
+                z=_hm_z, x=qx, y=[s[0] for s in reversed(QSPEC)],
+                text=_hm_txt, texttemplate="%{text}",
+                textfont=dict(size=10),
+                customdata=_hm_hov,
+                hovertemplate="%{y} · %{x}: %{customdata}<extra></extra>",
+                colorscale=DIVERGE, zmid=0, zmin=-30, zmax=30,
+                colorbar=dict(title="% vs avg"), xgap=2, ygap=2))
+            hmf.update_xaxes(side="top")
+            _style(hmf, 26 * len(QSPEC) + 60)
+            hmf.update_layout(margin=dict(l=4, r=10, t=30, b=10))
+            st.plotly_chart(hmf, width="stretch", key="qgrid_heat")
+
+            _qpick = st.selectbox("Drill into a stat",
+                                  [s[0] for s in QSPEC], key="qgrid_stat")
+            _plbl, _pfn, _pkind = next(s for s in QSPEC if s[0] == _qpick)
+            st.plotly_chart(
+                _q_bars(qsq, [(_plbl, [_pfn(qbx[q]) for q in qsq], ACCENT)],
+                        _plbl, height=280, text_fmt=_qfmt(_pkind)),
+                width="stretch", key="qgrid_drill")
 
             # ── by tracked game: a stat across each game's quarters ─────────────
             st.markdown("<div class='lab-hdr'>By tracked game — quarter by quarter"
@@ -3491,6 +3464,43 @@ def _fx_chadv():
         sr[3].metric("Avg win / loss margin",
                      f"+{strk['avg_win_margin']:.0f} / "
                      f"{strk['avg_loss_margin']:.0f}")
+
+        # ── margins & venue (moved from Charts → Trends: results-math) ──────
+        st.markdown("<div class='lab-hdr'>Margins & venue</div>",
+                    unsafe_allow_html=True)
+        mc1, mc2 = st.columns([3, 2])
+        with mc1:
+            # one dot per game — honest at HS sample sizes where a binned
+            # histogram is mostly noise
+            ms = go.Figure(go.Scatter(
+                x=[g["margin"] for g in log],
+                y=[((i % 7) - 3) / 8 for i in range(len(log))],
+                mode="markers",
+                marker=dict(size=11,
+                            color=[GOOD if g["won"] else BAD for g in log],
+                            line=dict(width=1, color="#0d1117")),
+                hovertext=[f"{g['date'][5:]} {g['site']} {g['opp']}"
+                           for g in log],
+                hovertemplate="%{hovertext}<br>Margin %{x:+d}<extra></extra>"))
+            ms.add_vline(x=0, line=dict(color=GREY, dash="dot"))
+            ms.update_xaxes(title="Final margin")
+            ms.update_yaxes(visible=False, range=[-1, 1])
+            _style(ms, 240)
+            st.plotly_chart(ms, width="stretch", key="res_margin")
+            st.caption("Every game as one dot — green win, red loss. Dots "
+                       "bunched near zero = living dangerously.")
+        with mc2:
+            venue = bundle["venue"]
+            vrows = []
+            for tag in ("Home", "Away"):
+                v = venue[tag]
+                vrows.append({"Venue": tag, "GP": v["n"],
+                              "Record": f"{v['W']}-{v['L']}",
+                              "PF/G": f"{v['PF']:.1f}",
+                              "PA/G": f"{v['PA']:.1f}",
+                              "MOV": f"{v['MOV']:+.1f}"})
+            st.dataframe(pd.DataFrame(vrows), hide_index=True,
+                         width="stretch")
 
         # schedule-difficulty scatter: opponent power vs result margin
         st.markdown("<div class='lab-hdr'>Did they beat who they should?</div>",

@@ -1888,8 +1888,12 @@ if _tdview == "Charts":
                 st.markdown("**Actual vs expected FG% by zone**")
                 zxbt = bundle["zone_xfg_by_type"]
 
-                def _avefig(zt):
-                    zl = [TA.ZONE_LABELS[z].split("/")[0].strip() for z in TA.ZONES]
+                def _avefig(zt, three=False):
+                    # on a 3-pt-only chart the C zone is the top-of-key 3, not
+                    # the paint — label it Center
+                    zl = ["Center" if z == "C" and three
+                          else TA.ZONE_LABELS[z].split("/")[0].strip()
+                          for z in TA.ZONES]
                     fig = go.Figure()
                     fig.add_trace(go.Bar(name="Actual", x=zl,
                                          y=[zt[z]["FG%"] * 100 for z in TA.ZONES],
@@ -1911,8 +1915,8 @@ if _tdview == "Charts":
                                     key="sh_ave2")
                 with av2:
                     st.caption("3-pointers — actual vs expected")
-                    st.plotly_chart(_avefig(zxbt["3"]), width="stretch",
-                                    key="sh_ave3")
+                    st.plotly_chart(_avefig(zxbt["3"], three=True),
+                                    width="stretch", key="sh_ave3")
                 st.caption("xFG% = expected FG% from the league-wide make-rate of each "
                            "shot's (zone · creation · contest) type. Actual above xFG% "
                            "= the team finishes that zone better than the looks imply. "
@@ -2231,7 +2235,7 @@ if _tdview == "Charts":
                 zsl_bt = bundle["zones_by_type"]["off"]   # {'all','2','3': {zone: agg}}
                 zxsl_bt = bundle["zone_xfg_by_type"]      # {'2','3': {zone: agg}}
 
-                def _shotlab(zmap, zxmap, title, keypfx):
+                def _shotlab(zmap, zxmap, title, keypfx, three=False):
                     exp = sum(zmap[z]["FGA"] * zxmap[z]["xFG%"] for z in TA.ZONES)
                     act = sum(zmap[z]["FGM"] for z in TA.ZONES)
                     fga = sum(zmap[z]["FGA"] for z in TA.ZONES)
@@ -2249,7 +2253,8 @@ if _tdview == "Charts":
                             f"{exp:.0f} expected on {fga:.0f} shots</div></div>",
                             unsafe_allow_html=True)
                     with c2:
-                        diffs = [(TA.ZONE_LABELS[z].split("/")[0].strip(),
+                        diffs = [("Center" if z == "C" and three
+                                  else TA.ZONE_LABELS[z].split("/")[0].strip(),
                                   (zmap[z]["FG%"] - zxmap[z]["xFG%"]) * 100,
                                   zmap[z]["FGA"]) for z in TA.ZONES]
                         smf = go.Figure(go.Bar(
@@ -2267,7 +2272,8 @@ if _tdview == "Charts":
                         st.plotly_chart(smf, width="stretch", key=f"sh_smoe_{keypfx}")
 
                 _shotlab(zsl_bt["2"], zxsl_bt["2"], "2-pointers", "2")
-                _shotlab(zsl_bt["3"], zxsl_bt["3"], "3-pointers", "3")
+                _shotlab(zsl_bt["3"], zxsl_bt["3"], "3-pointers", "3",
+                         three=True)
 
                 # overall look-quality + efficiency metrics (all shots, both values)
                 zo_sl = zones["off"]
@@ -2645,7 +2651,9 @@ if _tdview == "Charts":
                 _fm = st.columns(3)
                 _fm[0].metric("Fouls / game",
                               f"{_tf['total'] / max(_tf['games'], 1):.1f}")
-                _fm[1].metric("Opp FTA drawn", _tf["opp_fta"])
+                _fm[1].metric("Opp FTA given up", _tf["opp_fta"],
+                              help="Free throws opponents earned from this "
+                                   "team's fouls.")
                 _fm[2].metric("Total fouls", _tf["total"])
                 st.caption("Opp FTA = free throws your fouls gave up. When the "
                            "team fouls by quarter (Q4 spikes = late-game trouble) "
@@ -3524,6 +3532,12 @@ def _fx_playmaking():
 
             top_edges = an["edges"][:8]
             if top_edges:
+                _e0 = top_edges[0]
+                _verdict_lines([(
+                    "duo", _e0["count"],
+                    f"Top connection: <b>{full_by.get(_e0['from'], '?')} → "
+                    f"{full_by.get(_e0['to'], '?')}</b> — {_e0['count']} "
+                    f"assists for {_e0['pts']} points.")])
                 st.markdown("**Top passing connections**")
                 st.dataframe(pd.DataFrame([{
                     "Passer": full_by.get(e["from"], "?"),

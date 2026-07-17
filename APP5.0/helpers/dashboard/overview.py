@@ -397,3 +397,44 @@ def render(ctx):
                 "and allowed on the right — every completed game.")
     st.plotly_chart(fig, width="stretch", key="ov_trend")
     st.caption(_cap)
+
+    # ── rank trajectory (daily rating snapshots — helpers/rating_history) ──────
+    # Where has this team BEEN: the results-only Rating + league rank over time.
+    # Snapshots accrue from the Rankings page's daily write; the section simply
+    # doesn't render until two days of history exist.
+    try:
+        import helpers.rating_history as RH
+        _traj = RH.team_series(ctx.team_id, ctx.gender, system="score",
+                               season=getattr(ctx, "season", "Current"))
+    except Exception:
+        _traj = []
+    if len(_traj) >= 2:
+        st.markdown("<div class='lab-hdr'>Rank trajectory</div>",
+                    unsafe_allow_html=True)
+        _days = [r["day"] for r in _traj]
+        tj = go.Figure()
+        tj.add_trace(go.Scatter(
+            x=_days, y=[r["rating"] for r in _traj], name="Rating",
+            mode="lines+markers", line=dict(color=ctx.ACCENT, width=2.5),
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>Rating %{y:.2f}<extra></extra>"))
+        tj.add_trace(go.Scatter(
+            x=_days, y=[r["rank"] for r in _traj], name="Rank", yaxis="y2",
+            mode="lines+markers", line=dict(color=ctx.BLUE, width=2, dash="dot"),
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>Rank #%{y}<extra></extra>"))
+        ctx.style(tj, 300)
+        tj.update_layout(
+            yaxis=dict(title="Rating", showgrid=False),
+            yaxis2=dict(title="Rank", overlaying="y", side="right",
+                        autorange="reversed", showgrid=False, dtick=1),
+            legend=dict(orientation="h", y=-0.28))
+        st.plotly_chart(tj, width="stretch", key="ov_rank_traj")
+        _d0, _d1 = _traj[0], _traj[-1]
+        _dr = _d0["rank"] - _d1["rank"]
+        _word = (f"climbed {_dr}" if _dr > 0 else
+                 f"fallen {-_dr}" if _dr < 0 else "held their rank")
+        st.caption(f"Results-only Rating (left) and league rank (right, 1 = "
+                   f"best) by day since {_d0['day']} — they've {_word}"
+                   f"{' spots' if _dr else ''} in that span. History accrues "
+                   "daily from the Rankings board.")

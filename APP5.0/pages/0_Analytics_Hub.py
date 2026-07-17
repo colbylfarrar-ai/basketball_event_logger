@@ -307,6 +307,33 @@ else:
         except Exception:
             pass
 
+    # ── biggest risers this week (daily rating snapshots) ──────────────────────
+    # Results-only board movement → public like the power ratings. Renders only
+    # once two snapshot days exist (history accrues from the Rankings page's
+    # daily write), so an empty league or fresh deploy shows nothing.
+    try:
+        import helpers.rating_history as RH
+
+        @st.cache_data(ttl=600, show_spinner=False)
+        def _hub_risers(g):
+            return RH.risers(g, system="score", days=7, top=3)
+
+        _rise = _hub_risers(_gender)
+    except Exception:
+        _rise = []
+    if _rise:
+        st.markdown("<div class='lab-hdr'>Biggest risers this week</div>",
+                    unsafe_allow_html=True)
+        _rc = st.columns(3)
+        for _col, (_tid, _m) in zip(_rc, _rise):
+            _nm = D["scored"].get(_tid, {}).get("name", f"#{_tid}")
+            _col.markdown(
+                _mini(_nm, f"▲{_m['d_rank']}",
+                      sub=f"rating {_m['d_rating']:+.1f} since {_m['from_day'][5:]}"),
+                unsafe_allow_html=True)
+        st.caption("Rank spots climbed on the results-only power board over the "
+                   "last week (daily snapshots).")
+
     # ── game of the season — DRAMATIZED win-prob ribbon (Paid only) ────────────
     if D["game"] and _paid:
         from helpers.win_probability import excitement_label

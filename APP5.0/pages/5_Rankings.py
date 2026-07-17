@@ -472,6 +472,37 @@ formed = _form_ratings(gender, season_pick)
 tracked = _tracked_ratings(gender, _VISK, season_pick)
 form_stats = _form_stats(gender, season_pick)
 
+# ── daily rating snapshot (rank trajectory — helpers/rating_history) ──────────
+# The first visit each day records both boards for the ACTIVE season; INSERT OR
+# IGNORE + the per-(gender, day) resource cache make every later rerun free. The
+# tracked board is snapshotted over the FULL pool (vis=None), not the viewer's
+# read-filter — history is global truth, not per-coach.
+import helpers.rating_history as RH
+
+
+@st.cache_resource(show_spinner=False)
+def _snap_today(g, day):
+    try:
+        return RH.snapshot_board(
+            g, {"score": _score_ratings(g), "tracked": _tracked_ratings(g, None)},
+            day=day)
+    except Exception:
+        return 0
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _rank_moves(g, season="Current"):
+    """~Week-over-week rank movement for the Overview Δ column ({} until two
+    snapshot days exist)."""
+    try:
+        return RH.movement(g, system="score", season=season)
+    except Exception:
+        return {}
+
+
+if _is_cur_season:
+    _snap_today(gender, RH._today())
+
 if not scored:
     empty_state("No finished games for this league yet",
                 "Enter results in the Input Hub and they'll rank here.",
@@ -696,6 +727,12 @@ if _view == "Overview":
             "Rank", "name", "class_lbl", "W", "L", "Power", "Rating",
             "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]].rename(
             columns={"name": "Team", "class_lbl": "Class"})
+        # Rank movement vs ~a week ago (rating_snapshots) — appears once two
+        # snapshot days exist, so the column simply shows up as history accrues.
+        _mv = _rank_moves(gender, season_pick)
+        if _mv:
+            df.insert(1, "Δ Rk",
+                      [RH.arrow(_mv.get(t, {}).get("d_rank")) for t in ov_tids])
         # Inline margin-trend sparkline per team (last 7 games, oldest→newest) —
         # reads the engine's per_team_results; aligned to ov_tids row order.
         try:
@@ -732,6 +769,9 @@ if _view == "Overview":
         _comp_cols = ["Rank", "Team", "Class", "Power", "MOV", "Dominance",
                       "Consistency", "Clutch", "Momentum", "Volatility",
                       "Pyth W", "Luck (W)"]
+        if "Δ Rk" in df.columns:
+            _core_cols.insert(1, "Δ Rk")
+            _comp_cols.insert(1, "Δ Rk")
         _colset = _rkseg("Columns", ["Core", "Composites", "All"],
                          default="Core", key="rk_ov_cols") or "Core"
         _show = (_core_cols if _colset == "Core"
@@ -741,6 +781,11 @@ if _view == "Overview":
             CD.round_df(df[_show]), hide_index=True, width="stretch",
             height=min(720, 60 + 35 * len(df)),
             column_config={
+                "Δ Rk": st.column_config.TextColumn(
+                    "Δ Rk",
+                    help="Rank movement vs about a week ago (▲ = climbed, "
+                         "▼ = fell). From the daily rating snapshots — appears "
+                         "once a few days of history exist."),
                 "Power": st.column_config.ProgressColumn(
                     "Power", format="%.1f", min_value=0, max_value=100,
                     help="Opponent-adjusted power rating on a 0–100 scale — the "

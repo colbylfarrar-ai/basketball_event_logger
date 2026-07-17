@@ -36,7 +36,7 @@ def set_audit_actor(email) -> None:
 _AUDIT_SKIP_TABLES = {
     "app_settings", "change_requests", "audit_log",
     "game_event_lineup", "game_lineup_players", "game_lineup_officials",
-    "fan_views", "game_timeouts",
+    "fan_views", "game_timeouts", "rating_snapshots",
 }
 _AUDIT_RE = re.compile(
     r"^\s*(INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
@@ -517,6 +517,20 @@ def initialize_database():
             # were the last unindexed hot paths.
             "CREATE INDEX IF NOT EXISTS idx_games_date    ON games(date)",
             "CREATE INDEX IF NOT EXISTS idx_schedule_date ON schedule(date)",
+            # Daily rating/rank snapshots (helpers/rating_history.py). Written
+            # idempotently by the Rankings page the first time a board computes
+            # each day (INSERT OR IGNORE on the PK — no timer); read by the
+            # movement arrows / rank-trajectory / risers surfaces. `season`
+            # stores the REAL label (never 'Current') so rollover can't blend
+            # trajectories; `system` is 'score' or 'tracked'.
+            "CREATE TABLE IF NOT EXISTS rating_snapshots ("
+            " day TEXT NOT NULL, gender TEXT NOT NULL, system TEXT NOT NULL,"
+            " team_id INTEGER NOT NULL,"
+            " season TEXT NOT NULL DEFAULT '',"
+            " rating REAL, rank INTEGER,"
+            " PRIMARY KEY (day, gender, system, team_id))",
+            "CREATE INDEX IF NOT EXISTS idx_rsnap_board "
+            "ON rating_snapshots(gender, system, season, day)",
             # Audit-log retention: the moderation trail only needs a season of
             # look-back; unbounded growth was bloating the DB. Runs every boot
             # (cheap — indexed on ts).

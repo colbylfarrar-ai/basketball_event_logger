@@ -31,8 +31,23 @@ def _b(t):
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _league(gender, season="Current", season_gp=None):
+def _data_fp():
+    """Cheap change signature for everything this tab computes from: the event
+    book (count + max id) and the finished scores (results_fingerprint). Passed
+    into every cached wrapper so the heavy league engine recomputes only when
+    data actually changes — with the old bare ttl=300 the whole tab silently
+    re-ran the engine every 5 minutes, which is the 'Insights sometimes hangs
+    on load' report. One aggregate query, a few ms."""
+    import helpers.team_ratings as TR
+    ev = query("SELECT COUNT(*) c, COALESCE(MAX(id),0) m FROM game_events")[0]
+    return (ev["c"], ev["m"], TR.results_fingerprint())
+
+
+# ttl is a fallback only (the fp argument does the real invalidation);
+# spinner messages make a cold engine run look like loading, not a hang.
+@st.cache_data(ttl=6 * 3600,
+               show_spinner="Scoring the league (fresh data — one-time crunch)…")
+def _league(gender, season="Current", season_gp=None, fp=None):
     """League table + insight feed + role splits + win-impact + guarded cliffs,
     computed once per gender (the team view filters this to its own players, so the
     z-scores stay league-relative). `season`/`season_gp` scope the whole pass to
@@ -110,8 +125,8 @@ def _league(gender, season="Current", season_gp=None):
     return table, feed, roles, impact, cliffs
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _team_feed(gender, season="Current", team_id=None, tids=None):
+@st.cache_data(ttl=6 * 3600, show_spinner="Reading the team's tendencies…")
+def _team_feed(gender, season="Current", team_id=None, tids=None, fp=None):
     """League-wide team insight feed (z-scored vs the tracked field) — the tab
     shows only the selected team's lines. The per-team extras (lineup / matchup
     / chemistry feeds) are built for the VIEWED team only, scoped to its own
@@ -132,8 +147,8 @@ def _team_feed(gender, season="Current", team_id=None, tids=None):
         return {}
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _strength(gender, team_id, tids, season="Current"):
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _strength(gender, team_id, tids, season="Current", fp=None):
     """Opponent-strength offense split for this team (top vs bottom half of the
     league), cached per (gender, team, visible games, season)."""
     return INT.strength_splits(team_id, gender=gender,
@@ -141,29 +156,29 @@ def _strength(gender, team_id, tids, season="Current"):
                                season=season)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _winloss(gender, team_id, tids):
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _winloss(gender, team_id, tids, fp=None):
     """Wins-vs-losses offense split for this team, cached per (gender, team, games)."""
     return INT.winloss_splits(team_id, gender=gender,
                               game_ids=list(tids) if tids else None)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _wl_align(gender, team_id, tids):
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _wl_align(gender, team_id, tids, fp=None):
     """This team's most win/loss-aligned stats (effect-size ranked)."""
     return INT.winloss_alignment(team_id, gender=gender,
                                  game_ids=list(tids) if tids else None)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _tendencies(gender, team_id, tids):
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _tendencies(gender, team_id, tids, fp=None):
     """Zone-based shot tendencies (force left/right, where shots live)."""
     return INT.shot_tendencies(team_id, gender=gender,
                                game_ids=list(tids) if tids else None)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _passers(gender, season_gp=None):
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _passers(gender, season_gp=None, fp=None):
     """Per-passer shot-creation quality (pass-from look quality vs finish).
     `season_gp` (a tuple of game ids) scopes an archive season; None = current."""
     return INT.passer_quality(
@@ -189,9 +204,10 @@ def _split_rows(pa, pb, la, lb):
 @st.fragment
 def render(ctx):
     # (Team at a glance moved to the Overview tab — UI_DENSITY_PLAN phase A.)
+    _fp = _data_fp()          # cache key: recompute only when data changes
     table, feed, roles, impact, cliffs = _league(
         ctx.gender, getattr(ctx, "season", "Current"),
-        getattr(ctx, "season_gp", None))
+        getattr(ctx, "season_gp", None), fp=_fp)
     # career rows (last season's read, open archive) keep the tab alive on a
     # freshly rolled-over season even before this season's tracked gate opens
     _career_here = [r for r in table.values()
@@ -236,6 +252,7 @@ def render(ctx):
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "team_id", None),
         tuple(getattr(ctx, "tracked_ids", None) or ()) or None,
+        fp=_fp,
     ).get(getattr(ctx, "team_id", None), [])
     if _tlines:
         st.markdown("<div class='lab-hdr'>Auto-scout — team read</div>",
@@ -276,7 +293,7 @@ def render(ctx):
     # ── deep dive: offense vs TOP-half vs BOTTOM-half opponents ────────────────
     _tids = getattr(ctx, "tracked_ids", None)
     _ss = _strength(ctx.gender, ctx.team_id, _tids,
-                    getattr(ctx, "season", "Current")) \
+                    getattr(ctx, "season", "Current"), fp=_fp) \
         if getattr(ctx, "team_id", None) else {"available": False}
     st.markdown("<div class='lab-hdr'>Deep dive — vs top teams vs bottom teams</div>",
                 unsafe_allow_html=True)
@@ -303,8 +320,8 @@ def render(ctx):
                        "opponents — a steady, opponent-proof profile.")
 
     # ── deep dive: offense IN WINS vs IN LOSSES ───────────────────────────────
-    _wl = _winloss(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id", None) \
-        else {"available": False}
+    _wl = _winloss(ctx.gender, ctx.team_id, _tids, fp=_fp) \
+        if getattr(ctx, "team_id", None) else {"available": False}
     st.markdown("<div class='lab-hdr'>Deep dive — in wins vs in losses</div>",
                 unsafe_allow_html=True)
     if not _wl.get("available"):
@@ -331,9 +348,8 @@ def render(ctx):
             "what shows up when this team is at its best.")
 
     # ── what separates wins from losses — THIS team's signature stats ────────
-    _wa = _wl_align(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id",
-                                                               None) \
-        else {"available": False}
+    _wa = _wl_align(ctx.gender, ctx.team_id, _tids, fp=_fp) \
+        if getattr(ctx, "team_id", None) else {"available": False}
     if _wa.get("available"):
         st.markdown("<div class='lab-hdr'>What separates wins from losses — "
                     "this team's signature stats</div>", unsafe_allow_html=True)
@@ -397,9 +413,8 @@ def render(ctx):
                    "side of the record — fills in as results build.")
 
     # ── self-scout: shot tendencies (force left/right, where shots live) ──────
-    _te = _tendencies(ctx.gender, ctx.team_id, _tids) if getattr(ctx, "team_id",
-                                                                 None) \
-        else {"available": False}
+    _te = _tendencies(ctx.gender, ctx.team_id, _tids, fp=_fp) \
+        if getattr(ctx, "team_id", None) else {"available": False}
     st.markdown("<div class='lab-hdr'>Self-scout — shot tendencies (how to defend "
                 "us)</div>", unsafe_allow_html=True)
     if not _te.get("available"):
@@ -448,7 +463,7 @@ def render(ctx):
             _tend_table(_te["three"], "3-point shots")
 
     # ── passer quality — look created vs finish (the pass-from FG% nuance) ────
-    _pq = _passers(ctx.gender, getattr(ctx, "season_gp", None))
+    _pq = _passers(ctx.gender, getattr(ctx, "season_gp", None), fp=_fp)
     _prows = sorted(((pid, _pq[pid]) for pid in pids if pid in _pq),
                     key=lambda t: -t[1]["xPPS_created"])
     if _prows:

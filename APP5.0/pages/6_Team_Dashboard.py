@@ -711,6 +711,24 @@ def _located_allowed(tid, gids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _passer_quality(g, gids):
+    """Per-passer look quality over this team's tracked games (charts port of
+    the Insights passer read — the render filters to this roster's pids)."""
+    import helpers.insights_team as INT
+    return INT.passer_quality(gender=g, game_ids=list(gids) if gids else None)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _strength_split(g, tid, gids, season):
+    """Offense vs top-half / bottom-half opponents (charts port of the Insights
+    strength deep-dive)."""
+    import helpers.insights_team as INT
+    return INT.strength_splits(tid, gender=g,
+                               game_ids=list(gids) if gids else None,
+                               season=season)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _reb_geography(tid, gids):
     """Located missed shots with a logged rebounder, split by which basket:
     'own' = this team's misses (second-chance creation), 'opp' = opponent
@@ -1521,6 +1539,7 @@ if _tdview == "Charts":
             situational=_TMBIND(_situational_view),
             after_outcome=_TMBIND(_after_outcome_view),
             runs=_TMBIND(_runs_view),
+            game_log=log,          # rest & fatigue (score-based, date+margin)
             by_game_type=(_by_game_type if _is_cur_season
                           else _partial(_by_game_type, season=season_pick)),
             is_current=_is_cur_season)
@@ -1710,10 +1729,22 @@ if _tdview == "Charts":
                         "shot-making", _sv_fga,
                         f"This team {_sv_w} — {_sv_moe:+.1f}pp FG% vs expected "
                         f"(made {_sv_act:.0f}, looks said {_sv_exp:.0f})."))
-                    _sv_zd = [(TA.ZONE_LABELS[z].split("/")[0].strip(),
-                               (_sv_zo[z]["FG%"] - _sv_zx[z]["xFG%"]) * 100,
-                               _sv_zo[z]["FGA"])
-                              for z in TA.ZONES if _sv_zo[z]["FGA"] >= 10]
+                    # hot/cold per SHOT VALUE — a "Paint" read lumping 2s with
+                    # the top-of-key 3 hides which shot is actually hot
+                    _sv_bt = bundle["zones_by_type"]["off"]
+                    _sv_xbt = bundle["zone_xfg_by_type"]
+                    _sv_zd = []
+                    for _tk in ("2", "3"):
+                        for z in TA.ZONES:
+                            _a = _sv_bt[_tk][z]
+                            if _a["FGA"] < 10:
+                                continue
+                            _lbl = ("Center" if z == "C" and _tk == "3"
+                                    else TA.ZONE_LABELS[z].split("/")[0].strip())
+                            _sv_zd.append(
+                                (f"{_lbl} {_tk}s",
+                                 (_a["FG%"] - _sv_xbt[_tk][z]["xFG%"]) * 100,
+                                 _a["FGA"]))
                     if len(_sv_zd) >= 2:
                         _sv_hot = max(_sv_zd, key=lambda d: d[1])
                         _sv_cold = min(_sv_zd, key=lambda d: d[1])
@@ -1771,9 +1802,8 @@ if _tdview == "Charts":
                 sd.update_layout(margin=dict(l=4, r=14, t=10, b=30))
                 st.plotly_chart(sd, width="stretch", key="sh_diet")
 
-                # zone aggregates — feed the xFG table below and the legacy
-                # zone charts in the no-tap-data fallback branch
-                zo = zones["off"]
+                # zone aggregates by shot value — feed the per-type xFG tables
+                # below and the legacy zone charts in the no-tap-data fallback
                 zbt = bundle["zones_by_type"]["off"]   # {'all','2','3': {zone: agg}}
 
                 # ── hot zone maps (court layout, colored by FG%) — 2s and 3s ─────
@@ -1922,14 +1952,22 @@ if _tdview == "Charts":
                            "= the team finishes that zone better than the looks imply. "
                            "Full per-zone detail (2PA/3PA split) is in the table below.")
 
-                zxfg = bundle["zone_xfg"]
-                ztbl = []
-                for z in TA.ZONES:
-                    row = _shot_row(TA.ZONE_LABELS[z], zo[z], ppf, ftpf)
-                    row["xFG%"] = _pctf(zxfg[z]["xFG%"]) if zo[z]["FGA"] else "—"
-                    ztbl.append(row)
-                st.dataframe(pd.DataFrame(ztbl), hide_index=True,
-                             width="stretch")
+                # per-zone detail split by shot value — 2-pt zones and 3-pt
+                # zones are different shots, so they get their own tables
+                zxbt_tbl = bundle["zone_xfg_by_type"]
+                for _tk, _tname in (("2", "2-pointers"), ("3", "3-pointers")):
+                    ztbl = []
+                    for z in TA.ZONES:
+                        _a = zbt[_tk][z]
+                        _lbl = ("Center" if z == "C" and _tk == "3"
+                                else TA.ZONE_LABELS[z])
+                        row = _shot_row(_lbl, _a, ppf, ftpf)
+                        row["xFG%"] = (_pctf(zxbt_tbl[_tk][z]["xFG%"])
+                                       if _a["FGA"] else "—")
+                        ztbl.append(row)
+                    st.markdown(f"**{_tname} — by zone**")
+                    st.dataframe(pd.DataFrame(ztbl), hide_index=True,
+                                 width="stretch")
 
             with _shc:
                 # guarded vs unguarded — overall, then split by 2/3, zone & creation
@@ -2744,6 +2782,51 @@ if _tdview == "Charts":
                                "**Insights** tab.")
                     _jump("Insights", "Open Insights →", "tr_jump_ins")
 
+                # ── vs top-half vs bottom-half opponents (Insights port) ────
+                _ss = _strength_split(gender, team_id,
+                                      tuple(bundle["tracked_ids"]), season_pick)
+                if _ss and _ss.get("available"):
+                    st.markdown("<div class='lab-hdr'>Vs top-half vs bottom-half"
+                                " opponents</div>", unsafe_allow_html=True)
+                    _tp, _bt = _ss["top"], _ss["bottom"]
+                    _dppp = (_tp.get("PPP") or 0) - (_bt.get("PPP") or 0)
+                    _ss_w = (f"offense <b>drops {abs(_dppp):.2f} PPP</b> against "
+                             "top-half teams — the scoring feasts on weaker "
+                             "opponents" if _dppp <= -0.12 else
+                             f"offense <b>rises {_dppp:+.2f} PPP</b> vs top-half "
+                             "teams — it brings its best against the better "
+                             "opponents" if _dppp >= 0.12 else
+                             "offense holds up about the same against strong "
+                             "and weak opponents — an opponent-proof profile")
+                    _verdict_lines([(
+                        "strength", _ss["top_games"] + _ss["bottom_games"],
+                        f"This team's {_ss_w}.")])
+                    _ssm = st.columns(2)
+                    _ssm[0].metric(f"PPP vs top half ({_ss['top_games']}g)",
+                                   f"{_tp.get('PPP') or 0:.2f}")
+                    _ssm[1].metric(f"PPP vs bottom half ({_ss['bottom_games']}g)",
+                                   f"{_bt.get('PPP') or 0:.2f}")
+                    _SS_CATS = [("eFG%", "eFG"), ("ScEff", "SCE"),
+                                ("3PA rate", "3PA_rate"), ("Rim rate", "rim_rate"),
+                                ("Assisted", "ast_rate"), ("Open looks", "open_rate")]
+                    ssf = go.Figure()
+                    ssf.add_trace(go.Bar(
+                        name="vs top half", x=[c[0] for c in _SS_CATS],
+                        y=[(_tp.get(c[1]) or 0) * 100 for c in _SS_CATS],
+                        marker_color=ACCENT, marker_line_width=0))
+                    ssf.add_trace(go.Bar(
+                        name="vs bottom half", x=[c[0] for c in _SS_CATS],
+                        y=[(_bt.get(c[1]) or 0) * 100 for c in _SS_CATS],
+                        marker_color=GREY, marker_line_width=0))
+                    ssf.update_layout(barmode="group")
+                    ssf.update_yaxes(title="%")
+                    _style(ssf, 300)
+                    st.plotly_chart(ssf, width="stretch", key="tr_strength")
+                    st.caption("The offense's shot profile against the league's "
+                               "top half vs its bottom half (by power rank) — "
+                               "what stops working against good teams. Full "
+                               "7-metric split table → **Insights** tab.")
+
                 # ── every team stat over the tracked games (straight, individual)
                 st.markdown("<div class='lab-hdr'>Every team stat over tracked "
                             "games</div>", unsafe_allow_html=True)
@@ -3546,6 +3629,46 @@ def _fx_playmaking():
                 } for e in top_edges]), hide_index=True, width="stretch")
         else:
             st.caption("Not enough assisted baskets to draw a network yet.")
+
+        # ── passer quality — look created vs finished (Insights port) ───
+        _pqmap = _passer_quality(gender, tuple(bundle["tracked_ids"]))
+        _pq_rows = sorted(
+            ((full_by[p], v) for p, v in (_pqmap or {}).items()
+             if p in full_by and (v.get("feeds") or 0) >= 5),
+            key=lambda t: -t[1]["xPPS_created"])
+        if _pq_rows:
+            st.markdown("<div class='lab-hdr'>Passer Quality — looks created "
+                        "vs finished</div>", unsafe_allow_html=True)
+            _pq_top = _pq_rows[0]
+            _verdict_lines([(
+                "playmaker", _pq_top[1]["feeds"],
+                f"Top look-creator: <b>{_pq_top[0]}</b> — "
+                f"{_pq_top[1]['xPPS_created']:.2f} expected points per shot "
+                "on the looks they set up.")])
+            pqf = go.Figure()
+            _pq_names = [t[0] for t in reversed(_pq_rows)]
+            pqf.add_trace(go.Bar(
+                name="Look quality (xPPS)", y=_pq_names,
+                x=[t[1]["xPPS_created"] for t in reversed(_pq_rows)],
+                orientation="h", marker_color=ACCENT, marker_line_width=0,
+                text=[f"{t[1]['xPPS_created']:.2f}"
+                      for t in reversed(_pq_rows)], textposition="auto"))
+            pqf.add_trace(go.Bar(
+                name="Result (PPS)", y=_pq_names,
+                x=[t[1]["PPS"] for t in reversed(_pq_rows)],
+                orientation="h", marker_color=BLUE, marker_line_width=0,
+                text=[f"{t[1]['PPS']:.2f}" for t in reversed(_pq_rows)],
+                textposition="auto"))
+            pqf.update_layout(barmode="group")
+            pqf.update_xaxes(title="Points per shot")
+            _style(pqf, 90 + 52 * len(_pq_rows))
+            pqf.update_layout(margin=dict(l=4, r=14, t=8, b=30))
+            st.plotly_chart(pqf, width="stretch", key="adv_passerq")
+            st.caption("Look quality = expected value of the shots this passer "
+                       "sets up (zone · contest of the look, made or not). "
+                       "Result = what those looks actually produced. Result "
+                       "below quality = good passes going unrewarded — a "
+                       "shooter problem, not a passer problem. Min 5 feeds.")
 
         # ── possession-outcome Sankey ───────────────────────────────────
         st.markdown("<div class='lab-hdr'>How Every Possession Ends</div>",

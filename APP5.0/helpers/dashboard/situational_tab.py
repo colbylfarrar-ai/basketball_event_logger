@@ -33,6 +33,17 @@ def _fmt_top(t):
     return f"{t['label']} {t['share'] * 100:.0f}%" if t else "—"
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _rest_edge(g):
+    """League margin-by-rest-differential curve (helpers/fatigue) — cached here
+    so flipping situational filters never re-walks the league schedule."""
+    import helpers.fatigue as FT
+    try:
+        return FT.league_rest_edge(g)
+    except Exception:
+        return {}
+
+
 @st.fragment
 def render(ctx):
     """Render the Situational super-tab. ``ctx`` carries plain values + the page-cached
@@ -46,6 +57,46 @@ def render(ctx):
         "state**, and whether the team is **on a run**. A shot ends a possession, so "
         "PPP = points per possession. Each situation is its own lens — a possession "
         "can be both *4th quarter* and *down 10+*.")
+
+    # ── Rest & fatigue — how they play on X days of rest. Score-based (game
+    # dates + margins from the season log), so it renders even before any game
+    # is tracked and sits ABOVE the tracked gate. ─────────────────────────────
+    _rs = None
+    try:
+        import helpers.fatigue as FT
+        _rs = FT.rest_splits(list(getattr(ctx, "game_log", None) or []))
+    except Exception:
+        _rs = None
+    if _rs and _rs["buckets"]:
+        st.markdown("<div class='pl-hdr'>Rest &amp; fatigue — how they play on "
+                    "X days of rest</div>", unsafe_allow_html=True)
+        _cells = list(_rs["buckets"])
+        _hv = _rs.get("heavy")
+        fcols = st.columns(max(len(_cells) + (1 if _hv else 0), 2))
+        for col, bkt in zip(fcols, _cells):
+            col.metric(bkt["label"], f"{bkt['w']}-{bkt['l']}",
+                       delta=f"{bkt['delta']:+.1f} MOV",
+                       help=f"{bkt['gp']} games · avg margin {bkt['mov']:+.1f} "
+                            f"(season MOV {_rs['overall_mov']:+.1f})")
+        if _hv:
+            fcols[len(_cells)].metric(
+                "3+ games in 7 days", f"{_hv['w']}-{_hv['l']}",
+                delta=f"{_hv['delta']:+.1f} MOV",
+                help=f"{_hv['gp']} games in heavy weeks · avg margin "
+                     f"{_hv['mov']:+.1f}")
+        _edge = _rest_edge(g)
+        _fresh = {d: v for d, v in _edge.items() if d > 0}
+        if _fresh:
+            _etxt = " · ".join(
+                f"+{d} day{'s' if d > 1 else ''} fresher: "
+                f"{v['mov']:+.1f} ({v['gp']} gms)"
+                for d, v in sorted(_fresh.items()))
+            st.caption(f"Record and margin-vs-usual by days of rest; MOV delta "
+                       f"is against this team's own season margin. League-wide "
+                       f"fatigue edge — {_etxt}.")
+        else:
+            st.caption("Record and margin-vs-usual by days of rest; MOV delta "
+                       "is against this team's own season margin.")
 
     if not getattr(ctx, "has_tracked", False):
         empty_state("No tracked games yet",

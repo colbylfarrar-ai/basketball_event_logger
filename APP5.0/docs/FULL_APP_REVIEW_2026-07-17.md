@@ -1051,3 +1051,38 @@ rebased cleanly around it all session.
 Verification: full script-test sweep green after every item (66 tests by
 tier's end — 5 new files); per-item AppTest smokes as noted; browser-pane
 verification for items 24 and 25.
+
+## 29. QUICK-HITS BATCH — BUILT (2026-07-18, solo session)
+
+Six §24 grab-bag items + the §27 "remaining sweep", after Tiers 1-3 closed.
+
+**Settings backup** *(39b9ed4)*: admin "Download season DB" — SQLite
+backup-API snapshot (consistent while live), two-step prepare/download,
+season-labeled filename.
+
+**Event Editor coverage chips** *(d10f74f)*: whole-game play-call + defense
+coverage % above the filters, semantic-pair colored, next to the bulk tools
+that close the gap.
+
+**TD Overview next-game strip** *(ccc5587)*: banner-grammar card composing
+opponent, model line, rest edge (fatigue.rest_on_date) and crew outlook
+(ref_tendencies) when refs are assigned. Display-only; sleeps when nothing
+is scheduled (offseason now — verify on prod once the 2026-27 schedule
+imports).
+
+**Colorblind sweep finished** *(ca56019)*: every inline green/red that MEANS
+good/bad now reads ui.GOOD/BAD at call time (Players cues + leader bar,
+Rankings form/best-win/worst-loss, TD RAPM quadrant + error dots, War Room
+bracket ladder + form tone, scout matchup edges + spacing warning, Officials
+tiles + lean bar, Schedule legend dot). Categorical palettes (pies, schemes,
+tier ladders, social PNGs) deliberately keep their hues. box_score's dead
+GOOD/BAD constants removed.
+
+**Roster Conf glyphs + Schedule Load chips** *(this commit's sibling)*:
+● ◐ ○ sample-honesty column on the roster ratings table (conf_level k=8);
+⚠️ 3-in-4 / 🔥 4-in-7 density flags on upcoming projections.
+
+Verification: 69/69 script-test sweep; AppTest smoke on all ten touched
+pages/views. Not done (still open): ui.chart() export adoption, cross-filter
+courts beyond Players, cards.tier() ladder under cb_safe, gauge
+consolidation, undo-toast for admin deletes.

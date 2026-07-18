@@ -506,6 +506,47 @@ size is expected sampling noise; recheck each season as the tracked book grows.
     return path
 
 
+WF_CUTOFF = "2026-02-01"    # walk-forward split: train Nov-Jan, predict Feb-Mar
+
+
+def t6_walkforward(gender, cutoff=WF_CUTOFF, reg=None, sos_weight=None,
+                   focus_tid=None):
+    """T6 — chronological holdout (spec 2026-07-18 §6): every engine trains on
+    games dated before `cutoff` and is scored on what actually happened after.
+    This is the primary guard for aggressive weight sweeps — a constant that
+    only wins in-sample dies here.
+
+      t6a  team-margin MAE   score_ratings on the pre-cutoff book, MAE of the
+                             predicted margin over post-cutoff games (both
+                             teams >= 2 train games). League-wide sample.
+      t6b  player validity   OVERALL trained on pre-cutoff tracked games vs
+                             post-cutoff GS/G (Spearman, focus team, 1+ held
+                             games). Thin — reported, weighted below t6a.
+    """
+    allg = finished_games(gender=gender)
+    train = [g for g in allg if g["date"] < cutoff]
+    held = [g for g in allg if g["date"] >= cutoff]
+    gp = _team_gp(train)
+    mae, bmae, n = _margin_mae([g["id"] for g in train], held, gender,
+                               reg=reg, sos_weight=sos_weight, train_gp=gp)
+    t6a = {"mae": (round(mae, 2) if mae is not None else None),
+           "baseline": (round(bmae, 2) if bmae is not None else None), "n": n}
+
+    t6b = {"rho": None, "n": 0}
+    tracked = tracked_games()
+    tr_ids = [g["id"] for g in tracked if g["date"] < cutoff]
+    ho_ids = {g["id"] for g in tracked if g["date"] >= cutoff}
+    if focus_tid and tr_ids and ho_ids:
+        held_lines = _heldout_lines(ho_ids)
+        R = PR.player_ratings(game_ids=tr_ids, gender=gender, season=SEASON)
+        pairs = [(row["OVERALL"], held_lines[pid]["gsg"])
+                 for pid, row in R.items()
+                 if pid in held_lines and row.get("team_id") == focus_tid
+                 and row.get("OVERALL") is not None]
+        t6b = {"rho": _spearman(pairs), "n": len(pairs)}
+    return {"t6a": t6a, "t6b": t6b}
+
+
 def run_all(constants=None, reg=None, sos_weight=None, include_t4=True):
     """Full harness pass under an optional constant config. Returns the report
     dict; team-ratings params (reg/sos_weight) ride as direct kwargs because
@@ -524,6 +565,10 @@ def run_all(constants=None, reg=None, sos_weight=None, include_t4=True):
             "t1_league": t1_league(gender, reg=reg, sos_weight=sos_weight),
             "t2_validity": t2_rating_validity(folds, tracked, tid, gender),
             "t3_projection": t3_projection(folds, tracked, tid, gender),
+            "t6_walkforward": {
+                g: t6_walkforward(g, reg=reg, sos_weight=sos_weight,
+                                  focus_tid=(tid if g == gender else None))
+                for g in ("F", "M")},
         }
         if include_t4:
             report["t4_shrink_logo"] = t4_shrink_logo(tracked)
@@ -564,6 +609,12 @@ def main():
     for name, row in rep["t3_projection"].items():
         if row:
             print(f"T3  {name:5s} proj MAE   {row['mae']}  (prior-only {row['prior_mae']}, vol={row['vol']})")
+    for g, wf in rep.get("t6_walkforward", {}).items():
+        a, b = wf["t6a"], wf["t6b"]
+        print(f"T6a [{g}] walk-fwd margin MAE {a['mae']}  "
+              f"(baseline {a['baseline']}, n={a['n']})")
+        if b["n"]:
+            print(f"T6b [{g}] walk-fwd validity rho {b['rho']}  (n={b['n']})")
     if "t4_shrink_logo" in rep:
         print("T4  shrink-k LOGO MAE per k (by train-GP bucket):")
         for k, by_b in rep["t4_shrink_logo"].items():

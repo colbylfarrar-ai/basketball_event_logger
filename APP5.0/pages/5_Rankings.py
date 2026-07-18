@@ -104,8 +104,10 @@ def _archive_note():
             "efficiency and the KenPom map DO show the archived season.)")
 
 # futuristic-lab palette (mirrors the Team Analytics advanced layer)
-GOOD = "#3fb950"
-BAD = "#e74c3c"
+# Re-read per run AFTER page_chrome so the viewer's colorblind-safe pair lands
+import helpers.ui as _uimod
+GOOD = _uimod.GOOD
+BAD = _uimod.BAD
 BLUE = "#58a6ff"
 PURPLE = "#bc8cff"
 CYBER = "#00e5ff"

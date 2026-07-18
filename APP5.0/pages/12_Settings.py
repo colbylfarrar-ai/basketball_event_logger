@@ -87,6 +87,19 @@ with c2:
         set_setting("accent_color", ACCENT_PRESETS[new_scheme])
         st.rerun()
 
+cb_now = _cfg.get("cb_safe", DEFAULTS["cb_safe"]) == "1"
+cb = st.toggle(
+    "Colorblind-safe good/bad colours",
+    value=cb_now,
+    help="Swap the green/red good-vs-bad encoding (deltas, percentile bars, "
+         "win/loss pills, diverging charts) for a blue/orange pair that reads "
+         "under red-green colour blindness. Team identity colours and the "
+         "accent stay as chosen.",
+)
+if cb != cb_now:
+    set_setting("cb_safe", "1" if cb else "0")
+    st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DEFAULT TEAM

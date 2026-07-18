@@ -91,12 +91,16 @@ def refresh_theme_tokens():
     Called once at import (global fallback before any auth) and from
     page_chrome on every run — a style change reruns the page, so charts drawn
     after boot always match the cards."""
-    global CARD_BG, GRID, HEAT, DIVERGE
-    from helpers.settings_utils import STYLE_PRESETS, get_setting
+    global CARD_BG, GRID, HEAT, DIVERGE, GOOD, BAD
+    from helpers.settings_utils import STYLE_PRESETS, get_setting, semantic_pair
     try:
         name = get_setting("app_style", "Dark") or "Dark"
     except Exception:
         name = "Dark"
+    try:
+        GOOD, BAD = semantic_pair()      # colorblind-safe pair when cb_safe=1
+    except Exception:
+        pass
     p = STYLE_PRESETS.get(name, STYLE_PRESETS["Dark"])
     CARD_BG, GRID = p["card_bg"], p["track"]
     HEAT = [[0.0, CARD_BG], [1.0, GOOD]]

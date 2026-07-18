@@ -131,10 +131,10 @@
 /* ── Four-factors bar labels ─────────────────────────────────────────────── */
 .ff-label  { font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
 .ff-team   { font-size: 20px; font-weight: 800; color: #f0a500; }
-.ff-opp    { font-size: 20px; font-weight: 800; color: #e74c3c; }
+.ff-opp    { font-size: 20px; font-weight: 800; color: var(--bad); }
 .ff-bar-wrap { background: var(--track); border-radius: 4px; height: 8px; overflow: hidden; margin: 4px 0; }
 .ff-bar-t  { background: #f0a500; height: 100%; border-radius: 4px; }
-.ff-bar-o  { background: #e74c3c; height: 100%; border-radius: 4px; }
+.ff-bar-o  { background: var(--bad); height: 100%; border-radius: 4px; }
 
 /* ── Rating / player-rating cards ────────────────────────────────────────── */
 .rat-card {
@@ -306,8 +306,8 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 12px; font-weight: 800; color: #0d1117;
 }
-.form-pill.w { background: #3fb950; box-shadow: 0 0 10px -2px rgba(63,185,80,0.8); }
-.form-pill.l { background: #e74c3c; box-shadow: 0 0 10px -2px rgba(231,76,60,0.8); }
+.form-pill.w { background: var(--good); box-shadow: 0 0 10px -2px rgba(63,185,80,0.8); }
+.form-pill.l { background: var(--bad); box-shadow: 0 0 10px -2px rgba(231,76,60,0.8); }
 .form-pill.now { outline: 2px solid #00e5ff; outline-offset: 1px; }
 
 /* Neon section header */

@@ -21,7 +21,24 @@ DEFAULTS = {
     "color_scheme":  "Gold",
     "app_style":     "Dark",
     "wide_mode":     "1",   # "1" = wide, "0" = centered
+    "cb_safe":       "0",   # "1" = colorblind-safe good/bad pair (blue/orange)
 }
+
+# Colorblind-safe semantic pair (deuteranopia/protanopia-friendly): the app's
+# GOOD/BAD encoding is pure green/red everywhere; this swaps the PAIR while
+# leaving team identity colours and the accent alone.
+CB_GOOD = "#58a6ff"
+CB_BAD = "#e67e22"
+
+
+def semantic_pair(settings=None) -> tuple:
+    """(good_hex, bad_hex) for the current viewer — the single source both the
+    CSS vars and the chart tokens resolve from."""
+    cb = (settings or {}).get("cb_safe") if settings is not None \
+        else get_setting("cb_safe", "0")
+    if cb == "1":
+        return CB_GOOD, CB_BAD
+    return "#3fb950", "#e74c3c"
 
 # Named accent-color presets  {name: hex}
 ACCENT_PRESETS = {
@@ -104,7 +121,7 @@ STYLE_PRESETS = {
 # (data_version, active_season, team_color::*, migration markers) stays GLOBAL.
 # Stored as "u:<email>:<key>"; a coach with no override inherits the global value.
 USER_SCOPED = {"default_team", "accent_color", "color_scheme", "app_style",
-               "wide_mode", "scout_hidden_sections",
+               "wide_mode", "cb_safe", "scout_hidden_sections",
                # per-coach {team_id: {insight-line hash: first-seen date}} JSON
                # blob behind the Insights tab's NEW chips (one key, one blob —
                # USER_SCOPED is an exact-key set, so no per-team keys).
@@ -306,6 +323,8 @@ def apply_theme_css(settings: dict = None) -> None:
     except Exception:
         accent_rgb = "240,165,0"
 
+    _good, _bad = semantic_pair(settings)
+
     css = f"""
 <style>
 /* ── Theme tokens consumed by the Modern UI 2.0 layer in styles.css ── */
@@ -320,8 +339,8 @@ def apply_theme_css(settings: dict = None) -> None:
     --subtext: {style['subtext']};
     --track: {style.get('track', '#21262d')};
     --card-grad: {style['card_grad']};
-    --good: {style.get('good', '#3fb950')};
-    --bad: {style.get('bad', '#e74c3c')};
+    --good: {_good};
+    --bad: {_bad};
 }}
 /* ── Accent colour ─────────────────────────────────────────── */
 .dash-card-value,

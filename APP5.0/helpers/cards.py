@@ -24,10 +24,21 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-# Fixed semantic colours (the per-page ACCENT is passed in where it matters).
-_GOOD = "#3fb950"
-_BAD = "#e74c3c"
+# Semantic colours (the per-page ACCENT is passed in where it matters).
+# GOOD/BAD are read off helpers.ui at CALL time — page_chrome re-resolves them
+# per viewer (colorblind-safe pair when the coach set cb_safe), and pandas
+# Stylers / plotly need real hexes, not CSS vars.
 _CYBER = "#00e5ff"
+
+
+def _good():
+    from helpers import ui
+    return ui.GOOD
+
+
+def _bad():
+    from helpers import ui
+    return ui.BAD
 
 
 # ── labels ────────────────────────────────────────────────────────────────────
@@ -74,11 +85,15 @@ def pctile(val, key, pool, lower_better=False):
 
 
 def pctile_color(p):
-    """Percentile (0-100) → quartile colour (player palette)."""
+    """Percentile (0-100) → quartile colour (player palette). Reads the
+    semantic pair at call time so the colorblind-safe swap reaches every
+    percentile bar/rank chip."""
     if p is None:
         return "#8b949e"
-    return ("#2ea043" if p >= 75 else "#3fb950" if p >= 50
-            else "#f0a500" if p >= 25 else "#da3633")
+    g = _good()
+    hi = "#2ea043" if g == "#3fb950" else "#388bfd"   # deep variant of GOOD
+    return (hi if p >= 75 else g if p >= 50
+            else "#f0a500" if p >= 25 else _bad())
 
 
 def pctile_bar(label, value_str, p):
@@ -271,16 +286,16 @@ def factor_tile(label, value_str, opp_str, lg_str, rk, tot, *, value_good=True):
 
     ``value_good`` colours the headline number (green beats opp / red worse);
     ``rk``/``tot`` drive the rank chip colour and the percentile bar."""
-    vcol = _GOOD if value_good else _BAD
+    vcol = _good() if value_good else _bad()
     if not rk or tot <= 1:
         rc, rstr, bar = "#8b949e", "", ""
     else:
         p = rk / tot
-        rc = _GOOD if p <= 0.25 else (_AMBER if p <= 0.50 else _BAD)
+        rc = _good() if p <= 0.25 else (_AMBER if p <= 0.50 else _bad())
         rstr = (f"<div style='font-size:10px;font-weight:700;color:{rc};"
                 f"margin-top:3px'>#{rk}/{tot}</div>")
         pct = (1 - (rk - 1) / (tot - 1)) * 100
-        bc = _GOOD if pct >= 75 else (_AMBER if pct >= 50 else _BAD)
+        bc = _good() if pct >= 75 else (_AMBER if pct >= 50 else _bad())
         bar = (f"<div style='background:var(--track);border-radius:3px;height:4px;"
                f"overflow:hidden;margin-top:5px'><div style='background:{bc};"
                f"width:{pct:.0f}%;height:100%;border-radius:3px'></div></div>")
@@ -460,8 +475,8 @@ def style_df(df, grad_cols=None, signed_cols=None):
 
         def _sign(v):
             try:
-                return (f"color:{_GOOD}" if float(v) > 0
-                        else f"color:{_BAD}" if float(v) < 0 else "")
+                return (f"color:{_good()}" if float(v) > 0
+                        else f"color:{_bad()}" if float(v) < 0 else "")
             except (TypeError, ValueError):
                 return ""
 
@@ -498,8 +513,8 @@ def gauge_range(value, vmin, vmax, label, suffix="", good_high=True, ref=None,
             "steps": [{"range": [a, b], "color": c} for a, b, c in zones]},
         title={"text": label, "font": {"size": 12, "color": "#8b949e"}})
     if ref is not None:
-        ind["delta"] = {"reference": ref, "increasing": {"color": _GOOD},
-                        "decreasing": {"color": _BAD}, "font": {"size": 12}}
+        ind["delta"] = {"reference": ref, "increasing": {"color": _good()},
+                        "decreasing": {"color": _bad()}, "font": {"size": 12}}
         ind["gauge"]["threshold"] = {"line": {"color": _CYBER, "width": 3},
                                      "thickness": 0.85, "value": ref}
     fig = go.Figure(go.Indicator(**ind))

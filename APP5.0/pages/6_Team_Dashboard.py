@@ -102,8 +102,10 @@ import helpers.situational as SIT
 import helpers.seasons as SEAS
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
-GOOD = "#3fb950"
-BAD = "#e74c3c"
+# Re-read per run AFTER page_chrome so the viewer's colorblind-safe pair lands
+import helpers.ui as _uimod
+GOOD = _uimod.GOOD
+BAD = _uimod.BAD
 BLUE = "#58a6ff"
 PURPLE = "#bc8cff"
 GREY = "#8b949e"

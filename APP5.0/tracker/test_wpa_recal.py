@@ -29,7 +29,7 @@ GIRLS = (9001, 9002)
 BOYS = (9101, 9102)
 
 
-def _seed():
+def _seed_once():
     execute("INSERT INTO teams (id, name, class, gender) VALUES "
             "(9001,'GA','4A','F'),(9002,'GB','4A','F'),"
             "(9101,'BA','4A','M'),(9102,'BB','4A','M')")
@@ -45,6 +45,9 @@ def _seed():
     execute("INSERT INTO games (id, team1_id, team2_id, date, tracked, season) VALUES "
             "(9200,9001,9002,'2026-01-05',1,'2025-2026'),"
             "(9201,9101,9102,'2026-01-05',1,'2025-2026')")
+
+
+_seed_once()   # module level: test classes run alphabetically, all need the rows
 
 
 def _players_of(tid, n=5):
@@ -81,7 +84,6 @@ class EPScoping(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        _seed()
         times = ["7:00", "6:00", "5:00", "4:00", "3:00", "2:00"]
         for i, tm in enumerate(times):
             _shot(9200, 9001, 9002, 9010, 1, tm, "make", guarded=9016)
@@ -107,6 +109,71 @@ class EPScoping(unittest.TestCase):
         # scoring exactly the scoped EP every time -> ~zero value over expected
         self.assertLess(abs(girl["off_wpa"]), 0.02,
                         f"off_wpa {girl['off_wpa']} — EP baseline not scoped?")
+
+
+class DwpaTeamSplit(unittest.TestCase):
+    """Defensive-credit assignment in possession mode (spec §3):
+      * made basket   — on-ball defender ONBALL_SHARE, help splits the rest
+      * unforced TO   — full positive credit split among on-floor defenders
+      * dead miss     — (no credited defensive rebound) same team split
+      * zero-sum      — with full floor data, Σdef_wpa == −Σoff_wpa per game
+    One possession per game (plus a Q4 free-throw miss that only extends the
+    timeline so the possession isn't at the buzzer)."""
+
+    @classmethod
+    def setUpClass(cls):
+        execute("INSERT INTO games (id, team1_id, team2_id, date, tracked, season) VALUES "
+                "(9300,9001,9002,'2026-01-06',1,'TEST-SPLIT'),"
+                "(9301,9001,9002,'2026-01-07',1,'TEST-SPLIT'),"
+                "(9302,9001,9002,'2026-01-08',1,'TEST-SPLIT')")
+        for gid in (9300, 9301, 9302):
+            GE.log_event(gid, {"event_type": "free_throw", "quarter": 4,
+                               "time": "0:30", "primary_player_id": 9010,
+                               "shot_result": "miss"},
+                         on_court=_floor(9001, 9002))
+        # late-game possessions -> big WP swings, so the 3-decimal rounding of
+        # def_wpa can't distort the share ratios under test
+        _shot(9300, 9001, 9002, 9010, 4, "1:00", "make", guarded=9016)
+        _tov(9301, 9001, 9002, 9010, 4, "1:00")                  # unforced
+        _shot(9302, 9001, 9002, 9010, 4, "1:00", "miss")         # dead ball
+
+    def _defs(self, gid):
+        res = WPA.game_wpa(gid, mode="possession", ep=1.0)
+        return {pid: r["def_wpa"] for pid, r in res["players"].items()
+                if r["def_wpa"] != 0.0}, res
+
+    def test_make_splits_onball_vs_help(self):
+        d, _ = self._defs(9300)
+        onball, help_ = d[9016], d[9017]
+        self.assertLess(onball, 0.0)
+        self.assertLess(help_, 0.0)
+        self.assertAlmostEqual(
+            onball / help_,
+            WPA.ONBALL_SHARE / ((1 - WPA.ONBALL_SHARE) / 4),
+            delta=0.35)   # def_wpa is stored rounded to 3 decimals
+        for p in (9017, 9018, 9019, 9020):
+            self.assertAlmostEqual(d[p], help_, places=6)
+
+    def test_unforced_to_credits_floor_defense(self):
+        d, _ = self._defs(9301)
+        self.assertEqual(sorted(d), [9016, 9017, 9018, 9019, 9020])
+        for v in d.values():
+            self.assertGreater(v, 0.0)
+        self.assertAlmostEqual(min(d.values()), max(d.values()), places=6)
+
+    def test_dead_miss_credits_floor_defense(self):
+        d, _ = self._defs(9302)
+        self.assertEqual(sorted(d), [9016, 9017, 9018, 9019, 9020])
+        for v in d.values():
+            self.assertGreater(v, 0.0)
+
+    def test_zero_sum_with_full_floor(self):
+        for gid in (9300, 9301, 9302):
+            res = WPA.game_wpa(gid, mode="possession", ep=1.0)
+            tot_off = sum(r["off_wpa"] for r in res["players"].values())
+            tot_def = sum(r["def_wpa"] for r in res["players"].values())
+            self.assertAlmostEqual(tot_def, -tot_off, places=2,
+                                   msg=f"game {gid} not zero-sum")
 
 
 if __name__ == "__main__":

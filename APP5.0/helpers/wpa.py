@@ -45,6 +45,10 @@ import helpers.stats as S
 CLUTCH_LI = 1.5         # leverage threshold for a moment to count as "clutch"
 ASSIST_SHARE = 0.30     # share of a made FG's WPA credited to the passer
 BLOCK_SHARE = 0.50      # share of a forced-miss stop credited to the blocker
+ONBALL_SHARE = 0.60     # share of a made basket's negative defensive credit
+                        # charged to the on-ball defender; the rest spreads to
+                        # the help (team defense is a team outcome — spec §3,
+                        # 2026-07-18 recal)
 
 
 # Game-clock helpers — canonical versions live in helpers.stats.
@@ -55,6 +59,47 @@ _elapsed = S.elapsed
 
 
 _safe = S._safe   # shared definition lives in helpers.stats
+
+
+def _def_split(contribs, def_wpa, li, defenders, main_pid=None,
+               main_share=1.0):
+    """Assign one possession's defensive credit (spec §3, team-split model).
+
+    `defenders` = the on-floor defense (pids) from the lineup snapshot.
+    `main_pid` (on-ball defender / credited stopper) takes `main_share`; the
+    other on-floor defenders split the remainder equally. Fallbacks preserve
+    the legacy behavior: no floor data -> main_pid takes all; no main and no
+    floor -> the credit is dropped (nothing to assign it to)."""
+    others = [p for p in defenders if p != main_pid]
+    if main_pid is None:
+        if others:
+            share = def_wpa / len(others)
+            for p in others:
+                contribs.append((p, share, li, "def"))
+        return
+    if not others:
+        contribs.append((main_pid, def_wpa, li, "def"))
+        return
+    contribs.append((main_pid, def_wpa * main_share, li, "def"))
+    rest = def_wpa * (1.0 - main_share) / len(others)
+    for p in others:
+        contribs.append((p, rest, li, "def"))
+
+
+def _fetch_floor(game_ids):
+    """{event_id: [(pid, team_id), ...]} — per-event on-court snapshots for the
+    given games (the same game_event_lineup data the RAPM walk uses)."""
+    if not game_ids:
+        return {}
+    ph = ",".join("?" * len(game_ids))
+    floor = {}
+    for r in query(
+            f"""SELECT gel.event_id eid, gel.player_id pid, gel.team_id tid
+                FROM game_event_lineup gel
+                JOIN game_events ge ON ge.id = gel.event_id
+                WHERE ge.game_id IN ({ph})""", tuple(game_ids)):
+        floor.setdefault(r["eid"], []).append((r["pid"], r["tid"]))
+    return floor
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -82,7 +127,8 @@ def league_ep(game_ids=None, events=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
-             events=None, names=None, ginfo=None, pregame_edge=0.0):
+             events=None, names=None, ginfo=None, pregame_edge=0.0,
+             floor=None):
     """
     Per-player WPA + clutch WPA + a win-probability timeline for one game.
 
@@ -156,6 +202,8 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
     if mode == "possession":
         if ep is None:
             ep = league_ep(events=events)
+        if floor is None:
+            floor = _fetch_floor([game_id])
         h = a = 0
         contribs = []          # (pid, wpa, li, side)
         li_list = []
@@ -197,13 +245,24 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
                 else:
                     contribs.append((user, off_wpa, li, "off"))
 
-            # defense credit
+            # defense credit (team-split model — spec §3): tagged stoppers keep
+            # priority, but credit that used to be DROPPED (unforced TOs, misses
+            # with no credited defensive rebound) now lands on the on-floor
+            # defense, and a made basket is charged mostly-but-not-only to the
+            # on-ball defender. This closes the accounting hole that skewed the
+            # whole league's Def WPA negative.
+            defenders = [pid for pid, tid in (floor.get(e["id"]) or ())
+                         if tid != off_team]
             if et == "turnover":
                 if e["stolen_by_id"] is not None:
                     contribs.append((e["stolen_by_id"], def_wpa, li, "def"))
+                else:   # unforced giveaway — the floor defense forced nothing
+                        # specific, but the stop is real: split it
+                    _def_split(contribs, def_wpa, li, defenders)
             elif e["shot_result"] == "make":
-                if e["guarded_by_id"] is not None:
-                    contribs.append((e["guarded_by_id"], def_wpa, li, "def"))
+                _def_split(contribs, def_wpa, li, defenders,
+                           main_pid=e["guarded_by_id"],
+                           main_share=ONBALL_SHARE)
             else:  # missed shot
                 reb = e["rebound_by_id"]
                 if reb is not None and e["rebounder_team_id"] is not None \
@@ -214,6 +273,9 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
                         contribs.append((reb, def_wpa * (1 - BLOCK_SHARE), li, "def"))
                     else:
                         contribs.append((reb, def_wpa, li, "def"))
+                else:   # forced miss, no credited defensive board (team/dead
+                        # ball or offensive rebound) — split the stop
+                    _def_split(contribs, def_wpa, li, defenders)
 
             if off_team == t1:
                 h += pts
@@ -323,6 +385,9 @@ def season_wpa(gender=None, mode="scoring", opp_adjust=True, season="Current"):
     ev_by_game = defaultdict(list)
     for e in S.fetch_events(game_ids):
         ev_by_game[e["game_id"]].append(e)
+    # on-court snapshots for the whole scope in one query (event ids are unique
+    # across games, so the one dict serves every per-game call)
+    floor = _fetch_floor(game_ids) if mode == "possession" else None
     names = {r["id"]: {"name": r["name"], "team": r["tn"]} for r in query(
         "SELECT p.id, p.name, t.name tn FROM players p JOIN teams t ON t.id=p.team_id")}
     ginfo = {}
@@ -354,7 +419,7 @@ def season_wpa(gender=None, mode="scoring", opp_adjust=True, season="Current"):
         if scored and gi:
             edge = TR.predict_spread(scored, gi["t1"], gi["t2"]) or 0.0
         res = game_wpa(gid, mode=mode, ep=ep, events=ev_by_game.get(gid, []),
-                       names=names, ginfo=gi, pregame_edge=edge)
+                       names=names, ginfo=gi, pregame_edge=edge, floor=floor)
         if not res:
             continue
         for pid, r in res["players"].items():

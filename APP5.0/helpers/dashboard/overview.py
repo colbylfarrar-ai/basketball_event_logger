@@ -66,6 +66,7 @@ def render(ctx):
     #    game-type caption) and the glance strip into one OOTP-style read.
     import helpers.dashboard.team_card as TC
     TC.render_header(ctx)
+    TC.render_next_game_strip(ctx)
 
     if ctx.has_tracked:
         # ── efficiency rankings vs league (DEMOTED into an expander) ────────

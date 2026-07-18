@@ -219,6 +219,61 @@ def render_banner(ctx):
         unsafe_allow_html=True)
 
 
+def render_next_game_strip(ctx):
+    """One card composing the next game's prep reads (§24 quick-hit): opponent,
+    the model's line, the rest edge, and the crew outlook when officials are
+    assigned. Every read exists elsewhere (predictor, fatigue, ref_tendencies) —
+    this puts them together at the moment of preparation. Display-only; nothing
+    folds into the spread (real-numbers rule). Renders nothing off-season or
+    when no game is scheduled."""
+    ng = _next_game(ctx.team_id, getattr(ctx, "season", "Current"))
+    if not ng:
+        return
+    import helpers.predictor as PRED
+    import helpers.fatigue as FT
+    at_home = ng["team1_id"] == ctx.team_id
+    oid = ng["team2_id"] if at_home else ng["team1_id"]
+    opp = ng["n2"] if at_home else ng["n1"]
+    rows = []
+    try:
+        pred = PRED.predict_game(ctx.team_id, oid, scored=ctx.scored,
+                                 tracked=ctx.tracked,
+                                 home=(ctx.team_id if at_home else oid))
+    except Exception:
+        pred = None
+    if pred:
+        rows.append(("Model line",
+                     f"{pred['pf_a']:.0f}-{pred['pf_b']:.0f} · "
+                     f"{pred['win_prob_a'] * 100:.0f}% win"))
+    ra = FT.rest_on_date(ctx.team_id, ng["date"])
+    rb = FT.rest_on_date(oid, ng["date"])
+    if ra is not None and rb is not None:
+        edge = ("even rest" if ra == rb
+                else "you come in fresher" if ra > rb
+                else "they come in fresher")
+        rows.append(("Rest", f"you {ra}d · them {rb}d — {edge}"))
+    refs = [r["official_id"] for r in query(
+        "SELECT official_id FROM game_lineup_officials WHERE game_id=?",
+        (ng["id"],))]
+    if refs:
+        try:
+            import helpers.ref_tendencies as RTD
+            co = RTD.crew_outlook(refs, gender=ctx.gender)
+            if co:
+                rows.append(("Crew", co["summary"]))
+        except Exception:
+            pass
+    if not rows:
+        return
+    body = "".join(_kv(k, v) for k, v in rows)
+    hdr = _zone_hdr(f"Next game — {'vs' if at_home else '@'} {opp} · {ng['date']}")
+    st.markdown(
+        f"<div style='background:var(--card-bg);border:1px solid "
+        f"var(--card-border);border-left:3px solid var(--accent);"
+        f"border-radius:10px;padding:10px 14px;margin-bottom:10px'>"
+        f"{hdr}{body}</div>", unsafe_allow_html=True)
+
+
 def render_header(ctx):
     """The dense team header: banner · glance strip · identity/engine/verdict."""
     render_banner(ctx)

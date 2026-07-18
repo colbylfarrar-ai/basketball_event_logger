@@ -640,6 +640,89 @@ if _hubview == "Players":
                     st.cache_data.clear()
                     st.rerun()
 
+        # ── Import a whole roster at once — CSV upload or pasted block. Engine
+        # (parse + dedup plan) lives in helpers/roster_import.py; this glue
+        # applies the plan through the SAME insert/update path as the editor
+        # above (season stamping, identity auto-link, grad-year default).
+        with st.expander("📥 Import roster — CSV upload or paste"):
+            import helpers.roster_import as RIMP
+            st.caption(
+                "Bring a whole roster in at once — upload a CSV or paste rows "
+                "straight from a spreadsheet/program page. Columns read: "
+                "**name, number, height, grad year** (header row optional, "
+                "extra columns ignored, heights like `5'11` are fine). Preview "
+                "shows what each row will do before anything saves.")
+            _rup = st.file_uploader("Roster CSV", type=["csv", "txt", "tsv"],
+                                    key="rimp_file")
+            _rblk = st.text_area(
+                "…or paste rows here", key="rimp_paste", height=120,
+                placeholder="Jane Smith, 12, 5'9, 2027\nKate Jones, 23, 5'11, 2026")
+            _rtext = ""
+            if _rup is not None:
+                _rtext = _rup.getvalue().decode("utf-8-sig", errors="replace")
+            elif (_rblk or "").strip():
+                _rtext = _rblk
+            if _rtext.strip():
+                _rrows, _rwarns = RIMP.parse_roster(_rtext)
+                for _w in _rwarns[:8]:
+                    st.warning(_w)
+                if not _rrows:
+                    st.info("Nothing importable found — need at least a name "
+                            "per row.")
+                else:
+                    _rc2, _rp2 = SZ.roster_clause(roster_season)
+                    _rexist = [dict(x) for x in query(
+                        f"SELECT id, name, number, height, grad_year FROM players "
+                        f"WHERE team_id=? AND {_rc2}", (team_id, *_rp2))]
+                    _rplan = RIMP.plan_import(_rrows, _rexist)
+                    _ric = {"add": "➕ add", "update": "✏️ update",
+                            "skip": "⏭️ skip"}
+                    st.dataframe(pd.DataFrame([{
+                        "Action": _ric[p["verdict"]],
+                        "Player": p["row"]["name"],
+                        "#": p["row"]["number"],
+                        "Ht (in)": p["row"]["height"],
+                        "Grad": p["row"]["grad_year"],
+                        "Why": p["reason"],
+                    } for p in _rplan]), hide_index=True, width="stretch")
+                    _radd = sum(1 for p in _rplan if p["verdict"] == "add")
+                    _rupd = sum(1 for p in _rplan if p["verdict"] == "update")
+                    _rskp = len(_rplan) - _radd - _rupd
+                    if not (_radd or _rupd):
+                        st.caption("Nothing to import — every row is already on "
+                                   "this roster.")
+                    elif st.button(f"Import — add {_radd}, update {_rupd}"
+                                   + (f", skip {_rskp}" if _rskp else ""),
+                                   type="primary", key="rimp_go"):
+                        import helpers.identity as IDN
+                        _rszn = SZ.ACTIVE if _is_cur_roster else str(roster_season)
+                        for p in _rplan:
+                            r = p["row"]
+                            if p["verdict"] == "add":
+                                _rgy = r["grad_year"] or SZ.default_grad_year(roster_season)
+                                _rpid = execute(
+                                    "INSERT INTO players (team_id, name, number, "
+                                    "grad_year, height, wingspan, weight, handedness, "
+                                    "season, archived) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                    (team_id, r["name"], int(r["number"] or 0), _rgy,
+                                     r["height"], None, None, "right",
+                                     _rszn, 0 if _is_cur_roster else 1))
+                                if not _is_cur_roster:
+                                    IDN.auto_link(_rpid)
+                            elif p["verdict"] == "update":
+                                _rsets = ", ".join(f"{k}=?" for k in p["changes"])
+                                execute(f"UPDATE players SET {_rsets} WHERE id=?",
+                                        (*p["changes"].values(), p["pid"]))
+                                if "grad_year" in p["changes"]:
+                                    IDN.propagate_person_fields(p["pid"])
+                        invalidate("_players_orig", "players_editor")
+                        st.cache_data.clear()
+                        flash("success",
+                              f"Roster imported — added {_radd}, updated {_rupd}"
+                              + (f", skipped {_rskp} already-rostered" if _rskp
+                                 else "") + ".")
+                        st.rerun()
+
         # One-shot cross-season sync (admin): fix rosters renamed AFTER a rollover
         # (the archived rows kept the old names — e.g. a Current-roster rename that
         # should read back onto last season). Edits made from now on sync live;

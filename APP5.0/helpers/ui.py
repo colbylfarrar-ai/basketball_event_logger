@@ -65,6 +65,21 @@ FONT_FAMILY = ("'Segoe UI Variable Display','Segoe UI',-apple-system,"
                "BlinkMacSystemFont,Inter,Roboto,sans-serif")
 
 _CSS_PATH = _ROOT / "assets" / "style.css"
+_CSS_CACHE = {"mtime": None, "text": ""}
+
+
+def _css_text() -> str:
+    """The global stylesheet, read from disk only when its mtime moves —
+    page_chrome injects it on EVERY rerun, so this saves a ~740-line file read
+    per interaction (and dev edits to style.css still show up on next rerun)."""
+    try:
+        mtime = _CSS_PATH.stat().st_mtime
+    except OSError:
+        return ""
+    if _CSS_CACHE["mtime"] != mtime:
+        _CSS_CACHE["text"] = _CSS_PATH.read_text(encoding="utf-8")
+        _CSS_CACHE["mtime"] = mtime
+    return _CSS_CACHE["text"]
 
 
 def refresh_theme_tokens():
@@ -128,11 +143,9 @@ def page_chrome(title: str = None):
     _sync_external_writes()
     cfg = get_all_settings()
     apply_page_config(cfg, title)
-    if _CSS_PATH.exists():
-        st.markdown(
-            f"<style>{_CSS_PATH.read_text(encoding='utf-8')}</style>",
-            unsafe_allow_html=True,
-        )
+    css = _css_text()
+    if css:
+        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
     apply_theme_css(cfg)
     refresh_theme_tokens()
     from helpers.auth import require_login
@@ -142,6 +155,7 @@ def page_chrome(title: str = None):
     if st.sidebar.button("↻ Refresh data", key="_chrome_refresh"):
         from datetime import datetime
         st.cache_data.clear()
+        st.session_state.pop("_settings_snap", None)
         st.session_state["_data_refreshed_at"] = (
             datetime.now().strftime("%I:%M %p").lstrip("0"))
         st.session_state["_data_just_refreshed"] = True

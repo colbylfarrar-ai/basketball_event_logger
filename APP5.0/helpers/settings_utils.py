@@ -108,7 +108,10 @@ USER_SCOPED = {"default_team", "accent_color", "color_scheme", "app_style",
                # per-coach {team_id: {insight-line hash: first-seen date}} JSON
                # blob behind the Insights tab's NEW chips (one key, one blob —
                # USER_SCOPED is an exact-key set, so no per-team keys).
-               "insights_seen"}
+               "insights_seen",
+               # War Room save/load (Tier 3 item 23): named saved lineups and
+               # bracket seed configs — ONE JSON blob per concern per coach.
+               "wr_saved_lineups", "wr_bracket_seeds"}
 
 
 def _scope_email() -> str:
@@ -132,9 +135,72 @@ def _ukey(key: str, email: str) -> str:
     return f"u:{email}:{key}" if (email and key in USER_SCOPED) else key
 
 
+# ── per-rerun settings snapshot ───────────────────────────────────────────────
+# get_setting used to open a fresh SQLite connection per call; team_color()
+# alone can call it dozens of times in one render. Instead: ONE
+# `SELECT key, value FROM app_settings` per rerun, held in session_state and
+# reused by every get_setting / get_all_settings on that run. Invalidation:
+#   · keyed on `_data_version_seen` (page_chrome bumps it when another process
+#     writes) so tracker-side writes refresh the snapshot the same rerun the
+#     data caches refresh;
+#   · plus a 60-second wall-clock bucket, so a settings write from ANOTHER web
+#     session (no data_version bump) can stay stale for at most a minute —
+#     the same staleness contract as the ttl'd data caches;
+#   · set_setting patches the snapshot in place, so a session always reads its
+#     own writes immediately.
+# Outside a Streamlit run (script tests, bare imports) there is no session —
+# _session_store() returns None and every reader falls back to direct queries,
+# which is byte-for-byte the old behaviour.
+_SNAP_TTL = 60
+_SNAP_KEY = "_settings_snap"
+
+
+def _session_store():
+    """The live session_state dict, or None when there is no Streamlit run
+    (bare script / test import). Split out so tests can inject a plain dict."""
+    try:
+        if st.runtime.exists():
+            return st.session_state
+    except Exception:
+        pass
+    return None
+
+
+def _snapshot():
+    """{key: value} for the whole app_settings table, one query per rerun.
+    None = no session to memo in (caller uses the direct-query path)."""
+    import time
+    ss = _session_store()
+    if ss is None:
+        return None
+    ver = ss.get("_data_version_seen", "")
+    bucket = int(time.time() // _SNAP_TTL)
+    snap = ss.get(_SNAP_KEY)
+    if snap and snap["ver"] == ver and snap["bucket"] == bucket:
+        return snap["data"]
+    try:
+        data = {r["key"]: r["value"]
+                for r in query("SELECT key, value FROM app_settings")}
+    except Exception:
+        return None
+    ss[_SNAP_KEY] = {"ver": ver, "bucket": bucket, "data": data}
+    return data
+
+
 def get_setting(key: str, default: str = "", email=None) -> str:
     email = _scope_email() if email is None else email
-    # user-scoped key: prefer this coach's value, else fall through to the global one
+    snap = _snapshot()
+    if snap is not None:
+        # user-scoped key: prefer this coach's value, else the global one
+        if email and key in USER_SCOPED:
+            v = snap.get(_ukey(key, email))
+            if v is not None:
+                return v
+        v = snap.get(key)
+        if v is not None:
+            return v
+        return default if default else DEFAULTS.get(key, "")
+    # no-session fallback — the original per-call query path
     if email and key in USER_SCOPED:
         rows = query("SELECT value FROM app_settings WHERE key=?",
                      (_ukey(key, email),))
@@ -152,11 +218,28 @@ def set_setting(key: str, value: str, email=None) -> None:
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?,?)",
         (_ukey(key, email), value),
     )
+    # read-your-own-writes: patch the live snapshot instead of waiting out TTL
+    ss = _session_store()
+    if ss is not None:
+        snap = ss.get(_SNAP_KEY)
+        if snap:
+            snap["data"][_ukey(key, email)] = value
 
 
 def get_all_settings(email=None) -> dict:
     email = _scope_email() if email is None else email
+    snap = _snapshot()
     s = dict(DEFAULTS)                       # start with defaults
+    if snap is not None:
+        for k, v in snap.items():
+            if not k.startswith("u:"):       # global values + non-scoped keys
+                s[k] = v
+        if email:                            # overlay THIS coach's scoped values
+            prefix = f"u:{email}:"
+            for k, v in snap.items():
+                if k.startswith(prefix):
+                    s[k[len(prefix):]] = v
+        return s
     for r in query("SELECT key, value FROM app_settings"):
         if not r["key"].startswith("u:"):    # global values + non-scoped keys
             s[r["key"]] = r["value"]

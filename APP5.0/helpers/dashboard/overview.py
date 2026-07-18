@@ -13,7 +13,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query, execute
-from helpers.ui import AWAY, CARD_BG, GRID, seg as _segc
+from helpers.ui import AWAY, seg as _segc
+from helpers import ui as _uit  # theme-reactive tokens — read at call time
 import helpers.cards as CARDS
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
@@ -192,7 +193,7 @@ def render(ctx):
             rstr = (f"<div style='font-size:9px;font-weight:700;color:{rc};"
                     f"margin-top:2px'>#{rk}/{tot}</div>") if rk else ""
             col.markdown(
-                f"<div style='background:{CARD_BG};border:1px solid {GRID};"
+                f"<div style='background:{_uit.CARD_BG};border:1px solid {_uit.GRID};"
                 f"border-radius:8px;padding:10px 8px;text-align:center'>"
                 f"<div style='font-size:9px;color:{ctx.GREY};text-transform:uppercase;"
                 f"letter-spacing:1px'>{label}</div>"

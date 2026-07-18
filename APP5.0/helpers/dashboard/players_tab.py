@@ -16,7 +16,8 @@ import streamlit as st
 
 from database.db import query
 from helpers.court import zone_leader_map as _zone_leader_map
-from helpers.ui import DIVERGE, HEAT, grid as _grid
+from helpers.ui import grid as _grid
+from helpers import ui as _uit  # theme-reactive HEAT/DIVERGE — read at call time
 import helpers.team_analytics as TA
 import helpers.player_ratings as PR
 
@@ -233,7 +234,7 @@ def render(ctx):
                     textposition="top center", textfont=dict(size=9),
                     marker=dict(size=[max(8, (p["PPG"] or 0) * 1.3) for p in mp],
                                 color=[p["OVERALL"] or 50 for p in mp],
-                                colorscale=HEAT, showscale=True,
+                                colorscale=_uit.HEAT, showscale=True,
                                 colorbar=dict(title="OVR"),
                                 line=dict(width=1, color="#30363d")),
                     hovertext=[p["name"] for p in mp],
@@ -376,7 +377,7 @@ def render(ctx):
                     marker=dict(
                         size=[max(9, (p["PPG"] or 0) * 1.4) for p in _sel],
                         color=[p["PPG"] or 0 for p in _sel],
-                        colorscale=HEAT, showscale=True,
+                        colorscale=_uit.HEAT, showscale=True,
                         colorbar=dict(title="PPG"),
                         line=dict(width=1, color="#30363d")),
                     hovertext=[p["name"] for p in _sel],
@@ -421,7 +422,7 @@ def render(ctx):
                     textposition="top center", textfont=dict(size=9),
                     marker=dict(size=[max(9, (p["PPG"] or 0) * 1.4) for p in ve],
                                 color=[p["OVERALL"] or 50 for p in ve],
-                                colorscale=HEAT, showscale=True,
+                                colorscale=_uit.HEAT, showscale=True,
                                 colorbar=dict(title="OVR"),
                                 line=dict(width=1, color="#30363d")),
                     hovertext=[p["name"] for p in ve],
@@ -441,7 +442,7 @@ def render(ctx):
             if pzl and any(pzl.values()):
                 # Rendered on the real half-court (helpers/court.py) instead of
                 # the old hand-drawn rectangles.
-                hz, _ = _zone_leader_map(pzl, title="", colorscale=DIVERGE)
+                hz, _ = _zone_leader_map(pzl, title="", colorscale=_uit.DIVERGE)
                 st.plotly_chart(hz, width="stretch", key="pl_zone_best")
                 st.caption("Each zone shows the teammate with the best FG% there "
                            "(≥3 located attempts), colored by make rate — the go-to "

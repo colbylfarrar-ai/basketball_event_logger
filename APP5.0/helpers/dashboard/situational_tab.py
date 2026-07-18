@@ -20,13 +20,17 @@ import streamlit as st
 import helpers.situational as SIT
 from helpers.cards import glass, dense_table
 from helpers.ui import empty_state, style_fig
+from helpers import ui as _uit  # theme-reactive CARD_BG — read at call time
 
 # Identity palette for the usage bars (separate from any performance colour).
 _PALETTE = ["#58a6ff", "#3fb950", "#bc8cff", "#ff5db1", "#f0a500", "#e74c3c",
             "#2dd4bf", "#f97583", "#a3e635", "#fbbf24", "#22d3ee", "#c084fc",
             "#7ee787"]
-# more-is-share heatmap: fade into the card, climb to gold.
-_HEAT = [[0.0, "#161b22"], [1.0, "#f0a500"]]
+
+
+def _heat():
+    # more-is-share heatmap: fade into the (theme-reactive) card, climb to gold.
+    return [[0.0, _uit.CARD_BG], [1.0, "#f0a500"]]
 
 
 def _fmt_top(t):
@@ -314,7 +318,7 @@ def render(ctx):
             txt.append(tr)
         hfig = go.Figure(go.Heatmap(
             z=z, x=[s2["label"] for s2 in cols_s], y=play_lbls,
-            colorscale=_HEAT, text=txt, texttemplate="%{text}",
+            colorscale=_heat(), text=txt, texttemplate="%{text}",
             textfont=dict(size=10), showscale=False,
             hovertemplate="%{y} in %{x}: %{z}% of tagged plays<extra></extra>"))
         hfig.update_xaxes(tickangle=-30)
@@ -342,7 +346,7 @@ def render(ctx):
             dtxt.append(tr)
         dhfig = go.Figure(go.Heatmap(
             z=dz, x=[s2["label"] for s2 in cols_s], y=def_lbls,
-            colorscale=_HEAT, text=dtxt, texttemplate="%{text}",
+            colorscale=_heat(), text=dtxt, texttemplate="%{text}",
             textfont=dict(size=10), showscale=False,
             hovertemplate="%{y} in %{x}: %{z}% of tagged def poss<extra></extra>"))
         dhfig.update_xaxes(tickangle=-30)

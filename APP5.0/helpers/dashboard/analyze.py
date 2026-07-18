@@ -19,7 +19,8 @@ import plotly.express as px
 import streamlit as st
 
 from helpers.ui import (gender_radio, style_fig as _style, empty_state,
-                        grid as _grid, chart as _chart, DIVERGE)
+                        grid as _grid, chart as _chart)
+from helpers import ui as _uit  # theme-reactive DIVERGE — read at call time
 from helpers.cards import round_df as _round_df
 import helpers.player_ratings as PR
 import helpers.archetypes as AR
@@ -198,7 +199,7 @@ def render(season="Current"):
                         "matrix.", icon="▦")
         else:
             corr = df[pick].corr()
-            fig = px.imshow(corr, text_auto=".2f", color_continuous_scale=DIVERGE,
+            fig = px.imshow(corr, text_auto=".2f", color_continuous_scale=_uit.DIVERGE,
                             zmin=-1, zmax=1, aspect="auto")
             _style(fig, max(360, 34 * len(pick)))
             _chart(fig, data=corr.reset_index(), key="dx_corr")

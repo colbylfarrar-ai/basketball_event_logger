@@ -34,7 +34,8 @@ import helpers.trends as TRD
 import helpers.player_ratings as PR
 import helpers.playtypes as PT
 import helpers.shrinkage as SH
-from helpers.ui import empty_state, rgb as _rgb, style_fig as _style, CARD_BG, GRID
+from helpers.ui import empty_state, rgb as _rgb, style_fig as _style
+from helpers import ui as _uit  # theme-reactive tokens — read at call time
 from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
                            gauge_dial, scoring_donut as _donut)
@@ -940,10 +941,10 @@ def render_card(ctx):
                 fillcolor=f"rgba({ar},{ag},{ab},0.25)"))
             rad.update_layout(
                 template="plotly_dark", height=360, paper_bgcolor="rgba(0,0,0,0)",
-                polar=dict(bgcolor=CARD_BG,
-                           radialaxis=dict(range=[0, 100], gridcolor=GRID,
+                polar=dict(bgcolor=_uit.CARD_BG,
+                           radialaxis=dict(range=[0, 100], gridcolor=_uit.GRID,
                                            tickfont=dict(size=9)),
-                           angularaxis=dict(gridcolor=GRID)),
+                           angularaxis=dict(gridcolor=_uit.GRID)),
                 margin=dict(l=50, r=50, t=40, b=30),
                 legend=dict(orientation="h", y=1.12, x=0, bgcolor="rgba(0,0,0,0)"))
             st.plotly_chart(rad, width="stretch", key=f"{_kp}_radar")

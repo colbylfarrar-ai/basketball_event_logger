@@ -42,8 +42,7 @@ import helpers.defenses as DEF
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
                "RW": "Right Wing", "RC": "Right Corner"}
-CARD_BG = "#161b22"
-GRID = "#21262d"
+from helpers import ui as _uit  # theme-reactive CARD_BG/GRID — read at call time
 BLUE = "#58a6ff"
 PURPLE = "#9b59b6"
 GOOD = "#3fb950"
@@ -146,14 +145,14 @@ def _pct(n, d):
 def _style(fig, height=330, **kw):
     fig.update_layout(
         template="plotly_dark", height=height,
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor=CARD_BG,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor=_uit.CARD_BG,
         margin=dict(l=46, r=22, t=46, b=42),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
                     bgcolor="rgba(0,0,0,0)"),
         font=dict(size=12, color="#c9d1d9"),
         bargap=0.22, **kw)
-    fig.update_xaxes(gridcolor=GRID, zerolinecolor="#30363d", showline=False)
-    fig.update_yaxes(gridcolor=GRID, zerolinecolor="#30363d", showline=False)
+    fig.update_xaxes(gridcolor=_uit.GRID, zerolinecolor="#30363d", showline=False)
+    fig.update_yaxes(gridcolor=_uit.GRID, zerolinecolor="#30363d", showline=False)
     return fig
 
 
@@ -504,9 +503,9 @@ def render_box_score(game_id: int):
             rad.update_layout(
                 template="plotly_dark", height=330,
                 paper_bgcolor="rgba(0,0,0,0)",
-                polar=dict(bgcolor=CARD_BG,
-                           radialaxis=dict(range=[0, 100], gridcolor=GRID, tickfont=dict(size=9)),
-                           angularaxis=dict(gridcolor=GRID)),
+                polar=dict(bgcolor=_uit.CARD_BG,
+                           radialaxis=dict(range=[0, 100], gridcolor=_uit.GRID, tickfont=dict(size=9)),
+                           angularaxis=dict(gridcolor=_uit.GRID)),
                 margin=dict(l=40, r=40, t=50, b=30),
                 legend=dict(orientation="h", y=1.08, x=0, bgcolor="rgba(0,0,0,0)"))
             st.plotly_chart(rad, width="stretch", key=f"bs{game_id}_radar")

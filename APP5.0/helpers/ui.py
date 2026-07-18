@@ -30,14 +30,23 @@ from helpers.settings_utils import (
     get_all_settings, apply_page_config, apply_theme_css, get_setting,
 )
 
-# ── Static chart palette ────────────────────────────────────────────────────────
-# ACCENT is dynamic (resolved per-page from settings); these are the fixed colours
-# every chart shares.
+# ── Chart palette ───────────────────────────────────────────────────────────────
+# ACCENT is dynamic (resolved per-page from settings). CARD_BG / GRID / HEAT /
+# DIVERGE are THEME-REACTIVE module attrs: they default to the Dark preset and
+# are re-resolved from the active style preset by refresh_theme_tokens()
+# (called at import and from page_chrome each run). Importers that snapshot them
+# by value once per process (cached helper modules) must read them off this
+# module at call time instead — see helpers/dashboard/*.
 CARD_BG = "#161b22"
 GRID    = "#21262d"
 AWAY    = "#e74c3c"
 GOOD    = "#3fb950"
 BAD     = "#e74c3c"
+
+# Extended tokens the chart builders read at call time (kept in one mutable dict
+# so functions pick up a preset change without re-importing anything).
+_TOK = {"body_bg": "#0d1117", "border": "#30363d",
+        "text": "#f0f6fc", "subtext": "#8b949e"}
 
 # Modern categorical palette (used for multi-series charts with no explicit colour)
 PALETTE = ["#58a6ff", "#3fb950", "#f0a500", "#bc8cff", "#ff7b72", "#56d4dd",
@@ -56,6 +65,35 @@ FONT_FAMILY = ("'Segoe UI Variable Display','Segoe UI',-apple-system,"
                "BlinkMacSystemFont,Inter,Roboto,sans-serif")
 
 _CSS_PATH = _ROOT / "assets" / "style.css"
+
+
+def refresh_theme_tokens():
+    """Re-resolve the chart colour tokens from the ACTIVE style preset.
+
+    Cards reskin per-preset via settings_utils.STYLE_PRESETS; charts used to
+    hardcode the Dark palette. This keeps CARD_BG / GRID / HEAT / DIVERGE (and
+    the _TOK extended tokens) in sync with the preset the signed-in coach chose.
+    Called once at import (global fallback before any auth) and from
+    page_chrome on every run — a style change reruns the page, so charts drawn
+    after boot always match the cards."""
+    global CARD_BG, GRID, HEAT, DIVERGE
+    from helpers.settings_utils import STYLE_PRESETS, get_setting
+    try:
+        name = get_setting("app_style", "Dark") or "Dark"
+    except Exception:
+        name = "Dark"
+    p = STYLE_PRESETS.get(name, STYLE_PRESETS["Dark"])
+    CARD_BG, GRID = p["card_bg"], p["track"]
+    HEAT = [[0.0, CARD_BG], [1.0, GOOD]]
+    DIVERGE = [[0.0, BAD], [0.5, GRID], [1.0, GOOD]]
+    _TOK.update(body_bg=p["body_bg"], border=p["card_border"],
+                text=p["text"], subtext=p["subtext"])
+
+
+# Resolve once at import so a fresh process starts on the stored (global)
+# preset instead of the hardcoded Dark defaults. Failures (no DB yet, e.g.
+# engine-only scripts) leave the Dark fallback in place.
+refresh_theme_tokens()
 
 
 def _sync_external_writes():
@@ -96,6 +134,7 @@ def page_chrome(title: str = None):
             unsafe_allow_html=True,
         )
     apply_theme_css(cfg)
+    refresh_theme_tokens()
     from helpers.auth import require_login
     require_login()
     # Always-available data refresh — kept LAST in page_chrome. Clearing stamps
@@ -356,13 +395,13 @@ def style_fig(fig, height=340, **kw):
         margin=margin,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
                     bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
-        font=dict(family=FONT_FAMILY, size=12, color="#c9d1d9"),
+        font=dict(family=FONT_FAMILY, size=12, color=_TOK["text"]),
         colorway=PALETTE,
-        hoverlabel=dict(bgcolor="#0d1117", bordercolor="#30363d",
-                        font=dict(family=FONT_FAMILY, size=12, color="#f0f6fc")),
+        hoverlabel=dict(bgcolor=_TOK["body_bg"], bordercolor=_TOK["border"],
+                        font=dict(family=FONT_FAMILY, size=12, color=_TOK["text"])),
         bargap=0.22, **kw)
-    fig.update_xaxes(gridcolor=GRID, zerolinecolor="#30363d", showline=False)
-    fig.update_yaxes(gridcolor=GRID, zerolinecolor="#30363d", showline=False)
+    fig.update_xaxes(gridcolor=GRID, zerolinecolor=_TOK["border"], showline=False)
+    fig.update_yaxes(gridcolor=GRID, zerolinecolor=_TOK["border"], showline=False)
     return fig
 
 
@@ -389,26 +428,26 @@ def gauge(value, title="", vmin=0, vmax=100, ref=None, suffix="", accent=None,
                  (vmin + 2 * third, vmax, "rgba(63,185,80,0.20)")]
     mode = "gauge+number+delta" if ref is not None else "gauge+number"
     g = dict(
-        axis=dict(range=[vmin, vmax], tickfont=dict(size=9, color="#8b949e")),
+        axis=dict(range=[vmin, vmax], tickfont=dict(size=9, color=_TOK["subtext"])),
         bar=dict(color=accent, thickness=0.28),
         bgcolor="rgba(0,0,0,0)", borderwidth=0,
         steps=[dict(range=[lo, hi], color=c) for lo, hi, c in bands],
     )
     if ref is not None:
-        g["threshold"] = dict(line=dict(color="#f0f6fc", width=2), thickness=0.75,
+        g["threshold"] = dict(line=dict(color=_TOK["text"], width=2), thickness=0.75,
                               value=ref)
     fig = go.Figure(go.Indicator(
         mode=mode, value=value,
-        number=dict(suffix=suffix, font=dict(size=26, color="#f0f6fc"),
+        number=dict(suffix=suffix, font=dict(size=26, color=_TOK["text"]),
                     valueformat=number_fmt),
         delta=(dict(reference=ref, valueformat="+.1f",
                     increasing=dict(color=GOOD), decreasing=dict(color=BAD))
                if ref is not None else None),
-        title=dict(text=title, font=dict(size=12, color="#c9d1d9")),
+        title=dict(text=title, font=dict(size=12, color=_TOK["text"])),
         gauge=g))
     fig.update_layout(height=height, margin=dict(l=14, r=14, t=34, b=6),
                       paper_bgcolor="rgba(0,0,0,0)",
-                      font=dict(family=FONT_FAMILY, color="#c9d1d9"))
+                      font=dict(family=FONT_FAMILY, color=_TOK["text"]))
     return fig
 
 
@@ -590,11 +629,11 @@ def wp_ribbon(curve, *, home_name="Home", accent=None, height=240, swings=3,
         line=dict(color=accent, width=2.6), fill="tozeroy",
         fillcolor=f"rgba({r},{g},{b},0.14)", name=f"{home_name} win %",
         hovertemplate=f"{home_name} win: " + "%{y:.0f}%<extra></extra>"))
-    fig.add_hline(y=50, line=dict(color="#8b949e", width=1, dash="dot"))
+    fig.add_hline(y=50, line=dict(color=_TOK["subtext"], width=1, dash="dot"))
     # quarter dividers (480s HS quarters) within range
     for tk in range(480, int(total) + 1, 480):
         if tk < total:
-            fig.add_vline(x=tk, line=dict(color="#30363d", width=1, dash="dot"))
+            fig.add_vline(x=tk, line=dict(color=_TOK["border"], width=1, dash="dot"))
     # markers on the biggest single-step win-prob swings
     if swings and len(curve) > 2:
         order = sorted(range(1, len(curve)),
@@ -603,7 +642,7 @@ def wp_ribbon(curve, *, home_name="Home", accent=None, height=240, swings=3,
         fig.add_trace(go.Scatter(
             x=[xs[i] for i in pk], y=[wp[i] for i in pk], mode="markers",
             marker=dict(size=9, color=accent,
-                        line=dict(color="#0d1117", width=1.5)),
+                        line=dict(color=_TOK["body_bg"], width=1.5)),
             hoverinfo="skip", showlegend=False))
     fig.update_yaxes(range=[0, 100], ticksuffix="%",
                      title=f"{home_name} win probability")

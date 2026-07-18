@@ -172,6 +172,27 @@ def render(ctx):
     if up_rows:
         st.markdown("<div class='lab-hdr'>Upcoming — projections</div>",
                     unsafe_allow_html=True)
+        # schedule-density chip per row — "3 in 4 nights" is the classic tired-legs
+        # setup (quick-hit; fatigue engine's b2b/short-rest splits already render
+        # above, this flags WHICH upcoming games carry the load).
+        from datetime import date as _d_
+        _all_dates = {g["date"] for g in ctx.log} | {g["date"] for g in up_rows}
+
+        def _load_chip(diso):
+            try:
+                dd = _d_.fromisoformat(diso)
+            except ValueError:
+                return ""
+            n4 = sum(1 for x in _all_dates
+                     if 0 <= (dd - _d_.fromisoformat(x)).days <= 3)
+            n7 = sum(1 for x in _all_dates
+                     if 0 <= (dd - _d_.fromisoformat(x)).days <= 6)
+            if n7 >= 4:
+                return f"🔥 {n7} in 7"
+            if n4 >= 3:
+                return f"⚠️ {n4} in 4"
+            return ""
+
         up_disp = []
         for g in up_rows:
             at_home = g["team1_id"] == ctx.team_id
@@ -192,12 +213,14 @@ def render(ctx):
                 "Our win %": (f"{up_pred['win_prob_a'] * 100:.0f}%"
                               if up_pred else "—"),
                 "Call": up_pred["confidence"] if up_pred else "—",
+                "Load": _load_chip(g["date"]),
             })
         st.dataframe(pd.DataFrame(up_disp), hide_index=True, width="stretch",
                      height=min(420, 60 + 35 * len(up_disp)))
         st.caption("Opponent-adjusted projection with home court at the actual "
-                   "venue. Open the **Scout** tab to build the game plan "
-                   "against the next opponent.")
+                   "venue. **Load** flags schedule density going INTO that game "
+                   "(⚠️ 3 games in 4 nights · 🔥 4+ in 7). Open the **Scout** tab "
+                   "to build the game plan against the next opponent.")
 
     st.markdown("<div class='lab-hdr'>Box score</div>",
                 unsafe_allow_html=True)

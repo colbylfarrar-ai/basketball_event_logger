@@ -151,10 +151,16 @@ def render(ctx):
             # entitlement (tracked_gate), so a Free viewer / non-pool scout sees only
             # the box columns (#/Player/GP/PPG/RPG/APG/TS%).
             arch = ctx.archetypes(ctx.gender) if ctx.has_tracked else {}
+            # sample-honesty glyph next to GP — the conf-dot ladder (k=8 games,
+            # the insight-line standard) in text form, since the canvas dataframe
+            # can't render the HTML dot. ● stable · ◐ fair · ○ small sample.
+            from helpers.cards import conf_level as _clev
+            _cglyph = {"stable": "●", "fair": "◐", "weak": "○"}
             rdf_rows = []
             for p in ctx.players:
                 row = {"#": p["number"], "Player": p["name"], "GP": p["GP"]}
                 if ctx.has_tracked:
+                    row["Conf"] = _cglyph[_clev(p["GP"] or 0, k=8)]
                     for c in ctx.RATING_COLS_ALL:
                         row[c] = p.get(c)
                     row["Archetype"] = arch.get(p["_pid"], "—")
@@ -180,7 +186,9 @@ def render(ctx):
                            "average) plus the data-driven Archetype, and shot-creation "
                            "mix: SC Shot% (own shots), SC Pass% (passes into shots) and "
                            "SC Created% (screens that freed a shooter) — shares of the "
-                           "player's total shot creation.")
+                           "player's total shot creation. **Conf** = how firmly the "
+                           "sample backs the ratings (● stable · ◐ fair · ○ small "
+                           "sample, from games played).")
             else:
                 st.caption("Box-score lines. Tracked ratings, archetypes and "
                            "shot-creation mix unlock with a Paid plan.")

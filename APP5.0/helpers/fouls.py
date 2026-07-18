@@ -17,6 +17,7 @@ from collections import defaultdict
 
 from database.db import query
 import helpers.stats as S
+import helpers.late_game as LG
 
 
 _safe = S._safe   # shared definition lives in helpers.stats
@@ -120,7 +121,12 @@ def player_foul_ft(game_ids=None, events=None):
     """
     if events is None:
         events = S.fetch_events(game_ids)
-    out = defaultdict(lambda: {"PF": 0, "drawn": 0, "FTA": 0, "FTM": 0,
+    # intentional clock-stop fouls (helpers.late_game) — counted separately so
+    # discipline reads (nsPF) don't punish a coach-ordered strategy foul
+    strategic = (LG.strategic_foul_event_ids(events)
+                 if any(e["event_type"] == "foul" for e in events) else set())
+    out = defaultdict(lambda: {"PF": 0, "drawn": 0, "strategic": 0,
+                               "FTA": 0, "FTM": 0,
                                "FTA_1h": 0, "FTM_1h": 0, "FTA_2h": 0, "FTM_2h": 0,
                                "cFTA": 0, "cFTM": 0, "and1": 0, "and1_made": 0})
     for e in events:
@@ -130,6 +136,8 @@ def player_foul_ft(game_ids=None, events=None):
             fouled = e["primary_player_id"]
             if fouler is not None:
                 out[fouler]["PF"] += 1
+                if e["id"] in strategic:
+                    out[fouler]["strategic"] += 1
             if fouled is not None:
                 out[fouled]["drawn"] += 1
         elif et == "free_throw":
@@ -148,6 +156,7 @@ def player_foul_ft(game_ids=None, events=None):
     for d in out.values():
         d["FT%"] = _safe(d["FTM"], d["FTA"]) * 100
         d["ClutchFT%"] = (_safe(d["cFTM"], d["cFTA"]) * 100) if d["cFTA"] else None
+        d["nsPF"] = d["PF"] - d["strategic"]   # discipline fouls (non-strategic)
     return dict(out)
 
 

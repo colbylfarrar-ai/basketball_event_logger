@@ -75,18 +75,32 @@ def _worked(game_ids):
 
 
 def _foul_events(game_ids):
-    """Foul events in game_ids, with the fouler's team joined in."""
+    """Foul events in game_ids, with the fouler's team joined in and each row
+    annotated `strategic` (intentional clock-stop foul per helpers.late_game).
+    Tendency aggregates skip strategic rows — a late-game foul barrage is coach
+    strategy, not a whistle profile — and surface them as a separate count."""
     if not game_ids:
         return []
     rows = query(
-        """SELECT ge.game_id, ge.quarter, ge.official_id AS off_pk,
+        """SELECT ge.id AS eid, ge.game_id, ge.quarter, ge.time,
+                  ge.official_id AS off_pk,
+                  ge.secondary_player_id AS fouler_id,
                   p.team_id AS fouler_team
            FROM game_events ge
            LEFT JOIN players p ON p.id = ge.secondary_player_id
            WHERE ge.event_type = 'foul'"""
     )
     gid_set = set(game_ids)
-    return [r for r in rows if r["game_id"] in gid_set]
+    rows = [r for r in rows if r["game_id"] in gid_set]
+    try:
+        import helpers.late_game as LG
+        import helpers.stats as S
+        flagged = LG.strategic_foul_event_ids(S.fetch_events(list(gid_set)))
+    except Exception:
+        flagged = set()
+    for r in rows:
+        r["strategic"] = r["eid"] in flagged
+    return rows
 
 
 def _possessions_by_game(game_ids):
@@ -202,11 +216,15 @@ def official_overview(gender=None, game_ids=None, season="Current"):
     # total fouls per game (by anyone) — for foul_share
     game_total_fouls = defaultdict(int)
 
+    f_strat = defaultdict(int)      # strategic clock-stop calls (excluded above)
     for e in fouls:
         gid = e["game_id"]
         game_total_fouls[gid] += 1
         opk = e["off_pk"]
         if opk is None:
+            continue
+        if e.get("strategic"):
+            f_strat[opk] += 1       # counted, but kept out of the profile
             continue
         f_total[opk] += 1
         f_by_game[opk][gid] += 1
@@ -252,6 +270,7 @@ def official_overview(gender=None, game_ids=None, season="Current"):
             "ext_id": o["official_id"],
             "games": n,
             "fouls": ftot,
+            "strategic_calls": f_strat.get(opk, 0),
             "FPG": _safe(ftot, n),
             "FPG_std": fpg_std,
             "q1": f_qtr[opk].get(1, 0),

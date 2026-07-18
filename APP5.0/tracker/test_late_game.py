@@ -100,6 +100,31 @@ class LateGameDetector(unittest.TestCase):
     def test_other_side_fts_not_damped(self):
         self.assertNotIn(self.ft_away, self.ctx["fts"])
 
+    def test_scoring_wpa_damps_strategic_fts(self):
+        """The shooter's credit for a strategic-foul FT scales with the damp
+        constant; players with no damped FTs are unchanged."""
+        import helpers.wpa as WPA
+        saved = WPA.STRATEGIC_FT_DAMP
+        try:
+            WPA.STRATEGIC_FT_DAMP = 1.0
+            full = WPA.game_wpa(9400, mode="scoring")["players"]
+            WPA.STRATEGIC_FT_DAMP = 0.25
+            damp = WPA.game_wpa(9400, mode="scoring")["players"]
+        finally:
+            WPA.STRATEGIC_FT_DAMP = saved
+        self.assertLess(damp[H_P]["wpa"], full[H_P]["wpa"])
+        a_full = full.get(A_P, {}).get("wpa", 0.0)
+        a_damp = damp.get(A_P, {}).get("wpa", 0.0)
+        self.assertAlmostEqual(a_full, a_damp, places=6)
+
+    def test_fouls_engine_counts_strategic(self):
+        import helpers.fouls as F
+        pf = F.player_foul_ft(game_ids=[9400])
+        self.assertEqual(pf[A_P]["PF"], 3)          # early + strategic + blowout
+        self.assertEqual(pf[A_P]["strategic"], 1)
+        self.assertEqual(pf[A_P]["nsPF"], 2)
+        self.assertEqual(pf[H_P]["strategic"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

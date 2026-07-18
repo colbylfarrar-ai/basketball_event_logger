@@ -40,6 +40,7 @@ from collections import defaultdict
 from database.db import query
 import helpers.win_probability as WP
 import helpers.stats as S
+import helpers.late_game as LG
 
 
 CLUTCH_LI = 1.5         # leverage threshold for a moment to count as "clutch"
@@ -49,6 +50,12 @@ ONBALL_SHARE = 0.60     # share of a made basket's negative defensive credit
                         # charged to the on-ball defender; the rest spreads to
                         # the help (team defense is a team outcome — spec §3,
                         # 2026-07-18 recal)
+STRATEGIC_FT_DAMP = 0.25   # credit multiplier on free throws produced by an
+                           # intentional clock-stop foul (helpers.late_game):
+                           # being fouled on purpose isn't clutch shot-making,
+                           # so the scoring model pays only a sliver of the
+                           # (large, late-game) WP jump. The TEAM's win prob
+                           # timeline still moves in full — points are points.
 
 
 # Game-clock helpers — canonical versions live in helpers.stats.
@@ -293,6 +300,11 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
                 rec["clutch_wpa"] += val
 
     else:  # ── scoring mode (conserving, made baskets only) ──────────────────
+        # free throws earned by an intentional clock-stop foul pay damped
+        # credit (spec §4) — the win-prob jump is the foul strategy, not the
+        # shooter's shot-making
+        damped_fts = (LG.damped_ft_event_ids(events)
+                      if any(e["event_type"] == "foul" for e in events) else set())
         h = a = 0
         rows = []
         for e in events:
@@ -310,6 +322,8 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
             d_home = (WP.win_prob(ma, secs_left, end, pregame_edge, sd_full)
                       - WP.win_prob(mb, secs_left, end, pregame_edge, sd_full))
             wpa_team = d_home if e["shooter_team_id"] == t1 else -d_home
+            if e["id"] in damped_fts:
+                wpa_team *= STRATEGIC_FT_DAMP
             rows.append((e["primary_player_id"],
                          e["pass_from_id"] if e["event_type"] == "shot" else None,
                          wpa_team, li_at(mb, secs_left, pregame_edge)))

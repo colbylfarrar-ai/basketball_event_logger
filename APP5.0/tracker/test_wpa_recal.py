@@ -111,6 +111,34 @@ class EPScoping(unittest.TestCase):
                         f"off_wpa {girl['off_wpa']} — EP baseline not scoped?")
 
 
+class GarbageTimeSelfDamp(unittest.TestCase):
+    """Spec §4 verification (no new mechanism): in a decided game, a late
+    basket barely moves win probability, so WPA credit is already ~0."""
+
+    @classmethod
+    def setUpClass(cls):
+        execute("INSERT INTO games (id, team1_id, team2_id, date, tracked, season) "
+                "VALUES (9310,9001,9002,'2026-01-09',1,'TEST-SPLIT')")
+        # 9001 pours in 13 straight makes (26-0), then one more with a minute left
+        times = [(1, "6:00"), (1, "5:00"), (1, "4:00"), (2, "6:00"), (2, "5:00"),
+                 (2, "4:00"), (3, "6:00"), (3, "5:00"), (3, "4:00"), (4, "7:00"),
+                 (4, "6:00"), (4, "5:00"), (4, "3:00")]
+        for q, tm in times:
+            _shot(9310, 9001, 9002, 9010, q, tm, "make", guarded=9016)
+        _shot(9310, 9001, 9002, 9011, 4, "1:00", "make", guarded=9016)
+        _shot(9310, 9002, 9001, 9016, 4, "0:10", "miss")   # timeline extender
+
+    def test_late_blowout_basket_worth_nothing(self):
+        res = WPA.game_wpa(9310, mode="scoring")
+        # the up-26 basket at 1:00 moved WP by ~nothing
+        tl = res["timeline"]
+        self.assertGreater(tl[-1][2], 0.995)
+        self.assertLess(abs(tl[-1][2] - tl[-2][2]), 0.005)
+        shooter = res["players"].get(9011)
+        if shooter:
+            self.assertLess(abs(shooter["wpa"]), 0.005)
+
+
 class DwpaTeamSplit(unittest.TestCase):
     """Defensive-credit assignment in possession mode (spec §3):
       * made basket   — on-ball defender ONBALL_SHARE, help splits the rest

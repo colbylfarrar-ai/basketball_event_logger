@@ -55,9 +55,13 @@ def crew_pairs(gender=None, game_ids=None, season="Current", *, min_games=5,
     poss = poss or {}
     names = names or {}
 
-    # per-game rollups (shared by every combo touching the game)
+    # per-game rollups (shared by every combo touching the game). Strategic
+    # clock-stop fouls (helpers.late_game, annotated by officials._foul_events)
+    # stay out — a late foul barrage is coach strategy, not crew feel.
     g_tot, g_home, g_away, g_q4 = {}, {}, {}, {}
     for e in fouls:
+        if e.get("strategic"):
+            continue
         gid = e["game_id"]
         g_tot[gid] = g_tot.get(gid, 0) + 1
         if e.get("quarter") == 4:

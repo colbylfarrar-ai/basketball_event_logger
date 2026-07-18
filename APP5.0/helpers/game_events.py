@@ -236,12 +236,34 @@ def live_state(game_id: int, n_events: int = 25) -> dict:
     events = query(
         "SELECT * FROM game_events WHERE game_id=? ORDER BY id DESC LIMIT ?",
         (game_id, n_events))
+    # Tonight's tag coverage — % of taggable events carrying the optional
+    # one-tap tags (play_type on shots; defense on shots + turnovers, the two
+    # event kinds that hold it). One aggregate COUNT; the PWA renders it as a
+    # live nudge toward detailed mode (definitions mirror helpers/coverage.py).
+    c = query(
+        """SELECT
+             SUM(CASE WHEN event_type='shot' THEN 1 ELSE 0 END) AS shots,
+             SUM(CASE WHEN event_type='shot'
+                       AND COALESCE(play_type,'') != '' THEN 1 ELSE 0 END) AS pt,
+             SUM(CASE WHEN event_type IN ('shot','turnover')
+                      THEN 1 ELSE 0 END) AS st,
+             SUM(CASE WHEN event_type IN ('shot','turnover')
+                       AND COALESCE(defense,'') != '' THEN 1 ELSE 0 END) AS df
+           FROM game_events WHERE game_id=?""", (game_id,))[0]
+    _shots, _st = c["shots"] or 0, c["st"] or 0
+    coverage = {
+        "play_type": {"tagged": c["pt"] or 0, "total": _shots,
+                      "pct": round(100 * (c["pt"] or 0) / _shots) if _shots else None},
+        "defense": {"tagged": c["df"] or 0, "total": _st,
+                    "pct": round(100 * (c["df"] or 0) / _st) if _st else None},
+    }
     return {
         "home_pts": hp, "away_pts": ap,
         "home_poss": p1, "away_poss": p2,
         "quarters": {str(q): {"home": d.get(t1, 0), "away": d.get(t2, 0)}
                      for q, d in qs.items()},
         "events": events,
+        "coverage": coverage,
     }
 
 

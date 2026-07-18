@@ -245,8 +245,30 @@ async function refreshLive() {
       lsSet(LS.live(S.gameId), S.lastLive);
       renderScore();
       renderPBP();
+      renderCoverage();
     }
   } catch (e) { /* offline — cached state stands */ }
+}
+
+// Tag-coverage nudge: how much of tonight carries the optional one-tap tags.
+// Quick-mode users see it too — that's the point (the pull toward detailed
+// mode). Hidden until 5 shots so an opening possession isn't "0%".
+function renderCoverage() {
+  const el = $('coverage-badge');
+  if (!el) return;
+  const cov = (S.lastLive && S.lastLive.coverage) || null;
+  if (!cov || !cov.play_type || (cov.play_type.total || 0) < 5) {
+    el.style.display = 'none';
+    return;
+  }
+  function part(label, s) {
+    if (s.pct == null) return label + ' —';
+    const color = s.pct >= 75 ? '#3fb950' : s.pct >= 40 ? '#f0a500' : '#e74c3c';
+    return label + ' <b style="color:' + color + '">' + s.pct + '%</b>';
+  }
+  el.innerHTML = '🏷️ Tags: ' + part('play', cov.play_type) + ' · '
+    + part('def', cov.defense);
+  el.style.display = '';
 }
 
 /* ---------- roster lookups / local score ---------- */
@@ -1756,7 +1778,10 @@ async function finishGame() {
     const res = await api('/api/games/' + S.gameId + '/finish', { method: 'POST' });
     if (res.ok) {
       const d = await res.json();
-      toast('Final: ' + d.home + ' – ' + d.away);
+      // the buzzer handoff: the app side (Game Tracker page) now shows the
+      // post-game read + result card + recap for a FINAL game (Tier 2 item 10)
+      toast('Final: ' + d.home + ' – ' + d.away
+        + ' — recap & share card ready in the app');
       S.gameId = null;
       S.game = null;
       showScreen('setup');

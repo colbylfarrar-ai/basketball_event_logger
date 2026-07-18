@@ -173,6 +173,141 @@ def _box_env_by_game(game_ids):
 
 # ── main entry point ─────────────────────────────────────────────────────────
 
+CLUTCH_LI = 1.5     # same app-wide threshold WPA / fouls use for "clutch"
+FOULOUT_PF = 5      # NFHS disqualification
+
+
+def wp_profile(game_ids):
+    """Per-official WIN-PROBABILITY context of their calls (2026-07-18 recal
+    §8) — strictly what-happened counting, zero call-quality judgment:
+
+      avg_call_li     mean leverage of the moments this ref blew the whistle
+                      (normalized per game so a tight game doesn't inflate a
+                      ref; 1.0 = an average moment of their games)
+      hi_li_calls     calls at CLUTCH_LI+ leverage ("took the big whistle")
+      li_calls        calls with a computable leverage (denominator)
+      li_call_ratio   this ref's high-LI CALL share ÷ the high-LI MOMENT share
+                      of the games they worked — >1 keeps the whistle in big
+                      moments, <1 swallows it late
+      foulouts        calls that were a player's FOULOUT_PF-th personal foul
+      foulout_impact  Σ over those: the player's in-game scoring share × the
+                      fraction of the game remaining (fouling out a star with
+                      lots of clock = big number; a bench player at 0:10 ≈ 0)
+
+    Strategic clock-stop calls (helpers.late_game) are excluded everywhere.
+    Returns {off_pk: {…}}; empty dict fields when a ref has no attributed calls.
+    """
+    import helpers.win_probability as WP
+    import helpers.late_game as LG
+    import helpers.stats as S
+
+    events = S.fetch_events(list(game_ids)) if game_ids else []
+    if not events:
+        return {}
+    flagged = LG.strategic_foul_event_ids(events)
+
+    by_game = defaultdict(list)
+    for e in events:
+        by_game[e["game_id"]].append(e)
+    pteam = {r["id"]: r["team_id"] for r in query(
+        "SELECT id, team_id FROM players")}
+
+    prof = defaultdict(lambda: {"lis": [], "hi": 0, "foulouts": 0,
+                                "foulout_impact": 0.0, "hi_moments": 0,
+                                "moments": 0})
+    for gid, evs in by_game.items():
+        evs.sort(key=lambda e: (S.elapsed(e["quarter"], e["time"]),
+                                e.get("id") or 0))
+        end = max((S.elapsed(e["quarter"], e["time"]) for e in evs),
+                  default=1) or 1
+        pts = defaultdict(int)
+        teams = []
+        pfs = defaultdict(int)                    # player -> PF so far
+        p_pts = defaultdict(int)                  # player -> points so far
+        moments = []                              # raw LI of scoring moments
+        calls = []                                # (off_pk, li, fouler, elapsed)
+        for e in evs:
+            team = e.get("shooter_team_id")
+            t = S.elapsed(e["quarter"], e["time"])
+            secs_left = max(end - t, 0)
+
+            def _li(for_team):
+                opp = None
+                if len(teams) > 1 and for_team in teams:
+                    opp = teams[0] if for_team == teams[1] else teams[1]
+                margin = pts[for_team] - (pts[opp] if opp is not None else 0)
+                return abs(WP.win_prob(margin + 2, secs_left, end)
+                           - WP.win_prob(margin - 2, secs_left, end))
+
+            if e["event_type"] in ("shot", "free_throw"):
+                if team is None:
+                    continue
+                if team not in teams:
+                    teams.append(team)
+                moments.append(_li(team))
+                if e["shot_result"] == "make":
+                    got = 1 if e["event_type"] == "free_throw" else \
+                        (3 if e["shot_type"] == 3 else 2)
+                    pts[team] += got
+                    if e["primary_player_id"] is not None:
+                        p_pts[e["primary_player_id"]] += got
+            elif e["event_type"] == "foul":
+                fouler = e["secondary_player_id"]
+                pf_no = 0
+                if fouler is not None:
+                    pfs[fouler] += 1
+                    pf_no = pfs[fouler]            # PF count AT THIS call
+                if e["id"] in flagged:
+                    continue                       # strategy, not profile
+                opk = e["official_id"]
+                if opk is None:
+                    continue
+                f_team = pteam.get(fouler)
+                if f_team is not None and f_team not in teams:
+                    teams.append(f_team)
+                li = _li(f_team) if f_team is not None else None
+                calls.append((opk, li, fouler, t, pf_no))
+
+        mean_li = (sum(moments) / len(moments)) if moments else 0.0
+        if mean_li <= 0:
+            continue
+        hi_moments = sum(1 for li in moments if li / mean_li >= CLUTCH_LI)
+        offs_here = {c[0] for c in calls}
+        for opk in offs_here:
+            prof[opk]["moments"] += len(moments)
+            prof[opk]["hi_moments"] += hi_moments
+        game_pts_total = sum(p_pts.values()) or 1
+        for opk, li, fouler, t, pf_no in calls:
+            d = prof[opk]
+            if li is not None:
+                nli = li / mean_li
+                d["lis"].append(nli)
+                if nli >= CLUTCH_LI:
+                    d["hi"] += 1
+            if fouler is not None and pf_no == FOULOUT_PF:
+                share = p_pts.get(fouler, 0) / game_pts_total
+                d["foulouts"] += 1
+                d["foulout_impact"] += share * (max(end - t, 0) / end)
+
+    out = {}
+    for opk, d in prof.items():
+        n = len(d["lis"])
+        call_hi_share = (d["hi"] / n) if n else None
+        moment_hi_share = (d["hi_moments"] / d["moments"]) if d["moments"] else None
+        ratio = None
+        if call_hi_share is not None and moment_hi_share:
+            ratio = call_hi_share / moment_hi_share
+        out[opk] = {
+            "avg_call_li": round(sum(d["lis"]) / n, 2) if n else None,
+            "hi_li_calls": d["hi"],
+            "li_calls": n,
+            "li_call_ratio": round(ratio, 2) if ratio is not None else None,
+            "foulouts": d["foulouts"],
+            "foulout_impact": round(d["foulout_impact"], 3),
+        }
+    return out
+
+
 def official_overview(gender=None, game_ids=None, season="Current"):
     """
     Returns {"officials": [row, ...], "teams": {team_id: name}}.
@@ -202,6 +337,7 @@ def official_overview(gender=None, game_ids=None, season="Current"):
     worked = _worked(game_ids)
     fouls = _foul_events(game_ids)
     poss_by_game = _possessions_by_game(game_ids)
+    wp = wp_profile(game_ids)   # leverage/foul-out context of each ref's calls
 
     teams = {r["id"]: r["name"] for r in query("SELECT id, name FROM teams")}
 
@@ -288,6 +424,10 @@ def official_overview(gender=None, game_ids=None, season="Current"):
             "POSSPG": _safe(gposs, n),
             "game_fouls": gfouls,
             "foul_share": _safe(ftot, gfouls),
+            # win-probability context (wp_profile; None/0 when no attributed calls)
+            **(wp.get(opk) or {"avg_call_li": None, "hi_li_calls": 0,
+                               "li_calls": 0, "li_call_ratio": None,
+                               "foulouts": 0, "foulout_impact": 0.0}),
         })
 
     rows.sort(key=lambda r: (-r["fouls"], r["name"]))

@@ -409,7 +409,8 @@ _dt_rows = query("SELECT gender FROM teams WHERE name=?", (default_team,)) \
 default_gender = _dt_rows[0]["gender"] if _dt_rows else "F"
 
 c1, c2 = st.columns([1, 3])
-gender = gender_radio(c1, default=default_gender)
+# keyed so the command palette (helpers/ui) can land a jump on the right league
+gender = gender_radio(c1, default=default_gender, key="ta_gender")
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _list_teams(g):
@@ -495,6 +496,10 @@ if _qp_team and st.session_state.get("_ta_deeplink") != _qp_team:
     if _dl_tid in order_ids:
         st.session_state["ta_team"] = _dl_tid
     st.session_state["_ta_deeplink"] = _qp_team
+# A seeded/stale ta_team outside the current pool (league flipped, team removed,
+# a bad palette jump) would crash the selectbox — drop it and fall back.
+if st.session_state.get("ta_team") not in order_ids:
+    st.session_state.pop("ta_team", None)
 team_id = c2.selectbox("Team", order_ids, index=default_idx,
                        format_func=lambda tid: _team_label(team_by_id[tid]),
                        key="ta_team")

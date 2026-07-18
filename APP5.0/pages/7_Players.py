@@ -295,7 +295,8 @@ _glossary_key("eFG%", "TS%", "USG%", "ORtg", "DRtg", "NetRtg", "AST/TO", "TOV%",
               label="📖 Stat key — what the advanced columns mean")
 
 c1, c2 = st.columns([1, 2])
-gender = gender_radio(c1)
+# keyed so the command palette (helpers/ui) can land a jump on the right league
+gender = gender_radio(c1, key="pl_gender")
 min_games = c2.slider("Minimum games played", 1, 16, 2, 1,
                       help="Players below this drop out of the pool. Higher "
                            "values cut small-sample noise but shrink the field. "
@@ -1362,6 +1363,18 @@ def _fx_prof():
         if _idx is not None:
             st.session_state["prof_pick"] = _idx
         st.session_state["_prof_deeplink"] = _qp
+    # Command-palette handoff (helpers/ui._palette_dialog): a player id seeded
+    # from anywhere in the app — same mapping as the ?player= deep-link, popped
+    # so it fires once and the picker stays free afterward.
+    _pp = st.session_state.pop("_palette_player", None)
+    if _pp is not None:
+        _idx = next((i for i, r in enumerate(order)
+                     if by_pid.get(_pp) is r), None)
+        if _idx is not None:
+            st.session_state["prof_pick"] = _idx
+    # a stale/seeded pick outside the current pool would crash the selectbox
+    if not (0 <= st.session_state.get("prof_pick", 0) < len(order)):
+        st.session_state.pop("prof_pick", None)
     pick = st.selectbox("Player", range(len(order)),
                         format_func=lambda i: labels[i], key="prof_pick")
     P = order[pick]

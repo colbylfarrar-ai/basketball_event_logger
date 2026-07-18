@@ -115,6 +115,10 @@ def page_chrome(title: str = None):
     _refreshed = st.session_state.get("_data_refreshed_at")
     if _refreshed:
         st.sidebar.caption(f"Data refreshed at {_refreshed}")
+    # Global search — jump to any team's dashboard or player's profile from
+    # any page (the command palette, Tier 2 item 12).
+    if st.sidebar.button("🔎 Go to team / player…", key="_chrome_palette"):
+        _palette_dialog()
     return cfg, get_setting("accent_color", "#f0a500")
 
 
@@ -141,6 +145,60 @@ def pdf_or_html_download(label: str, html_doc: str, basename: str, *, key: str):
         st.download_button(f"⬇ {label} (HTML — open & print to PDF)", html_doc,
                            file_name=f"{basename}.html", mime="text/html",
                            key=key)
+
+
+# ── Command palette (global search — Tier 2 item 12) ────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _palette_pool():
+    """The searchable universe: every team + every active player (one cached
+    query each). Cheap enough to hold whole — the league is a few hundred rows."""
+    from database.db import query
+    teams = query("SELECT id, name, class, gender FROM teams ORDER BY name")
+    players = query(
+        "SELECT p.id, p.name, p.number, t.name AS team, t.gender AS gender "
+        "FROM players p JOIN teams t ON t.id = p.team_id "
+        "WHERE p.archived = 0 ORDER BY p.name")
+    return teams, players
+
+
+@st.dialog("Go to…")
+def _palette_dialog():
+    """Global search: type a team or player name, click a hit, land on its
+    surface. Teams seed the Team Dashboard's league + team keys; players seed
+    the Players page's league + Player Profile pick (via the same handoff the
+    ?player= deep-link uses)."""
+    q = st.text_input("Search teams & players", key="_palette_q",
+                      placeholder="Start typing a team or player name…")
+    ql = (q or "").strip().lower()
+    if len(ql) < 2:
+        st.caption("Type at least 2 letters. Teams open their dashboard; "
+                   "players load into the Players → Player Profile tab.")
+        return
+    teams, players = _palette_pool()
+    t_hits = [t for t in teams if ql in t["name"].lower()][:8]
+    p_hits = [p for p in players if ql in p["name"].lower()][:8]
+    if not t_hits and not p_hits:
+        st.caption("No team or player matches that.")
+        return
+    if t_hits:
+        st.markdown("**Teams**")
+        for t in t_hits:
+            if st.button(f"{t['name']}  ({t['class']} · "
+                         f"{gender_label(t['gender'])})",
+                         key=f"_pal_t{t['id']}", width="stretch"):
+                st.session_state["ta_gender"] = t["gender"]
+                st.session_state["ta_team"] = t["id"]
+                st.switch_page("pages/6_Team_Dashboard.py")
+    if p_hits:
+        st.markdown("**Players**")
+        for p in p_hits:
+            _num = f"#{p['number']} " if p.get("number") not in (None, "") else ""
+            if st.button(f"{_num}{p['name']} — {p['team']} "
+                         f"({gender_label(p['gender'])})",
+                         key=f"_pal_p{p['id']}", width="stretch"):
+                st.session_state["pl_gender"] = p["gender"]
+                st.session_state["_palette_player"] = p["id"]
+                st.switch_page("pages/7_Players.py")
 
 
 def page_header(title: str, sub: str = None, chips: list = None):

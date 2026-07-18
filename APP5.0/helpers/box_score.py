@@ -45,8 +45,6 @@ ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
 from helpers import ui as _uit  # theme-reactive CARD_BG/GRID — read at call time
 BLUE = "#58a6ff"
 PURPLE = "#9b59b6"
-GOOD = "#3fb950"
-BAD = "#e74c3c"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

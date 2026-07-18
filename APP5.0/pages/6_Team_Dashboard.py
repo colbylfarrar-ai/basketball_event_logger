@@ -4271,7 +4271,7 @@ if _tdview == "Lab":
                     # solid = significantly clear of average (engine `sig`),
                     # hollow = directional. Upgrades the old relative bar — the
                     # one bit that says "this impact is real", not just ranked.
-                    _GRN, _RED, _BLU = "#3fb950", "#e74c3c", "#58a6ff"
+                    _GRN, _RED, _BLU = GOOD, BAD, "#58a6ff"
                     _ax = max(2.0,
                               max((abs(v["ORAPM"]) for v in rows_r), default=2),
                               max((abs(v["DRAPM"]) for v in rows_r), default=2)) * 1.1
@@ -4347,7 +4347,7 @@ if _tdview == "Lab":
                     half = [1.96 * v["RAPM_se"] for v in sequ]
                     nm = [v["name"] for v in sequ]
                     sig = [abs(v["RAPM"]) > h for v, h in zip(sequ, half)]
-                    dot = [("#3fb950" if x > 0 else "#e74c3c") if s else "#6b7280"
+                    dot = [(GOOD if x > 0 else BAD) if s else "#6b7280"
                            for s, x in zip(sig, xs)]
                     ef = go.Figure(go.Scatter(
                         x=xs, y=nm, mode="markers", customdata=half,

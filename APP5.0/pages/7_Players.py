@@ -29,6 +29,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
+import helpers.ui as _uimod  # theme tokens read at call time
 from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
                         empty_state, rgb as _rgb, shot_panel as _shot_panel,
                         style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
@@ -1022,7 +1023,7 @@ def _fx_shot():
     with g3:
         st.markdown("**Best shot quality (xPPS)**")
         top = _leaders(rows, "xPPS", n=8, qkey="FGA", qmin=15)
-        st.plotly_chart(_leader_bar(top, "xPPS", "f2", color="#3fb950", height=300),
+        st.plotly_chart(_leader_bar(top, "xPPS", "f2", color=_uimod.GOOD, height=300),
                         width="stretch", key="lab_xpps")
 
     # ── Guarded vs open: who holds up when contested ──────────────────────────
@@ -1126,7 +1127,7 @@ def _fx_shot():
         if _pps is not None and _xpps is not None and (PL.get("FGA") or 0) >= 12:
             _poe = _pps - _xpps
             _cues.append(("Over expected", f"{_poe:+.2f}", "pts/shot vs look quality",
-                          "#3fb950" if _poe >= 0 else "#e74c3c"))
+                          _uimod.GOOD if _poe >= 0 else _uimod.BAD))
         if gd:
             _g, _o = gd["guarded"], gd["open"]
             if _g["FGA"] >= 5 and _o["FGA"] >= 5:
@@ -1134,8 +1135,8 @@ def _fx_shot():
                 _cues.append(("Space dependence", f"{_cliff:+.0f}",
                               "needs space" if _cliff > 8 else
                               "contest-proof" if _cliff < -2 else "even",
-                              "#e74c3c" if _cliff > 8 else
-                              "#3fb950" if _cliff < -2 else "#8b949e"))
+                              _uimod.BAD if _cliff > 8 else
+                              _uimod.GOOD if _cliff < -2 else "#8b949e"))
         if hb:
             _d, _w = hb["dominant"]["all"], hb["weak"]["all"]
             if _d["FGA"] >= 6 and _w["FGA"] >= 6:

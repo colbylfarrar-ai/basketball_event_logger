@@ -25,6 +25,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import helpers.ui as _uimod  # theme tokens read at call time
 from helpers.ui import (page_chrome, style_fig as _style, empty_state, team_color,
                         chart as _chart, seg as _seg, engine_status as _eng,
                         AWAY, GOOD, BAD, HEAT, gender_radio, gender_label)
@@ -291,7 +292,7 @@ def _bracket_tree_html(res, short):
                     "border-radius:6px;padding:4px 7px;font-size:11px;"
                     "color:#484f58'>bye</div>")
         p, sd = slot["p"], slot.get("seed")
-        pcol = "#3fb950" if p >= .6 else "#f0a500" if p >= .3 else "#8b949e"
+        pcol = _uimod.GOOD if p >= .6 else "#f0a500" if p >= .3 else "#8b949e"
         bd = "#f0a500" if champ else "#30363d"
         seedtag = f"<span style='color:#6e7681'>{sd}</span> " if sd else ""
         return (f"<div style='background:#0d1117;border:1px solid {bd};"
@@ -583,7 +584,7 @@ def _render_matchup():
                 def _fchip(row, clr):
                     d = row["FormPower"] - row["SeasonPower"]
                     arrow = "▲" if d > 1 else "▼" if d < -1 else "▬"
-                    tone = "#3fb950" if d > 1 else "#e74c3c" if d < -1 else "#8b949e"
+                    tone = _uimod.GOOD if d > 1 else _uimod.BAD if d < -1 else "#8b949e"
                     return (f"<span style='color:{clr};font-weight:700'>"
                             f"{team_short(row['name'])}</span> "
                             f"<span style='color:{tone};font-weight:700'>{arrow} "

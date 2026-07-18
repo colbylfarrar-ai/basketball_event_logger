@@ -936,7 +936,7 @@ def _fx_team():
     _fr = formed.get(pick)
     if _fr:
         _fdelta = _fr["Power"] - r["Power"]
-        _fclr = "#3fb950" if _fdelta > 1 else "#e74c3c" if _fdelta < -1 else "#8b949e"
+        _fclr = GOOD if _fdelta > 1 else BAD if _fdelta < -1 else "#8b949e"
         _farrow = "▲" if _fdelta > 1 else "▼" if _fdelta < -1 else "▬"
         fx = st.columns(3)
         fx[0].markdown(CD.glass("Form Power", f"{_fr['Power']:.1f}",
@@ -1001,10 +1001,10 @@ def _fx_team():
     #  Verdict zone — only the ceiling/floor extremes stay here.)
     pm = st.columns(2)
     pm[0].markdown(CD.glass("Ceiling", _mv(f.get("ceiling"), "{:+d}"),
-                            "best win margin", "#3fb950"),
+                            "best win margin", GOOD),
                    unsafe_allow_html=True)
     pm[1].markdown(CD.glass("Floor", _mv(f.get("floor"), "{:+d}"),
-                            "worst loss margin", "#e74c3c"),
+                            "worst loss margin", BAD),
                    unsafe_allow_html=True)
 
     # league percentile profile (results-only, vs the whole field)

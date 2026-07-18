@@ -327,7 +327,7 @@ st.markdown("""
   <span style="font-size:11px;color:#8b949e;font-weight:700">GAME LOAD</span>
   <span class="cal-legend-item"><span class="cal-dot" style="background:#2ecc71"></span>1–2 games</span>
   <span class="cal-legend-item"><span class="cal-dot" style="background:#f0a500"></span>3–5 games</span>
-  <span class="cal-legend-item"><span class="cal-dot" style="background:#e74c3c"></span>6+ games</span>
+  <span class="cal-legend-item"><span class="cal-dot" style="background:var(--bad)"></span>6+ games</span>
 </div>
 """, unsafe_allow_html=True)
 

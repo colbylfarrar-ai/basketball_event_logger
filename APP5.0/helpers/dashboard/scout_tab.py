@@ -20,6 +20,7 @@ import streamlit.components.v1 as components
 from database.db import query
 from helpers.court import shot_map as _shot_map
 import helpers.scout as SC
+import helpers.ui as _uimod  # theme tokens read at call time
 import helpers.stats as S
 import helpers.scoutboard as SB
 import helpers.auth as AUTH
@@ -280,8 +281,14 @@ def _predict(ctx, is_self):
         return None
 
 
-# Edge palette (mirrors the Team Dashboard GOOD/BAD without importing the page).
-_MP_GOOD, _MP_BAD = "#3fb950", "#e74c3c"
+# Edge palette — the semantic pair, read off ui at call time so the
+# colorblind-safe swap reaches the matchup planner too.
+def _MP_GOOD():
+    return _uimod.GOOD
+
+
+def _MP_BAD():
+    return _uimod.BAD
 
 
 def _render_matchups(my_team_id, opp_tid, gender, show):
@@ -369,8 +376,8 @@ def _render_matchups(my_team_id, opp_tid, gender, show):
                     edge = d - off
                     tag = ("✅ Edge" if edge >= 8 else
                            "⚠ Tough" if edge <= -8 else "Even")
-                    clr = (_MP_GOOD if edge >= 8 else
-                           _MP_BAD if edge <= -8 else "#8b949e")
+                    clr = (_MP_GOOD() if edge >= 8 else
+                           _MP_BAD() if edge <= -8 else "#8b949e")
                     c[2].markdown(f"<span style='color:{clr};font-weight:700'>{tag} "
                                   f"({edge:+.0f})</span>", unsafe_allow_html=True)
                 else:
@@ -671,7 +678,7 @@ def render(ctx):
             _spi = (p.get("spacing") or {}).get("index")
             spc_html = (f"<br><span style='font-size:12px;color:#8b949e'>Floor "
                         f"spacing <b style='color:"
-                        f"{ctx.ACCENT if _spi >= 50 else '#e74c3c'}'>{_spi}</b> "
+                        f"{ctx.ACCENT if _spi >= 50 else _uimod.BAD}'>{_spi}</b> "
                         f"<span style='font-size:11px'>(0–100 vs league)</span>"
                         f"</span>" if _spi is not None else "")
             st.markdown(

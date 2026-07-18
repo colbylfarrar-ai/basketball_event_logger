@@ -30,6 +30,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import helpers.ui as _uimod  # theme tokens read at call time
 from helpers.ui import (page_chrome, style_fig as _style, AWAY, CARD_BG, GRID,
                         rgb as _rgb, grid as _grid, page_header, gender_radio,
                         gender_label, empty_state, HEAT)
@@ -283,7 +284,7 @@ _g = st.columns(5)
 _glass(_g[0], "TIGHTEST WHISTLE", f"{_tightest['FP100']:.1f}",
        f"{_tightest['name']} · FP100", ACCENT)
 _glass(_g[1], "MOST LENIENT", f"{_lenient['FP100']:.1f}",
-       f"{_lenient['name']} · FP100", "#3fb950")
+       f"{_lenient['name']} · FP100", _uimod.GOOD)
 _glass(_g[2], "BIGGEST H/A LEAN", f"{_homer['ha_diff']:+d}",
        f"{_homer['name']}", "#bc8cff")
 _glass(_g[3], "MOST CONSISTENT", f"±{_steady['FPG_std']:.1f}",
@@ -325,7 +326,7 @@ with tab_rate:
         _glass(gg[1], "BIG-STAGE REF", f"{_bigstage['leverage']:.2f}",
                f"{_bigstage['name']} · leverage", "#e3b341")
         _glass(gg[2], "LETS THEM PLAY", f"{_letplay['FPG']:.1f}",
-               f"{_letplay['name']} · FPG", "#3fb950")
+               f"{_letplay['name']} · FPG", _uimod.GOOD)
         _glass(gg[3], "MAKES THE CALL", f"{_clutchref['clutch']}",
                f"{_clutchref['name']} · clutch", "#bc8cff")
 
@@ -453,7 +454,7 @@ with tab_over:
             x=[r["ha_diff"] for r in seq], y=[r["name"] for r in seq],
             orientation="h", text=[f"{r['ha_diff']:+d}" for r in seq],
             textposition="auto",
-            marker_color=["#3fb950" if r["ha_diff"] >= 0 else AWAY for r in seq]))
+            marker_color=[_uimod.GOOD if r["ha_diff"] >= 0 else AWAY for r in seq]))
         fig.update_layout(
             template="plotly_dark", height=max(220, 50 + 26 * len(seq)),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -512,7 +513,7 @@ with tab_charts:
                         width="stretch", key="ch_fouls")
     with rc:
         st.markdown("**PPP of games worked** — points per possession")
-        st.plotly_chart(_leader_bar(rows, "PPP", "f3", color="#3fb950", n=14,
+        st.plotly_chart(_leader_bar(rows, "PPP", "f3", color=_uimod.GOOD, n=14,
                                     qkey="games", qmin=1),
                         width="stretch", key="ch_ppp")
 

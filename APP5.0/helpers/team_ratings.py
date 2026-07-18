@@ -54,17 +54,18 @@ _CLASS_RANK = {c: i for i, c in enumerate(CLASS_ORDER)}  # 'N/A' handled separat
 DEFAULT_CLASS_STEP = 1.5   # rating points added per class above the field's mean
 DEFAULT_ITERS      = 25    # SRS iterations (converges well before this)
 DEFAULT_HCA        = 3.0   # home-court advantage, points (predict_spread only)
-DEFAULT_REG        = 2.0   # phantom average-games per team (shrinkage strength).
-                           # Recalibrated on the 2025-2026 full-season backtest
-                           # (tools/backtest.py T1): held-out margin MAE falls
-                           # monotonically as reg drops (4.0 → 2.0 = 10.97 →
-                           # 10.41 league-wide, 10.0 → 9.42 on the Adair folds).
-                           # 2.0 keeps the divergence guard a sparse schedule
-                           # graph needs; 1.0 scored marginally better but blows
-                           # the rating spread out (sd 21 vs 18) and would make
-                           # thin early-season fields jumpy.
+DEFAULT_REG        = 0.5   # phantom average-games per team (shrinkage strength).
+                           # Re-recalibrated 2026-07-18 on the T6 walk-forward
+                           # (train ≤ Jan, predict Feb-Mar, ~1900 held-out games
+                           # per gender): MAE falls monotonically as reg drops
+                           # (2.0 → 0.5 = 21.45 → 20.27 F+M sum; still falling
+                           # at 0.15 = 20.07). 0.5 is the adopted knee: 4x more
+                           # aggressive than the old 2.0, keeps a real phantom-
+                           # game divergence guard for the sparse NOVEMBER
+                           # schedule graph — the one regime the late-season
+                           # walk-forward cannot test. Revisit next season.
 _SOR_MARGIN_CAP    = 20    # margin credited to a result is clamped to ±this
-DEFAULT_SOS_WEIGHT = 0.8   # schedule-strength nudge, in RATING POINTS PER
+DEFAULT_SOS_WEIGHT = 1.6   # schedule-strength nudge, in RATING POINTS PER
                            # STANDARD DEVIATION of SOS. The SRS opponent-adjustment
                            # already accounts for who you played, but its shrinkage
                            # (DEFAULT_REG phantom games) and the sparsely-connected
@@ -82,9 +83,13 @@ DEFAULT_SOS_WEIGHT = 0.8   # schedule-strength nudge, in RATING POINTS PER
                            # 1.0+ because at 1.0 the reshuffle among real, classed,
                            # deep-GP (15+) teams was too big (23% moved >10 ranks
                            # vs 12.5% at 0.8) relative to a "slight nudge".
-                           # Re-audited 2026-07-12 by the recal backtest: held-out
-                           # margin MAE is nearly flat in SOS (±0.05 over 0-2.0),
-                           # so the churn-based 0.8 stands — no evidence to move.
+                           # Re-audited 2026-07-12: flat in SOS on the fold
+                           # backtest, churn-based 0.8 stood. RETUNED 2026-07-18
+                           # on the T6 walk-forward (~1900 held-out games per
+                           # gender): MAE improves monotonically to 1.6 (F+M sum
+                           # 21.14 @0.4 → 20.60 @1.6) and goes FLAT beyond
+                           # (20.53 @2.5 = noise), so 1.6 is the evidence knee.
+                           # The churn concern loses to out-of-sample accuracy.
 
 
 FORM_HALF_LIFE = 8.0       # games: recency half-life for form_ratings. A game this

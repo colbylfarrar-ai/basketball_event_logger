@@ -595,7 +595,10 @@ _OVERALL_PARTS = [("offense", 1.1), ("impact", 0.9), ("defense", 1.0),
                   # buried inside playmaking/defense — "negative weights" so a
                   # stat-sheet stuffer who bleeds possessions stops rating clean.
                   # z's are sign-flipped (lower is better) before the blend.
-                  ("TOV/Gz", 0.4), ("nsPF/Gz", 0.4)]
+                  # Weight 0.2 from the sweep: 0.2 rho .682 > 0.4 .680 > 0.7
+                  # .668 on held-out Game Score — the penalties help small and
+                  # hurt when they swamp the production signal.
+                  ("TOV/Gz", 0.2), ("nsPF/Gz", 0.2)]
 
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players
 # is meaningless) and fall back to the raw weighted-mean z.
@@ -603,12 +606,13 @@ MIN_POOL_FOR_RESTD = 8
 
 # Games-equivalent prior weight for the per-rating shrinkage toward 50 (passed to
 # shrinkage.stabilize_index, which applies the SIGMOID retention curve — see
-# shrinkage.DEFAULT_INDEX_POWER). Recalibrated on the 2025-2026 full-season
-# backtest (tools/backtest.py T4 + rating_diff audit): the sigmoid keeps the
-# cameo protection the old linear k=5 bought (1 GP retains 0.16 vs 0.17) while
-# releasing real seasons the linear curve was flattening (retention g^1.5/
-# (g^1.5+k^1.5): 1 GP 0.16, 3 GP 0.50, 8 GP 0.81, 23 GP 0.96 — was 0.82).
-RATING_K_GAMES = 3
+# shrinkage.DEFAULT_INDEX_POWER). 2026-07-11: sigmoid p=1.5, k=3. RETUNED
+# 2026-07-18 on the deeper snapshot (39 tracked games): T4 LOGO now favors
+# less shrink (pooled MAE k=1.0 3.814 < k=2 3.866 < k=3 3.908) and T2 is flat
+# across k 1-3 (rho 0.679). k=2 is the adopted aggressive step: real seasons
+# keep more of their edge while a 1-game cameo still only retains
+# 1/(1+2^1.5) ≈ 0.26 of its distance from the anchor.
+RATING_K_GAMES = 2
 
 # ── team-prior anchor (partial pooling of thin player samples) ────────────────
 # A thin-sample player is normally shrunk toward flat 50 (league average). This
@@ -624,7 +628,10 @@ RATING_K_GAMES = 3
 # lift needs a real team résumé, not a fluke). LAMBDA=0 → anchor≡50 → byte-identical
 # to the pre-feature engine. Symmetric: a thin player on a weak team also regresses
 # slightly below 50 (set BOOST_ONLY=True for lift-only). Applies to OVERALL only.
-TEAM_PRIOR_LAMBDA     = 0.35    # 0 = off; ship value chosen via tools/team_prior_diff.py
+TEAM_PRIOR_LAMBDA     = 0.5     # 0 = off; 0.35 shipped 2026-07-05 via
+                                # tools/team_prior_diff.py; raised to 0.5 in the
+                                # 2026-07-18 sweep (best lean-T2 rho, aggressive
+                                # tie-break)
 TEAM_PRIOR_K_GAMES    = 6.0     # team-confidence prior weight (games-equivalent)
 TEAM_PRIOR_BOUNDS     = (35.0, 65.0)   # clamp the anchor to a sane band
 TEAM_PRIOR_BOOST_ONLY = False   # True = never anchor below 50 (good-team lift only)

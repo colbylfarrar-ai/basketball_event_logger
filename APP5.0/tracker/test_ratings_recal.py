@@ -84,6 +84,25 @@ class PenaltyLeaves(unittest.TestCase):
         self.assertGreater(clean, sloppy,
                            f"clean {clean} should out-rate sloppy {sloppy}")
 
+    def test_archetype_anchor_blend_changes_only_anchoring(self):
+        """With BLEND on vs off, ratings still rank CLEAN over SLOPPY and stay
+        on the 0-100 scale (the anchor only moves the shrink target; pool is
+        tiny so clustering may no-op — either way nothing breaks)."""
+        saved = PR.ARCH_ANCHOR_BLEND
+        try:
+            PR.ARCH_ANCHOR_BLEND = 0.0
+            off = PR.player_ratings(gender="F", season="2025-2026",
+                                    game_ids=[9100, 9101, 9102])
+            PR.ARCH_ANCHOR_BLEND = 0.5
+            on = PR.player_ratings(gender="F", season="2025-2026",
+                                   game_ids=[9100, 9101, 9102])
+        finally:
+            PR.ARCH_ANCHOR_BLEND = saved
+        for R in (off, on):
+            self.assertGreater(R[CLEAN]["OVERALL"], R[SLOPPY]["OVERALL"])
+            for row in R.values():
+                self.assertTrue(0.0 <= row["OVERALL"] <= 100.0)
+
     def test_nspf_leaf_present(self):
         prof = PR.player_profiles(gender="F", min_games=1,
                                   game_ids=[9100, 9101, 9102])

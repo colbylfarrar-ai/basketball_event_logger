@@ -629,6 +629,50 @@ TEAM_PRIOR_K_GAMES    = 6.0     # team-confidence prior weight (games-equivalent
 TEAM_PRIOR_BOUNDS     = (35.0, 65.0)   # clamp the anchor to a sane band
 TEAM_PRIOR_BOOST_ONLY = False   # True = never anchor below 50 (good-team lift only)
 
+# ── archetype anchor (partial pooling by PLAYER TYPE — 2026-07-18 recal §7) ───
+# A thin-sample player also borrows strength from players of their TYPE: k-means
+# clusters on style features (helpers.archetypes' math, style-only feature list
+# below — no OFFENSE/DEFENSE composites, so no circularity), and the cluster's
+# mean overall-z becomes a second anchor. Blended with the team-prior anchor:
+#   anchor = (1-BLEND)·team_anchor + BLEND·archetype_anchor
+# Unclustered players (tiny pool, engine unavailable, cluster < MIN members)
+# keep the team anchor alone; BLEND=0 turns the feature off.
+ARCH_ANCHOR_BLEND  = 0.5
+ARCH_MIN_CLUSTER   = 4          # smallest cluster allowed to anchor its members
+_ARCH_FEATURES = ["PPG", "REB/G", "AST/G", "STL/G", "BLK/G",
+                  "3PA/G", "3P%", "TS%", "USG%",
+                  "OREB/G", "DREB/G", "AST/TOV", "TOV/G"]
+
+
+def _archetype_anchors(profiles, overall_z):
+    """{player_id: anchor} — each clustered player's anchor = its archetype's
+    mean overall-z on the 0-100 scale, clamped to TEAM_PRIOR_BOUNDS. Empty on
+    any failure (tiny pool, numpy/sklearn trouble) — callers fall back."""
+    try:
+        import helpers.archetypes as AR
+        pids_m, X, _m, _s, _f = AR.build_matrix(profiles, _ARCH_FEATURES)
+        n = len(pids_m)
+        if n < 10:
+            return {}
+        k = max(1, min(AR._choose_k(X), n))
+        labels, _C = AR._fit_kmeans(X, k)
+    except Exception:
+        return {}
+    members = defaultdict(list)
+    for i, p in enumerate(pids_m):
+        members[int(labels[i])].append(p)
+    lo, hi = TEAM_PRIOR_BOUNDS
+    out = {}
+    for mem in members.values():
+        zs = [overall_z.get(p) for p in mem]
+        zs = [z for z in zs if z is not None]
+        if len(zs) < ARCH_MIN_CLUSTER:
+            continue
+        anchor = max(lo, min(hi, _scale100(sum(zs) / len(zs))))
+        for p in mem:
+            out[p] = anchor
+    return out
+
 
 def _restandardize(zmap):
     """Re-z a composite z-vector across the pool so it regains unit SD.
@@ -948,8 +992,18 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                          "TOV/Gz": zcol_signed("TOV/G", True),
                          "nsPF/Gz": zcol_signed("nsPF/G", True)})
 
-    # per-player OVERALL shrink anchor from their own team Power (partial pooling)
+    # per-player OVERALL shrink anchor: team Power prior blended with the
+    # player's ARCHETYPE mean (partial pooling by team AND by type — §7)
     team_anchor = _team_prior_anchors(profiles, gender, season, opp_ratings)
+    arch_anchor = (_archetype_anchors(profiles, overall_z)
+                   if ARCH_ANCHOR_BLEND else {})
+    anchor_of = {}
+    for p in pids:
+        ta = team_anchor.get(p, 50.0)
+        aa = arch_anchor.get(p)
+        anchor_of[p] = (ta if aa is None
+                        else (1.0 - ARCH_ANCHOR_BLEND) * ta
+                        + ARCH_ANCHOR_BLEND * aa)
 
     def _rate(z, g, anchor=50.0):
         """0-100 rating from a z-score, regressed toward `anchor` (50 = league
@@ -969,7 +1023,7 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         out[p] = {
             "name": prof["name"], "number": prof["number"],
             "team": prof["team"], "team_id": prof["team_id"], "GP": prof["GP"],
-            "OVERALL":    _rate(overall_z[p], eg, anchor=team_anchor.get(p, 50.0)),
+            "OVERALL":    _rate(overall_z[p], eg, anchor=anchor_of.get(p, 50.0)),
             "OFFENSE":    _rate(offense_z[p], eg),
             "DEFENSE":    _rate(defense_z[p], eg),
             "PLAYMAKING": _rate(playmaking_z[p], eg),

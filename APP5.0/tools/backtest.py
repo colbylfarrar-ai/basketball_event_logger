@@ -78,6 +78,7 @@ REGISTRY = {
     # 2026-07-18 recal — the aggressive-sweep surface:
     "player_ratings._OVERALL_PARTS":       (PR, "_OVERALL_PARTS"),
     "player_ratings.TEAM_PRIOR_LAMBDA":    (PR, "TEAM_PRIOR_LAMBDA"),
+    "player_ratings.ARCH_ANCHOR_BLEND":    (PR, "ARCH_ANCHOR_BLEND"),
     "wpa.ONBALL_SHARE":                    (WPA, "ONBALL_SHARE"),
     "wpa.STRATEGIC_FT_DAMP":               (WPA, "STRATEGIC_FT_DAMP"),
     "late_game.WINDOW_SECS":               (LGM, "WINDOW_SECS"),

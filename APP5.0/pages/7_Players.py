@@ -783,6 +783,25 @@ with tab_lead:
                  if _disp2canon.get(c, c) in PR.EVENT_DERIVED_STATS]
         full = full.drop(columns=_drop)
     _grid(full, "pl_full", height=560)
+    # ── player quick view (Tier 2 item 13): the full profile card in a modal,
+    #    no tab switch — pick a player, hit the button. Shares the Profile
+    #    tab's ctx builder (helpers/dashboard/player_card.build_card_ctx).
+    _qv_order = sorted(by_pid, key=lambda p: (by_pid[p]["Rank"] or 1e9))
+    if st.session_state.get("pl_qv_pick") not in [None] + _qv_order:
+        st.session_state.pop("pl_qv_pick", None)   # pool changed (league/season)
+    _qv1, _qv2 = st.columns([3, 1])
+    _qv_pid = _qv1.selectbox(
+        "Quick view", [None] + _qv_order,
+        format_func=lambda p: "Pick a player…" if p is None else (
+            f"#{by_pid[p]['Rank']}  {by_pid[p]['name']}  ·  {by_pid[p]['team']}"),
+        key="pl_qv_pick", label_visibility="collapsed")
+    if _qv2.button("Quick view", key="pl_qv_btn", width="stretch",
+                   disabled=_qv_pid is None):
+        from helpers.dashboard.player_card import quick_view
+        quick_view(_qv_pid, gender, season=season_pick, season_gp=_arch_key,
+                   P=by_pid[_qv_pid], rows=rows, paid=_PAID, accent=ACCENT,
+                   zsplits=zsplits, zguard=zguard, hsplits=hsplits,
+                   vis=_vis_key)
     st.download_button("Full stats (CSV)", full.to_csv(index=False),
                        file_name=f"players_{gender}.csv", mime="text/csv",
                        key="dl_full")
@@ -1411,20 +1430,11 @@ def _fx_prof():
                    "The ratings and advanced stats below use tracked games only "
                    "(entered games have no event detail).")
 
-    from types import SimpleNamespace
-    from helpers.dashboard.player_card import render_card
-    render_card(SimpleNamespace(
-        P=P, pid=pid, rows=rows, paid=_PAID, accent=ACCENT, gender=gender,
-        zsplits=zsplits, zguard=zguard, hsplits=hsplits,
-        badges=_lab_badges(gender, _vis_key).get(pid, []),
-        archetype=_lab_clusters(gender, _vis_key)["players"].get(pid, {}).get("archetype"),
-        pgb=_pgb(_arch_key), located=_player_located(pid, _arch_key),
-        foulft=_foulft(_arch_key).get(pid),
-        named_sets=_named_sets(gender, _vis_key).get(pid),
-        role_splits=_role_splits(gender, _vis_key).get(pid),
-        set_profiles=_set_profiles(gender, _vis_key).get(pid),
-        season=season_pick, season_gp=_arch_key,
-    ))
+    from helpers.dashboard.player_card import render_card, build_card_ctx
+    render_card(build_card_ctx(
+        pid, gender, season=season_pick, season_gp=_arch_key,
+        P=P, rows=rows, paid=_PAID, accent=ACCENT,
+        zsplits=zsplits, zguard=zguard, hsplits=hsplits, vis=_vis_key))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

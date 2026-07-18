@@ -41,6 +41,104 @@ from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile
 from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            hot_zones as _hot_zones)
 
+# ── shared ctx builder (Tier 2 item 13) ─────────────────────────────────────────
+# The heavy per-player feed set behind the card, cached HERE so the Players page,
+# the Team Dashboard profile and the quick-view dialog share one build instead of
+# three drifting page-local copies. Two scope keys, matching the pages' plumbing:
+#   `vis`       — the viewer's entitlement/percentile pool (tuple of game ids, or
+#                 None = unrestricted) for the league-ranked feeds,
+#   `season_gp` — the season's game pool (archive views; None = current default)
+#                 for the per-game/log feeds.
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_table_full(g, vis=None):
+    return PR.player_stat_table(gender=g, min_games=1,
+                                game_ids=(list(vis) if vis else None))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_badges(g, vis=None):
+    return BG.award_badges(_ctx_table_full(g, vis))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_archetypes(g, vis=None):
+    import helpers.archetypes as ARC
+    return ARC.cluster_players(_ctx_table_full(g, vis))["players"]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_pgb(season_gp=None):
+    return S.player_game_boxes(
+        game_ids=(list(season_gp) if season_gp is not None else None))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_located(pid, season_gp=None):
+    return S.located_shots(
+        player_id=pid,
+        game_ids=(list(season_gp) if season_gp is not None else None))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_foulft(season_gp=None):
+    import helpers.fouls as FL
+    return FL.player_foul_ft(
+        game_ids=(list(season_gp) if season_gp is not None else None))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_named_sets(g, vis=None):
+    return PT.player_named_playtype_percentiles(
+        gender=g, game_ids=(list(vis) if vis else None))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_role_splits(g, vis=None):
+    gids = list(vis) if vis else PT._tracked_game_ids(g)
+    return PT.player_role_splits(game_ids=gids) if gids else {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ctx_set_profiles(g, vis=None):
+    gids = list(vis) if vis else PT._tracked_game_ids(g)
+    return PT.player_playtype_shot_profiles(game_ids=gids) if gids else {}
+
+
+def build_card_ctx(pid, gender, season="Current", season_gp=None, *,
+                   P, rows, paid, accent, zsplits, zguard, hsplits=None,
+                   vis=None):
+    """Assemble the full render_card ctx for one player. The page supplies what
+    it already has (its player row `P`, the ranked pool `rows`, the zone tables,
+    theme + gate); every league-wide feed lookup happens here off the shared
+    caches above."""
+    from types import SimpleNamespace
+    arch = _ctx_archetypes(gender, vis).get(pid)
+    return SimpleNamespace(
+        P=P, pid=pid, rows=rows, paid=paid, accent=accent, gender=gender,
+        zsplits=zsplits, zguard=zguard, hsplits=hsplits,
+        badges=_ctx_badges(gender, vis).get(pid, []),
+        archetype=(arch.get("archetype") if isinstance(arch, dict) else arch),
+        pgb=_ctx_pgb(season_gp), located=_ctx_located(pid, season_gp),
+        foulft=_ctx_foulft(season_gp).get(pid),
+        named_sets=_ctx_named_sets(gender, vis).get(pid),
+        role_splits=_ctx_role_splits(gender, vis).get(pid),
+        set_profiles=_ctx_set_profiles(gender, vis).get(pid),
+        season=season, season_gp=season_gp)
+
+
+@st.dialog("Player quick view", width="large")
+def quick_view(pid, gender, season="Current", season_gp=None, *,
+               P, rows, paid, accent, zsplits, zguard, hsplits=None, vis=None):
+    """The full player card in a modal — one click from any roster/leaders table,
+    no page switch. Same ctx builder as the two Profile tabs."""
+    ctx = build_card_ctx(
+        pid, gender, season=season, season_gp=season_gp, P=P, rows=rows,
+        paid=paid, accent=accent, zsplits=zsplits, zguard=zguard,
+        hsplits=hsplits, vis=vis)
+    ctx.key_suffix = "_qv"      # a Profile-tab card may be on screen too
+    render_card(ctx)
+
+
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 _DEV_STATS = ("PPG", "RPG", "APG", "SPG", "BPG", "TPG", "FPG")   # cross-season trend stats
 _DEV_INVERTED = ("TPG", "FPG")   # lower is better → inverse delta colouring
@@ -306,6 +404,11 @@ def _game_rtg_bundle(gender, game_ids=None, season="Current"):
 
 def render_card(ctx):
     """Render the full player-profile card (header banner -> scouting report)."""
+    # Widget-key namespace: the quick-view dialog (ctx.key_suffix='_qv') can be
+    # open while a page's Profile tab has ALSO rendered a card this run —
+    # without a distinct prefix the chart keys collide. Default '' keeps the
+    # tab cards' keys byte-identical.
+    _kp = "pcard" + str(getattr(ctx, "key_suffix", "") or "")
     P, pid, rows = ctx.P, ctx.pid, ctx.rows
     paid, accent = ctx.paid, ctx.accent
     zsplits, zguard, hsplits = ctx.zsplits, ctx.zguard, ctx.hsplits
@@ -589,7 +692,7 @@ def render_card(ctx):
                 st.markdown(
                     f"<div class='pl-hdr' style='margin-top:0'>Shot map · "
                     f"{len(located)} located</div>", unsafe_allow_html=True)
-                st.plotly_chart(sfig, width="stretch", key="pcard_court_fold")
+                st.plotly_chart(sfig, width="stretch", key=f"{_kp}_court_fold")
                 _ls = S.shot_location_summary(located)
                 if _ls:
                     st.markdown(
@@ -785,7 +888,7 @@ def render_card(ctx):
                 fig, ok = _shot_chart(zsplits.get(pid, {}),
                                       f"{P['name']} — FG% by zone")
                 if ok:
-                    st.plotly_chart(fig, width="stretch", key="pcard_court")
+                    st.plotly_chart(fig, width="stretch", key=f"{_kp}_court")
                     st.caption("Zone chart (older games) — ≥45% · 30–44% · <30% · "
                                "bubble size = attempts. Tap-captured shots show "
                                "as a precise shot map in the Overview grid.")
@@ -808,7 +911,7 @@ def render_card(ctx):
             if _dshots:
                 dfig, _dn = _shot_map(
                     _dshots, f"Shots defended · {len(_dshots)} located")
-                st.plotly_chart(dfig, width="stretch", key="pcard_defcourt")
+                st.plotly_chart(dfig, width="stretch", key=f"{_kp}_defcourt")
                 _gd4 = zguard.get(pid, {})
                 _gg = (_gd4 or {}).get("guarded", {})
                 _go = (_gd4 or {}).get("open", {})
@@ -843,7 +946,7 @@ def render_card(ctx):
                            angularaxis=dict(gridcolor=GRID)),
                 margin=dict(l=50, r=50, t=40, b=30),
                 legend=dict(orientation="h", y=1.12, x=0, bgcolor="rgba(0,0,0,0)"))
-            st.plotly_chart(rad, width="stretch", key="pcard_radar")
+            st.plotly_chart(rad, width="stretch", key=f"{_kp}_radar")
 
         # points by source
         pts2, pts3, ptsf = P["2PM"] * 2, P["3PM"] * 3, P["FTM"]
@@ -851,7 +954,7 @@ def render_card(ctx):
             dn = _donut(pts2, pts3, ptsf, colors=(accent, "#58a6ff", "#8b949e"),
                         height=260, margin_top=30, ft_label="FT",
                         title="Points by source")
-            st.plotly_chart(dn, width="stretch", key="pcard_src")
+            st.plotly_chart(dn, width="stretch", key=f"{_kp}_src")
 
     with right:
         def _row(stat, key, fmt):
@@ -972,7 +1075,7 @@ def render_card(ctx):
             df_.update_xaxes(visible=False)
             _style(df_, 240)
             df_.update_layout(margin=dict(l=4, r=14, t=10, b=6))
-            st.plotly_chart(df_, width="stretch", key="pcard_diet")
+            st.plotly_chart(df_, width="stretch", key=f"{_kp}_diet")
         with d2:
             st.markdown("**Shots created** — how SC is earned")
             comp = S.sc_composition(pbox)
@@ -985,7 +1088,7 @@ def render_card(ctx):
                 cd.update_layout(template="plotly_dark", height=240,
                                  paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
                                  margin=dict(l=10, r=10, t=10, b=10))
-                st.plotly_chart(cd, width="stretch", key="pcard_sccomp")
+                st.plotly_chart(cd, width="stretch", key=f"{_kp}_sccomp")
             else:
                 st.caption("No shots created.")
         with d3:
@@ -1001,7 +1104,7 @@ def render_card(ctx):
                 qfig.update_yaxes(title="Points")
                 _style(qfig, 240)
                 qfig.update_layout(margin=dict(l=30, r=10, t=10, b=24))
-                st.plotly_chart(qfig, width="stretch", key="pcard_qtr")
+                st.plotly_chart(qfig, width="stretch", key=f"{_kp}_qtr")
             else:
                 st.caption("No quarter data.")
 
@@ -1273,7 +1376,7 @@ def render_card(ctx):
         tr.update_yaxes(title="Points / Game Score")
         tr.update_xaxes(tickangle=-40)
         _style(tr, 320)
-        st.plotly_chart(tr, width="stretch", key="pcard_log")
+        st.plotly_chart(tr, width="stretch", key=f"{_kp}_log")
 
         _ldf = pd.DataFrame(log)
         if not paid:                      # RTG column is Paid — drop, don't blank
@@ -1304,7 +1407,7 @@ def render_card(ctx):
             rf.update_yaxes(title="Points")
             rf.update_xaxes(tickangle=-40)
             _style(rf, 280)
-            st.plotly_chart(rf, width="stretch", key="pcard_rolling")
+            st.plotly_chart(rf, width="stretch", key=f"{_kp}_rolling")
 
             _hi = TRD.season_highs(_tlog)
             st.markdown("<div class='pl-hdr'>Season highs</div>",
@@ -1432,7 +1535,7 @@ def render_card(ctx):
                 font=dict(size=10, color="#c9d1d9"))
             bar.update_xaxes(visible=False)
             bar.update_yaxes(showgrid=False, automargin=True, tickfont=dict(size=9))
-            st.plotly_chart(bar, width="stretch", key="pcard_leaguebar")
+            st.plotly_chart(bar, width="stretch", key=f"{_kp}_leaguebar")
 
     # ── Projection (career-stabilized intrinsic rates → Paid) ─────────────────
     # A player's SKILL rates pulled toward an archetype-else-league prior by how
@@ -1493,7 +1596,7 @@ def render_card(ctx):
                 marker_line_width=0))
             p32.update_yaxes(title="Per 32 min")
             _style(p32, 300)
-            st.plotly_chart(p32, width="stretch", key="pcard_per32")
+            st.plotly_chart(p32, width="stretch", key=f"{_kp}_per32")
             st.caption("Totals × 32 ÷ tracked minutes. HS games run ≈32 min here, so "
                        "per-32 ≈ a full game's production. Minutes come from tracked "
                        "possession time (a slight undercount).")

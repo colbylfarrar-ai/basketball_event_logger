@@ -5128,26 +5128,18 @@ if _tdview == "Glossary":
 #  TAB — PLAYER PROFILE  (ported from 6_Players.py; scoped to this team's roster)
 # ══════════════════════════════════════════════════════════════════════════════
 def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
-    from types import SimpleNamespace
-    from helpers.dashboard.player_card import render_card
+    from helpers.dashboard.player_card import render_card, build_card_ctx
     # _prof_gp (module global): None for a live current season → the fetchers keep
     # their current-season default (byte-identical); a PAST season's gender tracked
     # ids — either the picked archive, or the last-season FALLBACK when the current
     # season has no tracked games yet — so the whole card (shot map, game log,
-    # play-type mix, spacing, on/off) reads that season's pool.
+    # play-type mix, spacing, on/off) reads that season's pool. The dashboard's
+    # profile has always ranked vs that same pool, so it doubles as `vis` here.
     _gp = _prof_gp
-    render_card(SimpleNamespace(
-        P=P, pid=pid, rows=rows, paid=True, accent=ACCENT, gender=gender,
-        zsplits=zsplits, zguard=zguard, hsplits=hsplits,
-        badges=_badges(gender, _gp).get(pid, []),
-        archetype=_archetypes(gender, _gp).get(pid),
-        pgb=_pgb(_gp), located=_pp_located(pid, _gp),
-        foulft=_pp_foulft(_gp).get(pid),
-        named_sets=_named_sets_all(gender, _gp).get(pid),
-        role_splits=_role_splits_all(gender, _gp).get(pid),
-        set_profiles=_set_profiles_all(gender, _gp).get(pid),
-        season=_prof_season, season_gp=_gp,
-    ))
+    render_card(build_card_ctx(
+        pid, gender, season=_prof_season, season_gp=_gp,
+        P=P, rows=rows, paid=True, accent=ACCENT,
+        zsplits=zsplits, zguard=zguard, hsplits=hsplits, vis=_gp))
 
 
 # The Player Profile tab lives in helpers/dashboard/profile_tab.py; the heavy

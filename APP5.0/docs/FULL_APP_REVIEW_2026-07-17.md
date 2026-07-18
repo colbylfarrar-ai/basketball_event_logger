@@ -888,3 +888,61 @@ app5-web restarted (app5-tracker restarted for item 14; sw.js v46 verified
 on the box). All services active. Nothing left blocked on you from Tier 2;
 the Tier-1 rollover-timer sudo step (§25 item 8) is still the one manual
 item outstanding.
+
+## 27. UI & PERFORMANCE PASS — BUILT (2026-07-18, second agent)
+
+A parallel pass over §23's consistency/perf findings plus your vision note
+("the TD Overview banner is the standard: personalized, stat-packed, color
+coordinated, confidence shown"), run alongside the Tier-3 session. Five
+commits, all tested; the two agents interleaved cleanly (one ride-along:
+the War Room hero conversion landed inside the Tier-3 save/load commit).
+
+**Perf: settings snapshot** *(9b91991)*. `get_setting` opened a fresh
+SQLite connection per call — team_color alone fired it dozens of times per
+render. Now ONE `SELECT` per rerun serves every settings read via a
+session_state snapshot keyed on data_version + a 60s bucket; `set_setting`
+patches it in place (read-your-own-writes); bare mode falls back to the old
+path byte-for-byte. Also: page_chrome stops re-reading the 740-line
+style.css from disk every rerun (mtime cache). 20-assert
+`test_settings_memo.py`.
+
+**Benchmark banners follow the preset** *(d9245aa)*. The team banner /
+glance strip / zones (team_card) and the player-profile card baked
+GitHub-dark hexes — your benchmark surface was the one thing that DIDN'T
+reskin under Midnight/Forest/Slate. Now they consume
+`--card-grad/--card-bg-2/--track/--subtext/--text/--good/--bad` (plotly
+traces keep real hexes), and the `.pl-card`/`.rpl-card` leftover navy
+gradient follows the preset.
+
+**Header ladder finished** *(2d03101 + ride-along)*. War Room's hand-rolled
+hero HTML → `ui.lab_hero`; Settings + Whiteboard → `page_header`. Ladder
+now: masthead = flagship (TD), lab_hero = hero pages, page_header =
+utility. The TD's page-local PALETTE renamed CHART_CYCLE — it is an
+accent-led chart cycle, NOT a duplicate of ui.PALETTE (the frozen
+team-identity hash palette that must never be reordered); §23-6 withdrawn.
+
+**Skeleton shimmer** *(5bd3d98)*. New `ui.skeleton(tiles)` using the
+`.skeleton` CSS that shipped unused; adopted on the two heaviest cold
+paints (Rankings tracked box pass, TD Lab RAPM solve).
+
+**Colorblind-safe mode** *(24864f8)*. Settings → Appearance toggle
+(`cb_safe`, per-coach): swaps the green/red good-vs-bad pair for
+blue/orange everywhere the tokens reach — CSS vars for cards/pills/bars,
+`ui.GOOD/BAD` + HEAT/DIVERGE for charts, `cards.pctile_color` quartile
+ladder, TD/Rankings page constants re-bound per run. One source:
+`settings_utils.semantic_pair`. Team identity colours and the accent stay
+put. 11-assert `test_cb_safe.py`.
+
+**Findings, no code needed**: Officials already grew a season picker
+(career default + per-season narrow) — §23-5's "no season awareness" is
+stale for it; Schedule stays date-spanning per §13's own verdict.
+`ui.season_picker` remains a documented, unconsumed helper.
+
+**Remaining sweep (logged, not done)**: inline chart hexes in some
+dashboard modules and the social-card PNGs keep classic green/red under
+cb_safe; `cards.tier()` ladder (gold/green/blue) unchanged; `ui.chart()`
+export container and cross-filter courts beyond the Players page still
+unadopted (§23-4, C3/C4 of the overnight plan).
+
+Verification: 68/68 script-test sweep; AppTest smoke on Hub, Rankings, TD
+(Overview + Lab), Players, War Room, Settings (toggle renders), Whiteboard.

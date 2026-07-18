@@ -788,3 +788,103 @@ restarted, both active): migrations confirmed live on prod (`game_timeouts`
 table + `idx_games_date` / `idx_schedule_date` / `idx_gto_game` all present).
 PWA cache bumped to v45 so phones pick up the TO buttons on next open.
 Remaining for you: the one sudo command in item 8 above.
+
+## 26. TIER 2 — BUILT (2026-07-17, while you were out)
+
+All nine Tier-2 items (backlog 9–17) shipped, committed one item per commit
+and each deployed to the VPS as it landed. What each looks like now:
+
+**9. Rating snapshots → rank trajectory** *(rating_history.py, db.py,
+Rankings, Hub, TD Overview)*. New `rating_snapshots` table; the first
+Rankings visit each day INSERT OR IGNOREs both boards (score + tracked, full
+pool — history is global truth, not per-coach) for the active season, stamped
+with the REAL season label so rollover can't blend. No timer. Three surfaces
+light up once two snapshot days exist: a **Δ Rk** movement column (▲3 / ▼2)
+in the Overview rankings table, a **Rank trajectory** rating-vs-rank line on
+the TD Overview tab, and a **Biggest risers this week** strip on the Hub.
+History accrues from deploy day — expect the surfaces to appear from
+tomorrow. 18-assert engine test (`test_rating_history.py`).
+
+**10. Post-game read at the buzzer** *(Game_Tracker page, PWA)*. When the
+selected game is FINAL, the Game Tracker shows the engine-derived post-game
+paragraph (helpers/postgame) plus a "Share the result" expander: the branded
+1080×1080 result-card PNG (coach's own team on top when they staff one of
+the sides) and the recap PDF — no more hunting through Schedule → box score
+right after tapping End Game. Paid depth, same gate as the command center.
+The PWA finish toast now says "recap & share card ready in the app".
+
+**11. Opponent tells in the War Room Matchup** *(War_Room)*. Under the
+predicted line: a two-column "The tells" read — each side's top-3
+league-relative insight lines (same feed as the TD Insights tab, cached once
+per gender+season) in the Tier-1 line grammar (metric badge + confidence dot
++ n + sentence). Each column gates on the viewer's tracked entitlement for
+THAT team, exactly like the Rankings deep dive; a locked side shows the
+Co-op nudge instead.
+
+**12. Command palette** *(ui.py + TD/Players consumers)*. A "🔎 Go to team /
+player…" button in every page's sidebar (page_chrome) opens a search dialog
+over all teams + active players. A team hit lands on its Team Dashboard
+(league + team keys seeded); a player hit lands on Players with the Player
+Profile pick seeded via the same mapping as the ?player= deep-link. Both
+consumers now drop an out-of-pool seeded selection instead of crashing —
+which also fixes the pre-existing league-flip stale-key edge.
+
+**13. Player quick view** *(player_card.py, Players, TD)*. The heavy
+per-player feed set (badges, archetypes, per-game boxes, located shots,
+foul/FT, set/role/profile percentiles) moved into a shared cached
+`build_card_ctx` in player_card.py — both Profile call sites shrank from ~10
+feed lookups to one call, and the caches are now shared instead of
+duplicated per page. On top of it: `quick_view` (@st.dialog) renders the
+full card in a modal; first trigger is a picker + button under the Players
+Leaders full stat table. Card chart keys gained a namespace so the modal can
+coexist with a tab-rendered card.
+
+**14. PWA coverage nudge** *(game_events.live_state, PWA)*. The /live
+payload now carries tonight's tag coverage (play_type over shots, defense
+over shots+turnovers — one aggregate COUNT, definitions mirroring
+coverage.py). The phone shows a color-coded "🏷️ Tags: play 62% · def 41%"
+badge next to sync-status once 5 shots exist — quick-mode users see it too,
+which is the point. PWA cache → v46. 6-assert engine test
+(`test_live_coverage.py`).
+
+**15. Event Editor bulk re-tag** *(event_log.py, Event_Editor)*. New
+`bulk_retag(event_ids, field, value)`: one batched UPDATE across many events
+for play_type / defense / turnover_type, validated against the canonical
+sets and scoped to the event types that legitimately carry the tag (a stray
+free throw is skipped, never corrupted); the audit hook logs it. The editor
+grew a "Bulk re-tag selected events" expander — multiselect over the
+filtered rows (so filter to one quarter / just shots first) + field/value
+pickers + one apply. Complements the whole-game defense fill. 13-assert
+test (`test_bulk_retag.py`).
+
+**16. Insight NEW badges** *(insights_tab.py, settings_utils)*. Per-coach
+`insights_seen` JSON blob (USER_SCOPED, one key — {team_id: {line_hash:
+first-seen date}}, hash = metric + first 40 chars). Unseen lines on the TD
+Insights tab get a gold NEW chip that stays for the rest of that day
+(day-sticky — a fragment rerun mid-scroll can't eat it) and is gone the next
+day. One settings write per render, only when something new appeared; blob
+capped at 300 hashes/team. 9-assert test (`test_insights_seen.py`).
+
+**17. Glossary + grid adoption** *(Rankings, War Room, Officials)*. One
+📖 stat-key popover at the top of each page's dense-table zone (Rankings
+after the View switcher; War Room after its switcher; Officials above the
+ratings table). Four big raw league walls on Rankings (play-type PPP, runs,
+game-type efficiency, upsets) + the Officials game log converted to
+`ui.grid` (in-grid sort/filter, pinned identity column). Styled tables
+(Progress columns, gradient styles) deliberately left as dataframes — the
+grid would strip their formatting.
+
+Verification: every item has either a script test (rating history, live
+coverage, bulk retag, insights seen — all green in the full 61-test sweep)
+or an AppTest smoke on the touched page's populated branch (Hub, Rankings,
+Game Tracker with a FINAL game — both new expanders render; Players Leaders
+quick-view modal opens with the card; TD Insights renders 7 NEW chips; War
+Room Matchup, Officials, Event Editor — re-tag expander + 163-row
+multiselect present). The known `page_link url_pathname` harness artifact on
+empty-season branches remains the only AppTest noise.
+
+**Deployed**: commits `a52eec9` → `c72b11d` (+ this log), each pulled +
+app5-web restarted (app5-tracker restarted for item 14; sw.js v46 verified
+on the box). All services active. Nothing left blocked on you from Tier 2;
+the Tier-1 rollover-timer sudo step (§25 item 8) is still the one manual
+item outstanding.

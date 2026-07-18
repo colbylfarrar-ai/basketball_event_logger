@@ -463,6 +463,10 @@ _WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_CO
 _WR_VIEWS = ["Lineups", "Matchup", "Season sim", "Bracket",
              "Defensive assignments", "Analyze", "Glossary"]
 _wrview = _seg("View", _WR_VIEWS, default="Lineups", key="wr_view") or "Lineups"
+# one stat key for the dense tables across the views (lineups / sims / boards)
+from helpers.ui import glossary_key as _glossary_key
+_glossary_key("ORtg", "DRtg", "NetRtg", "Pace", "PPP", "HoopWAR", "RAPM",
+              "Unit Net", "Pair Net", "Exp. Wins", "Luck", "Title Odds")
 
 
 def _wr_team_pick(key):

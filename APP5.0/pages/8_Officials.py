@@ -330,6 +330,8 @@ with tab_rate:
                f"{_clutchref['name']} · clutch", "#bc8cff")
 
         import pandas as _pd
+        from helpers.ui import glossary_key as _glossary_key
+        _glossary_key("FPG", "Leverage", "PPP", "Clutch")
         _rdf = _pd.DataFrame([{
             "Official": r["name"], "Rating": round(r["rating"], 0),
             "GP": r["games"], "FPG": round(r["FPG"], 1),
@@ -781,8 +783,8 @@ def _fx_individual():
             "Ref fouls": g["fouls"], "Game fouls": g["game_fouls"],
             "POSS": round(g["poss"], 1), "PPP": round(g["ppp"], 3),
         } for g in log])
-        st.dataframe(log_df, hide_index=True, width="stretch",
-                     height=min(520, 60 + 35 * len(log_df)))
+        _grid(log_df, "off_log_grid", pin_first=False,
+              height=min(520, 60 + 35 * len(log_df)))
     else:
         st.info("No game log available.")
 

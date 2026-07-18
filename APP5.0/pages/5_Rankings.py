@@ -39,7 +39,8 @@ from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, rank_chip, grid as _grid,
                         page_header, lab_hero as _lab_hero, empty_state,
-                        seg as _rkseg, HEAT, DIVERGE, PALETTE)
+                        seg as _rkseg, HEAT, DIVERGE, PALETTE,
+                        glossary_key as _glossary_key)
 
 # The style-mix stacked bars cycle the app's own categorical palette rather than
 # a second one — a set-call block keeps the colour it has everywhere else.
@@ -565,6 +566,9 @@ st.caption(("State / " if _RK_MULTI_ST else "")
 _RK_VIEWS = ["Overview", "Compare", "Team", "Tracked", "League landscape",
              "Glossary"]
 _view = _rkseg("View", _RK_VIEWS, default="Overview", key="rk_view") or "Overview"
+# one stat key for the whole page's dense tables (Overview / Tracked / Lab)
+_glossary_key("Power", "SOS", "ORtg", "DRtg", "NetRtg", "PPP", "Pace",
+              "eFG%", "TOV%", "FTr", "OREB%", "GEI", "Luck")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1713,8 +1717,8 @@ def _fx_chart():
             if not rows:
                 st.caption("Nothing tagged in this pool yet.")
                 return
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
-                         height=min(560, 60 + 35 * len(rows)))
+            _grid(pd.DataFrame(rows), "rk_pt_grid",
+                  height=min(560, 60 + 35 * len(rows)))
             st.caption(f"{ppp_label} with tagged possessions in parentheses. "
                        "Full league — the team filter above only trims the "
                        "graphs. A dash means nothing tagged for that team.")
@@ -2385,8 +2389,9 @@ def _fx_evr():
             } for t, p in _rt.items()])
             _rrows.sort(key=lambda r: -(r["10-0 / g"] or 0))
             if _rrows:
-                st.dataframe(pd.DataFrame(_rrows).drop(columns=["class"]),
-                             hide_index=True, width="stretch", key="lab_runs_df")
+                _grid(pd.DataFrame(_rrows).drop(columns=["class"]),
+                      "lab_runs_grid",
+                      height=min(560, 60 + 35 * len(_rrows)))
                 st.caption(f"{len(_rrows)} team(s) · 'W-L w/ run' = record in "
                            "games with at least one 10-0 run of their own · "
                            "'After run' = avg net points in the 2 minutes after "
@@ -2448,8 +2453,8 @@ def _fx_evr():
                         "tracked game of this type within the Class / min-games "
                         "filter above.")
             else:
-                st.dataframe(pd.DataFrame(_tt), hide_index=True, width="stretch",
-                             key="lab_gt_eff")
+                _grid(pd.DataFrame(_tt), "lab_gt_eff_grid",
+                      height=min(520, 60 + 35 * len(_tt)))
                 st.caption(f"Efficiency scoped to tracked {_gt} games (Class / "
                            "min-games filter applied). Record / results columns may "
                            "reflect the full season.")
@@ -3075,8 +3080,8 @@ def _fx_evr():
             _show = fc2.slider("Upsets to show", 5, min(40, len(ups)),
                                min(12, len(ups)), key="lab_net_ups") \
                 if len(ups) > 5 else len(ups)
-            st.dataframe(CD.round_df(pd.DataFrame(ups[:_show])), hide_index=True,
-                         width="stretch")
+            _grid(pd.DataFrame(ups[:_show]), "lab_net_ups_grid",
+                  height=min(520, 60 + 35 * min(_show, len(ups))))
         else:
             st.info("No upsets match this filter." if pick_cls
                     else "No upsets recorded.")

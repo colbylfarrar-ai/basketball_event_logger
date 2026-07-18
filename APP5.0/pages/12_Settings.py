@@ -19,15 +19,15 @@ from database.db import query, execute
 from helpers.settings_utils import (
     set_setting, get_setting, ACCENT_PRESETS, STYLE_PRESETS, DEFAULTS,
 )
-from helpers.ui import page_chrome, team_color
+from helpers.ui import page_chrome, page_header, team_color
 import helpers.auth as AUTH
 
 _cfg, _ = page_chrome("Settings")
 
 
-st.title("Settings")
-st.caption("Changes are saved immediately — other pages pick them up automatically "
-           "the next time they load.")
+page_header("Settings",
+            sub="Changes are saved immediately — other pages pick them up "
+                "automatically the next time they load.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

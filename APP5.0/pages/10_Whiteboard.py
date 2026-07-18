@@ -37,18 +37,17 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import helpers.court_geom as CG
-from helpers.ui import page_chrome
+from helpers.ui import page_chrome, page_header
 
 _cfg, ACCENT = page_chrome("Whiteboard")
 
-st.title("Whiteboard")
-st.caption(
-    "Sketch plays on a half or full court — solid arrow = cut, dashed = pass, "
-    "zigzag = dribble, T-bar = screen, numbered O/X = players, gold dot = ball. "
-    "**Drag any O, X or the ball to move it** — walk a player through the "
-    "action piece by piece. **Nothing is saved**: leaving or refreshing clears "
-    "the board. Use PNG to keep a copy on your device."
-)
+page_header(
+    "Whiteboard",
+    sub="Sketch plays on a half or full court — solid arrow = cut, dashed = pass, "
+        "zigzag = dribble, T-bar = screen, numbered O/X = players, gold dot = ball. "
+        "**Drag any O, X or the ball to move it** — walk a player through the "
+        "action piece by piece. **Nothing is saved**: leaving or refreshing clears "
+        "the board. Use PNG to keep a copy on your device.")
 
 # Court geometry, single-sourced from the shot-location model. The whiteboard
 # adds the one real-world constant court_geom doesn't need: a high-school court

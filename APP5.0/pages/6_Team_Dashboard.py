@@ -109,7 +109,7 @@ GREY = "#8b949e"
 CYBER = "#00e5ff"
 PINK = "#ff5db1"
 # Distinct, repeatable colour cycle for the multi-series Build-your-own charts.
-PALETTE = [ACCENT, BLUE, PURPLE, GOOD, "#d29922", PINK, CYBER, "#56d4dd",
+CHART_CYCLE = [ACCENT, BLUE, PURPLE, GOOD, "#d29922", PINK, CYBER, "#56d4dd",
            AWAY, GREY]
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 # every glossary rating that exists per-player (numeric, 0-100) — the roster table
@@ -3558,7 +3558,7 @@ def _fx_chqt():
                     bgf.add_trace(go.Scatter(
                         x=[_q_label(q) for q in qs_g], y=[fn(qd[q]) for q in qs_g],
                         name=glabel.get(gid, str(gid)), mode="lines+markers",
-                        line=dict(color=PALETTE[j % len(PALETTE)], width=2),
+                        line=dict(color=CHART_CYCLE[j % len(CHART_CYCLE)], width=2),
                         marker=dict(size=6)))
                 bgf.update_yaxes(title=stat_name)
                 _style(bgf, 420)
@@ -4847,7 +4847,7 @@ def _fx_chbld():
                 xv = d[xcol].tolist()
                 fig = go.Figure()
                 for i, ycol in enumerate(ys):
-                    clr = PALETTE[i % len(PALETTE)]
+                    clr = CHART_CYCLE[i % len(CHART_CYCLE)]
                     yv = d[ycol].tolist()
                     txt = ([("" if v is None or pd.isna(v) else f"{v:g}")
                             for v in yv] if show_vals else None)
@@ -4971,7 +4971,7 @@ def _fx_chbld():
                     labels=d[lblcol], values=d[val],
                     hole=0.55 if ctype == "Donut" else 0,
                     textinfo="label+percent", sort=False,
-                    marker=dict(colors=[PALETTE[i % len(PALETTE)]
+                    marker=dict(colors=[CHART_CYCLE[i % len(CHART_CYCLE)]
                                         for i in range(len(d))],
                                 line=dict(color="#0d1117", width=1))))
                 fig.update_layout(template="plotly_dark", height=480,
@@ -5011,7 +5011,7 @@ def _fx_chbld():
                     rv = [series[s].get(e, 0) for s in stats]
                     rv = [0 if pd.isna(x) else x for x in rv]
                     rv = rv + [rv[0]]
-                    clr = PALETTE[i % len(PALETTE)]
+                    clr = CHART_CYCLE[i % len(CHART_CYCLE)]
                     rr, gg, bb = _rgb(clr)
                     fig.add_trace(go.Scatterpolar(
                         r=rv, theta=theta, fill="toself", name=e,
@@ -5045,7 +5045,7 @@ def _fx_chbld():
                 for i, s in enumerate(stats):
                     fig.add_trace(go.Histogram(
                         x=df[s].dropna(), name=s, nbinsx=bins,
-                        marker_color=PALETTE[i % len(PALETTE)],
+                        marker_color=CHART_CYCLE[i % len(CHART_CYCLE)],
                         marker_line_width=0,
                         opacity=0.65 if len(stats) > 1 else 1))
                 if len(stats) > 1:
@@ -5069,7 +5069,7 @@ def _fx_chbld():
                 for i, s in enumerate(stats):
                     fig.add_trace(go.Box(
                         y=df[s].dropna(), name=s,
-                        marker_color=PALETTE[i % len(PALETTE)],
+                        marker_color=CHART_CYCLE[i % len(CHART_CYCLE)],
                         boxpoints="all" if show_pts else "outliers",
                         jitter=0.4, pointpos=0))
                 fig.update_yaxes(title="Value")

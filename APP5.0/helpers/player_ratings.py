@@ -459,6 +459,11 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "And1M": ftp.get(pid, {}).get("and1_made", 0),
             "DRtg":  ddr.get(pid),   # Oliver individual DRtg (per-100, lower=better)
             "PF/G":  cper_g(cb["PF"]),                   # box (combined)
+            # non-strategic fouls per game: intentional clock-stop fouls
+            # (helpers.late_game, counted by fouls.player_foul_ft) are a coach
+            # call, not indiscipline — the OVERALL penalty leaf reads THIS.
+            "nsPF/G": cper_g(max(cb["PF"]
+                                 - (ftp.get(pid, {}).get("strategic") or 0), 0)),
             # charges DRAWN per game (event-only). None for a player whose team
             # doesn't tag charges at all — a genuine 0 would otherwise score a
             # tagging gap as bad defense, and the None-drops-out protection does
@@ -584,7 +589,13 @@ _OFFENSE_PARTS = [("shooting", 1.0), ("finishing", 0.6),
 _OVERALL_PARTS = [("offense", 1.1), ("impact", 0.9), ("defense", 1.0),
                   ("playmaking", 1.0), ("rebounding", 0.8),
                   ("GS/G", 1.0), ("EFF/G", 0.6), ("FIC/G", 0.5),
-                  ("physical", 0.25), ("oppadj", 0.6)]
+                  ("physical", 0.25), ("oppadj", 0.6),
+                  # explicit PENALTY leaves (2026-07-18 recal, spec §5): giveaways
+                  # and non-strategic fouls subtract at the TOP level, not only
+                  # buried inside playmaking/defense — "negative weights" so a
+                  # stat-sheet stuffer who bleeds possessions stops rating clean.
+                  # z's are sign-flipped (lower is better) before the blend.
+                  ("TOV/Gz", 0.4), ("nsPF/Gz", 0.4)]
 
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players
 # is meaningless) and fall back to the raw weighted-mean z.
@@ -932,7 +943,10 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                         {"offense": offense_z, "impact": impact_z,
                          "defense": defense_z, "playmaking": playmaking_z,
                          "rebounding": rebounding_z, "physical": physical_z,
-                         "oppadj": oppadj_z})
+                         "oppadj": oppadj_z,
+                         # penalty leaves (sign-flipped: fewer TOs/fouls = better)
+                         "TOV/Gz": zcol_signed("TOV/G", True),
+                         "nsPF/Gz": zcol_signed("nsPF/G", True)})
 
     # per-player OVERALL shrink anchor from their own team Power (partial pooling)
     team_anchor = _team_prior_anchors(profiles, gender, season, opp_ratings)

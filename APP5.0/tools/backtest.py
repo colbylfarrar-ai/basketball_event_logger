@@ -51,6 +51,8 @@ import helpers.shrinkage as SHR
 import helpers.player_ratings as PR
 import helpers.team_ratings as TR
 import helpers.projection as PJ
+import helpers.wpa as WPA
+import helpers.late_game as LGM
 
 SEASON = "2025-2026"
 N_FOLDS = 4
@@ -73,6 +75,12 @@ REGISTRY = {
     "projection.ARCHETYPE_MIN_OPP":        (PJ, "ARCHETYPE_MIN_OPP"),
     "team_ratings.DEFAULT_REG":            (TR, "DEFAULT_REG"),
     "team_ratings.DEFAULT_SOS_WEIGHT":     (TR, "DEFAULT_SOS_WEIGHT"),
+    # 2026-07-18 recal — the aggressive-sweep surface:
+    "player_ratings._OVERALL_PARTS":       (PR, "_OVERALL_PARTS"),
+    "player_ratings.TEAM_PRIOR_LAMBDA":    (PR, "TEAM_PRIOR_LAMBDA"),
+    "wpa.ONBALL_SHARE":                    (WPA, "ONBALL_SHARE"),
+    "wpa.STRATEGIC_FT_DAMP":               (WPA, "STRATEGIC_FT_DAMP"),
+    "late_game.WINDOW_SECS":               (LGM, "WINDOW_SECS"),
 }
 
 

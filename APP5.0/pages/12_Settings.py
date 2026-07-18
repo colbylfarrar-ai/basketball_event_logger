@@ -303,6 +303,43 @@ else:
             st.dataframe(_arows, hide_index=True, width="stretch")
     st.divider()
 
+    # ── Backup — download the season DB. Litestream covers the server copy;
+    # this covers the laptop-only install and gives the admin an offsite copy
+    # (the audit-log caption above says "restore from backup" — now there IS
+    # one). Two steps so the snapshot isn't taken on every rerun. ────────────
+    with st.expander("💾 Backup — download the season database"):
+        st.caption("A consistent point-in-time snapshot of the active season's "
+                   "SQLite file (safe while the app is live — taken with the "
+                   "SQLite backup API, not a raw file copy). Past seasons live "
+                   "in their own archived files and never change.")
+        if st.button("Prepare snapshot", key="bk_prep"):
+            import os as _os
+            import sqlite3 as _sq
+            import tempfile as _tf
+            from database.db import get_db_path as _dbp
+            _src = _sq.connect(str(_dbp()))
+            try:
+                _fd, _tmp = _tf.mkstemp(suffix=".db")
+                _os.close(_fd)
+                _dst = _sq.connect(_tmp)
+                with _dst:
+                    _src.backup(_dst)
+                _dst.close()
+                with open(_tmp, "rb") as _fh:
+                    st.session_state["bk_bytes"] = _fh.read()
+                _os.unlink(_tmp)
+            finally:
+                _src.close()
+        if st.session_state.get("bk_bytes"):
+            from datetime import date as _date
+            import helpers.seasons as _SEAS
+            _lbl = _SEAS.active_label()   # real label, e.g. 2026-2027
+            st.download_button(
+                f"Download ({len(st.session_state['bk_bytes']) / 1e6:.1f} MB)",
+                data=st.session_state["bk_bytes"],
+                file_name=f"app5-{_lbl}-{_date.today().isoformat()}.db",
+                mime="application/vnd.sqlite3", key="bk_dl")
+
     # ── Resolve duplicate tracked games — canonical pick for the pool ─────────
     import helpers.game_dedup as GD
     _dups = GD.duplicate_matchups()

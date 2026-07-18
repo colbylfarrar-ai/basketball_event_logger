@@ -49,20 +49,43 @@ from database.db import query
 _cfg, ACCENT = page_chrome("War Room")
 
 
+# ── per-coach save/load blobs (Tier 3 item 23) ────────────────────────────────
+# ONE compact USER_SCOPED JSON blob per concern (the insights_seen pattern):
+# wr_saved_lineups = {name: {team_id, gender, season, pids, saved}}
+# wr_bracket_seeds = {name: {gender, size, mode, field|seeds, saved}}
+# Caps keep the app_settings row small (DB = living archive, founder rule).
+_WR_MAX_SAVED = 20
+
+
+def _wr_blob(key):
+    import json
+    from helpers.settings_utils import get_setting
+    try:
+        b = json.loads(get_setting(key, "") or "{}")
+        return b if isinstance(b, dict) else {}
+    except Exception:
+        return {}
+
+
+def _wr_blob_save(key, blob):
+    import json
+    from helpers.settings_utils import set_setting
+    set_setting(key, json.dumps(blob, separators=(",", ":")))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  HEADER + LEAGUE + PRECISION
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown(
-    "<div class='lab-hero'><h1>War Room — Lineups, Matchups &amp; Sims</h1>"
-    "<p>Build and compare your fives, optimize the rotation, project any matchup, "
-    "roll the season thousands of times, and bracket the title.</p>"
-    "</div>", unsafe_allow_html=True)
+from helpers.ui import lab_hero as _lab_hero
+_lab_hero("War Room — Lineups, Matchups & Sims",
+          sub="Build and compare your fives, optimize the rotation, project any "
+              "matchup, roll the season thousands of times, and bracket the title.")
 
 cc = st.columns([2, 3])
 gender = gender_radio(cc[0])
 n = cc[1].select_slider(
     "Simulations per scenario", options=[5000, 20000, 50000], value=SIM.DEFAULT_N,
-    format_func=lambda v: f"{v // 1000}k sims",
+    key="wr_sims", format_func=lambda v: f"{v // 1000}k sims",
     help="More sims = smoother odds, slightly slower. 20k is plenty for HS fields.")
 
 # Form weight — how much every prediction/sim/bracket-seed leans on recency-
@@ -70,7 +93,7 @@ n = cc[1].select_slider(
 # ranking); higher chases who's hot right now. Blends the ratings dict once, up
 # front, so the predictor + all sims inherit it for free.
 _form_pct = cc[1].slider(
-    "Form weight", 0, 100, 35, step=5, format="%d%%",
+    "Form weight", 0, 100, 35, step=5, format="%d%%", key="wr_form",
     help="How much predictions & sims lean on recent form (recency-weighted) vs "
          "the full-season rating. 0% = season only. 35% = résumé leads, form is a "
          "real thumb on the scale — the recommended balance for short HS records.")
@@ -1009,12 +1032,35 @@ def _render_bracket():
         "rating, or set the size and place teams into seeds yourself. Byes to the "
         "next power of two are handled automatically.")
 
+    _BYE = -1
+    # staged bracket-config load — applied BEFORE the widgets render; teams no
+    # longer in the rated pool fall back to byes / drop from the field.
+    _bl = st.session_state.pop("_wr_brk_load", None)
+    if _bl:
+        _bsz = _bl.get("size", 8)
+        st.session_state["wr_brk_size"] = _bsz if _bsz in (4, 8, 16, 32) else 8
+        st.session_state["wr_brk_mode"] = ("Manual" if _bl.get("mode") == "Manual"
+                                           else "Auto (by rating)")
+        if _bl.get("mode") == "Manual":
+            _seeds = list(_bl.get("seeds") or [])
+            _dropped = False
+            for i in range(st.session_state["wr_brk_size"]):
+                _sv = _seeds[i] if i < len(_seeds) else _BYE
+                if _sv not in order and _sv != _BYE:
+                    _sv, _dropped = _BYE, True
+                st.session_state[f"wr_seed_{i}"] = _sv
+            if _dropped:
+                st.toast("Some saved seeds aren't rated in this pool — left "
+                         "as byes.", icon="⚠️")
+        else:
+            st.session_state["wr_field"] = [t for t in (_bl.get("field") or [])
+                                            if t in order]
+        st.session_state.pop("wr_brk_ran", None)
+
     _csz, _cmode = st.columns([1, 2])
     size = _csz.selectbox("Bracket size", [4, 8, 16, 32], index=1, key="wr_brk_size")
     mode = _cmode.radio("Seeding", ["Auto (by rating)", "Manual"],
                         horizontal=True, key="wr_brk_mode")
-
-    _BYE = -1
     if mode.startswith("Auto"):
         default_field = order[:min(size, len(order))]
         field = st.multiselect(
@@ -1048,6 +1094,67 @@ def _render_bracket():
                        "duplicate(s) were dropped to byes.")
         reseed = False
         n_teams = len(_seen)
+
+    # ── 💾 Saved brackets — keep a seeded field (e.g. the real OSSAA draw) ────
+    with st.expander("💾 Saved brackets"):
+        _bb = _wr_blob("wr_bracket_seeds")
+        _bs1, _bs2 = st.columns([3, 1])
+        _bname = _bs1.text_input("Save this bracket as", key="wr_brk_save_name",
+                                 placeholder="e.g. 3A Area I — real draw")
+        _bs2.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if _bs2.button("Save", key="wr_brk_save_btn",
+                       disabled=not (_bname or "").strip()):
+            _nm = _bname.strip()
+            if len(_bb) >= _WR_MAX_SAVED and _nm not in _bb:
+                st.warning(f"{_WR_MAX_SAVED} saved brackets max — delete one "
+                           "first.")
+            else:
+                from datetime import date as _date
+                _cfg_b = {"gender": gender, "size": int(size),
+                          "mode": "Manual" if mode == "Manual" else "Auto",
+                          "sims": int(n), "form": int(_form_pct),
+                          "saved": _date.today().isoformat()}
+                if mode == "Manual":
+                    _cfg_b["seeds"] = [int(t) if t is not None else _BYE
+                                       for t in seed_list]
+                else:
+                    _cfg_b["field"] = [int(t) for t in seed_list]
+                _bb[_nm] = _cfg_b
+                _wr_blob_save("wr_bracket_seeds", _bb)
+                st.toast(f"Saved '{_nm}'", icon="💾")
+                st.rerun()
+        _bnames = [nm for nm, d in sorted(_bb.items())
+                   if d.get("gender") in (None, gender)]
+        if not _bnames:
+            st.caption("No saved brackets yet — set the size and seeds above "
+                       "(Manual seeding for a real OSSAA draw), name it, Save.")
+        else:
+            _bc1, _bc2, _bc3 = st.columns([3, 1, 1])
+            _bpick = _bc1.selectbox(
+                "Saved brackets", _bnames, key="wr_brk_saved_pick",
+                format_func=lambda nm: (
+                    f"{nm} — {_bb[nm].get('mode', '?')} · "
+                    f"{_bb[nm].get('size', '?')} teams · {_bb[nm].get('saved', '')}"),
+                label_visibility="collapsed")
+
+            def _brk_do_load(nm, _blob=_bb):
+                _d = _blob.get(nm) or {}
+                st.session_state["_wr_brk_load"] = _d
+                # the sim sliders live at page TOP; a callback runs before any
+                # widget instantiates, so this is the one safe place to
+                # restore them (the fragment's staging runs too late on a
+                # full rerun).
+                if _d.get("sims") in (5000, 20000, 50000):
+                    st.session_state["wr_sims"] = _d["sims"]
+                if _d.get("form") is not None:
+                    st.session_state["wr_form"] = int(min(100, max(0, _d["form"])))
+
+            _bc2.button("Load", key="wr_brk_load_btn",
+                        on_click=_brk_do_load, args=(_bpick,))
+            if _bc3.button("Delete", key="wr_brk_del_btn"):
+                _bb.pop(_bpick, None)
+                _wr_blob_save("wr_bracket_seeds", _bb)
+                st.rerun()
 
     if n_teams < 2:
         empty_state("Pick at least two teams",
@@ -1158,6 +1265,16 @@ if _wrview == "Lineups" and _lu_view == "Creator":
                         "then build its lineup here. Go League-wide in Settings to "
                         "build any team's lineups.")
             st.stop()
+        # staged lineup load (set by the Saved-lineups Load callback) — applied
+        # BEFORE the widgets render; out-of-pool team/pids are dropped, like
+        # the command-palette consumers.
+        _ld = st.session_state.pop("_wl1_load", None)
+        if _ld:
+            if _ld.get("team_id") in _team_opts:
+                st.session_state["wl1_team"] = _ld["team_id"]
+                st.session_state["_wl1_load_pids"] = list(_ld.get("pids") or [])
+            else:
+                st.toast("That lineup's team isn't in your current pool.", icon="⚠️")
         _t = st.selectbox("Team", _team_opts,
                           format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
                           key="wl1_team")
@@ -1175,9 +1292,66 @@ if _wrview == "Lineups" and _lu_view == "Creator":
                                    if r.get("OVERALL") is not None else _b)
             _def5 = [r["_pid"] for r in
                      sorted(_rows, key=lambda r: (r.get("MIN") or 0), reverse=True)[:5]]
+            _lp = st.session_state.pop("_wl1_load_pids", None)
+            if _lp is not None:
+                _valid = [p for p in _lp if p in _lab]
+                st.session_state["wl1_pick"] = _valid
+                if len(_valid) < len(_lp):
+                    st.toast("Some saved players aren't on this season's rated "
+                             "roster anymore — loaded the rest.", icon="⚠️")
             _chosen = st.multiselect("Lineup (up to 5)", list(_lab), default=_def5,
                                      format_func=lambda pid: _lab[pid],
                                      max_selections=5, key="wl1_pick")
+
+            # ── 💾 Saved lineups — save-as-name / load / delete (per coach) ──
+            with st.expander("💾 Saved lineups"):
+                _sl = _wr_blob("wr_saved_lineups")
+                _sv1, _sv2 = st.columns([3, 1])
+                _sname = _sv1.text_input(
+                    "Save current five as", key="wl1_save_name",
+                    placeholder="e.g. Crunch-time five")
+                _sv2.markdown("<div style='height:28px'></div>",
+                              unsafe_allow_html=True)
+                if _sv2.button("Save", key="wl1_save_btn",
+                               disabled=not ((_sname or "").strip() and _chosen)):
+                    _nm = _sname.strip()
+                    if len(_sl) >= _WR_MAX_SAVED and _nm not in _sl:
+                        st.warning(f"{_WR_MAX_SAVED} saved lineups max — delete "
+                                   "one first.")
+                    else:
+                        from datetime import date as _date
+                        _sl[_nm] = {"team_id": int(_t), "gender": gender,
+                                    "season": str(season_pick),
+                                    "pids": [int(p) for p in _chosen],
+                                    "saved": _date.today().isoformat()}
+                        _wr_blob_save("wr_saved_lineups", _sl)
+                        st.toast(f"Saved '{_nm}'", icon="💾")
+                        st.rerun()
+                _snames = [nm for nm, d in sorted(_sl.items())
+                           if d.get("gender") in (None, gender)]
+                if not _snames:
+                    st.caption("No saved lineups yet — pick a five above, name "
+                               "it, Save. They're yours (per coach) and follow "
+                               "you across devices.")
+                else:
+                    _lc1, _lc2, _lc3 = st.columns([3, 1, 1])
+                    _slpick = _lc1.selectbox(
+                        "Saved", _snames, key="wl1_saved_pick",
+                        format_func=lambda nm: (
+                            f"{nm} — {team_short(name_of.get(_sl[nm].get('team_id'), '?'))}"
+                            f" · {len(_sl[nm].get('pids') or [])} players"
+                            f" · {_sl[nm].get('saved', '')}"),
+                        label_visibility="collapsed")
+
+                    def _wl1_do_load(nm, _blob=_sl):
+                        st.session_state["_wl1_load"] = _blob.get(nm)
+
+                    _lc2.button("Load", key="wl1_load_btn",
+                                on_click=_wl1_do_load, args=(_slpick,))
+                    if _lc3.button("Delete", key="wl1_del_btn"):
+                        _sl.pop(_slpick, None)
+                        _wr_blob_save("wr_saved_lineups", _sl)
+                        st.rerun()
             # ⚡ engine-built preset fives — top 5 by each lens, auto-rated. Gated
             # like the projection itself (own team on any Paid plan; another team
             # is Co-op only), so it never leaks another team's depth.

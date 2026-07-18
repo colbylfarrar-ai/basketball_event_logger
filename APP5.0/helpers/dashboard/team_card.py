@@ -104,14 +104,14 @@ def _next_game(team_id, season="Current"):
 
 
 # ── tiny html primitives (same visual language as the player card) ──────────────
-def _kv(k, v, vc="#f0f6fc"):
+def _kv(k, v, vc="var(--text)"):
     return (f"<div style='display:flex;justify-content:space-between;"
-            f"font-size:12px;padding:2px 0'><span style='color:#8b949e'>{k}"
+            f"font-size:12px;padding:2px 0'><span style='color:var(--subtext)'>{k}"
             f"</span><span style='color:{vc};font-weight:600'>{v}</span></div>")
 
 
 def _zone_hdr(t):
-    return (f"<div style='font-size:10px;color:#8b949e;text-transform:uppercase;"
+    return (f"<div style='font-size:10px;color:var(--subtext);text-transform:uppercase;"
             f"letter-spacing:1.5px;margin:0 0 4px'>{t}</div>")
 
 
@@ -132,11 +132,11 @@ def render_mini(team_id, gender, scored, tracked=None, show_tracked=False):
     _stk = (f" · {fm['streak_type']}{fm['streak_len']}"
             if fm.get("streak_type") and fm.get("streak_len") else "")
     html = (
-        f"<div style='background:#0d1117;border:1px solid {hue}55;"
+        f"<div style='background:var(--card-bg-2);border:1px solid {hue}55;"
         f"border-radius:12px;padding:12px 14px'>"
         f"<div style='display:flex;justify-content:space-between;"
         f"align-items:baseline'>"
-        f"<div style='font-size:16px;font-weight:800;color:#f0f6fc'>{tname}"
+        f"<div style='font-size:16px;font-weight:800;color:var(--text)'>{tname}"
         f"</div><div style='font-size:22px;font-weight:900;color:{hue}'>"
         f"{r.get('Power', '—')}</div></div>"
         f"<div style='font-size:10px;color:{hue};letter-spacing:1px;"
@@ -150,7 +150,7 @@ def render_mini(team_id, gender, scored, tracked=None, show_tracked=False):
         html += _kv("SOS", f"{r['SOS']:.1f}")
     if fm.get("mom_delta") is not None:
         html += _kv("Momentum (L5 − season)", f"{fm['mom_delta']:+.1f}",
-                    vc="#3fb950" if fm["mom_delta"] >= 0 else "#e74c3c")
+                    vc="var(--good)" if fm["mom_delta"] >= 0 else "var(--bad)")
     if tr:
         html += _kv("Adj Off / Def rating",
                     f"{tr['ORtg']:.0f} / {tr['DRtg']:.0f}")
@@ -197,17 +197,16 @@ def render_banner(ctx):
 
     # ── banner — the player-card banner grammar, team-sized ──────────────────
     st.markdown(
-        f"<div class='team-banner' style='background:linear-gradient(135deg,"
-        f"#080c14,#0d1117 55%,#111827);"
+        f"<div class='team-banner' style='background:var(--card-grad);"
         f"border:1px solid {hue}66;border-radius:18px;padding:18px 24px;"
         f"margin-bottom:12px;position:relative;overflow:hidden'>"
         f"<div style='position:absolute;left:0;top:0;bottom:0;width:4px;"
         f"background:{hue};box-shadow:0 0 18px {hue}'></div>"
         f"<div style='display:flex;align-items:center;gap:22px'>"
         f"<div style='flex:1'>"
-        f"<div style='font-size:28px;font-weight:900;color:#f0f6fc;line-height:1.05'>"
+        f"<div style='font-size:28px;font-weight:900;color:var(--text);line-height:1.05'>"
         f"{tname}</div>"
-        f"<div style='font-size:13px;color:#8b949e;margin-top:4px'>"
+        f"<div style='font-size:13px;color:var(--subtext);margin-top:4px'>"
         f"<span style='color:{hue};font-weight:700;letter-spacing:1px'>{tlabel}</span>"
         f"{_style_bit}"
         f"{' · ' + _cls if _cls else ''} · {rec['wins']}-{rec['losses']}"
@@ -234,18 +233,18 @@ def render_header(ctx):
         if _gl:
             _tiles = ""
             for _gt in _gl:
-                _clr = ("#3fb950" if _gt["good"] else "#e74c3c") \
+                _clr = ("var(--good)" if _gt["good"] else "var(--bad)") \
                     if _gt["good"] is not None else "#58a6ff"
                 _tiles += (
-                    f"<div style='background:#0d1117;border:1px solid #21262d;"
+                    f"<div style='background:var(--card-bg-2);border:1px solid var(--track);"
                     f"border-left:3px solid {_clr};border-radius:8px;"
                     f"padding:8px 11px'>"
-                    f"<div style='font-size:11px;color:#8b949e'>{_gt['label']}</div>"
-                    f"<div style='font-size:18px;font-weight:700;color:#f0f6fc'>"
+                    f"<div style='font-size:11px;color:var(--subtext)'>{_gt['label']}</div>"
+                    f"<div style='font-size:18px;font-weight:700;color:var(--text)'>"
                     f"{_gt['value']}</div>"
                     f"<div style='font-size:11px;color:{_clr};font-weight:600'>"
                     f"{_gt['pct']}th pct</div>"
-                    f"<div style='font-size:11px;color:#8b949e;margin-top:2px'>"
+                    f"<div style='font-size:11px;color:var(--subtext);margin-top:2px'>"
                     f"{_gt['tag']}</div></div>")
             st.markdown(
                 "<div style='display:grid;grid-template-columns:"
@@ -294,12 +293,12 @@ def render_header(ctx):
                 if b["key"] in ("b2b", "short") and b["gp"] >= 2:
                     html += _kv(b["label"],
                                 f"{b['w']}-{b['l']} ({b['delta']:+.1f} MOV)",
-                                vc="#3fb950" if b["delta"] > 0 else "#e74c3c")
+                                vc="var(--good)" if b["delta"] > 0 else "var(--bad)")
             if _rs.get("heavy") and _rs["heavy"]["gp"] >= 2:
                 hv = _rs["heavy"]
                 html += _kv("3+ games in 7 days",
                             f"{hv['w']}-{hv['l']} ({hv['delta']:+.1f} MOV)",
-                            vc="#3fb950" if hv["delta"] > 0 else "#e74c3c")
+                            vc="var(--good)" if hv["delta"] > 0 else "var(--bad)")
         st.markdown(html, unsafe_allow_html=True)
 
     # ── zone B · engine (tracked possession economy) ──────────────────────────
@@ -310,7 +309,7 @@ def render_header(ctx):
             html += _kv("Off / Def rating",
                         f"{summ.get('ORtg', 0):.1f} / {summ.get('DRtg', 0):.1f}")
             html += _kv("Net rating", f"{summ.get('NetRtg', 0):+.1f}",
-                        vc="#3fb950" if summ.get("NetRtg", 0) >= 0 else "#e74c3c")
+                        vc="var(--good)" if summ.get("NetRtg", 0) >= 0 else "var(--bad)")
             html += _kv("Pace (poss/g)", f"{summ.get('POSS_pg', 0):.1f}")
             _aj = _adj_shoot(ctx.gender, _season).get(ctx.team_id)
             if _aj:
@@ -331,7 +330,7 @@ def render_header(ctx):
                             f"{_mix.get('turnover', 0) * 100:.0f}%")
             st.markdown(html, unsafe_allow_html=True)
         else:
-            html += ("<div style='font-size:12px;color:#8b949e'>Track games to "
+            html += ("<div style='font-size:12px;color:var(--subtext)'>Track games to "
                      "unlock the possession economy — efficiency, adjusted "
                      "shooting and where possessions go.</div>")
             st.markdown(html, unsafe_allow_html=True)
@@ -344,11 +343,11 @@ def render_header(ctx):
                         f"{fm['Pyth_W']:.1f}-{fm['Pyth_L']:.1f}")
             _lw = fm.get("Luck_wins", 0)
             html += _kv("Luck (wins vs expected)", f"{_lw:+.1f}",
-                        vc="#3fb950" if _lw >= 0 else "#e74c3c")
+                        vc="var(--good)" if _lw >= 0 else "var(--bad)")
             _md = fm.get("mom_delta")
             if _md is not None:
                 html += _kv("Momentum (L5 MOV − season)", f"{_md:+.1f}",
-                            vc="#3fb950" if _md >= 0 else "#e74c3c")
+                            vc="var(--good)" if _md >= 0 else "var(--bad)")
             _cw, _cl = fm.get("close_w", 0), fm.get("close_l", 0)
             if _cw + _cl:
                 html += _kv("Close games (≤5)", f"{_cw}-{_cl}")

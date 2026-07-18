@@ -145,8 +145,8 @@ _DEV_STATS = ("PPG", "RPG", "APG", "SPG", "BPG", "TPG", "FPG")   # cross-season 
 _DEV_INVERTED = ("TPG", "FPG")   # lower is better → inverse delta colouring
 
 # Rating-bar palette for the dense Overview grid (mirrors the gauge-dial colours).
-GRID_CLR = {"OVERALL": "#58a6ff", "OFFENSE": "#f0a500", "DEFENSE": "#e74c3c",
-            "PLAYMAKING": "#bc8cff", "REBOUNDING": "#3fb950", "Floor spacing": "#56d4dd"}
+GRID_CLR = {"OVERALL": "#58a6ff", "OFFENSE": "#f0a500", "DEFENSE": "var(--bad)",
+            "PLAYMAKING": "#bc8cff", "REBOUNDING": "var(--good)", "Floor spacing": "#56d4dd"}
 
 
 def _rating_bar(label, value, color, ci=None, trend=None):
@@ -165,9 +165,9 @@ def _rating_bar(label, value, color, ci=None, trend=None):
     if trend is not None:
         d, eps, proxy = trend
         if d >= eps:
-            _a, _c = "↗", "#3fb950"
+            _a, _c = "↗", "var(--good)"
         elif d <= -eps:
-            _a, _c = "↘", "#e74c3c"
+            _a, _c = "↘", "var(--bad)"
         else:
             _a, _c = "→", "#6e7681"
         chip = (f"<div style='width:52px;text-align:right;font-size:10px;"
@@ -175,8 +175,8 @@ def _rating_bar(label, value, color, ci=None, trend=None):
                 f"season average'>{_a} {d:+.1f}</div>")
     if value is None:
         return (f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0'>"
-                f"<div style='width:86px;font-size:11px;color:#8b949e'>{label}</div>"
-                f"<div style='flex:1;height:8px;border-radius:4px;background:#161b22'></div>"
+                f"<div style='width:86px;font-size:11px;color:var(--subtext)'>{label}</div>"
+                f"<div style='flex:1;height:8px;border-radius:4px;background:var(--card-bg)'></div>"
                 f"<div style='width:28px;text-align:right;font-size:12px;color:#484f58'>—</div>"
                 f"{chip}</div>")
     v = max(0.0, min(100.0, float(value)))
@@ -187,13 +187,13 @@ def _rating_bar(label, value, color, ci=None, trend=None):
                 f"left:{lo}%;width:{hi-lo}%;background:{color};opacity:.28'></div>")
     return (
         f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0'>"
-        f"<div style='width:86px;font-size:11px;color:#8b949e'>{label}</div>"
-        f"<div style='flex:1;position:relative;height:8px;border-radius:4px;background:#161b22'>"
+        f"<div style='width:86px;font-size:11px;color:var(--subtext)'>{label}</div>"
+        f"<div style='flex:1;position:relative;height:8px;border-radius:4px;background:var(--card-bg)'>"
         f"{band}"
         f"<div style='position:absolute;top:0;height:8px;border-radius:4px;width:{v}%;"
         f"background:{color}'></div></div>"
         f"<div style='width:28px;text-align:right;font-size:12px;font-weight:700;"
-        f"color:#f0f6fc'>{value:.0f}</div>{chip}</div>")
+        f"color:var(--text)'>{value:.0f}</div>{chip}</div>")
 
 
 # Trajectory proxies: each rating category tracked by ONE legible per-game stat
@@ -232,17 +232,17 @@ def _teamrow(label, tr):
     """One team-within row: a dot on the team's min→max spread + rank #k/n."""
     if not tr:
         return (f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0;"
-                f"font-size:11px'><div style='width:82px;color:#8b949e'>{label}</div>"
-                f"<div style='flex:1;height:16px;border-radius:4px;background:#161b22'></div>"
+                f"font-size:11px'><div style='width:82px;color:var(--subtext)'>{label}</div>"
+                f"<div style='flex:1;height:16px;border-radius:4px;background:var(--card-bg)'></div>"
                 f"<div style='width:44px;text-align:right;color:#484f58'>—</div></div>")
     pos = tr["pos"] * 100
     return (
         f"<div style='display:flex;align-items:center;gap:8px;margin:5px 0;font-size:11px'>"
-        f"<div style='width:82px;color:#8b949e'>{label}</div>"
-        f"<div style='flex:1;position:relative;height:16px;border-radius:4px;background:#161b22'>"
+        f"<div style='width:82px;color:var(--subtext)'>{label}</div>"
+        f"<div style='flex:1;position:relative;height:16px;border-radius:4px;background:var(--card-bg)'>"
         f"<div style='position:absolute;top:1px;height:14px;width:14px;border-radius:50%;"
-        f"background:#bc8cff;border:2px solid #0d1117;left:calc({pos}% - 7px)'></div></div>"
-        f"<div style='width:44px;text-align:right;font-weight:700;color:#f0f6fc'>"
+        f"background:#bc8cff;border:2px solid var(--card-bg-2);left:calc({pos}% - 7px)'></div></div>"
+        f"<div style='width:44px;text-align:right;font-weight:700;color:var(--text)'>"
         f"#{tr['rank']}/{tr['n']}</div></div>")
 
 
@@ -449,14 +449,14 @@ def render_card(ctx):
     _phys = (" · " + " · ".join(_phys_bits)) if _phys_bits else ""
     if paid and P["OVERALL"] is not None:
         badges = "".join(
-            f"<div style='background:#0d1117;border:1px solid {hue}55;border-radius:8px;"
+            f"<div style='background:var(--card-bg-2);border:1px solid {hue}55;border-radius:8px;"
             f"padding:6px 14px;text-align:center'>"
             f"<div style='font-size:20px;font-weight:900;color:{hue}'>"
-            f"{P[k]:.0f}</div><div style='font-size:8px;color:#8b949e;"
+            f"{P[k]:.0f}</div><div style='font-size:8px;color:var(--subtext);"
             f"text-transform:uppercase;letter-spacing:1px'>{k[:4]}</div></div>"
             for k in RATING_COLS if P[k] is not None)
         st.markdown(
-            f"<div style='background:linear-gradient(135deg,#080c14,#0d1117 55%,#111827);"
+            f"<div style='background:linear-gradient(135deg,#080c14,var(--card-bg-2) 55%,#111827);"
             f"border:1px solid {hue}66;border-radius:18px;padding:24px 28px;"
             f"margin-bottom:18px;position:relative;overflow:hidden'>"
             f"<div style='position:absolute;right:-6px;top:50%;"
@@ -465,13 +465,13 @@ def render_card(ctx):
             f"<div style='display:flex;align-items:center;gap:22px;position:relative'>"
             f"<div style='background:{hue}18;border:2px solid {hue}55;border-radius:14px;"
             f"padding:12px 16px;text-align:center;min-width:74px'>"
-            f"<div style='font-size:9px;color:#8b949e;letter-spacing:1px'>NO.</div>"
+            f"<div style='font-size:9px;color:var(--subtext);letter-spacing:1px'>NO.</div>"
             f"<div style='font-size:44px;font-weight:900;color:{hue};line-height:1'>"
             f"{P['number']}</div></div>"
             f"<div style='flex:1'>"
-            f"<div style='font-size:34px;font-weight:900;color:#f0f6fc;line-height:1.05'>"
+            f"<div style='font-size:34px;font-weight:900;color:var(--text);line-height:1.05'>"
             f"{P['name']}</div>"
-            f"<div style='font-size:13px;color:#8b949e;margin-top:5px'>"
+            f"<div style='font-size:13px;color:var(--subtext);margin-top:5px'>"
             f"<span style='color:{hue};font-weight:700;letter-spacing:1px'>{tier}</span> · "
             f"{P['team']} · {P['class']} · {P['GP']} GP · rank #{P['Rank']} of {len(rows)}"
             f"{_phys}</div></div>"
@@ -480,11 +480,11 @@ def render_card(ctx):
             f"<div style='font-size:60px;font-weight:900;color:{hue};line-height:1'>"
             f"{P['OVERALL']:.0f}</div></div></div>"
             f"<div style='display:flex;gap:8px;margin-top:14px;padding-top:12px;"
-            f"border-top:1px solid #21262d;flex-wrap:wrap'>{badges}</div></div>",
+            f"border-top:1px solid var(--track);flex-wrap:wrap'>{badges}</div></div>",
             unsafe_allow_html=True)
     else:
         st.markdown(
-            f"<div style='background:linear-gradient(135deg,#080c14,#0d1117 55%,#111827);"
+            f"<div style='background:linear-gradient(135deg,#080c14,var(--card-bg-2) 55%,#111827);"
             f"border:1px solid {hue}66;border-radius:18px;padding:24px 28px;"
             f"margin-bottom:18px;position:relative;overflow:hidden'>"
             f"<div style='position:absolute;right:-6px;top:50%;"
@@ -493,13 +493,13 @@ def render_card(ctx):
             f"<div style='display:flex;align-items:center;gap:22px;position:relative'>"
             f"<div style='background:{hue}18;border:2px solid {hue}55;border-radius:14px;"
             f"padding:12px 16px;text-align:center;min-width:74px'>"
-            f"<div style='font-size:9px;color:#8b949e;letter-spacing:1px'>NO.</div>"
+            f"<div style='font-size:9px;color:var(--subtext);letter-spacing:1px'>NO.</div>"
             f"<div style='font-size:44px;font-weight:900;color:{hue};line-height:1'>"
             f"{P['number']}</div></div>"
             f"<div style='flex:1'>"
-            f"<div style='font-size:34px;font-weight:900;color:#f0f6fc;line-height:1.05'>"
+            f"<div style='font-size:34px;font-weight:900;color:var(--text);line-height:1.05'>"
             f"{P['name']}</div>"
-            f"<div style='font-size:13px;color:#8b949e;margin-top:5px'>"
+            f"<div style='font-size:13px;color:var(--subtext);margin-top:5px'>"
             f"{P['team']} · {P['class']} · {P['GP']} GP{_phys}</div></div></div></div>",
             unsafe_allow_html=True)
 
@@ -521,7 +521,7 @@ def render_card(ctx):
         _pbadges = lab_badges
         if _pbadges:
             _bchips = "".join(
-                f"<span style='display:inline-block;background:#0d1117;"
+                f"<span style='display:inline-block;background:var(--card-bg-2);"
                 f"border:1px solid {_tc.get(b['tier'], '#888')};border-radius:20px;"
                 f"padding:4px 12px;margin:0 6px 7px 0;font-size:12px'>{b['emoji']} "
                 f"<b>{b['name']}</b> <span style='color:"
@@ -529,7 +529,7 @@ def render_card(ctx):
                 for b in _pbadges[:8])
             st.markdown(
                 f"<div style='margin:0 0 12px'><span style='font-size:11px;"
-                f"color:#8b949e;text-transform:uppercase;letter-spacing:1px;"
+                f"color:var(--subtext);text-transform:uppercase;letter-spacing:1px;"
                 f"margin-right:8px'>Badges</span>{_bchips}</div>",
                 unsafe_allow_html=True)
         else:
@@ -544,8 +544,8 @@ def render_card(ctx):
         _conf = SH.rating_confidence(P.get("GP") or 0)
         _twrel = PR.team_relative(P, rows)
         _space = _spacing(getattr(ctx, "gender", None), _gp).get(pid, {}).get("index")
-        _cclr = {"high": "#3fb950", "medium": "#f0a500",
-                 "low": "#e74c3c", "very_low": "#e74c3c"}[_conf["tier"]]
+        _cclr = {"high": "var(--good)", "medium": "#f0a500",
+                 "low": "var(--bad)", "very_low": "var(--bad)"}[_conf["tier"]]
         # verdict strip (OOTP summary box): season value in wins + the two
         # archetype lenses side by side — agreement is the scouting note
         _gnd = getattr(ctx, "gender", None)
@@ -562,23 +562,23 @@ def render_card(ctx):
             _agree = "✓ agree" if _barch == _arch else "↔ differ"
             _verdict_bits.append(
                 f"Badges <b>{_barch}</b> / Style <b>{_arch}</b> "
-                f"<span style='color:{'#3fb950' if _barch == _arch else '#f0a500'}'>"
+                f"<span style='color:{'var(--good)' if _barch == _arch else '#f0a500'}'>"
                 f"{_agree}</span>")
-        _verdict = ("<span style='font-size:11px;color:#8b949e;font-weight:400;"
+        _verdict = ("<span style='font-size:11px;color:var(--subtext);font-weight:400;"
                     "float:right'>" + " · ".join(_verdict_bits) + "</span>"
                     if _verdict_bits else "")
         st.markdown(
             "<div class='pl-hdr' style='margin-top:0'>Overview · scouted "
             f"<span style='color:{_cclr};font-weight:800'>{_conf['label']}</span> "
-            f"<span style='font-size:11px;color:#8b949e;font-weight:400'>"
+            f"<span style='font-size:11px;color:var(--subtext);font-weight:400'>"
             f"({_conf['games']} game{'s' if _conf['games'] != 1 else ''} · "
             f"OVERALL &plusmn;{_conf['ci']:.0f})</span>{_verdict}</div>",
             unsafe_allow_html=True)
 
         def _kv(k, v):
             return (f"<div style='display:flex;justify-content:space-between;"
-                    f"font-size:12px;padding:2px 0'><span style='color:#8b949e'>{k}"
-                    f"</span><span style='color:#f0f6fc;font-weight:600'>{v}</span></div>")
+                    f"font-size:12px;padding:2px 0'><span style='color:var(--subtext)'>{k}"
+                    f"</span><span style='color:var(--text);font-weight:600'>{v}</span></div>")
 
         def _g(key, d=0.0):
             return P.get(key) if P.get(key) is not None else d
@@ -618,7 +618,7 @@ def render_card(ctx):
                             trend=_traj.get(k))
                 for k in RATING_COLS)
             bars += _rating_bar("Floor spacing", _space, GRID_CLR["Floor spacing"])
-            _thdr = ("Ratings <span style='font-size:10px;color:#8b949e;"
+            _thdr = ("Ratings <span style='font-size:10px;color:var(--subtext);"
                      "font-weight:400'>· ↗↘ = last 5 games vs season (real "
                      "form, not a projection)</span>") if _traj else "Ratings"
             st.markdown(f"<div class='pl-hdr' style='margin-top:0'>{_thdr}</div>"
@@ -636,10 +636,10 @@ def render_card(ctx):
             # one thin pill strip (phase E) — the tiles were a 2-row grid that
             # pushed the fold down; same six numbers, a third of the height
             pills = "".join(
-                f"<span style='background:#0d1117;border:1px solid #21262d;"
+                f"<span style='background:var(--card-bg-2);border:1px solid var(--track);"
                 f"border-radius:14px;padding:3px 10px;font-size:11px;"
-                f"color:#8b949e;white-space:nowrap'>{l} "
-                f"<b style='color:#f0f6fc;font-size:12px'>{v}</b></span>"
+                f"color:var(--subtext);white-space:nowrap'>{l} "
+                f"<b style='color:var(--text);font-size:12px'>{v}</b></span>"
                 for l, v in _sig)
             st.markdown(
                 "<div class='pl-hdr'>Signature</div>"
@@ -651,7 +651,7 @@ def render_card(ctx):
             trows = "".join(_teamrow(k.title(), _twrel.get(k)) for k in RATING_COLS)
             st.markdown(
                 "<div class='pl-hdr' style='margin-top:0'>Vs teammates</div>" + trows
-                + "<div style='font-size:11px;color:#8b949e;margin-top:4px'>Dot = "
+                + "<div style='font-size:11px;color:var(--subtext);margin-top:4px'>Dot = "
                 "position on the team's min&rarr;max span. League rating stays the "
                 "number up top.</div>", unsafe_allow_html=True)
             # Play-type PPP/FG% fills the space under the (short) teammate panel —
@@ -670,8 +670,8 @@ def render_card(ctx):
                         _sh = (c["poss"] / _pt_tot * 100) if _pt_tot else 0
                         return (
                             f"<div style='display:flex;justify-content:space-between;"
-                            f"font-size:11px;padding:2px 0'><span style='color:#8b949e'>"
-                            f"{_ptlbl.get(k, k.title())}</span><span style='color:#f0f6fc;"
+                            f"font-size:11px;padding:2px 0'><span style='color:var(--subtext)'>"
+                            f"{_ptlbl.get(k, k.title())}</span><span style='color:var(--text);"
                             f"font-weight:600'>{c['poss']} &middot; {_sh:.0f}% &middot; "
                             f"{c['PPP']:.2f} &middot; {c['FG%']*100:.0f}%</span></div>")
                     st.markdown(
@@ -697,7 +697,7 @@ def render_card(ctx):
                 _ls = S.shot_location_summary(located)
                 if _ls:
                     st.markdown(
-                        f"<div style='font-size:10px;color:#8b949e;margin-top:-6px'>"
+                        f"<div style='font-size:10px;color:var(--subtext);margin-top:-6px'>"
                         f"avg {_ls['avg_dist']:.1f} ft · rim {_ls['rim_n']} · "
                         f"mid {_ls['mid_n']} · three {_ls['three_n']} — hover a "
                         f"dot for the shot</div>", unsafe_allow_html=True)
@@ -710,7 +710,7 @@ def render_card(ctx):
                     unsafe_allow_html=True)
             else:
                 st.markdown("<div class='pl-hdr' style='margin-top:0'>Shot map"
-                            "</div><div style='font-size:11px;color:#8b949e'>"
+                            "</div><div style='font-size:11px;color:var(--subtext)'>"
                             "Tap-located shots build the court read — the zone "
                             "chart below covers older games.</div>"
                             f"<div style='font-size:11px;color:#c9d1d9;"
@@ -792,10 +792,10 @@ def render_card(ctx):
                         "&middot; WPA</div>",
                         unsafe_allow_html=True)
             _itiles = "".join(
-                f"<div style='background:#0d1117;border:1px solid #21262d;"
+                f"<div style='background:var(--card-bg-2);border:1px solid var(--track);"
                 f"border-radius:8px;padding:6px 9px'>"
-                f"<div style='font-size:10px;color:#8b949e'>{l}</div>"
-                f"<div style='font-size:16px;font-weight:700;color:#f0f6fc'>{v}</div>"
+                f"<div style='font-size:10px;color:var(--subtext)'>{l}</div>"
+                f"<div style='font-size:16px;font-weight:700;color:var(--text)'>{v}</div>"
                 f"<div style='font-size:9px;color:#6e7681'>{s}</div></div>"
                 for l, v, s in _imp)
             st.markdown(
@@ -827,7 +827,7 @@ def render_card(ctx):
             ("Q4 PPG", _fmt(P["Q4PPG"], "f1"),
              f"{_fmt(P['Q4%'], 'pct')} of points", "#ff7b72"),
             ("SELF-CR%", _fmt(P["SelfCr%"], "pct"), "shot independence", "#d2a8ff"),
-            ("STOCKS/32", _fmt(P["STOCKS/32"], "f1"), "defensive disruption", "#3fb950"),
+            ("STOCKS/32", _fmt(P["STOCKS/32"], "f1"), "defensive disruption", "var(--good)"),
             ("DOM-SIDE%", f"{_dom_share*100:.0f}%" if _dom_share is not None else "—",
              "strong-hand shot share", "#f0a500"),
         ]
@@ -952,7 +952,7 @@ def render_card(ctx):
         # points by source
         pts2, pts3, ptsf = P["2PM"] * 2, P["3PM"] * 3, P["FTM"]
         if pts2 + pts3 + ptsf > 0:
-            dn = _donut(pts2, pts3, ptsf, colors=(accent, "#58a6ff", "#8b949e"),
+            dn = _donut(pts2, pts3, ptsf, colors=(accent, "#58a6ff", "var(--subtext)"),
                         height=260, margin_top=30, ft_label="FT",
                         title="Points by source")
             st.plotly_chart(dn, width="stretch", key=f"{_kp}_src")
@@ -1259,7 +1259,7 @@ def render_card(ctx):
         if _ros.get("ok"):
             st.markdown(
                 f"<div class='pl-hdr'>Rest of season "
-                f"<span style='font-size:11px;color:#8b949e;font-weight:400'>"
+                f"<span style='font-size:11px;color:var(--subtext);font-weight:400'>"
                 f"· {_ros['gp']} played · {_ros['remaining']} left — projected "
                 f"season-end totals (per-game)</span></div>",
                 unsafe_allow_html=True)
@@ -1295,7 +1295,7 @@ def render_card(ctx):
         ch = st.columns(6)
         ch[0].markdown(_glass("HIGH PTS", P["bestPTS"], "single game", accent),
                        unsafe_allow_html=True)
-        ch[1].markdown(_glass("HIGH REB", P["bestREB"], "single game", "#3fb950"),
+        ch[1].markdown(_glass("HIGH REB", P["bestREB"], "single game", "var(--good)"),
                        unsafe_allow_html=True)
         ch[2].markdown(_glass("HIGH AST", P["bestAST"], "single game", "#bc8cff"),
                        unsafe_allow_html=True)
@@ -1703,14 +1703,14 @@ def render_card(ctx):
                     "Still building their game — more tracked games will sharpen it.")
 
         st.markdown(
-            f"<div style='background:linear-gradient(135deg,#1a1200,#0d1117);"
+            f"<div style='background:linear-gradient(135deg,#1a1200,var(--card-bg-2));"
             f"border:1px solid {accent};border-radius:12px;padding:14px 18px;"
             f"margin-bottom:14px;display:flex;align-items:center;gap:14px'>"
             f"<div>"
             f"<div style='font-size:10px;font-weight:700;letter-spacing:.08em;"
-            f"color:#8b949e;text-transform:uppercase'>Scouting role</div>"
+            f"color:var(--subtext);text-transform:uppercase'>Scouting role</div>"
             f"<div style='font-size:15px;font-weight:800;color:{accent}'>{arch[0]}</div>"
-            f"<div style='font-size:12px;color:#8b949e;margin-top:3px'>{arch[1]}</div>"
+            f"<div style='font-size:12px;color:var(--subtext);margin-top:3px'>{arch[1]}</div>"
             f"</div></div>", unsafe_allow_html=True)
 
         strengths, weaknesses = [], []
@@ -1753,8 +1753,8 @@ def render_card(ctx):
                 return f"<div style='font-size:12px;color:#484f58;font-style:italic'>{empty}</div>"
             return "".join(
                 f"<div style='margin-bottom:9px'>"
-                f"<div style='font-size:13px;font-weight:700;color:#f0f6fc'>{l}</div>"
-                f"<div style='font-size:12px;color:#8b949e'>{d}</div></div>"
+                f"<div style='font-size:13px;font-weight:700;color:var(--text)'>{l}</div>"
+                f"<div style='font-size:12px;color:var(--subtext)'>{d}</div></div>"
                 for l, d in items)
 
         sc1, sc2 = st.columns(2)

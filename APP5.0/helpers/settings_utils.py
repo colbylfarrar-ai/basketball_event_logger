@@ -319,6 +319,9 @@ def apply_theme_css(settings: dict = None) -> None:
     --text: {style['text']};
     --subtext: {style['subtext']};
     --track: {style.get('track', '#21262d')};
+    --card-grad: {style['card_grad']};
+    --good: {style.get('good', '#3fb950')};
+    --bad: {style.get('bad', '#e74c3c')};
 }}
 /* ── Accent colour ─────────────────────────────────────────── */
 .dash-card-value,
@@ -342,16 +345,16 @@ def apply_theme_css(settings: dict = None) -> None:
     border-color: {style['card_border']} !important;
 }}
 .pl-card {{
-    background: linear-gradient(135deg,#0f3460 0%,#16213e 100%) !important;
-    border-color: #1f4d8a !important;
+    background: {style['card_grad']} !important;
+    border-color: {style['card_border']} !important;
 }}
 .rat-card {{
     background: {style['card_grad']} !important;
     border-color: {style['card_border']} !important;
 }}
 .rpl-card {{
-    background: linear-gradient(135deg,#0f3460 0%,#16213e 100%) !important;
-    border-color: #1f4d8a !important;
+    background: {style['card_grad']} !important;
+    border-color: {style['card_border']} !important;
 }}
 
 /* ── Subtext / meta ────────────────────────────────────────── */

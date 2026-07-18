@@ -738,3 +738,59 @@ hr, [data-testid="stDivider"] {
     padding: 2px 8px; background: rgba(255,255,255,0.02);
 }
 .conf-chip .conf-dot { margin-left: 0; }
+
+/* ══ Mobile pass (Tier 3 item 25) ═════════════════════════════════════════════
+   One shared small-screen layer for every page (page_chrome injects this file),
+   generalized from the Schedule page's inline block: mastheads shrink, KPI
+   metric rows wrap 2-up instead of stacking into a tall single column, card
+   rows wrap 2-up, and wide tables scroll sideways inside their own box instead
+   of stretching the page. Page-specific mobile rules (e.g. the Schedule
+   calendar's 7-wide grid) stay on their pages. */
+@media (max-width: 640px) {
+    /* tighter page gutter — phones need the width */
+    .block-container, [data-testid="stMainBlockContainer"] {
+        padding-left: 0.9rem !important;
+        padding-right: 0.9rem !important;
+    }
+    /* mastheads / heroes shrink */
+    .masthead-title, .lab-hero-name { font-size: 22px; }
+    .masthead-sub, .lab-hero-sub { font-size: 12px; }
+    .masthead, .lab-hero { padding: 14px 14px 12px; }
+    .dash-card-value { font-size: 22px; }
+
+    /* KPI metric rows + card/tile rows: wrap 2-up (half height of stacking,
+       still readable). :has() is supported by every mobile browser the app
+       targets; older ones just fall back to Streamlit's default stacking. */
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]),
+    div[data-testid="stHorizontalBlock"]:has(.dash-card),
+    div[data-testid="stHorizontalBlock"]:has(.glass-tile),
+    div[data-testid="stHorizontalBlock"]:has(.mini-tile),
+    div[data-testid="stHorizontalBlock"]:has(.kpi-tile) {
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+        > div[data-testid="stColumn"],
+    div[data-testid="stHorizontalBlock"]:has(.dash-card)
+        > div[data-testid="stColumn"],
+    div[data-testid="stHorizontalBlock"]:has(.glass-tile)
+        > div[data-testid="stColumn"],
+    div[data-testid="stHorizontalBlock"]:has(.mini-tile)
+        > div[data-testid="stColumn"],
+    div[data-testid="stHorizontalBlock"]:has(.kpi-tile)
+        > div[data-testid="stColumn"] {
+        min-width: calc(50% - 8px) !important;
+        flex: 1 1 calc(50% - 8px) !important;
+    }
+    [data-testid="stMetricValue"] { font-size: 1.35rem !important; }
+
+    /* wide markdown tables scroll in place (dense_table already wraps itself;
+       this catches the hand-rolled ones) */
+    [data-testid="stMarkdown"] table {
+        display: block;
+        overflow-x: auto;
+        max-width: 100%;
+    }
+    /* st.dataframe / aggrid: never wider than the phone viewport */
+    [data-testid="stDataFrame"], .ag-root-wrapper { max-width: 100% !important; }
+}

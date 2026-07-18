@@ -946,3 +946,108 @@ unadopted (§23-4, C3/C4 of the overnight plan).
 
 Verification: 68/68 script-test sweep; AppTest smoke on Hub, Rankings, TD
 (Overview + Lab), Players, War Room, Settings (toggle renders), Whiteboard.
+
+## 28. TIER 3 — BUILT (2026-07-18, while you were out)
+
+All nine Tier 3 items (backlog 18-26) landed, one commit each, deployed to
+the VPS after every item (app5-web restarted; tracker untouched all tier).
+Verdicts first, receipts after.
+
+**18. Theme-reactive charts — charts finally follow your preset.** You run
+Midnight; every chart was hardcoded Dark. `CARD_BG/GRID/HEAT/DIVERGE` (+ new
+text/subtext/border/body_bg tokens) now resolve from the active
+STYLE_PRESETS row via `ui.refresh_theme_tokens()` (import-time fallback,
+re-resolved every `page_chrome` run). The six cached helper modules that
+froze the old constants at first import now read them off `helpers.ui` at
+call time. Proof: AppTest under Forest carries the preset colour into 4
+rendered Plotly figures on TD; `tracker/test_theme_tokens.py`.
+
+**19. Roster CSV import — a whole roster in one paste.** Input Hub → Players
+→ "📥 Import roster": upload a CSV or paste spreadsheet rows; tolerant parse
+(header optional + alias-sniffed, `5'11`/`5-11`/`71` heights, "Last, First"
+flip, per-line warnings) → previewed add/update/skip plan → one confirm that
+runs the editor's own insert path (season stamping, identity auto-link,
+grad-year default). Engine is pure (`helpers/roster_import.py`);
+`tracker/test_roster_import.py` covers the variants + a throwaway-DB apply.
+
+**20. Hall of Fame — the record book opened.** New "Single-game records" tab:
+top-10 PTS/TRB/AST/STL/BLK nights, all seasons, tracked + hand-entered boxes
+pooled (same fuel as the career sums), ties to whoever did it first. Plus
+"🔔 Records watch" under the career leaders: active players whose own pace
+passes a displayed career rung within ~5 games, verdict-sentence chips.
+Empty locally only because 'Current' has no careers yet — engine covered by
+`tracker/test_hall_of_fame.py`, boards verified on the archive.
+
+**21. Nightly OSSAA refresh — packaged, one sudo step left for you.**
+`deploy/app5-ossaa-refresh.{service,timer}` on the rollover pattern: 04:30
+nightly (after the rollover check), `--days 3` fast refresh (~20-40 pages,
+untracked-scores-only, idempotent), Persistent=true. Dry-ran clean locally
+(offseason no-op). **Your install step, same as the rollover timer:**
+
+```bash
+ssh app5@107.170.27.154
+sudo cp ~/app5/APP5.0/deploy/app5-ossaa-refresh.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now app5-ossaa-refresh.timer
+```
+
+(While you're in there: the season-rollover timer from §25 item 8 is still
+uninstalled too — same three lines with `app5-season-rollover`.)
+
+**22. Officials crew pairs — how refs call it TOGETHER.** Individual tab
+gains a crew table: every pair (and full 3-man crew) with 5+ tracked games
+together — fouls/game in their shared games, home/away lean %, PPP, Q4 call
+share — verdict line first (tightest / most home-leaning, conf-dotted at
+k=8). The archive has 11 real pairs, none past n≥5 yet, so prod shows the
+honest empty state until the book grows. `tracker/test_crew_pairs.py`.
+
+**23. War Room save/load — your prep survives the tab close.** Named saved
+lineups (Creator) and named bracket configs (size, manual seeds for the real
+OSSAA draw or auto field, plus the sim count + form weight) — two USER_SCOPED
+JSON blobs per coach, 20-name caps, out-of-pool ids dropped on load with a
+toast. Verified by AppTest round trips: save five → clear → load → exact pids
+back; save 4-team bracket → fresh session → load → size/sims/form restored.
+
+**24. Whiteboard playbook — plays persist, and they print.** The board is
+now a real two-way component (same canvas JS, no new deps): draw → "⬆ Send
+to app" → name it in the new 📓 Playbook expander → saved to `coach_plays`,
+PRIVATE per coach. Storage honours the living-archive rule: compact rounded
+ops JSON only (~120 bytes for a small play), 40-play cap, audit-skipped, no
+PNGs in the DB ever — a `play_svg` renderer regenerates print-vector art on
+demand for the SVG download AND a new "Saved whiteboard plays" section on the
+printable scout sheet (own toggle, tracked + cold paths). Verified end to
+end in a real browser: drew, sent, saved (row inspected in the live DB),
+reloaded the page, loaded the play back onto the canvas, deleted it.
+`tracker/test_playbook.py`.
+
+**25. Mobile pass — phones get a real layout.** One shared
+`@media (max-width:640px)` layer in assets/style.css (every page loads it):
+mastheads shrink, KPI/metric and card/tile rows wrap 2-up instead of
+stacking into a tall column, metric values scale, wide tables scroll in
+place, tighter gutters. Browser-verified with computed styles at 375px
+(metric row wraps 4→2×2 at 169px cols, zero horizontal overflow on TD + HoF)
+and at 1280px (single row, full sizes — query correctly scoped). The
+Schedule calendar's 7-wide rules stay inline — calendar-specific.
+
+**26. WP calibration + weekly awards.** (a) `python -m tools.backtest
+--wp-report` → `docs/WP_CALIBRATION_2025-2026.md`: 29 tracked games, 1449
+curve steps, **Brier 0.0677** vs 0.2478 base-rate guessing; second half
+0.016 vs first half 0.117. The reliability table says the model is a touch
+UNDERconfident mid-range (10-30% buckets almost never win) — worth a
+constant pass when the pool is bigger. (b) Hub "This week in the league"
+strip (Paid, league-wide): player of the week (best Game Score week), game
+of the week (GEI), riser of the week (snapshots) — anchored on the latest
+game DATE so archives/offseason read right. Archive run composes Hannah
+Bond / Anadarko-vs-Adair for the season's closing week.
+`tracker/test_awards.py`.
+
+**Session notes.** (1) Laptop gotcha discovered: the shell's default
+`python` is MS-Store Python, which VIRTUALIZES `AppData\Local\APP5` — live-DB
+checks must use the Python312 binary (now in assistant memory). (2) A
+`.claude/launch.json` "app-noauth" config (port 8512, empty secrets file)
+now exists for browser-pane verification without the login wall — local
+only, untracked. (3) Concurrent with the second agent's UI pass (§27);
+rebased cleanly around it all session.
+
+Verification: full script-test sweep green after every item (66 tests by
+tier's end — 5 new files); per-item AppTest smokes as noted; browser-pane
+verification for items 24 and 25.

@@ -67,14 +67,70 @@ _EVIDENCE_VIEW = {
 _CONF_K = 8
 
 
-def _line_html(ln):
-    """One insight line: metric badge + confidence dot + n + the sentence."""
+def _line_html(ln, new=False):
+    """One insight line: metric badge + confidence dot + n + the sentence.
+    `new=True` prepends a NEW chip (per-coach, see the insights_seen blob)."""
     n = ln.get("n")
     dot = conf_dot(n, k=_CONF_K) if isinstance(n, (int, float)) else ""
-    return (f"<div style='margin-top:4px;font-size:12px'>"
+    new_chip = ("<span style='background:#f0a50022;color:#f0a500;"
+                "border:1px solid #f0a50055;border-radius:6px;padding:0 4px;"
+                "font-size:9px;font-weight:800;letter-spacing:1px;"
+                "margin-right:4px;vertical-align:1px'>NEW</span>" if new else "")
+    return (f"<div style='margin-top:4px;font-size:12px'>{new_chip}"
             f"<span class='badge accent'>{ln['metric']}</span> {dot}"
             f"<span style='color:var(--subtext);font-size:10px'>n={n}</span> "
             f"{_b(ln['text'])}</div>")
+
+
+# ── per-coach NEW badges (Tier 2 item 16) ─────────────────────────────────────
+# One JSON blob per coach (settings key `insights_seen`, USER_SCOPED):
+# {str(team_id): {line_hash: first-seen iso date}}. A line is NEW until the
+# coach has had it on screen on a PRIOR day — first sight stamps today, and the
+# chip stays for the rest of that day (a mid-scroll rerun must not eat it).
+def _ins_hash(ln):
+    import hashlib
+    raw = f"{ln.get('metric', '')}{str(ln.get('text', ''))[:40]}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def _seen_tracker(team_id):
+    """(is_new(ln), persist()) for this coach + team. `persist` writes the
+    updated blob once, only when something unseen actually rendered."""
+    import datetime as _dt
+    import json
+    import helpers.settings_utils as SU
+    tkey = str(team_id or "")
+    today = _dt.date.today().isoformat()
+    try:
+        seen_all = json.loads(SU.get_setting("insights_seen", "") or "{}")
+        if not isinstance(seen_all, dict):
+            seen_all = {}
+    except Exception:
+        seen_all = {}
+    seen = dict(seen_all.get(tkey) or {})
+    fresh = {}
+
+    def is_new(ln):
+        h = _ins_hash(ln)
+        if h not in seen:
+            fresh[h] = today
+        return seen.get(h, today) == today      # unseen, or first seen today
+
+    def persist():
+        if not (fresh and tkey):
+            return
+        seen.update(fresh)
+        if len(seen) > 300:                     # cap the blob per team
+            seen_d = sorted(seen.items(), key=lambda kv: kv[1])[-300:]
+            seen.clear()
+            seen.update(seen_d)
+        seen_all[tkey] = seen
+        try:
+            SU.set_setting("insights_seen", json.dumps(seen_all))
+        except Exception:
+            pass
+
+    return is_new, persist
 
 
 def _evidence_jumps(lines, key):
@@ -312,6 +368,10 @@ def render(ctx):
                "player's biggest deviation from the league, gated by sample size "
                "so a hot night never headlines. Scored vs the whole league.")
 
+    # per-coach NEW chips: unseen lines get flagged; the blob is persisted once
+    # after both feeds render (so a fragment rerun mid-scroll never eats chips).
+    _is_new, _seen_persist = _seen_tracker(getattr(ctx, "team_id", None))
+
     # ── team auto-scout — the TEAM's own most surprising reads ────────────────
     _tlines = _team_feed(
         ctx.gender, getattr(ctx, "season", "Current"),
@@ -322,7 +382,7 @@ def render(ctx):
     if _tlines:
         st.markdown("<div class='lab-hdr'>Auto-scout — team read</div>",
                     unsafe_allow_html=True)
-        _tbody = "".join(_line_html(ln) for ln in _tlines)
+        _tbody = "".join(_line_html(ln, new=_is_new(ln)) for ln in _tlines)
         st.markdown(f"<div class='gloss-card'>{_tbody}</div>",
                     unsafe_allow_html=True)
         _evidence_jumps(_tlines, key="insj_team")
@@ -337,7 +397,7 @@ def render(ctx):
         if not lines:
             continue
         nm = table[pid]["name"]
-        body = "".join(_line_html(ln) for ln in lines)
+        body = "".join(_line_html(ln, new=_is_new(ln)) for ln in lines)
         _cards.append(
             (pid, lines,
              f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>{body}</div>"))
@@ -350,6 +410,7 @@ def render(ctx):
     else:
         st.caption("No standout signals yet — this roster reads close to league "
                    "average on the tracked splits, or needs more games.")
+    _seen_persist()   # stamp today's first-sight dates (one write, if any)
 
     # ── deep dive: offense vs TOP-half vs BOTTOM-half opponents ────────────────
     _tids = getattr(ctx, "tracked_ids", None)

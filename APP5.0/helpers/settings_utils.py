@@ -104,7 +104,11 @@ STYLE_PRESETS = {
 # (data_version, active_season, team_color::*, migration markers) stays GLOBAL.
 # Stored as "u:<email>:<key>"; a coach with no override inherits the global value.
 USER_SCOPED = {"default_team", "accent_color", "color_scheme", "app_style",
-               "wide_mode", "scout_hidden_sections"}
+               "wide_mode", "scout_hidden_sections",
+               # per-coach {team_id: {insight-line hash: first-seen date}} JSON
+               # blob behind the Insights tab's NEW chips (one key, one blob —
+               # USER_SCOPED is an exact-key set, so no per-team keys).
+               "insights_seen"}
 
 
 def _scope_email() -> str:

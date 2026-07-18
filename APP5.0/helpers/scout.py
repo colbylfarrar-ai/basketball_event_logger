@@ -1301,6 +1301,22 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
         notes_html = (f"<h2>Game-plan notes</h2>"
                       f"<div class='notes-box'>{e(ntext)}</div>")
 
+    # ── saved whiteboard plays (drawn on the Whiteboard, per coach) ──
+    # `extra["plays"]` = [{"name", "svg"}] — vector art regenerated from the
+    # stored ops on demand (playbook.play_svg); prints like the shot chart.
+    plays_html = ""
+    _wb_plays = extra.get("plays") or []
+    if _show("saved_plays") and _wb_plays:
+        _rows_p = ""
+        for i in range(0, len(_wb_plays), 2):
+            pair = _wb_plays[i:i + 2]
+            _rows_p += "<tr>" + "".join(
+                f"<td><div class='diagname' style='border-bottom:none;"
+                f"font-weight:700'>{e(p['name'])}</div>{p['svg']}</td>"
+                for p in pair) + "</tr>"
+        plays_html = ("<h2>Plays for this game — from your whiteboard</h2>"
+                      f"<table class='diag'>{_rows_p}</table>")
+
     # ── blank play diagrams (hand-draw after printing) ──
     # A dense grid of blank half-courts with a write-your-own name line on top of
     # each (no pre-set BLOB/SLOB labels) — coaches name plays themselves. 4-across
@@ -1465,6 +1481,7 @@ table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;backg
         f"{sbd_html}"
         f"{sbpd_html}"
         f"{sbdd_html}"
+        f"{plays_html}"
         f"{diag_html}"
         "</div>")
     return PO.doc(f"Scout · {sc['name']}", body, extra_css=_extra_css)

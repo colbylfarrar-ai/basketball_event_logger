@@ -37,6 +37,9 @@ _AUDIT_SKIP_TABLES = {
     "app_settings", "change_requests", "audit_log",
     "game_event_lineup", "game_lineup_players", "game_lineup_officials",
     "fan_views", "game_timeouts", "rating_snapshots",
+    # coach_plays: private per-coach stroke blobs — auditing would re-store the
+    # whole ops JSON on every save and bloat the DB for zero moderation value.
+    "coach_plays",
 }
 _AUDIT_RE = re.compile(
     r"^\s*(INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
@@ -531,6 +534,20 @@ def initialize_database():
             " PRIMARY KEY (day, gender, system, team_id))",
             "CREATE INDEX IF NOT EXISTS idx_rsnap_board "
             "ON rating_snapshots(gender, system, season, day)",
+            # Saved whiteboard plays (Tier 3 item 24). PRIVATE per coach — every
+            # read/write filters coach_email (the coach_notes privacy model).
+            # `ops` is the compact rounded stroke JSON (feet coords); no PNG or
+            # other binary ever lands here (DB = living archive, founder rule) —
+            # renderings (SVG/PNG) regenerate from ops on demand.
+            "CREATE TABLE IF NOT EXISTS coach_plays ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " coach_email TEXT NOT NULL,"
+            " name TEXT NOT NULL,"
+            " mode TEXT NOT NULL DEFAULT 'half',"
+            " ops TEXT NOT NULL DEFAULT '[]',"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+            " UNIQUE(coach_email, name))",
+            "CREATE INDEX IF NOT EXISTS idx_cplays_coach ON coach_plays(coach_email)",
             # Audit-log retention: the moderation trail only needs a season of
             # look-back; unbounded growth was bloating the DB. Runs every boot
             # (cheap — indexed on ts).

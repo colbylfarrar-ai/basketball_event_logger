@@ -75,7 +75,25 @@ SCOUT_SECTIONS = [
     ("manual_intel", "Manual scouting (key players)", "Extras"),
     ("notes", "Game-plan notes", "Extras"),
     ("play_diagrams", "Blank play diagrams (draw by hand)", "Extras"),
+    ("saved_plays", "Saved whiteboard plays", "Extras"),
 ]
+
+
+def _saved_plays_for_sheet(limit=6):
+    """This coach's saved whiteboard plays as [{'name','svg'}] for the
+    printable sheet — SVG regenerated from stored ops (nothing rendered is
+    ever stored; playbook rule). Empty list when the coach has none, so the
+    section self-hides like every other extra block."""
+    try:
+        import helpers.auth as AUTH
+        import helpers.playbook as PB
+        _em = (AUTH.current_user() or {}).get("email", "")
+        return [{"name": p["name"],
+                 "svg": PB.play_svg(PB.get_play(_em, p["id"])["ops"],
+                                    p["mode"], width_px=330)}
+                for p in PB.list_plays(_em)[:limit]]
+    except Exception:
+        return []
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -531,7 +549,8 @@ def render(ctx):
                            "notes": SB.get_note(ctx.team_id),
                            "player_notes": SB.get_player_notes(ctx.team_id),
                            "coach_note": SB.get_note(ctx.team_id, kind="cnote"),
-                           "matchups": _matchups}
+                           "matchups": _matchups,
+                           "plays": _saved_plays_for_sheet()}
             st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                         unsafe_allow_html=True)
             html_doc = SC.printable_html(sc, opp_label, hidden=_hidden,
@@ -1382,6 +1401,8 @@ def render(ctx):
         "creation": _creat,
         "def_concession": _conc,
         "predictability": _pred,
+        # this coach's saved whiteboard plays, rendered to print SVG on demand
+        "plays": _saved_plays_for_sheet(),
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)

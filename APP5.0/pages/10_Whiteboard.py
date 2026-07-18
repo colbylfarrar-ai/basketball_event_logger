@@ -1,12 +1,18 @@
 """
-10_Whiteboard.py — draw plays on a half or full court. Nothing is stored.
+10_Whiteboard.py — draw plays on a half or full court, save them to a playbook.
 
-A pure client-side canvas whiteboard: the court is drawn in JavaScript (vector,
+The canvas whiteboard is a no-build bidirectional component
+(assets/whiteboard/index.html): the court is drawn in JavaScript (vector,
 crisp at any size) from the same geometry constants the shot-chart model uses
-(helpers/court_geom.py), and every stroke lives only in the browser. No DB, no
-API, no session state — refreshing the page wipes the board, by design. The one
-escape hatch is a "PNG" button that composites the court + drawing and saves to
-the coach's own device via canvas.toDataURL (still nothing server-side).
+(helpers/court_geom.py) and every stroke stays client-side at 60fps. Two
+round-trips exist, both explicit (never per-stroke):
+  * "⬆ Send to app" pushes the current board to Python so the coach can NAME
+    and SAVE it (helpers/playbook.py → coach_plays, compact rounded ops JSON
+    only — no PNGs or renders in the DB; the founder's living-archive rule).
+  * Loading a saved play hands the ops back to the component via a nonce'd
+    arg, replacing the board.
+Saved plays render to print-ready SVG on demand (playbook.play_svg) — download
+here, and they embed on the printable scout sheet.
 
 Why not streamlit-drawable-canvas: it round-trips every stroke through Python
 (laggy freehand) and the project is stale against current Streamlit. A ~300-line
@@ -46,8 +52,8 @@ page_header(
     sub="Sketch plays on a half or full court — solid arrow = cut, dashed = pass, "
         "zigzag = dribble, T-bar = screen, numbered O/X = players, gold dot = ball. "
         "**Drag any O, X or the ball to move it** — walk a player through the "
-        "action piece by piece. **Nothing is saved**: leaving or refreshing clears "
-        "the board. Use PNG to keep a copy on your device.")
+        "action piece by piece. Hit **⬆ Send to app**, then name it in the "
+        "Playbook below to save; PNG keeps a copy on your device.")
 
 # Court geometry, single-sourced from the shot-location model. The whiteboard
 # adds the one real-world constant court_geom doesn't need: a high-school court
@@ -63,480 +69,74 @@ _GEOM = json.dumps({
     "centerR": CG.FT_R,                   # center circle, 6 ft radius
 })
 
-_HTML = r"""
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; background: transparent; overflow: hidden; }
-  body { font-family: 'Segoe UI Variable Display','Segoe UI',-apple-system,
-         BlinkMacSystemFont,Inter,Roboto,sans-serif; }
-  #wrap { display: flex; flex-direction: column; height: 100%; gap: 8px; }
-  #bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-         background: #161b22; border: 1px solid #21262d; border-radius: 10px;
-         padding: 7px 9px; }
-  .grp { display: flex; align-items: center; gap: 4px; }
-  .sep { width: 1px; height: 22px; background: #21262d; margin: 0 4px; }
-  button { background: #0d1117; color: #9aa0aa; border: 1px solid #21262d;
-           border-radius: 7px; padding: 5px 10px; font-size: 12.5px;
-           cursor: pointer; font-family: inherit; line-height: 1.2;
-           white-space: nowrap; }
-  button:hover { border-color: #3a4048; color: #e6edf3; }
-  button.on { background: __ACCENT__22; border-color: __ACCENT__;
-              color: __ACCENT__; font-weight: 600; }
-  .swatch { width: 22px; height: 22px; border-radius: 50%; padding: 0;
-            border: 2px solid transparent; }
-  .swatch.on { border-color: #e6edf3; }
-  #stage { flex: 1; display: flex; justify-content: center; align-items: center;
-           min-height: 0; }
-  #frame { position: relative; background: #12141e; border: 1px solid #21262d;
-           border-radius: 12px; overflow: hidden; }
-  canvas { position: absolute; inset: 0; display: block; }
-  #draw { touch-action: none; cursor: crosshair; }
-</style>
+# ── the board (bidirectional component; see assets/whiteboard/index.html).
+# The declare_component call lives in helpers/whiteboard_component.py — pages
+# exec'd by st.navigation have no module, and declare_component requires one.
+from helpers.whiteboard_component import whiteboard as _wb_component
 
-<div id="wrap">
-  <div id="bar">
-    <div class="grp">
-      <button id="m-half" class="on">Half court</button>
-      <button id="m-full">Full court</button>
-    </div>
-    <div class="sep"></div>
-    <div class="grp" id="tools">
-      <button data-t="pen" class="on" title="Freehand">Pen</button>
-      <button data-t="cut" title="Solid arrow — player cut">Cut &#8594;</button>
-      <button data-t="pass" title="Dashed arrow — pass">Pass &#8674;</button>
-      <button data-t="dribble" title="Zigzag arrow — dribble">Dribble &#8767;</button>
-      <button data-t="screen" title="T-bar — screen">Screen &#8869;</button>
-      <button data-t="O" title="Tap to place numbered offense marker — drag to move">O</button>
-      <button data-t="X" title="Tap to place numbered defense marker — drag to move">X</button>
-      <button data-t="ball" title="Ball marker — one per court, drag to move">Ball</button>
-      <button data-t="erase" title="Tap or drag across a mark to remove it">Erase</button>
-    </div>
-    <div class="sep"></div>
-    <div class="grp" id="colors"></div>
-    <div class="sep"></div>
-    <div class="grp">
-      <button id="undo">Undo</button>
-      <button id="clear">Clear</button>
-      <button id="save" title="Download the board as an image">PNG</button>
-    </div>
-  </div>
-  <div id="stage"><div id="frame">
-    <canvas id="court"></canvas>
-    <canvas id="draw"></canvas>
-  </div></div>
-</div>
+# a Load stages {nonce, mode, ops_half, ops_full}; the component swaps its
+# board only when the nonce moves, so ordinary reruns never wipe a drawing.
+_load = st.session_state.get("_wb_load") or {}
 
-<script>
-(function () {
-  const G = __GEOM__;
-  const ACCENT = "__ACCENT__";
-  const LINE = "#9aa0aa", GOLD = "#e6be64";           // court palette (court_geom)
-  const COLORS = [ACCENT, "#e6edf3", "#58a6ff", "#3fb950", "#ff7b72"];
-  const M = 1.5;                                       // out-of-bounds margin, feet
+_board = _wb_component(geom=_GEOM, accent=ACCENT, load=_load,
+                       key="wb_board", default=None)
 
-  const frame = document.getElementById("frame");
-  const stage = document.getElementById("stage");
-  const courtCv = document.getElementById("court");
-  const drawCv = document.getElementById("draw");
-  const cctx = courtCv.getContext("2d");
-  const dctx = drawCv.getContext("2d");
+# ── 📓 Playbook — save / load / delete / export (per coach) ──────────────────
+import helpers.auth as AUTH
+import helpers.playbook as PB
 
-  // ── state ─────────────────────────────────────────────────────────────────
-  let mode = "half";                    // 'half' | 'full'
-  let tool = "pen";
-  let color = COLORS[0];
-  const ops = { half: [], full: [] };   // per-mode strokes, coords in FEET
-  let cur = null;                       // stroke in progress
-  let erasing = false;                  // eraser drag in progress
-  let dragOp = null;                    // marker (O/X/ball) being dragged
-  let scale = 10;                       // px per foot (set by layout)
+_me_email = (AUTH.current_user() or {}).get("email", "")
 
-  // feet-extent of the visible board per mode. Half court: portrait-ish,
-  // baseline at the BOTTOM (matches the app's shot charts). Full court:
-  // landscape, baselines left and right.
-  function extent() {
-    return mode === "half"
-      ? { w: G.courtW + 2 * M, h: G.halfLen + 2 * M }
-      : { w: 2 * G.halfLen + 2 * M, h: G.courtW + 2 * M };
-  }
+with st.expander("📓 Playbook — save & load plays", expanded=True):
+    _has_board = bool(_board and (_board.get("ops_half") or _board.get("ops_full")))
+    c1, c2 = st.columns([3, 1])
+    _pname = c1.text_input("Play name", key="wb_play_name",
+                           placeholder="e.g. Horns flare — ATO")
+    c2.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    if c2.button("Save play", key="wb_save_btn", type="primary",
+                 disabled=not ((_pname or "").strip() and _has_board)):
+        _mode = _board.get("mode", "half")
+        _ops = _board.get("ops_full" if _mode == "full" else "ops_half") or []
+        _err = PB.save_play(_me_email, _pname, _mode, _ops)
+        if _err:
+            st.warning(_err)
+        else:
+            st.toast(f"Saved '{_pname.strip()}' to your playbook", icon="📓")
+            st.rerun()
+    if not _has_board:
+        st.caption("Draw a play, hit **⬆ Send to app** on the board's toolbar, "
+                   "then name and save it here. Saved plays are private to you.")
 
-  // ── layout: fit the court into the stage, resize both canvases ───────────
-  function layout() {
-    const e = extent();
-    const availW = stage.clientWidth, availH = stage.clientHeight;
-    scale = Math.min(availW / e.w, availH / e.h);
-    const w = Math.round(e.w * scale), h = Math.round(e.h * scale);
-    const dpr = window.devicePixelRatio || 1;
-    frame.style.width = w + "px";
-    frame.style.height = h + "px";
-    for (const cv of [courtCv, drawCv]) {
-      cv.width = Math.round(w * dpr);
-      cv.height = Math.round(h * dpr);
-      cv.style.width = w + "px";
-      cv.style.height = h + "px";
-      cv.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    drawCourt(cctx);
-    render();
-  }
-
-  // ── court rendering (vector, in feet via canvas transforms) ──────────────
-  // One half court is drawn in a local frame: x across the court (-25..25),
-  // y up from the baseline (0..42), hoop at (0, hoopY). setTransform maps that
-  // frame onto the canvas per end; arcs/lines all inherit the mapping.
-  function halfCourtPaths(ctx) {
-    const yj = G.hoopY + G.cbreak;                 // corner-3 / arc join height
-    const tj = Math.atan2(G.cbreak, G.cornerX);    // arc start angle
-    const hw = G.courtW / 2;
-    ctx.lineWidth = 0.18;
-    ctx.strokeStyle = LINE;
-    ctx.beginPath();                               // boundary (3 sides; midcourt
-    ctx.moveTo(-hw, G.halfLen);                    //  line drawn by caller)
-    ctx.lineTo(-hw, 0);
-    ctx.lineTo(hw, 0);
-    ctx.lineTo(hw, G.halfLen);
-    ctx.stroke();
-    ctx.strokeRect(-G.laneHW, 0, 2 * G.laneHW, G.laneD);       // lane
-    ctx.beginPath();                                            // FT circle
-    ctx.arc(0, G.laneD, G.ftR, 0, 2 * Math.PI);
-    ctx.stroke();
-    ctx.beginPath();                                            // restricted arc
-    ctx.arc(0, G.hoopY, G.raR, 0, Math.PI);
-    ctx.stroke();
-    ctx.beginPath();                                            // corner 3s + arc
-    ctx.moveTo(-G.cornerX, 0); ctx.lineTo(-G.cornerX, yj);
-    ctx.moveTo(G.cornerX, 0); ctx.lineTo(G.cornerX, yj);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(0, G.hoopY, G.threeR, tj, Math.PI - tj);
-    ctx.stroke();
-    ctx.strokeStyle = GOLD;                                     // backboard + rim
-    ctx.lineWidth = 0.28;
-    ctx.beginPath();
-    ctx.moveTo(-3, G.boardY); ctx.lineTo(3, G.boardY);
-    ctx.stroke();
-    ctx.lineWidth = 0.22;
-    ctx.beginPath();
-    ctx.arc(0, G.hoopY, G.rimR, 0, 2 * Math.PI);
-    ctx.stroke();
-  }
-
-  function drawCourt(ctx) {
-    const e = extent();
-    ctx.save();
-    ctx.clearRect(0, 0, e.w * scale, e.h * scale);
-    const s = scale;
-    if (mode === "half") {
-      // local x → screen x, local y (up) → screen y (down), baseline at bottom
-      ctx.setTransform(ctx.getTransform().multiply(
-        new DOMMatrix([s, 0, 0, -s, (M + G.courtW / 2) * s, (M + G.halfLen) * s])));
-      halfCourtPaths(ctx);
-      ctx.beginPath();                            // midcourt line + center circle
-      ctx.lineWidth = 0.18; ctx.strokeStyle = LINE;
-      ctx.moveTo(-G.courtW / 2, G.halfLen); ctx.lineTo(G.courtW / 2, G.halfLen);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(0, G.halfLen, G.centerR, Math.PI, 2 * Math.PI);  // half circle in view
-      ctx.stroke();
-    } else {
-      const cy = (M + G.courtW / 2) * s;
-      // left end: local y runs toward +screen-x, local x down the screen
-      ctx.save();
-      ctx.setTransform(ctx.getTransform().multiply(
-        new DOMMatrix([0, s, s, 0, M * s, cy])));
-      halfCourtPaths(ctx);
-      ctx.restore();
-      // right end: mirrored
-      ctx.save();
-      ctx.setTransform(ctx.getTransform().multiply(
-        new DOMMatrix([0, s, -s, 0, (M + 2 * G.halfLen) * s, cy])));
-      halfCourtPaths(ctx);
-      ctx.restore();
-      ctx.lineWidth = 0.18 * s; ctx.strokeStyle = LINE;         // midcourt (screen px)
-      const mx = (M + G.halfLen) * s;
-      ctx.beginPath();
-      ctx.moveTo(mx, M * s); ctx.lineTo(mx, (M + G.courtW) * s);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(mx, cy, G.centerR * s, 0, 2 * Math.PI);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  // ── stroke rendering (screen px, points stored in feet) ──────────────────
-  const px = (f) => f * scale;
-
-  function arrowHead(ctx, x1, y1, x2, y2) {
-    const a = Math.atan2(y2 - y1, x2 - x1), L = px(1.3), w = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(x2, y2);
-    ctx.lineTo(x2 - L * Math.cos(a - w), y2 - L * Math.sin(a - w));
-    ctx.moveTo(x2, y2);
-    ctx.lineTo(x2 - L * Math.cos(a + w), y2 - L * Math.sin(a + w));
-    ctx.stroke();
-  }
-
-  function renderOp(ctx, o) {
-    ctx.strokeStyle = o.c; ctx.fillStyle = o.c;
-    ctx.lineWidth = px(0.32);
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.setLineDash([]);
-    if (o.t === "pen") {
-      if (o.pts.length < 2) return;
-      ctx.beginPath();
-      ctx.moveTo(px(o.pts[0][0]), px(o.pts[0][1]));
-      for (const p of o.pts) ctx.lineTo(px(p[0]), px(p[1]));
-      ctx.stroke();
-      return;
-    }
-    if (o.t === "O" || o.t === "X") {
-      const x = px(o.x), y = px(o.y), r = px(1.15);
-      ctx.lineWidth = px(0.28);
-      ctx.font = "600 " + px(1.5) + "px 'Segoe UI',sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      if (o.t === "O") {
-        ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
-        ctx.fillText(String(o.n), x, y + px(0.08));
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(x - r * 0.8, y - r * 0.8); ctx.lineTo(x + r * 0.8, y + r * 0.8);
-        ctx.moveTo(x + r * 0.8, y - r * 0.8); ctx.lineTo(x - r * 0.8, y + r * 0.8);
-        ctx.stroke();
-        ctx.font = "600 " + px(1.05) + "px 'Segoe UI',sans-serif";
-        ctx.fillText(String(o.n), x + r * 1.25, y - r * 0.85);
-      }
-      return;
-    }
-    if (o.t === "ball") {
-      // the ball: small filled circle, always gold (rim/backboard colour), so
-      // it reads apart from the O markers at a glance
-      const x = px(o.x), y = px(o.y), r = px(0.75);
-      ctx.fillStyle = "#e6be64";
-      ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill();
-      ctx.strokeStyle = "#12141e"; ctx.lineWidth = px(0.12);
-      ctx.stroke();
-      return;
-    }
-    // two-point tools
-    const x1 = px(o.x1), y1 = px(o.y1), x2 = px(o.x2), y2 = px(o.y2);
-    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
-    if (len < 2) return;
-    if (o.t === "pass") ctx.setLineDash([px(0.9), px(0.65)]);
-    if (o.t === "dribble") {
-      // zigzag: perpendicular triangle wave along the segment, arrowhead at end
-      const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
-      const amp = px(0.55), wave = px(1.5);
-      const straight = Math.min(px(1.2), len * 0.2);   // flat tail before the head
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      let d = wave / 2, k = 0;
-      while (d < len - straight) {
-        const sgn = (k % 2 === 0) ? 1 : -1;
-        ctx.lineTo(x1 + ux * d + nx * amp * sgn, y1 + uy * d + ny * amp * sgn);
-        d += wave; k++;
-      }
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      arrowHead(ctx, x1, y1, x2, y2);
-      return;
-    }
-    ctx.beginPath();
-    ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    if (o.t === "cut" || o.t === "pass") arrowHead(ctx, x1, y1, x2, y2);
-    if (o.t === "screen") {                      // T-bar perpendicular to the end
-      const ux = dx / len, uy = dy / len, half = px(1.1);
-      ctx.beginPath();
-      ctx.moveTo(x2 - uy * half, y2 + ux * half);
-      ctx.lineTo(x2 + uy * half, y2 - ux * half);
-      ctx.stroke();
-    }
-  }
-
-  function render() {
-    const e = extent();
-    dctx.clearRect(0, 0, e.w * scale, e.h * scale);
-    for (const o of ops[mode]) renderOp(dctx, o);
-    if (cur) renderOp(dctx, cur);
-  }
-
-  // ── eraser: removes whole marks by hit-test (vector model — clean removal,
-  // no pixel smudging; matches how undo works) ──────────────────────────────
-  const ERASE_R = 1.2;                                   // hit radius, feet
-  function _segDist(px_, py_, x1, y1, x2, y2) {
-    const dx = x2 - x1, dy = y2 - y1, L2 = dx * dx + dy * dy;
-    if (L2 === 0) return Math.hypot(px_ - x1, py_ - y1);
-    let t = ((px_ - x1) * dx + (py_ - y1) * dy) / L2;
-    t = Math.max(0, Math.min(1, t));
-    return Math.hypot(px_ - (x1 + t * dx), py_ - (y1 + t * dy));
-  }
-  function _hit(o, fx, fy) {
-    if (o.t === "O" || o.t === "X" || o.t === "ball")
-      return Math.hypot(o.x - fx, o.y - fy) < 1.7;
-    if (o.t === "pen") {
-      for (let i = 1; i < o.pts.length; i++)
-        if (_segDist(fx, fy, o.pts[i - 1][0], o.pts[i - 1][1],
-                     o.pts[i][0], o.pts[i][1]) < ERASE_R) return true;
-      return false;
-    }
-    return _segDist(fx, fy, o.x1, o.y1, o.x2, o.y2) < ERASE_R;
-  }
-  function eraseAt(fx, fy) {
-    const kept = ops[mode].filter((o) => !_hit(o, fx, fy));
-    if (kept.length !== ops[mode].length) { ops[mode] = kept; render(); }
-  }
-
-  // ── pointer input ─────────────────────────────────────────────────────────
-  function pos(ev) {
-    const r = drawCv.getBoundingClientRect();
-    return [(ev.clientX - r.left) / scale, (ev.clientY - r.top) / scale];
-  }
-
-  function nextNum(t) {                     // O/X auto-number, cycling 1-5
-    return ops[mode].filter((o) => o.t === t).length % 5 + 1;
-  }
-
-  function markerAt(fx, fy) {               // topmost draggable piece under the tap
-    const arr = ops[mode];
-    for (let i = arr.length - 1; i >= 0; i--) {
-      const o = arr[i];
-      if ((o.t === "O" || o.t === "X" || o.t === "ball")
-          && Math.hypot(o.x - fx, o.y - fy) < 1.7) return o;
-    }
-    return null;
-  }
-
-  drawCv.addEventListener("pointerdown", (ev) => {
-    ev.preventDefault();
-    drawCv.setPointerCapture(ev.pointerId);
-    const [fx, fy] = pos(ev);
-    if (tool === "erase") { erasing = true; eraseAt(fx, fy); return; }
-    // pieces are draggable with ANY drawing tool — grabbing an X/O/ball moves
-    // it instead of drawing over it (numbered players a kid can follow)
-    const m = markerAt(fx, fy);
-    if (m) { dragOp = m; return; }
-    if (tool === "ball") {                  // singleton: re-placing moves it
-      let b = ops[mode].find((o) => o.t === "ball");
-      if (!b) { b = { t: "ball", x: fx, y: fy }; ops[mode].push(b); }
-      b.x = fx; b.y = fy;
-      dragOp = b;
-      render();
-      return;
-    }
-    if (tool === "O" || tool === "X") {
-      const nm = { t: tool, c: color, x: fx, y: fy, n: nextNum(tool) };
-      ops[mode].push(nm);
-      dragOp = nm;                          // place-and-drag in one gesture
-      render();
-      return;
-    }
-    cur = tool === "pen"
-      ? { t: "pen", c: color, pts: [[fx, fy]] }
-      : { t: tool, c: color, x1: fx, y1: fy, x2: fx, y2: fy };
-  });
-  drawCv.addEventListener("pointermove", (ev) => {
-    if (dragOp) {
-      const [mx, my] = pos(ev);
-      dragOp.x = mx; dragOp.y = my;
-      render();
-      return;
-    }
-    if (erasing) { const [ex, ey] = pos(ev); eraseAt(ex, ey); return; }
-    if (!cur) return;
-    const [fx, fy] = pos(ev);
-    if (cur.t === "pen") cur.pts.push([fx, fy]);
-    else { cur.x2 = fx; cur.y2 = fy; }
-    render();
-  });
-  const finish = () => {
-    erasing = false;
-    dragOp = null;
-    if (!cur) return;
-    const trivial = cur.t !== "pen" && Math.hypot(cur.x2 - cur.x1, cur.y2 - cur.y1) < 0.3;
-    if (!trivial && !(cur.t === "pen" && cur.pts.length < 2)) ops[mode].push(cur);
-    cur = null;
-    render();
-  };
-  drawCv.addEventListener("pointerup", finish);
-  drawCv.addEventListener("pointercancel", () => {
-    erasing = false; dragOp = null; cur = null; render();
-  });
-
-  // ── toolbar ───────────────────────────────────────────────────────────────
-  const toolBtns = document.querySelectorAll("#tools button");
-  toolBtns.forEach((b) => b.addEventListener("click", () => {
-    tool = b.dataset.t;
-    toolBtns.forEach((x) => x.classList.toggle("on", x === b));
-  }));
-
-  const colGrp = document.getElementById("colors");
-  COLORS.forEach((c, i) => {
-    const b = document.createElement("button");
-    b.className = "swatch" + (i === 0 ? " on" : "");
-    b.style.background = c;
-    b.title = i === 0 ? "Accent" : c;
-    b.addEventListener("click", () => {
-      color = c;
-      colGrp.querySelectorAll(".swatch").forEach((x) => x.classList.toggle("on", x === b));
-    });
-    colGrp.appendChild(b);
-  });
-
-  const mHalf = document.getElementById("m-half");
-  const mFull = document.getElementById("m-full");
-  function setMode(m) {
-    mode = m;
-    mHalf.classList.toggle("on", m === "half");
-    mFull.classList.toggle("on", m === "full");
-    layout();
-  }
-  mHalf.addEventListener("click", () => setMode("half"));
-  mFull.addEventListener("click", () => setMode("full"));
-
-  document.getElementById("undo").addEventListener("click", () => {
-    ops[mode].pop();
-    render();
-  });
-
-  const clearBtn = document.getElementById("clear");
-  let armed = null;
-  clearBtn.addEventListener("click", () => {   // two-tap clear, no confirm() popup
-    if (armed) {
-      clearTimeout(armed); armed = null;
-      clearBtn.textContent = "Clear";
-      ops[mode] = [];
-      render();
-    } else {
-      clearBtn.textContent = "Sure?";
-      armed = setTimeout(() => { armed = null; clearBtn.textContent = "Clear"; }, 2000);
-    }
-  });
-
-  document.getElementById("save").addEventListener("click", () => {
-    const out = document.createElement("canvas");
-    out.width = courtCv.width; out.height = courtCv.height;
-    const octx = out.getContext("2d");
-    octx.fillStyle = "#12141e";
-    octx.fillRect(0, 0, out.width, out.height);
-    octx.drawImage(courtCv, 0, 0);
-    octx.drawImage(drawCv, 0, 0);
-    const a = document.createElement("a");
-    a.download = "hooptracks_play.png";
-    a.href = out.toDataURL("image/png");
-    a.click();
-  });
-
-  window.addEventListener("resize", layout);
-  layout();
-})();
-</script>
-"""
-
-components.html(
-    _HTML.replace("__GEOM__", _GEOM).replace("__ACCENT__", ACCENT),
-    height=780,
-    scrolling=False,
-)
+    _plays = PB.list_plays(_me_email)
+    if _plays:
+        _by_id = {p["id"]: p for p in _plays}
+        l1, l2, l3 = st.columns([3, 1, 1])
+        _pid = l1.selectbox(
+            "Saved plays", list(_by_id), key="wb_play_pick",
+            format_func=lambda i: (f"{_by_id[i]['name']} — "
+                                   f"{_by_id[i]['mode']} court · "
+                                   f"{_by_id[i]['n_ops']} marks"),
+            label_visibility="collapsed")
+        if l2.button("Load onto board", key="wb_load_btn"):
+            _pl = PB.get_play(_me_email, _pid)
+            if _pl:
+                st.session_state["_wb_load"] = {
+                    "nonce": st.session_state.get("_wb_load", {}).get("nonce", 0) + 1,
+                    "mode": _pl["mode"],
+                    "ops_half": _pl["ops"] if _pl["mode"] == "half" else [],
+                    "ops_full": _pl["ops"] if _pl["mode"] == "full" else []}
+                st.rerun()
+        if l3.button("Delete", key="wb_del_btn"):
+            PB.delete_play(_me_email, _pid)
+            st.toast("Play deleted")
+            st.rerun()
+        _sel = PB.get_play(_me_email, _pid)
+        if _sel:
+            st.download_button(
+                "⬇ Print image (SVG)",
+                PB.play_svg(_sel["ops"], _sel["mode"]),
+                file_name=f"{_sel['name'].replace(' ', '_')}.svg",
+                mime="image/svg+xml", key="wb_svg_dl",
+                help="A crisp vector image of the play on a white court — "
+                     "prints clean and drops into any doc. Saved plays also "
+                     "print on the scout sheet.")

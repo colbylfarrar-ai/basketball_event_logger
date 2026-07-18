@@ -150,6 +150,33 @@ if live is not None:
 
 st.divider()
 
+# ── tag-coverage chips — how much of this game the tag engines can read ────────
+# Film-review taggers are the coverage engine's best users; show the gap where
+# they fix it. Whole game (not the quarter/type filters below); definitions
+# mirror coverage.py / live_state: play_type over shots, defense over
+# shots + turnovers. Colours follow the semantic pair (colorblind-safe aware).
+_cov_evs = EL.load_events(gid, None)
+_cshots = [e for e in _cov_evs if e["event_type"] == "shot"]
+_ctovs = [e for e in _cov_evs if e["event_type"] == "turnover"]
+if _cshots:
+    import helpers.ui as _ui
+
+    def _cov_chip(lbl, n, tot):
+        pct = 100 * n / tot if tot else 0
+        c = _ui.GOOD if pct >= 60 else "#f0a500" if pct >= 30 else _ui.BAD
+        return (f"<span class='stat-chip' style='border-color:{c}66'>{lbl} "
+                f"<b style='color:{c}'>{pct:.0f}%</b> · {n}/{tot}</span>")
+
+    _p_n = sum(1 for e in _cshots if e.get("play_type"))
+    _d_pool = _cshots + _ctovs
+    _d_n = sum(1 for e in _d_pool if e.get("defense"))
+    st.markdown("<div style='margin:2px 0 4px'>"
+                + _cov_chip("🏷️ Play calls tagged", _p_n, len(_cshots))
+                + " " + _cov_chip("🛡️ Defense tagged", _d_n, len(_d_pool))
+                + "</div>", unsafe_allow_html=True)
+    st.caption("Whole game. Tags feed the play-type, scheme and exploit engines — "
+               "the bulk tools below make catch-up fast.")
+
 # ── quarter filter ─────────────────────────────────────────────────────────────
 qs = EL.quarters_in_game(gid)
 qlabels = ["All"] + [f"Q{q}" if q <= 4 else f"OT{q - 4}" for q in qs]

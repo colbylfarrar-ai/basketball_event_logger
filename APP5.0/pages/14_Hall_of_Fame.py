@@ -33,6 +33,7 @@ import helpers.seasons as SEAS
 import helpers.team_ratings as TR
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+import helpers.hall_of_fame as HOF
 
 _cfg, ACCENT = page_chrome("Hall of Fame")
 
@@ -90,6 +91,33 @@ def _player_sums(g):
         s["TRB"] += r["trb"] or 0
         s["AST"] += r["ast"] or 0
     return meta, sums
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _single_game(g):
+    """(boxes, game_meta) for the single-game record boards — tracked games'
+    event boxes plus hand-entered boxes for untracked games (the same
+    combined pool the career sums use, so the two halls never disagree)."""
+    _tgids = [r["id"] for r in query("SELECT id FROM games WHERE tracked=1")]
+    boxes = S.player_game_boxes(game_ids=_tgids) if _tgids else {}
+    boxes = {pid: dict(per) for pid, per in boxes.items()}
+    for r in query(
+            """SELECT m.game_id gid, m.player_id pid,
+                      (2*m.fgm + m.tpm + m.ftm) pts, (m.oreb + m.dreb) trb,
+                      m.ast, m.stl, m.blk
+               FROM manual_player_box m JOIN games gm ON gm.id=m.game_id
+               WHERE gm.tracked=0"""):
+        boxes.setdefault(r["pid"], {})[r["gid"]] = {
+            "PTS": r["pts"] or 0, "TRB": r["trb"] or 0, "AST": r["ast"] or 0,
+            "STL": r["stl"] or 0, "BLK": r["blk"] or 0}
+    game_meta = {r["id"]: {
+        "date": r["date"], "matchup": f'{r["n1"]} vs {r["n2"]}',
+        "season": r["season"] or "Current"} for r in query(
+        """SELECT g.id, g.date, g.season, t1.name AS n1, t2.name AS n2
+           FROM games g JOIN teams t1 ON t1.id=g.team1_id
+                        JOIN teams t2 ON t2.id=g.team2_id
+           WHERE t1.gender=?""", (g,))}
+    return boxes, game_meta
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -260,7 +288,8 @@ def _board(rows, cols, key):
                  width="stretch", key=key)
 
 
-tab_records, tab_tracked = st.tabs(["Records", "Tracked ratings"])
+tab_records, tab_single, tab_tracked = st.tabs(
+    ["Records", "Single-game records", "Tracked ratings"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,10 +328,12 @@ with tab_records:
         m = meta[pid]
         key = m["identity_id"] or pid
         c = _careers.setdefault(key, {"gp": 0, "PTS": 0, "TRB": 0, "AST": 0,
-                                      "seasons": 0, "rep": m})
+                                      "seasons": 0, "rep": m, "active": False})
         c["gp"] += s["gp"]; c["PTS"] += s["PTS"]
         c["TRB"] += s["TRB"]; c["AST"] += s["AST"]
         c["seasons"] += 1
+        # active = has a current-season line (drives the records-watch chips)
+        c["active"] = c["active"] or SEAS.is_current(m["season"])
         # newest season's row fronts the career ('Current' sorts above archives)
         if SEAS.is_current(m["season"]) or ((m["season"] or "") >
                                             (c["rep"]["season"] or "")):
@@ -324,6 +355,33 @@ with tab_records:
                     lbl: c[key], "GP": c["gp"], "Szn": c["seasons"],
                 } for c in top], ["Player", "Team", lbl, "GP", "Szn"],
                     f"hof_c_{lbl}")
+
+        # ── records watch — active players closing on a career rung ──────────
+        _watch = HOF.records_watch(
+            {k: {"name": c["rep"]["name"], "team": c["rep"]["team"],
+                 "gp": c["gp"], "active": c["active"],
+                 "PTS": c["PTS"], "TRB": c["TRB"], "AST": c["AST"]}
+             for k, c in _careers.items()},
+            top_n=10, horizon_games=5, min_gp=SEASON_MIN_GP,
+            board_min_gp=CAREER_MIN_GP)
+        if _watch:
+            _wlbl = {"PTS": "points", "TRB": "rebounds", "AST": "assists"}
+            st.markdown("#### 🔔 Records watch")
+            import math
+            for x in _watch[:6]:
+                _verb = ("to crack the top 10 in career "
+                         if x["entering"] else "to pass ")
+                _tail = (f"career {_wlbl[x['stat']]}"
+                         if x["entering"] else
+                         f"**{x['target_holder']}** ({x['target']:,} career "
+                         f"{_wlbl[x['stat']]})")
+                _gn = max(1, math.ceil(x["games_needed"]))
+                st.markdown(
+                    f"- **{x['name']}** ({x['team']}) needs "
+                    f"**{x['need']:,} {_wlbl[x['stat']]}** {_verb}{_tail} — "
+                    f"≈{_gn} game{'s' if _gn > 1 else ''} at their pace.")
+            st.caption("Active players only, at their own career per-game "
+                       "pace, within ~5 games of the next rung.")
 
     # ── team pantheon ────────────────────────────────────────────────────────
     st.markdown("### 🏆 Team pantheon")
@@ -391,7 +449,46 @@ with tab_records:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 2 — TRACKED RATINGS  (the deep engine: greatest-ever by OVERALL)
+#  TAB 2 — SINGLE-GAME RECORDS  (best individual nights, all seasons pooled)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_single:
+    st.markdown("### 🌙 Best single-game nights — all seasons")
+    st.caption("The biggest individual games in the program's book — tracked "
+               "games and hand-entered box scores both count. Ties go to "
+               "whoever did it first.")
+    _sg_boxes, _sg_games = _single_game(g)
+    _sg = HOF.single_game_records(_sg_boxes, meta, _sg_games, top_n=10)
+    if not any(_sg[s] for s in HOF.SG_STATS):
+        st.info("No per-game boxes yet — track a game or enter a box score "
+                "and the record book opens.")
+    else:
+        _sg_lbl = {"PTS": "Points", "TRB": "Rebounds", "AST": "Assists",
+                   "STL": "Steals", "BLK": "Blocks"}
+
+        def _sg_board(stat, key):
+            _board([{
+                "Player": f"#{r['number']} {r['name']}", "Team": r["team"],
+                _sg_lbl[stat]: r["value"], "Matchup": r["matchup"],
+                "Date": r["date"], "Season": r["season"],
+            } for r in _sg[stat]],
+                ["Player", "Team", _sg_lbl[stat], "Matchup", "Date", "Season"],
+                key)
+
+        s1, s2 = st.columns(2)
+        with s1:
+            st.markdown("**Points**"); _sg_board("PTS", "hof_sg_pts")
+            st.markdown("**Assists**"); _sg_board("AST", "hof_sg_ast")
+            st.markdown("**Blocks**"); _sg_board("BLK", "hof_sg_blk")
+        with s2:
+            st.markdown("**Rebounds**"); _sg_board("TRB", "hof_sg_trb")
+            st.markdown("**Steals**"); _sg_board("STL", "hof_sg_stl")
+        st.caption("Steals and blocks only exist in tracked games and fuller "
+                   "hand-entered boxes — those boards fill in as the tracked "
+                   "book grows.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 3 — TRACKED RATINGS  (the deep engine: greatest-ever by OVERALL)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_tracked:
     st.markdown("### 🐐 Greatest ever — by tracked rating")

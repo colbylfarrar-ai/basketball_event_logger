@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the APP5 OSSAA refresh nightly
+
+[Timer]
+# Nightly at 04:30 local (after the 03:30 rollover check, so on Oct 1 the new
+# season is active before the refresh runs). Persistent=true → a missed night
+# (box off) runs on next boot; the 3-day window in the service absorbs the gap.
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

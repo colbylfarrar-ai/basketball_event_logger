@@ -1,0 +1,19 @@
+[Unit]
+Description=APP5 nightly OSSAA schedule/score refresh (fast, date-ranged)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5/APP5.0
+Environment=APP5_DATA_DIR=/var/lib/app5
+# Fast refresh of the last 3 days: re-fetches ONLY teams already scheduled in
+# the window (~20-40 pages), inserts new games, fills/corrects scores on
+# UNTRACKED games, never touches tracked ones. Idempotent + rate-limited —
+# see tools/ossaa_refresh.py. The 3-day window catches late score postings.
+ExecStart=/home/app5/app5/APP5.0/.venv/bin/python tools/ossaa_refresh.py --days 3
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5

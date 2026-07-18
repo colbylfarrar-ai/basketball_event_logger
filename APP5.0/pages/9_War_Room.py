@@ -195,6 +195,18 @@ def _vis_tuple(ident, team_id):
 scored = _scored(gender, season_pick, form_w)
 tracked = _tracked(gender, season_pick)
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _wr_insight_feed(g, season="Current"):
+    """League-wide auto-scout feed (helpers/team_insights) for the Matchup
+    tells — cached once per (gender, season); the view looks both teams up.
+    3-line surface cap (the TD Insights tab is the deep-dive home)."""
+    import helpers.team_insights as TIN
+    try:
+        return TIN.team_insight_feed(gender=g, season=season, top=3)
+    except Exception:
+        return {}
+
 if not scored:
     empty_state(
         "No rated teams yet" if _is_cur_season
@@ -573,6 +585,58 @@ def _render_matchup():
             wp.update_yaxes(visible=False)
             _style(wp, 110, margin=dict(l=4, r=4, t=10, b=4))
             st.plotly_chart(wp, width="stretch", key="wr_wp")
+
+            # ── the tells — each side's auto-scout lines (Tier 2 item 11).
+            # The same league-relative feed the TD Insights tab deep-dives,
+            # capped at 3 lines per team; rendered in the Tier-1 line grammar
+            # (metric badge + confidence dot + n + sentence). Tracked depth →
+            # each column rides the viewer's entitlement for THAT team, like
+            # the Rankings deep dive (_see_trk).
+            _feed = _wr_insight_feed(gender, season_pick)
+            _wr_uid = AUTH.current_user()
+            if _feed.get(ta) or _feed.get(tb):
+                import re as _re_wri
+                from helpers.cards import conf_dot as _conf_dot
+
+                def _tell_lines(tid):
+                    if not ENT.can_see_team_tracked(_wr_uid, tid):
+                        return None                      # locked for viewer
+                    return _feed.get(tid, [])
+
+                def _tell_html(lines):
+                    return "".join(
+                        f"<div style='margin-top:4px;font-size:12px'>"
+                        f"<span class='badge accent'>{ln['metric']}</span> "
+                        f"{_conf_dot(ln.get('n'), k=8) if isinstance(ln.get('n'), (int, float)) else ''}"
+                        f"<span style='color:var(--subtext);font-size:10px'>"
+                        f"n={ln.get('n')}</span> "
+                        + _re_wri.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", ln["text"])
+                        + "</div>" for ln in lines)
+
+                st.markdown("<div class='section-hdr'>The tells — what the "
+                            "data says about each side</div>",
+                            unsafe_allow_html=True)
+                _tcols = st.columns(2)
+                for _col, _tid, _clr in ((_tcols[0], ta, ca), (_tcols[1], tb, cb)):
+                    with _col:
+                        st.markdown(
+                            f"<div style='font-weight:800;color:{_clr};"
+                            f"font-size:13px'>{name_of[_tid]}</div>",
+                            unsafe_allow_html=True)
+                        _tl = _tell_lines(_tid)
+                        if _tl is None:
+                            st.caption("🔒 Tracked-depth tells ride your access "
+                                       "to this team (own team / Co-op).")
+                        elif not _tl:
+                            st.caption("No tracked signal yet — the feed lights "
+                                       "up as this team's games are tracked.")
+                        else:
+                            st.markdown(
+                                f"<div class='gloss-card'>{_tell_html(_tl)}</div>",
+                                unsafe_allow_html=True)
+                st.caption("League-relative reads (|z| vs the tracked field), "
+                           "same engine as the Team Dashboard → Insights tab — "
+                           "attack the listed weakness, respect the strength.")
 
             # ── tale of the tape — the shared mini team cards (WAR_ROOM_PLAN
             # W-B). Tracked-depth rows gate per team on the viewer's

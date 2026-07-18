@@ -221,6 +221,46 @@ with st.expander("🛡️ Bulk-tag defense by team — set each side, then tweak
             st.info("Nothing to tag — pick a defense for at least one team "
                     "(uncheck **Only untagged** to overwrite existing tags).")
 
+# ── bulk re-tag SELECTED events (Tier 2 item 15) ────────────────────────────────
+# The defense fill above paints the whole game; this fixes a specific stretch —
+# pick the rows (they follow the quarter / event-type filters), pick the tag,
+# one write (helpers/event_log.bulk_retag validates against the canonical sets).
+with st.expander("🏷️ Bulk re-tag selected events — fix a stretch in one write"):
+    _rt_field_lbl = {"Play (set call)": "play_type", "Defense": "defense",
+                     "Turnover kind": "turnover_type"}
+    _rt_val_opts = {"play_type": play_opts, "defense": def_opts,
+                    "turnover_type": tov_opts}
+    _rt_val2key = {"play_type": play2key, "defense": def2key,
+                   "turnover_type": tov2key}
+    _rt_lbl = {e["id"]: (f"Q{e['quarter']} {e['time']} · "
+                         f"{e['event_type'].replace('_', ' ')} · "
+                         f"{pid2label.get(e['primary_player_id'], '—')}")
+               for e in events}
+    rt1, rt2 = st.columns(2)
+    _rt_f = rt1.radio("Tag to change", list(_rt_field_lbl), horizontal=True,
+                      key="ee_rt_field")
+    _rt_field = _rt_field_lbl[_rt_f]
+    _rt_v = rt2.selectbox("New value", _rt_val_opts[_rt_field],
+                          key=f"ee_rt_val_{_rt_field}",
+                          help="“—” clears the tag on the selected events.")
+    _rt_sel = st.multiselect(
+        "Events", list(_rt_lbl), format_func=lambda i: _rt_lbl[i],
+        key=f"ee_rt_sel_{gid}_{qpick}_{tpick}",
+        help="Follows the Quarter / Event-type filters above — filter to just "
+             "shots (or one quarter) first to keep this list short.")
+    st.caption("Events that can't carry the chosen tag (e.g. a free throw, or "
+               "a non-turnover for TO kind) are skipped, never corrupted.")
+    if st.button("Apply to selected", key="ee_rt_go", type="primary",
+                 disabled=not _rt_sel):
+        _n = EL.bulk_retag(_rt_sel, _rt_field,
+                           _rt_val2key[_rt_field].get(_rt_v))
+        if _n:
+            st.cache_data.clear()
+            st.success(f"Re-tagged {_n} event{'s' if _n != 1 else ''}.")
+            st.rerun()
+        else:
+            st.info("None of the selected events can carry that tag.")
+
 
 def _disp(ev):
     return {

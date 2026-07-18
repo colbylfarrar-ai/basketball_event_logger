@@ -301,6 +301,43 @@ def bulk_set_defense(game_id, defense, only_blank=True, primary_team_id=None):
     return n
 
 
+def bulk_retag(event_ids, field, value):
+    """Set ONE tag column to ``value`` across many events in a single write —
+    the Event Editor's multi-row re-tag (fix a whole stretch tagged with the
+    wrong set call / scheme / TO kind at once).
+
+    ``field`` ∈ {play_type, defense, turnover_type}; ``value`` must be a
+    canonical key for that field (helpers/playtypes.NAMED_PLAY_TYPES /
+    defenses.DEFENSES / turnovers.TURNOVER_TYPES), or None to clear. The
+    UPDATE is scoped to the event types that legitimately carry the tag
+    (_FIELDS_BY_TYPE), so a stray foul id in a turnover_type pass is skipped,
+    not corrupted. Tags are independent of scoring / lineups / +/-, so this is
+    a plain batched UPDATE (the db audit hook logs it). Returns rows updated.
+    """
+    import helpers.playtypes as PT
+    import helpers.defenses as DEF
+    import helpers.turnovers as TOV
+    canon = {
+        "play_type": {k for k, _ in PT.NAMED_PLAY_TYPES},
+        "defense": {k for k, _lbl, _fam in DEF.DEFENSES},
+        "turnover_type": {k for k, _ in TOV.TURNOVER_TYPES},
+    }
+    if field not in canon:
+        raise ValueError(f"bulk_retag: field must be one of {sorted(canon)}")
+    if value is not None and value not in canon[field]:
+        raise ValueError(f"bulk_retag: {value!r} is not a canonical {field}")
+    ids = [int(i) for i in (event_ids or [])]
+    if not ids:
+        return 0
+    eligible = tuple(t for t, cols in _FIELDS_BY_TYPE.items() if field in cols)
+    types = ",".join("?" for _ in eligible)
+    from database.db import executemany
+    return executemany(
+        f"UPDATE game_events SET {field}=? "
+        f"WHERE id=? AND event_type IN ({types})",
+        [(value, i, *eligible) for i in ids])
+
+
 def insert_missed_event(game_id, ev):
     """Insert an after-the-fact event (the basket the scorekeeper missed).
 

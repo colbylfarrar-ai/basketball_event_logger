@@ -441,6 +441,50 @@ _BLEND_FIELDS = ("Rating", "AdjNet", "ClassAdj", "SOS", "SOR",
                  "PPG", "oPPG", "MOV", "xPPG", "xoPPG")
 
 
+HYBRID_K_TRACKED = 6.0     # games-equivalent prior on the tracked-signal ramp:
+                           # a team's tracked possession rating earns weight
+                           # w = tracked_gp / (tracked_gp + K) in the hybrid, so
+                           # the tracked signal GROWS with the tracked book
+                           # instead of sitting behind a fixed constant
+                           # (2026-07-18 recal §10; adopt only on a T1/T6 win).
+
+
+def hybrid_ratings(gender=None, season="Current", game_ids=None,
+                   k_tracked=None, scored=None, tracked=None):
+    """score_ratings with each TRACKED team's Rating blended toward its
+    possession-based tracked rating by tracked-games evidence.
+
+    The tracked RatingPts (already points/game scale) is mean-aligned to the
+    same teams' score Ratings (removes any calibration offset between the two
+    engines), then blended per team:  (1-w)·score + w·tracked_aligned  with
+    w = tgp/(tgp+k). Teams without tracked games pass through untouched, so
+    the field stays comparable. Pass precomputed `scored`/`tracked` to reuse
+    cached engines. Returns the scored dict shape with Rating (and hybrid_w)
+    updated on tracked teams."""
+    if k_tracked is None:
+        k_tracked = HYBRID_K_TRACKED
+    if scored is None:
+        scored = score_ratings(gender=gender, season=season,
+                               game_ids=(list(game_ids) if game_ids else None))
+    if tracked is None:
+        tracked = tracked_ratings(gender=gender, season=season,
+                                  game_ids=(list(game_ids) if game_ids else None))
+    out = {tid: dict(r) for tid, r in scored.items()}
+    common = [t for t in tracked
+              if t in out and tracked[t].get("RatingPts") is not None]
+    if len(common) >= 3 and k_tracked is not None:
+        m_s = sum(out[t]["Rating"] for t in common) / len(common)
+        m_t = sum(tracked[t]["RatingPts"] for t in common) / len(common)
+        shift = m_s - m_t
+        for t in common:
+            tgp = tracked[t].get("GP", 0) or 0
+            w = tgp / (tgp + k_tracked) if (tgp + k_tracked) > 0 else 0.0
+            r_t = tracked[t]["RatingPts"] + shift
+            out[t]["Rating"] = (1.0 - w) * out[t]["Rating"] + w * r_t
+            out[t]["hybrid_w"] = round(w, 3)
+    return out
+
+
 def blended_ratings(gender=None, form_weight=0.0, game_ids=None, season="Current",
                     **kw):
     """Season score_ratings blended toward form_ratings by `form_weight` in [0,1]:

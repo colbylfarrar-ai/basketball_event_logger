@@ -559,6 +559,30 @@ def loading(msg="Crunching the numbers…"):
     return st.spinner(msg)
 
 
+def skeleton(tiles=4, *, height=92, container=None):
+    """Shimmer placeholder tiles (the ``.skeleton`` class in assets/style.css)
+    shown while a heavy first compute runs — perceived speed instead of a blank
+    flash. Returns the ``st.empty`` slot; the caller clears it when real content
+    is ready::
+
+        ph = ui.skeleton(4)
+        data = heavy_cached_call()
+        ph.empty()
+
+    Respects prefers-reduced-motion via the stylesheet (animation is CSS-only)."""
+    c = container if container is not None else st
+    ph = c.empty()
+    cells = "".join(
+        f"<div class='skeleton' style='height:{height}px'></div>"
+        for _ in range(tiles))
+    ph.markdown(
+        "<div style='display:grid;grid-template-columns:"
+        "repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0'>"
+        + cells + "</div>",
+        unsafe_allow_html=True)
+    return ph
+
+
 # ── Team identity colour ─────────────────────────────────────────────────────────
 def team_color(name, team_id=None):
     """A stable identity colour for a team, so each team carries one colour across

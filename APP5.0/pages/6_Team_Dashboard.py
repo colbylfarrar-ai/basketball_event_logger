@@ -43,6 +43,7 @@ from helpers.ui import (page_chrome, page_header, masthead, rgb as _rgb,
                         style_fig as _style, q_label as _q_label, empty_state,
                         gender_radio, gender_label, grid as _grid, seg as _seg,
                         AWAY, CARD_BG, GRID, HEAT, DIVERGE,
+                        skeleton as _skeleton,
                         glossary_key as _glossary_key)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar,
@@ -4223,8 +4224,10 @@ if _tdview == "Lab":
             if _bp:
                 st.caption("Box-prior on: stars are anchored to their player-rating "
                            "box impact, then moved by the possession data (gentle).")
+            _rapm_ph = _skeleton(4, height=110)
             rap = _rapm(gender, box_prior=_bp, season=season_pick)
             _wt = _war_tbl(gender, box_prior=_bp, season=season_pick)
+            _rapm_ph.empty()
             for _wpid, _wrow in rap.items():        # cache_data returns a copy —
                 _wv = _wt.get(_wpid)                 # safe to annotate per rerun
                 if _wv:

@@ -40,6 +40,7 @@ from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, rank_chip, grid as _grid,
                         page_header, lab_hero as _lab_hero, empty_state,
                         seg as _rkseg, HEAT, DIVERGE, PALETTE,
+                        skeleton as _skeleton,
                         glossary_key as _glossary_key)
 
 # The style-mix stacked bars cycle the app's own categorical palette rather than
@@ -520,7 +521,9 @@ TOP25 = {tid for tid, r in scored.items() if r["Rank"] <= 25}
 # tracked advanced bundle (one cached box pass) — shared by League Lab tab.
 # Pool-scoped to the viewer (_VISK) so the league-wide charts never surface a
 # Solo coach's tracked depth.
+_pack_ph = _skeleton(4)          # shimmer while the cold box pass runs
 pack = _tracked_pack(gender, tracked, _VISK, season_pick)
+_pack_ph.empty()
 
 # Page-level State + Class + Min-games filter — set the scope ONCE here (instead
 # of each tab rendering its own copy) so a coach picks the scope and every

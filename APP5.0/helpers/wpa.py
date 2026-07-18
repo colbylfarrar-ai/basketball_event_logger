@@ -309,8 +309,13 @@ def season_wpa(gender=None, mode="scoring", opp_adjust=True, season="Current"):
         """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
            WHERE g.tracked=1 AND g.season=? AND t.gender=?""", (season, gender)) if gender else query(
         "SELECT id FROM games WHERE tracked=1 AND season=?", (season,))
-    ep = league_ep() if mode == "possession" else None
     game_ids = [row["id"] for row in tg]
+    # EP over THIS scope (gender + season), never the no-arg default: the no-arg
+    # call filters season='Current', which is EMPTY post-rollover — it silently
+    # returned EP=0.0, zeroing every positive defensive credit (the all-negative
+    # Def WPA bug). Scoping also keeps boys/girls baselines separate.
+    ep = (league_ep(game_ids=game_ids) if game_ids else 0.0) \
+        if mode == "possession" else None
 
     # Fetch the per-game inputs ONCE instead of inside game_wpa per game (was an
     # N+1: each call re-pulled events + the full roster + game info). Now ~4

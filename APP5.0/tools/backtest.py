@@ -387,6 +387,125 @@ def t4_shrink_logo(tracked, k_grid=(0.0, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0, 20.0)):
 #  DRIVER
 # ══════════════════════════════════════════════════════════════════════════════
 
+def t5_wp_calibration(season=SEASON):
+    """In-game WIN-PROBABILITY calibration over the season's tracked games
+    (Tier 3 item 26a). For every step of every game's scoring-timeline WP
+    curve (the same pipeline the box score / Hub ribbon draws), record the
+    model's home-win probability vs whether home actually won, then:
+      * Brier score (mean squared error; 0.25 = a coin-flip guesser)
+      * reliability by decile — predicted bucket vs observed win rate
+      * a first-half / second-half split (early-game reads are the hard part)
+    Samples are curve steps (one per made basket), so busy stretches weigh
+    more; noted in the report. Returns the dict; write_wp_report() renders
+    the docs/ markdown artifact."""
+    import helpers.win_probability as WP
+    import helpers.gameflow as GF
+
+    rows = query(
+        """SELECT g.id, g.date, g.team1_id, g.team2_id,
+                  g.home_score, g.away_score
+           FROM games g WHERE g.tracked=1 AND g.season=?
+             AND g.home_score IS NOT NULL""", (season,))
+    ev_by = defaultdict(list)
+    for e in S.fetch_events([r["id"] for r in rows]):
+        ev_by[e["game_id"]].append(e)
+
+    samples = []          # (p_home, home_won 0/1, frac_elapsed)
+    n_games = 0
+    for r in rows:
+        scoring = [e for e in ev_by.get(r["id"], [])
+                   if e["event_type"] in ("shot", "free_throw")
+                   and e.get("shot_result") == "make"]
+        if len(scoring) < 4:
+            continue
+        scoring.sort(key=GF.elapsed)
+        times, margins, h, a = [0.0], [0], 0, 0
+        for e in scoring:
+            pts = e["shot_type"] if e["event_type"] == "shot" else 1
+            if e["shooter_team_id"] == r["team1_id"]:
+                h += pts
+            elif e["shooter_team_id"] == r["team2_id"]:
+                a += pts
+            times.append(GF.elapsed(e))
+            margins.append(h - a)
+        end_t = times[-1] or WP.GAME_SECONDS
+        curve = WP.wp_curve(list(zip(times, margins)), total_secs=end_t)
+        if len(curve) < 2:
+            continue
+        n_games += 1
+        won = 1 if r["home_score"] > r["away_score"] else 0
+        for t, _m, p in curve:
+            samples.append((p, won, (t / end_t) if end_t else 0.0))
+
+    if not samples:
+        return {"n_games": 0, "n_samples": 0}
+
+    brier = sum((p - w) ** 2 for p, w, _ in samples) / len(samples)
+    base = sum(w for _, w, _ in samples) / len(samples)
+    brier_base = sum((base - w) ** 2 for _, w, _ in samples) / len(samples)
+
+    def _buckets(sub):
+        out = []
+        for lo10 in range(10):
+            lo, hi = lo10 / 10, lo10 / 10 + 0.1
+            inb = [(p, w) for p, w, _ in sub if lo <= p < hi or (hi == 1.0 and p == 1.0)]
+            if inb:
+                out.append({"bucket": f"{lo:.0%}–{hi:.0%}",
+                            "pred": round(sum(p for p, _ in inb) / len(inb), 3),
+                            "obs": round(sum(w for _, w in inb) / len(inb), 3),
+                            "n": len(inb)})
+        return out
+
+    halves = {
+        "first_half": [s for s in samples if s[2] <= 0.5],
+        "second_half": [s for s in samples if s[2] > 0.5],
+    }
+    return {
+        "n_games": n_games, "n_samples": len(samples),
+        "brier": round(brier, 4), "base_rate": round(base, 3),
+        "brier_base": round(brier_base, 4),
+        "brier_halves": {k: (round(sum((p - w) ** 2 for p, w, _ in v) / len(v), 4)
+                             if v else None) for k, v in halves.items()},
+        "reliability": _buckets(samples),
+    }
+
+
+def write_wp_report(rep, season=SEASON, path=None):
+    """Render t5_wp_calibration() into docs/WP_CALIBRATION_<season>.md."""
+    from pathlib import Path
+    import datetime as _dt
+    path = Path(path) if path else (Path(__file__).resolve().parent.parent
+                                    / "docs" / f"WP_CALIBRATION_{season}.md")
+    if not rep.get("n_samples"):
+        body = "No tracked games with a scoreable timeline — nothing to calibrate.\n"
+    else:
+        rel = "\n".join(
+            f"| {b['bucket']} | {b['pred']:.1%} | {b['obs']:.1%} | {b['n']} |"
+            for b in rep["reliability"])
+        h = rep["brier_halves"]
+        body = f"""Generated {_dt.date.today().isoformat()} by `python -m tools.backtest --wp-report`.
+
+**Pool**: {rep['n_games']} tracked games, {rep['n_samples']} win-prob curve steps
+(one sample per made basket — busy stretches weigh more).
+
+**Brier score: {rep['brier']}** (lower is better; a coin-flip guesser scores 0.2500,
+always guessing the pool's home base rate of {rep['base_rate']:.1%} scores
+{rep['brier_base']}). First half {h['first_half']} · second half {h['second_half']}
+— late-game confidence should and does score better.
+
+| Predicted | Avg predicted | Observed home-win | n |
+|---|---|---|---|
+{rel}
+
+**Read**: each row is a probability decile — a calibrated model's *observed*
+column tracks its *predicted* column. Divergence at the tails on a pool this
+size is expected sampling noise; recheck each season as the tracked book grows.
+"""
+    path.write_text(f"# Win-probability calibration — {season}\n\n" + body,
+                    encoding="utf-8")
+    return path
+
+
 def run_all(constants=None, reg=None, sos_weight=None, include_t4=True):
     """Full harness pass under an optional constant config. Returns the report
     dict; team-ratings params (reg/sos_weight) ride as direct kwargs because
@@ -415,7 +534,21 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-t4", action="store_true")
+    ap.add_argument("--wp-report", action="store_true",
+                    help="run ONLY the T5 win-probability calibration and "
+                         "write docs/WP_CALIBRATION_<season>.md")
     args = ap.parse_args()
+    if args.wp_report:
+        rep = t5_wp_calibration()
+        if args.json:
+            print(json.dumps(rep, indent=2))
+        else:
+            print(f"T5 WP calibration: {rep.get('n_games', 0)} games, "
+                  f"{rep.get('n_samples', 0)} samples, "
+                  f"Brier {rep.get('brier')} (base {rep.get('brier_base')})")
+        p = write_wp_report(rep)
+        print(f"wrote {p}")
+        return
     rep = run_all(include_t4=not args.no_t4)
     if args.json:
         print(json.dumps(rep, indent=2, default=str))

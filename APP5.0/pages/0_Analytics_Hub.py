@@ -334,6 +334,52 @@ else:
         st.caption("Rank spots climbed on the results-only power board over the "
                    "last week (daily snapshots).")
 
+    # ── weekly awards digest (Tier 3 item 26b) — player / game / riser of the
+    # week, composed from existing feeds (game score, GEI, snapshots). Anchors
+    # on the latest game DATE, not the wall clock, so it reads right in the
+    # offseason too. Player + game are event-derived → gated like the other
+    # cross-team tracked strips.
+    if _paid:
+        try:
+            import helpers.awards as _AW
+
+            @st.cache_data(ttl=600, show_spinner=False)
+            def _hub_awards(g, vis):
+                return _AW.weekly_awards(g, game_ids=None if vis is None
+                                         else set(vis))
+
+            _aw = _hub_awards(_gender, _hub_vis)
+        except Exception:
+            _aw = None
+        if _aw and (_aw["player"] or _aw["game"] or _aw["riser"]):
+            _lo, _hi = _aw["window"]
+            st.markdown(f"<div class='lab-hdr'>This week in the league — "
+                        f"{_lo[5:]} → {_hi[5:]}</div>", unsafe_allow_html=True)
+            _ac = st.columns(3)
+            if _aw["player"]:
+                _p = _aw["player"]
+                _ac[0].markdown(
+                    _mini(f"#{_p['number']} {_p['name']}",
+                          f"GmSc {_p['gs']:.0f}",
+                          sub=f"Player of the week · {_p['team']} · "
+                              f"{_p['pts']} pts in {_p['gp']} gm"),
+                    unsafe_allow_html=True)
+            if _aw["game"]:
+                _g = _aw["game"]
+                _ac[1].markdown(
+                    _mini(_g["matchup"], f"GEI {_g['gei']:.1f}",
+                          sub=f"Game of the week · {_g['score']} · {_g['date']}"),
+                    unsafe_allow_html=True)
+            if _aw["riser"]:
+                _r = _aw["riser"]
+                _ac[2].markdown(
+                    _mini(_r["team"], f"▲{_r['d_rank']}",
+                          sub=f"Riser of the week · rating {_r['d_rating']:+.1f}"),
+                    unsafe_allow_html=True)
+            st.caption("Composed from the week ending at the latest played "
+                       "date — best Game Score week, most exciting tracked "
+                       "game (GEI), biggest board climb.")
+
     # ── game of the season — DRAMATIZED win-prob ribbon (Paid only) ────────────
     if D["game"] and _paid:
         from helpers.win_probability import excitement_label

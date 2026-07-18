@@ -25,6 +25,106 @@ def _fp100(r):
     return (r["fouls"] / r["game_poss"] * 100.0) if r.get("game_poss") else 0.0
 
 
+def crew_pairs(gender=None, game_ids=None, season="Current", *, min_games=5,
+               games_map=None, worked=None, fouls=None, poss=None, names=None):
+    """How officials call games TOGETHER — every pair (and the full three-man
+    crew where the sample holds) that has worked ≥ `min_games` games.
+
+    Data comes from the same primitives the per-ref aggregates use
+    (officials._games / _worked / _foul_events / _possessions_by_game); pass
+    them in explicitly for a synthetic script test. Game-level aggregation:
+    fouls/game counts EVERY whistle in their shared games (a pair's game feel,
+    not attribution), lean uses the fouler's team vs home/away, PPP the game
+    scores over event possessions, q4_share the late-call slice.
+
+    Returns {"rows": [...], "league_fpg": float, "league_ppp": float} — rows
+    sorted most-games-first, each:
+      {kind: 'pair'|'crew', off_pks, label, games, fpg, lean_pct, ha_fouls,
+       ppp, q4_share}
+    lean_pct > 0 = home-leaning (same convention as crew_outlook)."""
+    from itertools import combinations
+
+    if games_map is None:
+        games_map = OFF._games(gender, allow=game_ids, season=season)
+        gids = list(games_map.keys())
+        worked = OFF._worked(gids)
+        fouls = OFF._foul_events(gids)
+        poss = OFF._possessions_by_game(gids)
+        names = {pk: o["name"] for pk, o in OFF._officials().items()}
+    fouls = fouls or []
+    poss = poss or {}
+    names = names or {}
+
+    # per-game rollups (shared by every combo touching the game)
+    g_tot, g_home, g_away, g_q4 = {}, {}, {}, {}
+    for e in fouls:
+        gid = e["game_id"]
+        g_tot[gid] = g_tot.get(gid, 0) + 1
+        if e.get("quarter") == 4:
+            g_q4[gid] = g_q4.get(gid, 0) + 1
+        t = e.get("fouler_team")
+        g = games_map.get(gid)
+        if g and t is not None:
+            if t == g["team1_id"]:
+                g_home[gid] = g_home.get(gid, 0) + 1
+            elif t == g["team2_id"]:
+                g_away[gid] = g_away.get(gid, 0) + 1
+
+    # gid → refs on it, then co-occurrence sets per pair / full-crew triple
+    by_game = {}
+    for pk, gset in (worked or {}).items():
+        if pk not in names:
+            continue
+        for gid in gset:
+            by_game.setdefault(gid, []).append(pk)
+    combos = {}
+    for gid, pks in by_game.items():
+        pks = sorted(set(pks))
+        for pair in combinations(pks, 2):
+            combos.setdefault(("pair", pair), set()).add(gid)
+        if len(pks) >= 3:
+            for trio in combinations(pks, 3):
+                combos.setdefault(("crew", trio), set()).add(gid)
+
+    def _agg(gset):
+        scored = [g for g in gset if games_map.get(g)
+                  and games_map[g]["home_score"] is not None]
+        pts = sum((games_map[g]["home_score"] or 0)
+                  + (games_map[g]["away_score"] or 0) for g in scored)
+        po = sum(poss.get(g, 0) for g in scored)
+        ftot = sum(g_tot.get(g, 0) for g in gset)
+        hf = sum(g_home.get(g, 0) for g in gset)
+        af = sum(g_away.get(g, 0) for g in gset)
+        q4 = sum(g_q4.get(g, 0) for g in gset)
+        return pts, po, ftot, hf, af, q4
+
+    rows = []
+    for (kind, pks), gset in combos.items():
+        n = len(gset)
+        if n < min_games:
+            continue
+        pts, po, ftot, hf, af, q4 = _agg(gset)
+        ha = hf + af
+        rows.append({
+            "kind": kind, "off_pks": list(pks),
+            "label": " + ".join(names.get(p, str(p)) for p in pks),
+            "games": n, "fpg": round(ftot / n, 1) if n else 0.0,
+            "lean_pct": round((hf - af) / ha * 100.0, 0) if ha else 0.0,
+            "ha_fouls": ha,
+            "ppp": round(pts / po, 3) if po else None,
+            "q4_share": round(q4 / ftot * 100.0, 0) if ftot else 0.0})
+    rows.sort(key=lambda r: (-r["games"], r["label"]))
+
+    all_g = [g for g in by_game if g in games_map]
+    lg_fpg = (sum(g_tot.get(g, 0) for g in all_g) / len(all_g)) if all_g else 0.0
+    _scored = [g for g in all_g if games_map[g]["home_score"] is not None]
+    _pts = sum((games_map[g]["home_score"] or 0)
+               + (games_map[g]["away_score"] or 0) for g in _scored)
+    _po = sum(poss.get(g, 0) for g in _scored)
+    return {"rows": rows, "league_fpg": round(lg_fpg, 1),
+            "league_ppp": round(_pts / _po, 3) if _po else None}
+
+
 def crew_outlook(official_pks, gender=None, game_ids=None, overview=None,
                  env=None):
     """Pre-game outlook for the crew `official_pks` (a list of officials.id PKs).

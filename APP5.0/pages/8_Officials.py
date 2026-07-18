@@ -789,8 +789,56 @@ def _fx_individual():
         st.info("No game log available.")
 
 
+@st.fragment
+def _fx_crews():
+    """Crew pairs — how refs call games TOGETHER (Tier 3 item 22). League-wide
+    table (n≥5 games together), verdict line first (founder taste)."""
+    import helpers.ref_tendencies as RT
+    from helpers.cards import conf_dot as _conf_dot
+    st.markdown("<div class='lab-hdr'>Crew pairs — how they call it together</div>",
+                unsafe_allow_html=True)
+    cp = RT.crew_pairs(gender=gender, game_ids=_off_gids, season=_off_season,
+                       min_games=5)
+    _cp_rows = cp["rows"]
+    if not _cp_rows:
+        st.info("No pair of officials has 5+ tracked games together yet — the "
+                "crew table fills in as the tracked book grows.")
+        return
+    # verdict first: tightest + most home-leaning crews
+    _tight = max(_cp_rows, key=lambda r: r["fpg"])
+    _leany = [r for r in _cp_rows if r["ha_fouls"] >= 10]
+    _lean = max(_leany, key=lambda r: abs(r["lean_pct"])) if _leany else None
+    _v = (f"Tightest crew: <b>{_tight['label']}</b> — "
+          f"{_tight['fpg']:.1f} fouls/game across {_tight['games']} games "
+          f"together (league {cp['league_fpg']:.1f}) "
+          f"{_conf_dot(_tight['games'], k=8)}")
+    if _lean is not None and abs(_lean["lean_pct"]) >= 10:
+        _dir = "home" if _lean["lean_pct"] > 0 else "away"
+        _v += (f". Most {_dir}-leaning: <b>{_lean['label']}</b> "
+               f"({_lean['lean_pct']:+.0f}% of attributed fouls on the "
+               f"{'home' if _dir == 'home' else 'road'} team) "
+               f"{_conf_dot(_lean['games'], k=8)}")
+    st.markdown(_v + ".", unsafe_allow_html=True)
+    st.caption("Every pair (and full three-man crew) with 5+ games together. "
+               "Fouls/game counts every whistle in their shared games — the "
+               "game feel a crew produces, not individual attribution. "
+               "Lean +% = more fouls on the home team.")
+    _cp_df = pd.DataFrame([{
+        "Crew": r["label"],
+        "Type": "3-man crew" if r["kind"] == "crew" else "pair",
+        "GP together": r["games"],
+        "Fouls/gm": r["fpg"],
+        "Lean %": r["lean_pct"],
+        "PPP": r["ppp"],
+        "Q4 call %": r["q4_share"],
+    } for r in _cp_rows])
+    _grid(_cp_df, "off_crew_grid", height=min(520, 92 + 35 * len(_cp_df)))
+
+
 with tab_ind:
     _fx_individual()
+    st.divider()
+    _fx_crews()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

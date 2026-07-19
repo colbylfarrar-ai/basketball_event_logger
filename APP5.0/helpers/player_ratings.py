@@ -867,7 +867,7 @@ def _team_prior_anchors(profiles, gender, season, opp_ratings=None):
 def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                    stabilize=True, profiles=None, season="Current",
                    opp_adjust=True, opp_ratings=None,
-                   include_impact=True, rapm=None):
+                   include_impact=True, rapm=None, explain=False):
     """
     Compute every player's five 0-100 ratings over the eligible pool.
 
@@ -1060,8 +1060,71 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "SC": b["SC"],
             "GS/G": _round(prof["GS/G"]),
         }
+        if explain:
+            # spec 2.3 — the "why this number" payload, captured from the same
+            # z-maps the rating was just built from (no second engine pass).
+            _pillar_maps = {"offense": offense_z, "impact": impact_z,
+                            "defense": defense_z, "playmaking": playmaking_z,
+                            "rebounding": rebounding_z, "physical": physical_z,
+                            "oppadj": oppadj_z}
+            _parts = []
+            for _nm, _w in _OVERALL_PARTS:
+                _zm = _pillar_maps.get(_nm)
+                _zv = (_zm.get(p) if _zm is not None else None)
+                if _zm is None:
+                    # raw/penalty leaf — recompute its z cheaply from the pool
+                    if _nm == "TOV/Gz":
+                        _zv = zcol_signed("TOV/G", True).get(p)
+                    elif _nm == "nsPF/Gz":
+                        _zv = zcol_signed("nsPF/G", True).get(p)
+                    else:
+                        _zv = zcol(_nm).get(p)
+                _parts.append({"part": _nm, "weight": _w,
+                               "z": (None if _zv is None else round(_zv, 3))})
+            _raw100 = _scale100(overall_z[p])
+            out[p]["_explain"] = {
+                "parts": _parts,
+                "shrink": {"evidence_gp": round(eg, 2),
+                           "k": RATING_K_GAMES,
+                           "anchor": round(anchor_of.get(p, 50.0), 1),
+                           "raw": (None if _raw100 is None
+                                   else round(_raw100, 1)),
+                           "final": out[p]["OVERALL"]},
+                "samples": {"GP": prof["GP"], "evidence_gp": round(eg, 2)},
+            }
     _assign_ranks(out)
     return out
+
+
+# ── depth-of-track confidence tier (spec 2.3) ─────────────────────────────────
+# Two honest axes: games evidence (the same sigmoid curve the shrink uses) and
+# optional-tag coverage (helpers.coverage). Combined into a 4-tier chip whose
+# tooltip names the CHEAPEST next action — the PWA-header incentive mechanic,
+# pushing coaches to track and tag more.
+CONF_TIERS = ["Scouting look", "Solid read", "Deep book", "Full profile"]
+_CONF_COLORS = ["#8b949e", "#d29922", "#58a6ff", "#3fb950"]
+
+
+def confidence_tier(games, coverage_pct=None):
+    """(idx 0-3, label, color, next_action) from evidence games + tag coverage.
+
+    `coverage_pct` = the team's overall tag-coverage percent (0-100,
+    coverage.team_coverage()['overall_pct']); None treats coverage as 0 —
+    untagged is untagged, that's the incentive."""
+    import helpers.shrinkage as _SHR
+    ef = _SHR.evidence_frac(games or 0, RATING_K_GAMES)      # 0-1
+    cov = (coverage_pct or 0.0) / 100.0
+    score = 0.65 * ef + 0.35 * cov
+    idx = 0 if score < 0.35 else 1 if score < 0.60 else 2 if score < 0.80 else 3
+    if idx == 3:
+        action = "the full analytics stack is live for this player"
+    elif ef < 0.75:
+        need = 1 if (games or 0) >= RATING_K_GAMES else RATING_K_GAMES
+        action = f"track {max(need, 1)}+ more game(s) to firm this rating up"
+    else:
+        action = ("tag guarded-by / play type on shots to unlock the next "
+                  "trust tier")
+    return idx, CONF_TIERS[idx], _CONF_COLORS[idx], action
 
 
 def _assign_ranks(ratings):
@@ -1117,7 +1180,7 @@ def _versatility(per_game, pool_means):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
-                      stabilize=True, season="Current"):
+                      stabilize=True, season="Current", explain=False):
     """
     A single flat row per eligible player holding EVERY stat the app computes:
     meta (name/number/team/class), games, the five 0-100 ratings, raw totals,
@@ -1136,7 +1199,8 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     if not profiles:
         return {}
     ratings = player_ratings(game_ids, gender=gender, min_games=min_games,
-                             stabilize=stabilize, profiles=profiles, season=season)
+                             stabilize=stabilize, profiles=profiles,
+                             season=season, explain=explain)
 
     # shared event pass + rate tables so the per-player advanced metrics below
     # don't each refetch / recompute the whole sample.
@@ -1272,6 +1336,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "OREBrtg": rt.get("OREBrtg"), "DREBrtg": rt.get("DREBrtg"),
             "Impact": rt.get("Impact"),
             "PHYSICAL": rt.get("PHYSICAL"),
+            "_explain": rt.get("_explain"),   # spec 2.3 (None unless explain=True)
             "Height": prof.get("height"), "Wingspan": prof.get("wingspan"),
             "Weight": prof.get("weight"),
             # ── totals ──────────────────────────────────────────────

@@ -57,6 +57,15 @@ def _ctx_table_full(g, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _team_coverage_pct(team_id):
+    """The team's overall optional-tag coverage percent (spec 2.3 trust tier)."""
+    if team_id is None:
+        return None
+    import helpers.coverage as COV
+    return COV.team_coverage(int(team_id)).get("overall_pct")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _ctx_badges(g, vis=None):
     return BG.award_badges(_ctx_table_full(g, vis))
 
@@ -542,6 +551,14 @@ def render_card(ctx):
     #    league-percentile rail. Detail blocks below drill each of these.
     if paid:
         _conf = SH.rating_confidence(P.get("GP") or 0)
+        # depth-of-track trust tier (spec 2.3): games evidence × the TEAM's
+        # optional-tag coverage — the visible incentive to track & tag more.
+        try:
+            _covp = _team_coverage_pct(P.get("team_id"))
+            _t_idx, _t_label, _t_clr, _t_action = PR.confidence_tier(
+                P.get("GP"), _covp)
+        except Exception:
+            _t_label = None
         _twrel = PR.team_relative(P, rows)
         _space = _spacing(getattr(ctx, "gender", None), _gp).get(pid, {}).get("index")
         _cclr = {"high": "var(--good)", "medium": "#f0a500",
@@ -567,12 +584,18 @@ def render_card(ctx):
         _verdict = ("<span style='font-size:11px;color:var(--subtext);font-weight:400;"
                     "float:right'>" + " · ".join(_verdict_bits) + "</span>"
                     if _verdict_bits else "")
+        _tier_chip = (
+            f" <span title='{html_escape(_t_action)}' style='background:transparent;"
+            f"border:1px solid {_t_clr};color:{_t_clr};border-radius:12px;"
+            f"padding:1px 9px;font-size:10px;font-weight:700;"
+            f"letter-spacing:.5px'>{_t_label.upper()}</span>"
+            if _t_label else "")
         st.markdown(
             "<div class='pl-hdr' style='margin-top:0'>Overview · scouted "
             f"<span style='color:{_cclr};font-weight:800'>{_conf['label']}</span> "
             f"<span style='font-size:11px;color:var(--subtext);font-weight:400'>"
             f"({_conf['games']} game{'s' if _conf['games'] != 1 else ''} · "
-            f"OVERALL &plusmn;{_conf['ci']:.0f})</span>{_verdict}</div>",
+            f"OVERALL &plusmn;{_conf['ci']:.0f})</span>{_tier_chip}{_verdict}</div>",
             unsafe_allow_html=True)
 
         def _kv(k, v):
@@ -623,6 +646,37 @@ def render_card(ctx):
                      "form, not a projection)</span>") if _traj else "Ratings"
             st.markdown(f"<div class='pl-hdr' style='margin-top:0'>{_thdr}</div>"
                         + bars, unsafe_allow_html=True)
+            # spec 2.3 — "why this number": the OVERALL blend, weights, and the
+            # shrink applied, from the engine's own z-maps (explain payload).
+            _ex = P.get("_explain")
+            if _ex:
+                with st.popover("？ How OVERALL is built", width="stretch"):
+                    _sh = _ex["shrink"]
+                    st.markdown(
+                        f"**Blend → shrink → rating.** Raw blend "
+                        f"**{_sh['raw'] if _sh['raw'] is not None else '—'}** "
+                        f"→ shrunk toward anchor **{_sh['anchor']:.0f}** by "
+                        f"evidence ({_sh['evidence_gp']:g} games vs k="
+                        f"{_sh['k']}) → **{_sh['final']}**.")
+                    _prows = [{
+                        "Input": pr["part"], "Weight": pr["weight"],
+                        "z": ("—" if pr["z"] is None else f"{pr['z']:+.2f}"),
+                        "Pull": ("—" if pr["z"] is None
+                                 else f"{pr['z'] * pr['weight']:+.2f}")}
+                        for pr in _ex["parts"]]
+                    st.dataframe(pd.DataFrame(_prows), hide_index=True,
+                                 width="stretch",
+                                 height=38 + 35 * len(_prows))
+                    st.caption(
+                        "z = the player vs the pool on that input (+1 ≈ one SD "
+                        "better); Pull = z × weight, what actually moves the "
+                        "blend. Inputs marked — don't apply (thin sample) and "
+                        "drop from the mean rather than count against the "
+                        "player. TOV/Gz and nsPF/Gz are penalty leaves "
+                        "(sign-flipped — fewer is better). The anchor blends "
+                        "the team's Power prior with the player's archetype "
+                        "mean; tag more games to grow evidence and keep more "
+                        "of the raw number.")
             _selfcr = P.get("SelfCr%")
             _passpct = (100 - _selfcr) if _selfcr is not None else None
             # Paint FG% reads off the shot chart, AST:TO lives in Per game —

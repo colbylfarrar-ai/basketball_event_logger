@@ -326,7 +326,8 @@ def _stat_table(g, mg, vis=None):
     # "whole tracked sample", so an empty visible set must NEVER reach here — the
     # caller downgrades to box-only instead (see the table-build block below).
     return PR.player_stat_table(gender=g, min_games=mg,
-                                game_ids=(list(vis) if vis else None))
+                                game_ids=(list(vis) if vis else None),
+                                explain=True)   # spec 2.3 rating explainability
 
 
 @st.cache_data(ttl=600, show_spinner=False)

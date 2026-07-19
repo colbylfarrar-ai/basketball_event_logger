@@ -1408,12 +1408,14 @@ const SHOT_DETAILS = [
 
 // Optional one-tap "play call" tag — the literal set call (nullable). Separate
 // from the inferred tempo/creation play types computed in helpers/playtypes.py.
+// Order is the coach's call order, not alphabetical — most-tapped first, dead-
+// ball sets last. Keep in lockstep with helpers/playtypes.NAMED_PLAY_TYPES.
 const PLAY_TYPES = [
-  ['pnr', 'Pick & roll'], ['iso', 'Isolation'], ['post', 'Post-up'],
-  ['spot', 'Spot-up'], ['cut', 'Cut'], ['offscreen', 'Off screen'],
-  ['dho', 'DHO'], ['duckin', 'Duck in'],
-  ['slob', 'SLOB'], ['blob', 'BLOB'],
-  ['transition', 'Transition'], ['putback', 'Putback'], ['other', 'Other']
+  ['transition', 'Transition'], ['iso', 'Isolation'], ['pnr', 'Pick & roll'],
+  ['dho', 'DHO'], ['post', 'Post-up'], ['spot', 'Spot-up'],
+  ['offscreen', 'Off screen'], ['cut', 'Cut'], ['duckin', 'Duck in'],
+  ['putback', 'Putback'], ['blob', 'BLOB'], ['slob', 'SLOB'],
+  ['other', 'Other']
 ];
 const PLAY_TYPE_KEYS = PLAY_TYPES.map(function (p) { return p[0]; });
 const PLAY_TYPE_LABEL = PLAY_TYPES.reduce(function (m, p) { m[p[0]] = p[1]; return m; }, {});
@@ -1439,12 +1441,15 @@ function tovLabel(key) {
 // every event logged inherits S.defense until it's changed. Keep this list in
 // lockstep with helpers/defenses.DEFENSES (the server folds unknown -> 'other').
 const DEFENSES = [
+  // Scramble + man trap ride at the top — the two a coach reaches for mid-
+  // possession, so they shouldn't be a scroll away in the dropdown.
+  ['scramble', 'Scramble'], ['man_trap', 'Man trap'],
   ['man', 'Man'], ['man_press', 'Man press'],
   ['zone_23', '2-3'], ['zone_32', '3-2'], ['zone_131', '1-3-1'], ['zone_122', '1-2-2'],
   ['matchup', 'Match-up'], ['trap_23', '2-3 trap'], ['trap_131', '1-3-1 trap'],
   ['press_221', '2-2-1 press'], ['press_131', '1-3-1 press'], ['press_1211', '1-2-1-1 press'],
   ['box1', 'Box-1'], ['triangle2', 'Triangle-2'], ['diamond1', 'Diamond-1'],
-  ['scramble', 'Scramble'], ['other', 'Other']
+  ['other', 'Other']
 ];
 const DEFENSE_KEYS = DEFENSES.map(function (d) { return d[0]; });
 const DEFENSE_LABEL = DEFENSES.reduce(function (m, d) { m[d[0]] = d[1]; return m; }, {});
@@ -1462,7 +1467,7 @@ function renderDefenseBar() {
   lab.className = 'chip-label';
   lab.textContent = 'Defense';
   bar.appendChild(lab);
-  // dropdown, not a sliding chip strip — 17 schemes in one tap (OS picker)
+  // dropdown, not a sliding chip strip — 18 schemes in one tap (OS picker)
   bar.appendChild(makeSelect(
     DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
     S.defense,

@@ -186,12 +186,15 @@ def team_playtype_percentiles(team_id, gender=None, game_ids=None, events=None,
 # The companion to the INFERRED team_playtypes above: this reads the optional
 # `play_type` a coach taps on a shot in the tracker, so it stays empty until
 # tagging begins. These are the literal set calls inference can't derive.
+# Order is the coach's call order, not alphabetical — most-tapped first, dead-
+# ball sets last. Display order only (every consumer keys off the tag), and in
+# lockstep with the tracker's PLAY_TYPES in tracker/static/app.js.
 NAMED_PLAY_TYPES = [
-    ("pnr", "Pick & roll"), ("iso", "Isolation"), ("post", "Post-up"),
-    ("spot", "Spot-up"), ("cut", "Cut"), ("offscreen", "Off screen"),
-    ("dho", "DHO"), ("duckin", "Duck in"),
-    ("slob", "SLOB"), ("blob", "BLOB"),
-    ("transition", "Transition"), ("putback", "Putback"), ("other", "Other"),
+    ("transition", "Transition"), ("iso", "Isolation"), ("pnr", "Pick & roll"),
+    ("dho", "DHO"), ("post", "Post-up"), ("spot", "Spot-up"),
+    ("offscreen", "Off screen"), ("cut", "Cut"), ("duckin", "Duck in"),
+    ("putback", "Putback"), ("blob", "BLOB"), ("slob", "SLOB"),
+    ("other", "Other"),
 ]
 _NAMED_KEYS = {k for k, _ in NAMED_PLAY_TYPES}
 

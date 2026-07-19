@@ -41,6 +41,11 @@ MIN_PLAYER_POSS = PT.MIN_PLAYER_POSS
 # labels fold into. Add a scheme here and it flows everywhere (tracker, editor,
 # dashboard, scout) — the one source of truth, mirroring NAMED_PLAY_TYPES.
 DEFENSES = [
+    # Scramble + man trap lead: the two a coach reaches for mid-possession, so
+    # the tracker dropdown puts them within thumb reach. Display order only —
+    # family rollups below are unaffected.
+    ("scramble",   "Scramble / transition", "transition"),
+    ("man_trap",   "Man trap",              "trap"),
     ("man",        "Man-to-man",            "man"),
     ("man_press",  "Man press",             "press"),
     ("zone_23",    "2-3 zone",              "zone"),
@@ -56,7 +61,6 @@ DEFENSES = [
     ("box1",       "Box-and-1",             "junk"),
     ("triangle2",  "Triangle-and-2",        "junk"),
     ("diamond1",   "Diamond-and-1",         "junk"),
-    ("scramble",   "Scramble / transition", "transition"),
     ("other",      "Other",                 "other"),
 ]
 _KEYS = {k for k, *_ in DEFENSES}

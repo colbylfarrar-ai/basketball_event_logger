@@ -4165,6 +4165,27 @@ def _fx_chadv():
             _style(fl, 420)
             st.plotly_chart(fl, width="stretch", key="adv_flow_chart")
 
+            # possession-model WP ribbon (spec 2.1): steps at every shot and
+            # turnover, so stops move the line — display-only (GEI elsewhere
+            # keeps the scoring curve). Guarded: any failure skips silently.
+            try:
+                _g = query("SELECT g.team1_id t1, g.team2_id t2, t1.name n1 "
+                           "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+                           "WHERE g.id=?", (gsel["game_id"],))[0]
+                _pcurve = WP.possession_timeline(
+                    S.fetch_events([gsel["game_id"]]), _g["t1"], _g["t2"])
+                if len(_pcurve) >= 2:
+                    from helpers.ui import wp_ribbon as _wp_ribbon
+                    _wpfig = _wp_ribbon(_pcurve, home_name=_g["n1"],
+                                        accent=ACCENT, height=200)
+                    if _wpfig is not None:
+                        st.markdown("**Win probability** — possession model "
+                                    "(every shot & turnover moves it)")
+                        st.plotly_chart(_wpfig, width="stretch",
+                                        key="adv_flow_wp")
+            except Exception:
+                pass
+
             fc = st.columns(5)
             fc[0].metric("Final", f"{flow['final']['team']}-"
                          f"{flow['final']['opp']}")

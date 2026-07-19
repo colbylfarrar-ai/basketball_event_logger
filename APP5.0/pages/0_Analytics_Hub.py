@@ -150,8 +150,10 @@ def _dashboard(gender, vis=None):
     try:
         # game of the season (highest GEI)
         best = None
+        import helpers.seasons as _SEAS
         _gei_ids = [r["id"] for r in query(
-            "SELECT id FROM games WHERE tracked=1 AND season='Current'")]
+            "SELECT id FROM games WHERE tracked=1 "
+            f"AND season = {_SEAS.tracked_default_season_sql()}")]
         if _gids is not None:                         # read-filter the GEI pool
             _gei_ids = [g for g in _gei_ids if g in _gids]
         for gid in _gei_ids:
@@ -191,7 +193,8 @@ def _dashboard(gender, vis=None):
                 best = (gei, g["n1"], g["n2"],
                         g["hs"] if g["hs"] is not None else h,
                         g["aws"] if g["aws"] is not None else a,
-                        _curve, WP.summarize(_curve))
+                        _curve, WP.summarize(_curve),
+                        gid, g["t1"], g["t2"])   # for the possession ribbon
         d["game"] = best
     except Exception as e:
         _fail("Game of the season", e)
@@ -384,7 +387,18 @@ else:
     if D["game"] and _paid:
         from helpers.win_probability import excitement_label
         try:
-            gei, n1, n2, h, a, _curve, _summ = D["game"]
+            gei, n1, n2, h, a, _curve, _summ = D["game"][:7]
+            # possession-model display curve (spec 2.1) — GEI above stays on
+            # the scoring curve; fall back to it if events can't be fetched.
+            try:
+                _gid, _t1id, _t2id = D["game"][7:10]
+                import helpers.wpa as _WPA
+                _pc = _WPA.possession_timeline(
+                    S.fetch_events([_gid]), _t1id, _t2id)
+                if len(_pc) >= 2:
+                    _curve = _pc
+            except Exception:
+                pass
             st.markdown("<div class='lab-hdr'>Game of the season</div>",
                         unsafe_allow_html=True)
             _gc = st.columns((5, 2), gap="medium")

@@ -130,6 +130,56 @@ def league_ep(game_ids=None, events=None):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  POSSESSION-MODEL DISPLAY CURVE (spec 2.1, 2026-07-18)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def possession_timeline(events, t1, t2, end=None, pregame_edge=0.0,
+                        sd_full=WP.SD_FULL):
+    """Win-probability DISPLAY curve stepping at every possession-ending event.
+
+    [(elapsed, margin_home, wp_home)] with a step at each shot (make OR miss),
+    each turnover, and each made free throw — so stops and giveaways visibly
+    move the curve through time decay, the possession model's view of the game.
+    Margin still only moves on scores.
+
+    Deliberately NOT wired into game_wpa's `timeline`/`wp_curve`: GEI and
+    summarize() integrate |ΔWP| over the curve, so densifying it would silently
+    re-score every past game's excitement (awards / Hall of Fame history).
+    Display surfaces (tracker live strip, Score-Flow Explorer) use this;
+    metrics keep the scoring curve.
+    """
+    if not events:
+        return []
+    evs = sorted((e for e in events
+                  if e["event_type"] in ("shot", "turnover", "free_throw")),
+                 key=lambda e: _elapsed(e["quarter"], e["time"]))
+    if not evs:
+        return []
+    if end is None:
+        end = max(_elapsed(e["quarter"], e["time"]) for e in evs) or 1
+    out = []
+    h = a = 0
+    for e in evs:
+        et = e["event_type"]
+        pts = 0
+        if et == "shot" and e["shot_result"] == "make":
+            pts = 3 if e["shot_type"] == 3 else 2
+        elif et == "free_throw":
+            if e["shot_result"] != "make":
+                continue              # missed FTs are dead-ball non-events here
+            pts = 1
+        if pts:
+            if e["shooter_team_id"] == t1:
+                h += pts
+            elif e["shooter_team_id"] == t2:
+                a += pts
+        t = _elapsed(e["quarter"], e["time"])
+        wp = WP.win_prob(h - a, max(end - t, 0), end, pregame_edge, sd_full)
+        out.append((t, h - a, wp))
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  SINGLE-GAME WPA
 # ══════════════════════════════════════════════════════════════════════════════
 

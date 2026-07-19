@@ -592,8 +592,15 @@ def _render_command_center():
             _mc.append((float(_el), _s1 - _s2))
         if len(_mc) >= 2:
             _curve = _WP.wp_curve(_mc)
-            _summ = _WP.summarize(_curve)
-            _wpfig = _wp_ribbon(_curve, home_name=t1name, accent=_acc,
+            _summ = _WP.summarize(_curve)   # GEI/summary stay on the scoring
+            # curve (award-history stability) — the RIBBON shows the possession
+            # model: a step at every shot/turnover, so stops move the line.
+            import helpers.stats as _S2
+            import helpers.wpa as _WPA
+            _pcurve = _WPA.possession_timeline(
+                _S2.fetch_events([game_id]), t1id, t2id)
+            _wpfig = _wp_ribbon(_pcurve if len(_pcurve) >= 2 else _curve,
+                                home_name=t1name, accent=_acc,
                                 height=160)
             if _wpfig is not None:
                 st.markdown("<div class='lab-hdr' style='margin-top:4px'>"

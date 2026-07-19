@@ -43,9 +43,10 @@ def _label(pct):
 def _team_tracked_game_ids(team_id):
     """The team's tracked games this season (events logged), score-independent —
     mirrors scout.build_scout's game selection."""
+    import helpers.seasons as SEAS
     return [r["id"] for r in query(
         "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
-        "AND season='Current'", (team_id, team_id))]
+        f"AND season = {SEAS.tracked_default_season_sql()}", (team_id, team_id))]
 
 
 def team_coverage(team_id, game_ids=None, events=None):

@@ -32,6 +32,19 @@ def active_label() -> str:
     return v.strip() or DEFAULT_LABEL
 
 
+def tracked_default_season_sql() -> str:
+    """SQL scalar expression: the season whose tracked games form the DEFAULT
+    sample. Normally the active season ('Current'); when the active season has
+    no tracked games yet (the post-rollover gap that produced the DWPA EP=0.0
+    bug — a no-arg default silently scoping to an empty season), it falls back
+    to the most recently PLAYED season that has tracked games. Inline SQL (no
+    params) so every default-scope subquery can embed it verbatim."""
+    return ("(SELECT CASE WHEN EXISTS (SELECT 1 FROM games WHERE tracked=1 "
+            "AND season='Current') THEN 'Current' ELSE "
+            "(SELECT season FROM games WHERE tracked=1 "
+            "ORDER BY date DESC, id DESC LIMIT 1) END)")
+
+
 def archived_labels() -> list[str]:
     """Distinct past-season labels that have games, newest first."""
     return [r["season"] for r in query(

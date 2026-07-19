@@ -63,15 +63,23 @@ def test_untagged_pool_identical_real_db():
     """On a pool with no turnover_type tags the weighted twins equal the raw
     leaves, so PLAYMAKING is byte-identical to the pre-change engine."""
     import helpers.player_ratings as PR
+    import helpers.stats as S
     profs = PR.player_profiles(gender="F")
     if not profs:
         print("  (no local players — skipped)")
         return
+    # players with ANY tagged turnover legitimately diverge (that's the
+    # feature) — restrict the identity check to all-untagged players. The old
+    # None-ness filter never did this, which went unnoticed while the
+    # post-rollover 'Current' scope bug kept this whole section skipped.
+    tagged = {e["primary_player_id"] for e in S.fetch_events()
+              if e["event_type"] == "turnover"
+              and e.get("turnover_type") is not None}
     checked = 0
     mism = 0
     for pid, p in profs.items():
-        # only players whose TOs are ALL untagged reproduce exactly; the local
-        # dev DB has no tags, prod has a few — tolerate tagged players.
+        if pid in tagged:
+            continue
         if p.get("AST/TOV") is None and p.get("AST/pmTOV") is None:
             continue
         checked += 1

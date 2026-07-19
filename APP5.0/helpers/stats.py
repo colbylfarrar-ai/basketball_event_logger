@@ -38,6 +38,7 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database.db import query
+import helpers.seasons as SEAS
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -51,7 +52,10 @@ from database.db import query
 #: Season scope: the default sample is the ACTIVE season only ('Current' sentinel)
 #: so league/team event aggregates never blend seasons after a rollover. Viewing a
 #: past season passes explicit game_ids instead (see helpers/seasons.py).
-_TRACKED_SUBQUERY = "ge.game_id IN (SELECT id FROM games WHERE tracked=1 AND season='Current')"
+#: Post-rollover safe: the season scope falls back to the last tracked season
+#: when the active one is still empty (see seasons.tracked_default_season_sql).
+_TRACKED_SUBQUERY = ("ge.game_id IN (SELECT id FROM games WHERE tracked=1 "
+                     f"AND season = {SEAS.tracked_default_season_sql()})")
 
 
 def _game_filter(game_ids):
@@ -1187,7 +1191,8 @@ def plus_minus(game_ids=None):
     else:
         # default sample = tracked games only, ACTIVE season (mirror _game_filter
         # + _TRACKED_SUBQUERY; this table has no `ge` alias so it can't reuse them)
-        clause = " WHERE game_id IN (SELECT id FROM games WHERE tracked=1 AND season='Current')"
+        clause = (" WHERE game_id IN (SELECT id FROM games WHERE tracked=1 "
+                  f"AND season = {SEAS.tracked_default_season_sql()})")
         params = ()
     rows = query(
         f"SELECT player_id pid, SUM(plus_minus) pm FROM game_lineup_players{clause} GROUP BY player_id",

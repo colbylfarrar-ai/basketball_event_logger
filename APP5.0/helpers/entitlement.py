@@ -286,14 +286,24 @@ def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
 
 def free_demo_game_id(ident: dict | None) -> int | None:
     """The ONE game a FREE coach may open in full tracked depth — a
-    try-before-you-buy demo. Deterministic + stable: their own team's earliest
-    game (lowest id). Paid/admin are unrestricted, so the concept doesn't apply
-    (returns None). A coach with no team, or no games yet, gets None.
+    try-before-you-buy demo. Their own team's earliest game (lowest id) IN THE
+    ACTIVE SEASON. Paid/admin are unrestricted, so the concept doesn't apply
+    (returns None). A coach with no team, or no active-season game yet, gets
+    None — the slot appears the moment they schedule their first game.
+
+    ACTIVE-SEASON SCOPED (2026-07-19). Without the season filter this picked the
+    lowest game id the team had EVER played, which on a DB carrying imported
+    history is an archived, already-finished game: the coach's one free game was
+    spent on a game there was nothing left to log. The demo's whole promise is
+    "log it and watch the command center light up", so the slot has to land on a
+    game that can still be logged. Deliberately NO fallback to the all-time
+    earliest — a fallback would move the slot (re-locking a game they'd already
+    opened) the moment they scheduled their first active-season game.
 
     Stable on purpose — keys on the immutable game id, not event counts or
-    tracked_by, so the free slot never silently moves to a different game (and
-    re-locks one the coach already saw) and it works no matter which writer
-    logged the game (PWA or the Streamlit manual form)."""
+    tracked_by, so within a season the free slot never silently moves to a
+    different game and it works no matter which writer logged the game (PWA or
+    the Streamlit manual form)."""
     if ident is None or has_paid_plan(ident):
         return None
     own = _own_teams(ident)
@@ -301,8 +311,9 @@ def free_demo_game_id(ident: dict | None) -> int | None:
         return None
     ph = ",".join("?" * len(own))
     rows = query(
-        f"SELECT id FROM games WHERE team1_id IN ({ph}) OR team2_id IN ({ph}) "
-        f"ORDER BY id LIMIT 1", tuple(own) + tuple(own))
+        f"SELECT id FROM games WHERE (team1_id IN ({ph}) OR team2_id IN ({ph})) "
+        f"AND season=? ORDER BY id LIMIT 1",
+        tuple(own) + tuple(own) + (_ACTIVE_SEASON,))
     return rows[0]["id"] if rows else None
 
 

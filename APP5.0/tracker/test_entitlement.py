@@ -168,6 +168,48 @@ ok(E.can_see_tracked_game_view(solo, g2), "paid coach sees any game's depth")
 ok(E.can_see_tracked_game_view(admin, g4), "admin sees any game's depth")
 ok(not E.can_see_tracked_game_view(free, None), "free coach + no game in scope -> blocked")
 
+# ── the free slot is ACTIVE-SEASON scoped (2026-07-19) ─────────────────────────
+# Regression: unscoped, this picked the lowest game id the team had EVER played,
+# so on a DB carrying imported history the one free game was spent on an archived,
+# already-finished game — nothing left to log, which is the entire demo promise.
+#
+# NOTE these first two are sanity only: this archived row is inserted last, so it
+# has a HIGHER id than g1 and plain id-ordering already excludes it. The
+# load-bearing case is _arch_only_team below, where the archived game is inserted
+# FIRST and therefore holds the lower id — the prod shape (imported history, then
+# this season's schedule). That one fails against the unscoped query; these don't.
+_arch = execute("INSERT INTO games (team1_id,team2_id,date,tracked,tracked_by,"
+                "season) VALUES (?,?, '2024-12-01', 1, '', '2024-2025')", (A, C))
+ok(E.free_demo_game_id(free) == g1,
+   "archived-season game never becomes the free slot")
+ok(not E.can_see_tracked_game_view(free, _arch),
+   "free coach stays blocked on the archived game")
+
+# A team whose ONLY games are archived gets no slot at all — deliberately no
+# fallback to the all-time earliest, because a fallback would MOVE the slot
+# (re-locking a game they'd already opened) the moment they scheduled their
+# first active-season game.
+_arch_only_team = execute(
+    "INSERT INTO teams (name, gender, class) VALUES ('Archive Only','F','3A')")
+execute("INSERT INTO games (team1_id,team2_id,date,tracked,tracked_by,season) "
+        "VALUES (?,?, '2024-12-02', 1, '', '2024-2025')", (_arch_only_team, C))
+_arch_coach = {"role": "coach", "plan": "free", "team_id": _arch_only_team,
+               "shares_pool": 0}
+ok(E.free_demo_game_id(_arch_coach) is None,
+   "team with only archived games -> no free slot (no fallback)")
+
+# The slot appears the moment they schedule an active-season game, and pins to it.
+_new_game = execute("INSERT INTO games (team1_id,team2_id,date,tracked,tracked_by) "
+                    "VALUES (?,?, '2026-11-20', 0, '')", (_arch_only_team, C))
+ok(E.free_demo_game_id(_arch_coach) == _new_game,
+   "scheduling the first active-season game creates the free slot")
+_later = execute("INSERT INTO games (team1_id,team2_id,date,tracked,tracked_by) "
+                 "VALUES (?,?, '2026-11-25', 0, '')", (_arch_only_team, C))
+ok(E.free_demo_game_id(_arch_coach) == _new_game,
+   "slot stays pinned to the earliest active game (a later one never steals it)")
+ok(not E.can_see_tracked_game_view(_arch_coach, _later),
+   "the second active-season game stays locked")
+
 print("recompute_game_pool is season-locked + monotonic (share to scout)")
 execute("UPDATE teams SET shares_pool=1 WHERE id=?", (A,))
 E.recompute_game_pool()

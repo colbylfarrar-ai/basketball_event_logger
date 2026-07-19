@@ -254,6 +254,45 @@ elif _me["role"] != "admin":
                "Only the admin can manage users.")
     if st.button("Log out", key="au_logout"):
         st.logout()
+
+    # ── Duplicate tracked games involving THIS coach (read-only, spec item 9):
+    #    when the coach retracks a game someone else tracked (or vice versa)
+    #    they can see which version the pool surfaces and why. The pin itself
+    #    stays admin-only.
+    try:
+        import helpers.game_dedup as _GD
+        _my_tids = set(AUTH.get_teams(_me["email"]) or [])
+        _my_email = _me["email"]
+        _mine = []
+        for _d in _GD.duplicate_matchups():
+            _involved = any(c["tracked_by"] == _my_email
+                            for c in _d["candidates"])
+            if not _involved and _my_tids:
+                _ids = {int(x) for x in _d["key"].split("|")[1:]}
+                _involved = bool(_ids & _my_tids)
+            if _involved:
+                _mine.append(_d)
+        if _mine:
+            with st.expander(f"🔀 Games tracked more than once ({len(_mine)})"):
+                st.caption("The shared pool shows ONE version of each game — "
+                           "the most detailed track (✓), unless the admin has "
+                           "pinned one. Ask the admin to pin a version if the "
+                           "auto-pick is wrong.")
+                for _d in _mine:
+                    st.markdown(f"**{_d['team1']} vs {_d['team2']}** · "
+                                f"{_d['date']}")
+                    _shown = (_d["override"]
+                              or _d["candidates"][0]["game_id"])
+                    for _c in _d["candidates"]:
+                        _mark = (" ✓ shown in pool"
+                                 if _c["game_id"] == _shown else "")
+                        _who = ("you" if _c["tracked_by"] == _my_email
+                                else _c["tracked_by"])
+                        st.caption(f"Game #{_c['game_id']} · {_who} · detail "
+                                   f"{_c['score']:.1f} · {_c['events']} "
+                                   f"events{_mark}")
+    except Exception:
+        pass
 else:
     st.caption(f"Signed in as **{_me['email']}** (admin).")
     if st.button("Log out", key="au_logout"):

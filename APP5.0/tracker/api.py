@@ -509,13 +509,25 @@ def create_game(g: NewGame, user: dict = Depends(require_full_user)):
     # season: explicit override wins, else inferred from the date (Oct 1 cutoff)
     # so a back-dated game lands directly in its real past season.
     szn = SEAS.resolve_new_game_season(date, g.season)
+    # Retrack detection (spec item 9): the same real game already tracked by
+    # another coach is legitimate (a second angle), but the coach should KNOW —
+    # the pool will surface only the most detailed version (game_dedup).
+    dup = None
+    a, b = sorted((g.team1_id, g.team2_id))
+    for r in query(
+            "SELECT id, tracked_by FROM games WHERE date=? AND tracked=1 "
+            "AND ((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))",
+            (date, a, b, b, a)):
+        if (r["tracked_by"] or "") != (user.get("email") or ""):
+            dup = {"game_id": r["id"], "tracked_by": r["tracked_by"] or "—"}
+            break
     gid = execute(
         "INSERT INTO games (team1_id, team2_id, date, location, video_url, tracked_by, season) "
         "VALUES (?,?,?,?,?,?,?)",
         (g.team1_id, g.team2_id, date, (g.location or "").strip() or None,
          g.video_url.strip(), (user.get("email") or ""), szn))
     GE.bump_data_version()
-    return {"id": gid, "created": True, "season": szn}
+    return {"id": gid, "created": True, "season": szn, "duplicate_of": dup}
 
 
 @api.post("/games/{game_id}/players")

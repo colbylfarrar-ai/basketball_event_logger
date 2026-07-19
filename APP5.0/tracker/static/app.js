@@ -762,7 +762,15 @@ async function createGame() {
     NG.open = false;
     $('btn-new-game').textContent = '+ New game';
     renderNewGame();
-    toast('Game created');
+    if (d.duplicate_of) {
+      // Retrack notice (non-blocking): a second track is legitimate — the
+      // shared pool auto-surfaces the most detailed version of the game.
+      toast('Heads up: ' + (d.duplicate_of.tracked_by || 'another coach')
+        + ' already tracked this game. Yours saves separately; the pool '
+        + 'shows the most detailed version.', 6000);
+    } else {
+      toast('Game created');
+    }
     loadGames();          // refresh list cache in background
     selectGame(d.id);     // straight to the lineup screen
   } catch (e) {
@@ -2176,12 +2184,12 @@ async function deleteEdit(eid) {
 /* ----- toast / wake lock ----- */
 
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, ms) {
   const t = $('toast');
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { t.hidden = true; }, 1800);
+  toastTimer = setTimeout(function () { t.hidden = true; }, ms || 1800);
 }
 
 async function acquireWakeLock() {

@@ -98,6 +98,8 @@ _NAV = {
                 icon=":material/sports:"),
         st.Page("pages/12_Settings.py", title="Settings",
                 icon=":material/tune:"),
+        st.Page("pages/15_FAQ.py", title="FAQ",
+                icon=":material/help:"),
     ],
 }
 

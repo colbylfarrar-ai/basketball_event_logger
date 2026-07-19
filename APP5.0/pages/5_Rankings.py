@@ -709,26 +709,68 @@ if _view == "Overview":
         with st.expander("Standings — by district"):
             _distmap = {row["id"]: (row["district"] or "")
                         for row in query("SELECT id, district FROM teams")}
+            # Intra-district records (founder ask 2026-07-18): a game counts
+            # toward the DISTRICT standings only when both teams share the same
+            # non-empty district, OR the game is tagged game_type='District'
+            # (covers schedules where the opponent's district field is unset).
+            _dW, _dL = {}, {}
+            for _g in query(
+                    "SELECT team1_id t1, team2_id t2, home_score hs, "
+                    "away_score aws, game_type gt FROM games "
+                    "WHERE season=? AND home_score IS NOT NULL "
+                    "AND away_score IS NOT NULL", (season_pick,)):
+                _d1 = _distmap.get(_g["t1"]) or None
+                _d2 = _distmap.get(_g["t2"]) or None
+                if not ((_d1 and _d1 == _d2) or _g["gt"] == "District"):
+                    continue
+                if _g["hs"] == _g["aws"]:
+                    continue
+                _win, _los = ((_g["t1"], _g["t2"]) if _g["hs"] > _g["aws"]
+                              else (_g["t2"], _g["t1"]))
+                _dW[_win] = _dW.get(_win, 0) + 1
+                _dL[_los] = _dL.get(_los, 0) + 1
             _grp = {}
             for t in ov_tids:
                 r = scored[t]
                 key = _distmap.get(t) or f"Class {r.get('class_lbl', r['class'])}"
-                _grp.setdefault(key, []).append(r)
+                _grp.setdefault(key, []).append((t, r))
             for _dname in sorted(_grp):
-                _gts = sorted(_grp[_dname],
-                              key=lambda r: -(r["W"] / max(r["W"] + r["L"], 1)))
-                _lead = _gts[0]
+                _gts = sorted(
+                    _grp[_dname],
+                    key=lambda tr: (-(_dW.get(tr[0], 0)
+                                      / max(_dW.get(tr[0], 0)
+                                            + _dL.get(tr[0], 0), 1)),
+                                    -_dW.get(tr[0], 0)))
+                # GB leads on the DISTRICT record; teams with no district games
+                # sink to the bottom regardless of overall record.
+                _played = [tr for tr in _gts
+                           if _dW.get(tr[0], 0) + _dL.get(tr[0], 0) > 0]
+                _gts = _played + [tr for tr in _gts if tr not in _played]
+                _lead = _played[0] if _played else None
                 _srows = []
-                for r in _gts:
-                    gb = ((_lead["W"] - r["W"]) + (r["L"] - _lead["L"])) / 2
+                for t, r in _gts:
+                    dw, dl = _dW.get(t, 0), _dL.get(t, 0)
+                    if _lead is not None and (dw + dl):
+                        _lw, _ll = _dW.get(_lead[0], 0), _dL.get(_lead[0], 0)
+                        gb = ((_lw - dw) + (dl - _ll)) / 2
+                        _gbs = "—" if gb <= 0 else f"{gb:.1f}"
+                    else:
+                        _gbs = "—"
                     _srows.append({
-                        "Team": r["name"], "W": r["W"], "L": r["L"],
+                        "Team": r["name"],
+                        "District": (f"{dw}-{dl}" if dw + dl else "—"),
+                        "GB": _gbs,
+                        "Overall": f"{r['W']}-{r['L']}",
                         "Win%": round(r["W"] / max(r["W"] + r["L"], 1) * 100, 1),
-                        "GB": "—" if gb <= 0 else f"{gb:.1f}", "Power": r["Power"]})
+                        "Power": r["Power"]})
                 st.markdown(f"**{_dname}**")
                 st.dataframe(pd.DataFrame(_srows), hide_index=True, width="stretch")
-            st.caption("Grouped by district (set on the Setup page); teams with no "
-                       "district fall back to their class. GB = games behind leader.")
+            st.caption("**District** = games against same-district opponents "
+                       "(or tagged District on the game) — the record that "
+                       "seeds the district tournament. GB runs on the district "
+                       "record; Overall shown alongside. Teams with no district "
+                       "set group by class; set districts on Setup → Roster & "
+                       "District.")
 
         st.markdown("<div class='section-hdr'>Rankings table</div>",
                     unsafe_allow_html=True)

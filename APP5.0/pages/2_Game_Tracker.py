@@ -347,11 +347,36 @@ if not ENT.can_see_tracked_game_view(_ident, game_id):
 # hook, never possession/efficiency analytics. Guarded by _paid_view below.
 _paid_view = ENT.has_paid_plan(_ident)
 
+# ── Live / Log & fix split (spec 2.2): the LIVE side is watch-only — every
+#    input widget (manual logging, corrections, floor, notes, quick-add) lives
+#    behind the Log & fix view so the bench screen can't fat-finger the log. ──
+from helpers.ui import seg as _seg_ui
+_V_LIVE, _V_LOG = "📺 Live", "✏️ Log & fix"
+_gt_view = _seg_ui("View", [_V_LIVE, _V_LOG], key="gt_view",
+                   label_visibility="collapsed") or _V_LIVE
+
+# The Live side's insight picker — which panels the bench wants on screen.
+_LIVE_PANELS = ["Win probability", "Win formula", "Courtside strip",
+                "Box score", "Rosters", "Foul watch", "Shot chart",
+                "Play-by-play", "Scout cues"]
+if _gt_view == _V_LIVE:
+    _live_sel = st.multiselect(
+        "Insights", _LIVE_PANELS, default=_LIVE_PANELS, key="gt_live_panels",
+        help="Pick what the live screen shows — scoreboard, quarter scores "
+             "and team fouls always stay.")
+else:
+    _live_sel = []
+
+
+def _panel_on(name):
+    return name in _live_sel
+
+
 # ── Pregame scouting cues — each team's tendencies from its PRIOR tracked games
 #    (a scout read to glance at pregame / during fast-mode logging), NOT computed
 #    from this game's live events. Paid depth; hidden when neither team has a
 #    tracked history (untracked opponent → no panel). ──────────────────────────
-if _paid_view:
+if _paid_view and _panel_on("Scout cues"):
     def _cue_vis(tid):
         _v = ENT.team_visible_tracked_ids(_ident, tid)
         return None if _v is None else tuple(sorted(_v))
@@ -444,7 +469,7 @@ else:
 # paragraph and the two shareables WITHOUT hunting for the box score page. Paid
 # depth (event-derived read + full-depth performer panels on the card), same
 # gate as the live command center's depth.
-if is_tracked and _paid_view:
+if is_tracked and _paid_view and _gt_view == _V_LIVE:
     @st.cache_data(ttl=600, show_spinner=False)
     def _pg_read(gid):
         import helpers.postgame as PG
@@ -561,7 +586,7 @@ def _render_command_center():
     #    events and renders the shared wp_ribbon. Fully guarded: any failure
     #    silently skips so live tracking is never put at risk. ──────────────────
     try:
-        if not _paid_view:
+        if not _paid_view or not _panel_on("Win probability"):
             raise RuntimeError("paid")   # win-prob/GEI is Paid depth — skip for Free demo
         import helpers.win_probability as _WP
         from helpers.ui import wp_ribbon as _wp_ribbon, mini_tile as _mini
@@ -627,7 +652,7 @@ def _render_command_center():
     #    so they read at any point; a ✅ means the team is currently on the winning
     #    side of that stat's target (midpoint of its win vs loss average). Paid
     #    depth, fully guarded — any failure silently skips. ──────────────────────
-    if _paid_view:
+    if _paid_view and _panel_on("Win formula"):
         try:
             import helpers.insights_team as _IT
             _live_ev = None                       # fetched lazily, shared by teams
@@ -685,7 +710,7 @@ def _render_command_center():
     #    clock the win-prob walk above uses, so there is no second clock model (the
     #    one real correctness risk). Engine math lives in helpers/courtside.py; this
     #    is display only. Live games only, fully guarded — any failure skips. ───────
-    if not is_tracked and _paid_view:
+    if not is_tracked and _paid_view and _panel_on("Courtside strip"):
         try:
             import helpers.courtside as _CS
             from helpers.ui import mini_tile as _mini2
@@ -756,27 +781,72 @@ def _render_command_center():
 
     # ── live box score with foul-trouble shading ────────────────────────────────
     box_rows, _, _ = compute_box(game_id, t1id, t2id)
-    bt1, bt2 = st.tabs([t1name, t2name])
-    for tab, tid in ((bt1, t1id), (bt2, t2id)):
-        rows = [{k: v for k, v in r.items() if k != "_tid"}
-                for r in box_rows if r["_tid"] == tid]
-        if not rows:
-            tab.info("No roster for this team yet.")
-            continue
-        df = (pd.DataFrame(rows)
-              .sort_values(["PTS", "MIN"], ascending=False)
-              .reset_index(drop=True))
-        tab.dataframe(df.style.map(_pf_style, subset=["PF"]),
-                      hide_index=True, width="stretch",
-                      height=min(420, 38 + 35 * len(df)))
-    st.caption("PF shading: 3 amber · 4 orange · 5 red (fouled out). "
-               "MIN from event-clock elapsed time; needs the on-court five set "
-               "wherever the events are logged.")
+    if _panel_on("Box score"):
+        bt1, bt2 = st.tabs([t1name, t2name])
+        for tab, tid in ((bt1, t1id), (bt2, t2id)):
+            rows = [{k: v for k, v in r.items() if k != "_tid"}
+                    for r in box_rows if r["_tid"] == tid]
+            if not rows:
+                tab.info("No roster for this team yet.")
+                continue
+            df = (pd.DataFrame(rows)
+                  .sort_values(["PTS", "MIN"], ascending=False)
+                  .reset_index(drop=True))
+            tab.dataframe(df.style.map(_pf_style, subset=["PF"]),
+                          hide_index=True, width="stretch",
+                          height=min(420, 38 + 35 * len(df)))
+        st.caption("PF shading: 3 amber · 4 orange · 5 red (fouled out). "
+                   "MIN from event-clock elapsed time; needs the on-court five set "
+                   "wherever the events are logged.")
+
+    # ── rosters (spec 2.2): FULL benches for both teams — the live box above
+    #    only lists players with stats; this is the "who do they even have"
+    #    panel, with the on-court five and live foul trouble at a glance. ──────
+    if _panel_on("Rosters"):
+        _oncourt = set()
+        if events_asc:
+            _oncourt = {r["player_id"] for r in query(
+                "SELECT player_id FROM game_event_lineup WHERE event_id=?",
+                (events_asc[-1]["id"],))}
+        _rpf, _rpts = {}, {}
+        for _e in events_asc:
+            if _e["event_type"] == "foul" and _e["secondary_player_id"]:
+                _rpf[_e["secondary_player_id"]] = \
+                    _rpf.get(_e["secondary_player_id"], 0) + 1
+            elif _e["shot_result"] == "make" and _e["primary_player_id"]:
+                if _e["event_type"] == "shot":
+                    _rpts[_e["primary_player_id"]] = \
+                        _rpts.get(_e["primary_player_id"], 0) + (_e["shot_type"] or 2)
+                elif _e["event_type"] == "free_throw":
+                    _rpts[_e["primary_player_id"]] = \
+                        _rpts.get(_e["primary_player_id"], 0) + 1
+        _ros = query(
+            "SELECT id, name, number, team_id FROM players "
+            "WHERE team_id IN (?,?) ORDER BY team_id, number", (t1id, t2id))
+        st.markdown("#### Rosters")
+        _rc1, _rc2 = st.columns(2)
+        for _col, _tid, _tnm in ((_rc1, t1id, t1name), (_rc2, t2id, t2name)):
+            _rows = [{"#": r["number"], "Player": r["name"],
+                      "On": "●" if r["id"] in _oncourt else "",
+                      "PF": _rpf.get(r["id"], 0),
+                      "PTS": _rpts.get(r["id"], 0)}
+                     for r in _ros if r["team_id"] == _tid]
+            with _col:
+                st.markdown(f"**{_tnm}**")
+                if _rows:
+                    _rdf = pd.DataFrame(_rows)
+                    st.dataframe(_rdf.style.map(_pf_style, subset=["PF"]),
+                                 hide_index=True, width="stretch",
+                                 height=min(420, 38 + 35 * len(_rdf)))
+                else:
+                    st.caption("No roster yet — add players on Setup or the "
+                               "phone's Quick Add.")
+        st.caption("● = on the floor at the latest logged event.")
 
     # ── foul watch: live foul-out projection for players in trouble (Tier 2,
     #    ML_LAYER_ROADMAP). At each player's current foul pace, when do they foul
     #    out? Same 480/240 clock as the courtside strip. Guarded — never blocks. ──
-    if not is_tracked and _paid_view:
+    if not is_tracked and _paid_view and _panel_on("Foul watch"):
         try:
             import helpers.rotation_plan as _RP
             _QSEC = 480
@@ -811,7 +881,8 @@ def _render_command_center():
                p.team_id AS tid
         FROM game_events ge JOIN players p ON p.id = ge.primary_player_id
         WHERE ge.game_id=? AND ge.event_type='shot'
-          AND ge.shot_x IS NOT NULL AND ge.shot_y IS NOT NULL""", (game_id,))
+          AND ge.shot_x IS NOT NULL AND ge.shot_y IS NOT NULL""", (game_id,)) \
+        if _panel_on("Shot chart") else None
     if shots:
         cc1, cc2 = st.columns(2)
         for col, tid, tname in ((cc1, t1id, t1name), (cc2, t2id, t2name)):
@@ -825,11 +896,13 @@ def _render_command_center():
                                     key=f"cc_court_{game_id}_{tid}")
                 else:
                     st.caption(f"{tname}: no located shots yet.")
-    else:
+    elif shots is not None:
         st.caption("No located shots yet — taps from the phone (or the court "
                    "below) land here as the game goes.")
 
     # ── play-by-play with running score ─────────────────────────────────────────
+    if not _panel_on("Play-by-play"):
+        return
     st.markdown("#### Play-by-Play")
     if not events_asc:
         st.info("No events logged yet.")
@@ -903,11 +976,16 @@ def _render_command_center():
             st.cache_data.clear()
             st.rerun(scope="app")
 
-if is_tracked:
-    _render_command_center()
-else:
-    st.fragment(run_every=REFRESH_SECS)(_render_command_center)()
-    st.caption(f"Auto-refreshes every {REFRESH_SECS} s while the game is live.")
+if _gt_view == _V_LIVE:
+    if is_tracked:
+        _render_command_center()
+    else:
+        st.fragment(run_every=REFRESH_SECS)(_render_command_center)()
+        st.caption(f"Auto-refreshes every {REFRESH_SECS} s while the game is "
+                   "live.")
+    # The Live side is watch-only — everything below (manual logging, floor,
+    # corrections, notes, quick-add) belongs to the Log & fix view.
+    st.stop()
 
 st.divider()
 

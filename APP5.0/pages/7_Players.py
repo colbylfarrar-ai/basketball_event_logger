@@ -1169,6 +1169,69 @@ with tab_impact:
     import helpers.advanced_ratings as ADV
     ADV.leaderboard(rows, _PAID, key="pl")
 
+    # ── Rebounding enrichment (founder batch item 6) — reads from the tags
+    #    coaches already log (rebound_by, guarded_by, play_type). Paid depth. ──
+    if _PAID:
+        st.markdown("<div class='pl-hdr'>Rebounding enrichment</div>",
+                    unsafe_allow_html=True)
+        st.caption("From the boards you already tag — who SECURES when they "
+                   "contest the shot, on-ball vs weak-side cleanups, own-miss "
+                   "recovery, and how the PnR carom is split. Thin rates are "
+                   "shrunk toward league mean (the stabilized column).")
+
+        @st.cache_data(ttl=600, show_spinner=False)
+        def _reb_enrich(g, vis=None):
+            import helpers.rebounding as RB
+            P = RB.player_rebounding(gender=g,
+                                     game_ids=(list(vis) if vis else None))
+            roles = RB.pnr_rebound_roles(
+                gender=g, game_ids=(list(vis) if vis else None))
+            return P, roles
+
+        _RB, _roles = _reb_enrich(gender, _vis_key)
+        _name = {pid: r["name"] for pid, r in by_pid.items()}
+        _rrows = []
+        for _pid, _m in _RB.items():
+            if _m["onball_misses"] < 5 and _m["dreb"] < 3:
+                continue
+            _rrows.append({
+                "Player": _name.get(_pid, f"#{_pid}"),
+                "Secures own contest %": (round(_m["def_secure_team_pct"], 0)
+                                          if _m["onball_misses"] >= 5 else None),
+                "Stabilized": _m["def_secure_team_stab"]
+                if _m["onball_misses"] >= 5 else None,
+                "On-ball DREB %": (round(_m["onball_share"], 0)
+                                   if _m["dreb"] >= 3 else None),
+                "Own-miss recov %": (round(_m["own_miss_rec_pct"], 0)
+                                     if _m["own_misses"] >= 3 else None),
+                "Contests": _m["onball_misses"], "DREB": _m["dreb"],
+            })
+        _rrows.sort(key=lambda r: -(r["Stabilized"] or 0))
+        if _rrows:
+            st.dataframe(pd.DataFrame(_rrows), hide_index=True,
+                         width="stretch", key="pl_reb_enrich",
+                         height=min(460, 60 + 35 * len(_rrows)))
+            st.caption("**Secures own contest %** = when this player is the "
+                       "on-ball defender on a miss, how often their team ends "
+                       "the possession (box-out payoff). **On-ball DREB %** = "
+                       "share of their DREBs that came off their own "
+                       "assignment vs weak-side crashes. Rate columns need ≥5 "
+                       "contests / ≥3 boards; n shown at right.")
+        else:
+            st.caption("No tagged rebounding volume yet — tag rebound-by and "
+                       "guarded-by on shots to light this up.")
+
+        if _roles["misses"] >= 4:
+            _tot = _roles["misses"]
+            st.markdown(
+                f"**PnR carom** ({_tot} tagged PnR misses): handler "
+                f"{_roles['handler']} · roll/pop man (screener) "
+                f"{_roles['screener']} · other offense {_roles['other_off']} · "
+                f"defense {_roles['defense']}.")
+            st.caption("Roll/pop credited via the shot-creator tag on PnR "
+                       "misses — who actually chased the long rebound out of "
+                       "the ball screen.")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 4 — COMPARE

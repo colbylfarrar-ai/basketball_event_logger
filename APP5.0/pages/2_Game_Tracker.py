@@ -908,10 +908,20 @@ def _render_command_center():
         st.info("No events logged yet.")
         return
 
+    # Timeouts live in their own table (not game_events), so pull them in as
+    # pseudo-events — otherwise they're invisible on every read surface. They
+    # carry no points; the running score just passes through.
+    _tos = query("SELECT id, team_id, quarter, time FROM game_timeouts "
+                 "WHERE game_id=?", (game_id,))
+    _to_pseudo = [{"event_type": "timeout", "quarter": t["quarter"],
+                   "time": t["time"], "id": -(t["id"]),
+                   "primary_player_id": None, "shot_result": None,
+                   "_to_team": t["team_id"]} for t in _tos]
+
     # Walk in GAME order (quarter, clock), not insertion order — film-review
     # backfills and editor fixes insert rows out of chronology, which would
     # make the running score column lie.
-    events_chrono = sorted(events_asc,
+    events_chrono = sorted(list(events_asc) + _to_pseudo,
                            key=lambda e: (e["quarter"],
                                           -GE.time_to_secs(e["time"]), e["id"]))
     log_rows, s1, s2 = [], 0, 0
@@ -947,6 +957,9 @@ def _render_command_center():
             if ev.get("turnover_type"):
                 desc += f" ({TOV.label(ev['turnover_type']).lower()})"
             if ev["stolen_by_id"]: desc += f" · steal {pn(ev['stolen_by_id'])}"
+        elif et == "timeout":
+            _tnm = t1name if ev.get("_to_team") == t1id else t2name
+            desc = f"⏱ Timeout — {_tnm}"
         else:
             desc = et
         log_rows.append({"Q": q_label(ev["quarter"]), "Time": ev["time"],
@@ -956,6 +969,13 @@ def _render_command_center():
     pbp_df = pd.DataFrame(log_rows)
     st.dataframe(pbp_df, width="stretch", hide_index=True,
                  height=min(420, 38 + 35 * len(pbp_df)))
+    if _tos:
+        _tc = {}
+        for t in _tos:
+            _tc[t["team_id"]] = _tc.get(t["team_id"], 0) + 1
+        st.caption(f"⏱ Timeouts — {t1name}: {_tc.get(t1id, 0)} · "
+                   f"{t2name}: {_tc.get(t2id, 0)} (log/undo them on the phone "
+                   "tracker; they show in the play-by-play above).")
     dc1, dc2 = st.columns(2)
     dc1.download_button("Export play-by-play (CSV)", pbp_df.to_csv(index=False),
                         file_name=f"pbp_{game_id}.csv", mime="text/csv",

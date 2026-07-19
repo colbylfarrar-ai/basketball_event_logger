@@ -444,6 +444,30 @@ def undo_timeout(game_id: int):
     return {"deleted_timeout_id": row[0]["id"]}
 
 
+@api.get("/games/{game_id}/timeouts")
+def list_timeouts(game_id: int):
+    """The game's timeout markers + per-team counts — so the tracker can SHOW
+    how many each team has used (they're not game_events, so the PBP/box can't
+    carry them) and the edit log can delete a mis-tap."""
+    rows = query("SELECT id, team_id, quarter, time FROM game_timeouts "
+                 "WHERE game_id=? ORDER BY quarter, id", (game_id,))
+    counts: dict[int, int] = {}
+    for r in rows:
+        counts[r["team_id"]] = counts.get(r["team_id"], 0) + 1
+    return {"timeouts": [dict(r) for r in rows], "counts": counts}
+
+
+@api.delete("/games/{game_id}/timeouts/{timeout_id}")
+def delete_timeout(game_id: int, timeout_id: int):
+    """Delete a specific timeout by id (the edit log's per-row remove)."""
+    row = query("SELECT id FROM game_timeouts WHERE id=? AND game_id=?",
+                (timeout_id, game_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="no such timeout")
+    execute("DELETE FROM game_timeouts WHERE id=?", (timeout_id,))
+    return {"deleted_timeout_id": timeout_id}
+
+
 @api.post("/games/{game_id}/finish")
 def finish(game_id: int, user: dict = Depends(require_full_user)):
     if not query("SELECT id FROM games WHERE id=?", (game_id,)):

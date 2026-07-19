@@ -1092,6 +1092,7 @@ function enterTracker() {
   setMode(S.flow ? S.flow.mode : 'shot');
   renderScore();
   renderPBP();
+  refreshTimeouts();
   updateSyncUI();
   updateNetUI();
 }
@@ -1123,11 +1124,40 @@ async function logTimeout(side) {
   try {
     const res = await api('/api/games/' + S.gameId + '/timeouts',
                           { method: 'POST', body: JSON.stringify(body) });
-    if (res.ok) toast('Timeout — ' + S.game[side].name);
+    if (res.ok) { toast('Timeout — ' + S.game[side].name); refreshTimeouts(); }
     else toast('Timeout not saved — server said no');
   } catch (e) {
     toast('Offline — timeout not saved, tap again when back');
   }
+}
+
+// Undo the most recent timeout (mis-tap escape — the API deletes the newest).
+async function undoTimeout() {
+  if (!S.gameId) return;
+  try {
+    const res = await api('/api/games/' + S.gameId + '/timeouts/undo',
+                          { method: 'POST' });
+    const d = await res.json();
+    toast(d.deleted_timeout_id ? 'Removed last timeout' : 'No timeout to undo');
+    refreshTimeouts();
+  } catch (e) { toast('Offline — try again when back'); }
+}
+
+// Pull the game's timeouts and paint the per-team USED count onto the buttons
+// (game_timeouts is not part of live_state, so the tracker otherwise can't show
+// how many each team has burned). Online-only, same as logging.
+async function refreshTimeouts() {
+  if (!S.gameId || !S.game) { S.timeouts = []; return; }
+  try {
+    const res = await api('/api/games/' + S.gameId + '/timeouts');
+    if (!res.ok) return;
+    const d = await res.json();
+    S.timeouts = d.timeouts || [];
+    const cn = d.counts || {};
+    const h = $('btn-to-home'), a = $('btn-to-away');
+    if (h) h.textContent = 'TO Home (' + (cn[S.game.home.id] || 0) + ')';
+    if (a) a.textContent = 'TO Away (' + (cn[S.game.away.id] || 0) + ')';
+  } catch (e) { /* offline — leave the labels as-is */ }
 }
 
 // +/- steppers adjust minute and second INDEPENDENTLY (no borrow) — the point is
@@ -1879,6 +1909,26 @@ async function loadEditorEvents() {
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const data = await res.json();
   ED.events = data.events || [];
+  // Timeouts are their own table (not game_events), so pull them alongside so
+  // the edit log can SHOW and delete them — the coach's only view into them.
+  ED.timeouts = [];
+  try {
+    const tr = await api('/api/games/' + S.gameId + '/timeouts');
+    if (tr.ok) ED.timeouts = (await tr.json()).timeouts || [];
+  } catch (e) { /* offline — editor still lists events */ }
+}
+
+async function deleteTimeout(tid) {
+  try {
+    const res = await api('/api/games/' + S.gameId + '/timeouts/' + tid,
+                          { method: 'DELETE' });
+    if (res.ok) {
+      ED.timeouts = (ED.timeouts || []).filter(function (t) { return t.id !== tid; });
+      toast('Timeout removed');
+      renderEditor();
+      refreshTimeouts();
+    } else { toast('Delete failed (HTTP ' + res.status + ')'); }
+  } catch (e) { toast('Needs connection'); }
 }
 
 async function openEditor() {
@@ -1991,7 +2041,11 @@ function renderEditor() {
   ul.innerHTML = '';
   const rows = ED.events.slice().reverse()  // newest first
     .filter(function (e) { return ED.filter === 0 || e.quarter === ED.filter; });
-  if (!rows.length) { ul.innerHTML = '<li class="empty">No events</li>'; return; }
+  const tos = (ED.timeouts || [])
+    .filter(function (t) { return ED.filter === 0 || t.quarter === ED.filter; });
+  if (!rows.length && !tos.length) {
+    ul.innerHTML = '<li class="empty">No events</li>'; return;
+  }
   rows.forEach(function (ev) {
     const li = document.createElement('li');
     const btn = flowBtn(
@@ -2005,6 +2059,26 @@ function renderEditor() {
       });
     li.appendChild(btn);
     if (ED.openId === ev.id && ED.form) li.appendChild(buildEditForm(ev));
+    ul.appendChild(li);
+  });
+  // Timeouts listed at the end of the (filtered) log — read-only markers with a
+  // one-tap delete, since they carry no editable fields.
+  tos.forEach(function (t) {
+    const side = S.game && t.team_id === S.game.home.id ? 'home' : 'away';
+    const nm = S.game ? S.game[side].name : ('team ' + t.team_id);
+    const li = document.createElement('li');
+    const row = document.createElement('div');
+    row.className = 'ev-row';
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    const lbl = document.createElement('span');
+    lbl.style.flex = '1';
+    lbl.textContent = qlabel(t.quarter) + ' ' + (t.time || '') +
+      ' · Timeout · ' + nm;
+    row.appendChild(lbl);
+    row.appendChild(flowBtn('Delete', 'btn warn small',
+      function () { deleteTimeout(t.id); }));
+    li.appendChild(row);
     ul.appendChild(li);
   });
 }
@@ -2349,6 +2423,7 @@ function bindUI() {
   $('btn-undo').addEventListener('click', undo);
   $('btn-to-home').addEventListener('click', function () { logTimeout('home'); });
   $('btn-to-away').addEventListener('click', function () { logTimeout('away'); });
+  $('btn-to-undo').addEventListener('click', undoTimeout);
   $('btn-edit-log').addEventListener('click', openEditor);
   $('btn-leave').addEventListener('click', leaveGame);
   $('btn-finish').addEventListener('click', finishGame);

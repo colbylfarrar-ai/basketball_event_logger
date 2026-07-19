@@ -44,9 +44,20 @@ from database.db import query, execute
 import helpers.game_dedup as GD
 
 # The active-season sentinel (mirrors helpers.seasons.ACTIVE; kept local so this
-# gating module has no import cycle). A PAST season is an OPEN ARCHIVE — the co-op
-# / Paid depth gates below all bypass it (owner rule: last year's data is public,
-# full depth, to everyone; no competitive edge left to protect).
+# gating module has no import cycle). A PAST season is an OPEN ARCHIVE — the
+# co-op / Paid depth gates for READING bypass it (owner rule: last year's data is
+# public, full depth, to everyone; no competitive edge left to protect).
+#
+# READS ONLY — the bypass covers the aggregate/visibility gates
+# (visible_tracked_game_ids, visible_untracked_boxed_game_ids,
+# team_visible_tracked_ids, tracked_gate). It deliberately does NOT cover the
+# gates that authorize WRITES: can_see_tracked_game_view below (which fronts the
+# Game Tracker's Log & fix side — manual logging, corrections, quick-add) and the
+# has_paid_plan check in pages/3_Event_Editor.py. Logging carries no own-team or
+# co-op restriction by design (track-to-scout), so bypassing it for past seasons
+# would let any free coach edit any team's archived games with no ownership check
+# and no pool_banned enforcement. Opening the archive means anyone may READ it,
+# never that anyone may REWRITE it.
 _ACTIVE_SEASON = "Current"
 
 
@@ -321,7 +332,12 @@ def can_see_tracked_game_view(ident: dict | None, game_id) -> bool:
     """Game Tracker page (live command center + manual logging + shot chart):
     Paid/admin see any game; a FREE coach sees ONLY their single free-demo game.
     This is the one place a Free plan is granted tracked depth — the demo hook;
-    every other tracked surface stays gated on has_paid_plan/co-op."""
+    every other tracked surface stays gated on has_paid_plan/co-op.
+
+    NOT archive-bypassed, unlike the read gates above — this one fronts a WRITE
+    surface. It st.stop()s pages/2_Game_Tracker.py ahead of the Live / Log & fix
+    split, so returning True authorizes event logging and corrections, not just
+    viewing. See the READS ONLY note by _ACTIVE_SEASON."""
     if has_paid_plan(ident):
         return True
     return game_id is not None and game_id == free_demo_game_id(ident)

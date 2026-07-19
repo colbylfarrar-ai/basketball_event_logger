@@ -185,6 +185,22 @@ ok(E.free_demo_game_id(free) == g1,
 ok(not E.can_see_tracked_game_view(free, _arch),
    "free coach stays blocked on the archived game")
 
+# ── open archive = READ, never WRITE (2026-07-19 owner decision) ───────────────
+# The read gates bypass the Paid/co-op gates for a past season; the gate fronting
+# the Game Tracker does NOT, because it st.stop()s ahead of the Log & fix split
+# and so authorizes event logging + corrections. Logging carries no own-team or
+# co-op restriction by design, so bypassing it would let any free coach rewrite
+# any team's archived games. This asymmetry is intentional — assert it so a later
+# "consistency" cleanup can't quietly open the write path.
+ok(E.visible_tracked_game_ids(free, season="2024-2025") is None,
+   "READ gate: past season is unrestricted for a free coach")
+ok(E.team_visible_tracked_ids(free, C, season="2024-2025") is None,
+   "READ gate: past-season team depth is unrestricted")
+ok(E.tracked_gate(free, C, True, season="2024-2025")[0],
+   "READ gate: past-season tracked_gate opens with no lock message")
+ok(not E.can_see_tracked_game_view(free, _arch),
+   "WRITE gate: the Game Tracker stays closed on a past-season game")
+
 # A team whose ONLY games are archived gets no slot at all — deliberately no
 # fallback to the all-time earliest, because a fallback would MOVE the slot
 # (re-locking a game they'd already opened) the moment they scheduled their

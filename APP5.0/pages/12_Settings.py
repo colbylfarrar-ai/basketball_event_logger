@@ -426,6 +426,44 @@ else:
             st.success("Overrides cleared — the committed constants apply on "
                        "the next app restart.")
 
+    # ── Restart the app — makes "next restart" actually happen ────────────────
+    # The two buttons above both end with "takes effect on the next app
+    # restart"; this is that restart, without an SSH session.
+    with st.expander("♻️ Restart the app"):
+        import helpers.server_control as _SC
+        _can_restart, _why = _SC.restart_available()
+        st.caption("Restarts app5-web + app5-tracker. This is how adopted recal "
+                   "constants above take effect. Every connected session — "
+                   "including a coach on the phone tracker — drops for about "
+                   "10 seconds.")
+        _lastr = _SC.last_restart()
+        st.markdown(f"**Last restart:** {_lastr['at']} by {_lastr['by']}"
+                    if _lastr else "**Last restart:** none recorded yet.")
+
+        _livers = _SC.live_games()
+        if _livers:
+            st.warning("⚠️ **Being tracked right now:** "
+                       + ", ".join(
+                           f"{g['home']} vs {g['away']} ({g['events']} "
+                           f"event{'' if g['events'] == 1 else 's'})"
+                           for g in _livers)
+                       + ". Restarting stalls the coach mid-game. Logged events "
+                         "aren't lost — the phone tracker queues offline and "
+                         "retries — but the interruption is real.")
+
+        _armed = st.checkbox("I understand this drops every connected session",
+                             key="rs_arm")
+        if st.button("Restart now", key="rs_go", type="primary",
+                     disabled=not (_armed and _can_restart),
+                     help=None if _can_restart else _why):
+            _SC.record_restart(_me["email"])
+            st.warning("Restarting — this page will reconnect on its own in "
+                       "about 10 seconds. Reopen this panel to confirm the "
+                       "**Last restart** stamp updated.")
+            _SC.do_restart()
+        if not _can_restart:
+            st.caption(f"Unavailable here — {_why}.")
+
     # ── Resolve duplicate tracked games — canonical pick for the pool ─────────
     import helpers.game_dedup as GD
     _dups = GD.duplicate_matchups()

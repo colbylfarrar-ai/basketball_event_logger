@@ -103,9 +103,31 @@ with st.expander("📓 Playbook — save & load plays", expanded=True):
         else:
             st.toast(f"Saved '{_pname.strip()}' to your playbook", icon="📓")
             st.rerun()
+    # ── frame sequences (spec 2.4): save 1, save 2, save 3 … then slideshow.
+    # Each frame is a normal play row named '<seq> · <n>' — counts against the
+    # per-coach cap like any save.
+    f1, f2 = st.columns([3, 1])
+    _sqname = f1.text_input("Sequence name", key="wb_seq_name",
+                            placeholder="e.g. Horns flare — full action")
+    f2.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    if f2.button("Save frame", key="wb_frame_btn",
+                 disabled=not ((_sqname or "").strip() and _has_board),
+                 help="Appends the current board as the next frame of this "
+                      "sequence — draw the next action and hit it again."):
+        _mode = _board.get("mode", "half")
+        _ops = _board.get("ops_full" if _mode == "full" else "ops_half") or []
+        _err, _fidx = PB.save_frame(_me_email, _sqname, _mode, _ops)
+        if _err:
+            st.warning(_err)
+        else:
+            st.toast(f"Frame {_fidx} of '{_sqname.strip()}' saved", icon="🎞")
+            st.rerun()
+
     if not _has_board:
         st.caption("Draw a play, hit **⬆ Send to app** on the board's toolbar, "
-                   "then name and save it here. Saved plays are private to you.")
+                   "then name and save it here. Saved plays are private to you. "
+                   "Use **Save frame** repeatedly to build a step-by-step "
+                   "sequence you can play back below.")
 
     _plays = PB.list_plays(_me_email)
     if _plays:
@@ -140,3 +162,31 @@ with st.expander("📓 Playbook — save & load plays", expanded=True):
                 help="A crisp vector image of the play on a white court — "
                      "prints clean and drops into any doc. Saved plays also "
                      "print on the scout sheet.")
+
+# ── 🎞 Sequence playback — step through a saved frame sequence in order ───────
+_seqs = PB.list_sequences(_me_email)
+if _seqs:
+    with st.expander("🎞 Sequences — step through a play frame by frame",
+                     expanded=False):
+        s1, s2 = st.columns([3, 1])
+        _sq = s1.selectbox(
+            "Sequence", sorted(_seqs), key="wb_seq_pick",
+            format_func=lambda s: f"{s} — {len(_seqs[s])} frame(s)",
+            label_visibility="collapsed")
+        _frames = _seqs[_sq]
+        _fi = 0
+        if len(_frames) > 1:
+            _fi = st.slider("Frame", 1, len(_frames),
+                            key="wb_seq_frame") - 1
+        _fr = PB.get_play(_me_email, _frames[_fi]["id"])
+        if _fr:
+            st.caption(f"**{_fr['name']}** · {_fr['mode']} court")
+            st.image(PB.play_svg(_fr["ops"], _fr["mode"]).encode("utf-8"),
+                     width="stretch")
+            if s2.button("Load frame onto board", key="wb_seq_load"):
+                st.session_state["_wb_load"] = {
+                    "nonce": st.session_state.get("_wb_load", {}).get("nonce", 0) + 1,
+                    "mode": _fr["mode"],
+                    "ops_half": _fr["ops"] if _fr["mode"] == "half" else [],
+                    "ops_full": _fr["ops"] if _fr["mode"] == "full" else []}
+                st.rerun()

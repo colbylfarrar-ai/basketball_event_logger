@@ -72,9 +72,13 @@ def compact_ops(raw):
 
 # ── CRUD (always coach-scoped) ───────────────────────────────────────────────
 
-def save_play(coach_email, name, mode, ops):
+def save_play(coach_email, name, mode, ops, seq_name=None, seq_idx=None):
     """Upsert a named play for one coach. Returns None on success or a
-    human-readable error string (cap hit / nothing to save / bad name)."""
+    human-readable error string (cap hit / nothing to save / bad name).
+
+    `seq_name`/`seq_idx` mark the play as one FRAME of a sequence (spec 2.4);
+    standalone plays leave both None. A frame is an ordinary row — the
+    per-coach cap counts every frame (DB-stays-small rule)."""
     name = (name or "").strip()[:60]
     if not name:
         return "Give the play a name first."
@@ -90,21 +94,40 @@ def save_play(coach_email, name, mode, ops):
                   (email,))[0]["n"]
         if n >= MAX_PLAYS_PER_COACH:
             return (f"{MAX_PLAYS_PER_COACH} saved plays max — delete one you "
-                    "don't run anymore first.")
+                    "don't run anymore first. (Sequence frames count too.)")
     blob = json.dumps(clean, separators=(",", ":"))
+    sq = (seq_name or "").strip()[:60] or None
+    si = int(seq_idx) if (sq and seq_idx is not None) else None
     if existing:
-        execute("UPDATE coach_plays SET mode=?, ops=? WHERE id=?",
-                (mode, blob, existing[0]["id"]))
+        execute("UPDATE coach_plays SET mode=?, ops=?, seq_name=?, seq_idx=? "
+                "WHERE id=?", (mode, blob, sq, si, existing[0]["id"]))
     else:
-        execute("INSERT INTO coach_plays (coach_email, name, mode, ops) "
-                "VALUES (?,?,?,?)", (email, name, mode, blob))
+        execute("INSERT INTO coach_plays (coach_email, name, mode, ops, "
+                "seq_name, seq_idx) VALUES (?,?,?,?,?,?)",
+                (email, name, mode, blob, sq, si))
     return None
 
 
+def save_frame(coach_email, seq_name, mode, ops):
+    """Append the board as the NEXT frame of `seq_name` (creating the sequence
+    on the first save). Frame names are '<seq> · <idx>' so the coach_plays
+    UNIQUE(coach, name) key stays natural. Returns (error, idx)."""
+    sq = (seq_name or "").strip()[:55]
+    if not sq:
+        return "Give the sequence a name first.", None
+    email = (coach_email or "").strip().lower()
+    r = query("SELECT MAX(seq_idx) AS mx FROM coach_plays "
+              "WHERE coach_email=? AND seq_name=?", (email, sq))
+    idx = int(r[0]["mx"] or 0) + 1
+    err = save_play(email, f"{sq} · {idx}", mode, ops,
+                    seq_name=sq, seq_idx=idx)
+    return err, (None if err else idx)
+
+
 def list_plays(coach_email):
-    """[{id, name, mode, n_ops, created_at}] for one coach, newest first."""
-    rows = query("SELECT id, name, mode, ops, created_at FROM coach_plays "
-                 "WHERE coach_email=? ORDER BY id DESC",
+    """[{id, name, mode, n_ops, seq_name, seq_idx, created_at}] newest first."""
+    rows = query("SELECT id, name, mode, ops, seq_name, seq_idx, created_at "
+                 "FROM coach_plays WHERE coach_email=? ORDER BY id DESC",
                  ((coach_email or "").strip().lower(),))
     out = []
     for r in rows:
@@ -113,14 +136,28 @@ def list_plays(coach_email):
         except Exception:
             n_ops = 0
         out.append({"id": r["id"], "name": r["name"], "mode": r["mode"],
-                    "n_ops": n_ops, "created_at": r["created_at"]})
+                    "n_ops": n_ops, "seq_name": r["seq_name"],
+                    "seq_idx": r["seq_idx"], "created_at": r["created_at"]})
     return out
 
 
+def list_sequences(coach_email):
+    """{seq_name: [play rows ordered by seq_idx]} — the slideshow feed.
+    Deleted middle frames simply leave a gap; order is by seq_idx."""
+    seqs = {}
+    for p in list_plays(coach_email):
+        if p["seq_name"]:
+            seqs.setdefault(p["seq_name"], []).append(p)
+    for frames in seqs.values():
+        frames.sort(key=lambda p: (p["seq_idx"] or 0, p["id"]))
+    return seqs
+
+
 def get_play(coach_email, play_id):
-    """{id, name, mode, ops(list)} or None — never another coach's play."""
-    rows = query("SELECT id, name, mode, ops FROM coach_plays "
-                 "WHERE id=? AND coach_email=?",
+    """{id, name, mode, ops(list), seq_name, seq_idx} or None — never another
+    coach's play."""
+    rows = query("SELECT id, name, mode, ops, seq_name, seq_idx "
+                 "FROM coach_plays WHERE id=? AND coach_email=?",
                  (play_id, (coach_email or "").strip().lower()))
     if not rows:
         return None
@@ -129,7 +166,8 @@ def get_play(coach_email, play_id):
         ops = json.loads(r["ops"])
     except Exception:
         ops = []
-    return {"id": r["id"], "name": r["name"], "mode": r["mode"], "ops": ops}
+    return {"id": r["id"], "name": r["name"], "mode": r["mode"], "ops": ops,
+            "seq_name": r["seq_name"], "seq_idx": r["seq_idx"]}
 
 
 def delete_play(coach_email, play_id):

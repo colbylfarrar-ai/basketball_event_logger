@@ -548,6 +548,13 @@ def initialize_database():
             " created_at TEXT NOT NULL DEFAULT (datetime('now')),"
             " UNIQUE(coach_email, name))",
             "CREATE INDEX IF NOT EXISTS idx_cplays_coach ON coach_plays(coach_email)",
+            # Saved-play FRAME SEQUENCES (spec 2.4, 2026-07-18): a frame is a
+            # normal coach_plays row whose seq_name groups it and seq_idx orders
+            # it (1-based) — save 1, save 2, save 3, then slideshow in order.
+            # Standalone plays leave both NULL. Each frame is one row, so the
+            # per-coach play cap counts every frame (DB-stays-small rule).
+            "ALTER TABLE coach_plays ADD COLUMN seq_name TEXT",
+            "ALTER TABLE coach_plays ADD COLUMN seq_idx  INTEGER",
             # Audit-log retention: the moderation trail only needs a season of
             # look-back; unbounded growth was bloating the DB. Runs every boot
             # (cheap — indexed on ts).

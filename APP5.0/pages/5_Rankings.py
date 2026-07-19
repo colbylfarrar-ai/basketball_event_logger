@@ -1727,20 +1727,35 @@ def _fx_chart():
             if not have:
                 st.caption(f"No team has {minposs}+ tagged possessions here yet.")
                 return
-            have.sort(key=lambda x: x[1]["PPP"], reverse=not asc)
+            # EB shrink each team's PPP toward the tag's possession-weighted
+            # league mean by its own sample (noise filter, founder batch item
+            # 5): a team riding 6 lucky PnR possessions no longer tops the
+            # chart. k = MIN_POSS games-equivalent; raw PPP kept in the label.
+            import helpers.shrinkage as _SHR
+            _num = sum(r["PPP"] * r["poss"] for _, r in have)
+            _den = sum(r["poss"] for _, r in have) or 1
+            _prior = _num / _den
+            plotted = {t: _SHR.stabilize_value(r["PPP"], r["poss"], _prior,
+                                               PT.MIN_POSS)
+                       for t, r in have}
+            have.sort(key=lambda x: plotted[x[0]], reverse=not asc)
             fig = go.Figure(go.Bar(
                 y=[name_of.get(t, str(t)) for t, _ in have],
-                x=[r["PPP"] for _, r in have], orientation="h",
+                x=[plotted[t] for t, _ in have], orientation="h",
                 marker_color=color, marker_line_width=0,
-                text=[f"{r['PPP']:.2f} ({r['poss']} poss)" for _, r in have],
+                text=[f"{plotted[t]:.2f} · raw {r['PPP']:.2f} ({r['poss']}p)"
+                      for t, r in have],
                 textposition="auto",
-                hovertemplate="<b>%{y}</b><br>" + axis + ": %{x:.2f}<extra></extra>"))
-            fig.update_xaxes(title=axis)
+                hovertemplate="<b>%{y}</b><br>" + axis
+                + " (stabilized): %{x:.2f}<extra></extra>"))
+            fig.update_xaxes(title=axis + " (stabilized)")
             _style(fig, max(300, 26 * len(have)))
             st.markdown(f"**{title}**")
             st.plotly_chart(fig, width="stretch", key=chart_key)
-            st.caption(f"Teams with fewer than {minposs} tagged possessions on "
-                       "this tag are left out rather than shown at zero.")
+            st.caption(f"Teams under {minposs} tagged possessions are left out; "
+                       "the rest are EB-shrunk toward the tag's league mean by "
+                       "sample size (raw PPP + possession count in each label), "
+                       "so thin tags can't fake a league lead.")
 
         def _cell_table(cells, taglist, label_of, ppp_label="PPP"):
             """Full-league table (ignores the team filter, per the tab contract):
@@ -2420,11 +2435,23 @@ def _fx_evr():
                 w = sum(bc[k][0] for k in keys)
                 l = sum(bc[k][1] for k in keys)
                 return f"{w}-{l}"
+            # EB-shrink the per-game run rates toward the GP-weighted league
+            # mean (noise filter, item 5): a team with 2 games and one big run
+            # shouldn't top the field at 0.50 runs/g. k=4 games-equivalent.
+            import helpers.shrinkage as _SHR
+            _gp_tot = sum(p["gp"] for p in _rt.values()) or 1
+            _made_prior = sum(p["made_pg"] * p["gp"]
+                              for p in _rt.values()) / _gp_tot
+            _allow_prior = sum(p["allowed_pg"] * p["gp"]
+                               for p in _rt.values()) / _gp_tot
             _rrows = _filter_rows([{
                 "Team": name_of.get(t, f"#{t}"), "class": class_of.get(t),
                 "GP": p["gp"],
-                "10-0 / g": round(p["made_pg"], 2),
-                "Given up / g": round(p["allowed_pg"], 2),
+                "10-0 / g": round(_SHR.stabilize_value(
+                    p["made_pg"], p["gp"], _made_prior, 4), 2),
+                "Given up / g": round(_SHR.stabilize_value(
+                    p["allowed_pg"], p["gp"], _allow_prior, 4), 2),
+                "raw 10-0/g": round(p["made_pg"], 2),
                 "6-0 / g": round(p["made6_pg"], 2),
                 "Biggest": p["biggest"] or None,
                 "Avg len (s)": (round(p["avg_secs"]) if p["avg_secs"] is not None
@@ -2439,11 +2466,13 @@ def _fx_evr():
                 _grid(pd.DataFrame(_rrows).drop(columns=["class"]),
                       "lab_runs_grid",
                       height=min(560, 60 + 35 * len(_rrows)))
-                st.caption(f"{len(_rrows)} team(s) · 'W-L w/ run' = record in "
-                           "games with at least one 10-0 run of their own · "
-                           "'After run' = avg net points in the 2 minutes after "
-                           "their runs end (does the surge carry?). Scoped by "
-                           "the Class / min-games filter above.")
+                st.caption(f"{len(_rrows)} team(s) · run rates are EB-shrunk "
+                           "toward the league per-game mean by games played "
+                           "(raw in 'raw 10-0/g') so a 2-game team can't lead "
+                           "on one run · 'W-L w/ run' = record in games with "
+                           "at least one 10-0 run of their own · 'After run' = "
+                           "avg net points in the 2 minutes after their runs "
+                           "end. Scoped by the Class / min-games filter above.")
             else:
                 st.info("No teams match the current Class / min-games filter.")
 

@@ -151,7 +151,7 @@ function qDelete(uuids) {
 const SERVER_FIELDS = ['uuid', 'event_type', 'quarter', 'time', 'primary_player_id', 'shot_result',
   'shot_x', 'shot_y', 'shot_type', 'zone', 'pass_from_id', 'shot_created_by_id', 'rebound_by_id',
   'blocked_by_id', 'guarded_by_id', 'secondary_player_id', 'official_id', 'stolen_by_id',
-  'play_type', 'defense', 'on_court', 'officials_on', 'official_slots'];
+  'play_type', 'defense', 'turnover_type', 'on_court', 'officials_on', 'official_slots'];
 
 // Crew roles in assigning order (slot column is 1-based; mirrors
 // helpers/public_feed._SLOT_LABELS on the read side).
@@ -1389,6 +1389,13 @@ const TOV_TYPES = [
   ['shot_clock', 'Shot clock'], ['held', 'Held ball']
 ];
 
+function tovLabel(key) {
+  for (let i = 0; i < TOV_TYPES.length; i++) {
+    if (TOV_TYPES[i][0] === key) return TOV_TYPES[i][1];
+  }
+  return key;
+}
+
 // Sticky "current defense" the opponent is in. Unlike play_type (per-shot), a
 // defense holds for stretches, so this is set ONCE on the always-visible bar and
 // every event logged inherits S.defense until it's changed. Keep this list in
@@ -1610,12 +1617,16 @@ function renderFlow() {
           TOV_TYPES.map(function (t) { return { v: t[0], label: t[1] }; }),
           f.tovKind, function (v) { f.tovKind = v; renderFlow(); }));
       } else {
-        // quick mode: steal chips stay one tap away, TO kind hides behind it too
+        // quick mode: steal chips AND the 5-kind TO taxonomy stay one tap away
+        // (the kind used to hide behind "+ details", which is why legacy games
+        // sit ~95% untyped — coaches never saw the selector mid-game)
         wrap.appendChild(chipRow('Stolen by',
           players.filter(function (id) { return id !== f.player; }),
           f.stolen, function (id) { f.stolen = id; renderFlow(); }, { allowNone: true }));
-        wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
-          function () { f.expand = true; renderFlow(); }));
+        wrap.appendChild(chipRow('TO kind',
+          TOV_TYPES.map(function (t) { return t[0]; }),
+          f.tovKind, function (v) { f.tovKind = v; renderFlow(); },
+          { labelFn: tovLabel }));
       }
       wrap.appendChild(flowBtn('LOG TURNOVER', 'btn primary big', logTov));
     }

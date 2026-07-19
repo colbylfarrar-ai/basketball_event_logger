@@ -1,0 +1,23 @@
+[Unit]
+Description=APP5 living-recal — gated model-constant re-evaluation as games land
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5/APP5.0
+Environment=APP5_DATA_DIR=/var/lib/app5
+# Re-runs the OOS gate battery only when >= MIN_NEW_GAMES new tracked games
+# have landed since the last run, and adopts an aggressive constant ONLY on a
+# strict beat-or-tie (tools/living_recal.py). Adoption writes app_settings; it
+# takes effect on the NEXT app5-web restart (this job never mutates the live
+# process). Every run is logged to docs/RECAL_LOG.md + app_settings history.
+ExecStart=/home/app5/app5/APP5.0/.venv/bin/python -m tools.living_recal
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5 /home/app5/app5/APP5.0/docs
+
+[Install]
+WantedBy=multi-user.target

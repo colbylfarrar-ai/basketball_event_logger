@@ -63,6 +63,16 @@ try:
 except Exception:
     pass
 
+# Living-MLM overrides (founder batch item 7): fold any gate-adopted model
+# constants onto the engine globals ONCE at app startup — takes effect on this
+# process, so a deploy restart is what activates a newly-adopted set. Guarded:
+# a bad/absent override row leaves the code defaults untouched.
+try:
+    import helpers.model_constants as _MC
+    _MC.apply()
+except Exception:
+    pass
+
 # Build → Analyze → Plan: the program's workflow, made legible in the sidebar.
 _NAV = {
     "Analyze": [

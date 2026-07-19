@@ -379,6 +379,53 @@ else:
                 file_name=f"app5-{_lbl}-{_date.today().isoformat()}.db",
                 mime="application/vnd.sqlite3", key="bk_dl")
 
+    # ── Living recal — gated model-constant loop (founder batch item 7) ───────
+    with st.expander("🧠 Living recal — model weights as games land"):
+        import helpers.model_constants as _MC
+        import tools.living_recal as _LR
+        _ov = _MC.load()
+        if _ov:
+            st.caption("**Active overrides** (adopted by the gate loop; take "
+                       "effect on the next app restart):")
+            st.table([{"Constant": k, "Value": str(v)} for k, v in _ov.items()])
+        else:
+            st.caption("No overrides adopted — running on the committed "
+                       "2026-07-18 recal constants.")
+        _hist = _LR.history()
+        if _hist:
+            _last = _hist[-1]
+            st.markdown(
+                f"**Last run:** {_last['at']} · {_last['games']} tracked games "
+                f"· {'✅ ADOPTED' if _last['adopted'] else 'held'} · "
+                f"T6a {_last['incumbent_t6a']} → {_last['best_t6a']}")
+            st.caption(_last.get("reason", ""))
+            with st.popover("Run history"):
+                st.dataframe(pd.DataFrame([{
+                    "When": h["at"], "Games": h["games"],
+                    "Adopted": h["adopted"],
+                    "T6a in": h["incumbent_t6a"], "T6a best": h["best_t6a"],
+                } for h in reversed(_hist)]), hide_index=True, width="stretch")
+        else:
+            st.caption("The loop hasn't run yet — it fires weekly, or here.")
+        st.caption("The loop re-runs the out-of-sample gate battery and adopts "
+                   "an aggressive constant ONLY on a strict beat-or-tie; a tie "
+                   "always keeps the incumbent. Every run is logged.")
+        if st.button("Run recal check now", key="lr_run"):
+            with st.spinner("Running the gate battery…"):
+                _rep = _LR.run(force=True)
+            if not _rep["ran"]:
+                st.info(f"Skipped — {_rep['reason']}")
+            elif _rep["adopted"]:
+                st.success(f"Adopted new constants — {_rep['reason']}. Takes "
+                           "effect on the next app restart.")
+                st.json(_rep["changes"])
+            else:
+                st.info(f"Held the incumbent — {_rep['reason']}.")
+        if _ov and st.button("Revert to committed defaults", key="lr_clear"):
+            _MC.clear()
+            st.success("Overrides cleared — the committed constants apply on "
+                       "the next app restart.")
+
     # ── Resolve duplicate tracked games — canonical pick for the pool ─────────
     import helpers.game_dedup as GD
     _dups = GD.duplicate_matchups()

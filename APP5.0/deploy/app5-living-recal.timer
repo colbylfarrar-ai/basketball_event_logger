@@ -1,0 +1,13 @@
+[Unit]
+Description=Run APP5 living-recal weekly
+
+[Timer]
+# Weekly, Monday 05:00 local (after the nightly OSSAA refresh at 04:30, so the
+# week's freshly-scored games are in before the gates re-run). Persistent=true
+# → a missed week (box off) runs on next boot. The service self-skips when too
+# few new tracked games have landed, so an early fire is cheap.
+OnCalendar=Mon *-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

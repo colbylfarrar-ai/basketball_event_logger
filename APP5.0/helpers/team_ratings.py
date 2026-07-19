@@ -349,7 +349,7 @@ def results_fingerprint():
 
 
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
-                  reg=DEFAULT_REG, sos_weight=DEFAULT_SOS_WEIGHT, game_ids=None,
+                  reg=None, sos_weight=None, game_ids=None,
                   season="Current", half_life=None):
     """
     Results-only power ratings for every team in `gender` (None = all).
@@ -368,6 +368,13 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
     `half_life` (games) recency-weights each team's games — see form_ratings; None
     (default) is the flat, all-games-equal season rating.
     """
+    # Resolve at CALL time (not as def-time defaults) so a living-recal
+    # override of these module globals actually reaches production callers,
+    # which pass only gender/season. Explicit reg=/sos_weight= still win.
+    if reg is None:
+        reg = DEFAULT_REG
+    if sos_weight is None:
+        sos_weight = DEFAULT_SOS_WEIGHT
     games = _finished_games(gender=gender, game_ids=game_ids, season=season)
     meta = _team_meta(gender=gender, season=season)
     tg = _per_team_games(games, half_life=half_life)

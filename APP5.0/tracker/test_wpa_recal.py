@@ -97,10 +97,17 @@ class EPScoping(unittest.TestCase):
         self.assertAlmostEqual(WPA.league_ep(game_ids=[9200]), 2.0, places=6)
         self.assertAlmostEqual(WPA.league_ep(game_ids=[9201]), 0.0, places=6)
         self.assertAlmostEqual(WPA.league_ep(game_ids=[9200, 9201]), 1.0, places=6)
-        # The no-arg call filters season='Current' (empty post-rollover) -> 0.0.
-        # This is the bug season_wpa must never hit again: it must ALWAYS pass
-        # its own scoped game_ids instead of relying on the no-arg default.
-        self.assertAlmostEqual(WPA.league_ep(), 0.0, places=6)
+        # The no-arg default USED to filter season='Current' (empty post-
+        # rollover) and silently return 0.0 — the EP=0.0 trap behind the DWPA
+        # bug. seasons.tracked_default_season_sql now falls back to the last
+        # tracked season, so the no-arg call returns a REAL PPP instead of the
+        # zero trap. season_wpa must still pass its own scoped game_ids (the
+        # sibling test guards that) — this just proves the default is no longer
+        # the silent-zero hazard.
+        _ep = WPA.league_ep()
+        self.assertIsNotNone(_ep)
+        self.assertTrue(0.0 <= _ep <= 3.0)
+        self.assertGreater(_ep, 0.0)   # fallback sees real made-basket games
 
     def test_season_wpa_uses_gender_scoped_ep(self):
         sw = WPA.season_wpa(gender="F", mode="possession", opp_adjust=False,

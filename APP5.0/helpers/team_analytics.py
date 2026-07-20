@@ -393,18 +393,24 @@ def team_player_rows(team_id, gender=None, min_games=1, season="Current"):
     PR.player_stat_table (ratings are still pool-relative to the whole league,
     so they're comparable to players on other teams). Sorted by OVERALL desc.
 
-    For an ARCHIVED season the league pool is scoped to that season's tracked
-    games, so ratings/percentiles reflect that year — not the current roster.
+    The league pool is scoped to THAT SEASON's tracked games, so ratings and
+    percentiles reflect that year — not another year's roster.
+
+    'Current' is scoped exactly like an archived label, and must be: live rows
+    carry season='Current' literally (the rollover rewrites them to the real
+    label), so the same query works for both. An unscoped fallback here read as
+    "no games this season yet -> show every tracked game", which right after a
+    rollover means the WHOLE of last season — the graduated roster, with last
+    year's stats, presented as the current team. A fresh season legitimately has
+    no player rows; callers already handle the empty case by falling back to the
+    raw season-scoped roster (see helpers/dashboard/players_tab.py).
     """
-    if season and season != "Current":
-        gids = [r["id"] for r in query(
-            "SELECT id FROM games WHERE tracked=1 AND season=?", (season,))]
-        if not gids:
-            return []                    # no tracked games that season → no rows
-        table = PR.player_stat_table(game_ids=set(gids), gender=gender,
-                                     min_games=min_games)
-    else:
-        table = PR.player_stat_table(gender=gender, min_games=min_games)
+    gids = [r["id"] for r in query(
+        "SELECT id FROM games WHERE tracked=1 AND season=?", (season or "Current",))]
+    if not gids:
+        return []                        # no tracked games that season → no rows
+    table = PR.player_stat_table(game_ids=set(gids), gender=gender,
+                                 min_games=min_games)
     rows = []
     for pid, r in table.items():
         if r["team_id"] == team_id:

@@ -80,7 +80,11 @@ def render(ctx):
                 "#": r["number"], "Player": r["name"],
                 "Pos": (r["position"] or "—"),
                 "Status": (r["availability"] or "Active"),
-                "Grad": (r["grad_year"] or "—"),
+                # str(), not the raw int: a column mixing ints with the "—"
+                # placeholder is an object column, and Arrow refuses to convert
+                # it ("Could not convert '—' with type str: tried to convert to
+                # int64"), taking the whole roster table down with it.
+                "Grad": (str(r["grad_year"]) if r["grad_year"] else "—"),
                 "Hand": (r["handedness"] or "right").title(),
                 "Ht (in)": r["height"], "Wing (in)": r["wingspan"],
                 "Wt (lb)": r["weight"],

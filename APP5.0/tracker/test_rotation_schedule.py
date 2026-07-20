@@ -105,7 +105,30 @@ def test_free_blocks_chase_the_least_covered_signature_stat():
     # a covering five actually shows up in the free window
     free = [b for b in s["blocks"] if b["role"] == RS.FREE]
     assert any(b["goals_hit"] for b in free)
-    assert any("Covers" in b["why"] for b in free)
+    assert all(b["why"] for b in s["blocks"])
+
+
+def test_reasoning_does_not_repeat_itself():
+    """The old per-block rule named the strongest signature stat every time and
+    printed one identical sentence down the whole table. Each stint has to say
+    something the one before it didn't."""
+    s = _run()
+    whys = [g["why"] for g in s["segments"]]
+    assert len(set(whys)) == len(whys), whys
+    for a, b in zip(whys, whys[1:]):
+        assert a != b
+    # the anchor lines distinguish the tip from coming out of the half
+    anchors = [g["why"] for g in s["segments"] if g["role"] == RS.ANCHOR]
+    assert len(set(anchors)) == len(anchors)
+
+
+def test_shared_surnames_are_disambiguated():
+    ctx = _ctx([1, 2, 3, 4, 5, 6])
+    ctx["players"][1]["name"] = "Ali Schwerdfeger"
+    ctx["players"][2]["name"] = "Kodi Schwerdfeger"
+    short = RS.short_names(ctx, [1, 2, 3])
+    assert short[1] == "A. Schwerdfeger" and short[2] == "K. Schwerdfeger"
+    assert short[3] == "P3"                      # unique surname stays bare
 
 
 def test_uncovered_stat_is_reported_not_hidden():

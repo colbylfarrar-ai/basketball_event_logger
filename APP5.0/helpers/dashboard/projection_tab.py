@@ -150,8 +150,7 @@ def _suggested_rotation(tid, ctxp, opt, names, deep=False):
         drawn = set()
         fig = go.Figure()
         for r in sched["stints"]:
-            last = (r["name"].split()[-1] if r["name"] else str(r["pid"]))
-            lbl = f"{last} · {r['minutes']:.0f}"
+            lbl = f"{r['short']} · {r['minutes']:.0f}"
             for (s, e, unit) in r["segments"]:
                 fig.add_trace(go.Bar(
                     x=[e - s], y=[lbl], base=s, orientation="h",

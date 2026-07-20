@@ -334,8 +334,7 @@ def suggest_rotation(team_id, ctxp, opt, presets=None, project=None,
             "start": i * BLOCK, "end": (i + 1) * BLOCK,
             "role": role, "five": list(five), "label": label,
             "preset": is_preset and intact, "net": net,
-            "goals_hit": sorted(hit),
-            "why": _why(role, hit, coverage, gw, goals, net),
+            "goals_hit": sorted(hit), "why": "",
         })
         for p in five:
             pool[p] -= 1
@@ -349,10 +348,18 @@ def suggest_rotation(team_id, ctxp, opt, presets=None, project=None,
     if not blocks:
         return {"gated": "could not build a feasible schedule from these minutes"}
     _uniquify_labels(blocks)
+    # the reasoning is written per STINT, after the fact — a block-by-block rule
+    # can only describe the five in front of it, so it repeats itself all game.
+    segments = _narrate(_merge_segments(blocks), goals, gw, ctxp)
+    for b in blocks:
+        for s in segments:
+            if s["start"] <= b["start"] < s["end"]:
+                b["why"] = s["why"]
+                break
 
     return {
         "blocks": blocks,
-        "segments": _merge_segments(blocks),
+        "segments": segments,
         "stints": _stints(blocks, ctxp),
         "units": _units(blocks),
         "coverage": coverage,
@@ -377,30 +384,118 @@ def _uniquify_labels(blocks):
         b["label"] = seen[k]
 
 
-def _why(role, hit, coverage, gw, goals, net):
-    """One line of coach-facing reasoning for a block."""
-    if role == ANCHOR:
-        return "Anchor five — open the half with your best group."
-    if role == CLOSE:
-        return "Closing five — the game is decided here."
-    best, bw = None, 0.0
-    for k in hit:
-        w = gw.get(k, 0.0) * max(0.0, 1.0 - coverage.get(k, 0.0) / GAME_MIN)
-        if w > bw:
-            best, bw = k, w
-    if best and bw >= 0.15:
-        import helpers.lineup_projection as LP
-        lbl = LP.KEY_LABELS.get(best, best)
-        return f"Covers {lbl} — your least-covered win stat at this point."
-    if best:
-        import helpers.lineup_projection as LP
-        return ("Holds " + LP.KEY_LABELS.get(best, best)
-                + " — every win stat is already well covered, so this is bench "
-                  "time that costs you nothing.")
-    if goals:
-        return "Rest window — none of your win stats projects to land here; " \
-               "these are the minutes to spend bench legs."
-    return f"Rest window — best available Net ({(net or 0):+.1f})."
+def short_names(ctxp, pids):
+    """{pid: display name} — surname alone, or "K. Surname" when two players on
+    the floor share one. Sisters and cousins are common on a high-school roster,
+    and "Schwerdfeger in for Schwerdfeger" is not a substitution anyone can run."""
+    players = ctxp.get("players") or {}
+    full = {p: ((players.get(p) or {}).get("name") or str(p)) for p in pids}
+    last = {p: n.split()[-1] for p, n in full.items()}
+    dupes = {s for s in last.values() if list(last.values()).count(s) > 1}
+    out = {}
+    for p, n in full.items():
+        parts = n.split()
+        out[p] = (f"{parts[0][0]}. {last[p]}"
+                  if last[p] in dupes and len(parts) > 1 else last[p])
+    return out
+
+
+def _pick(cands, gw, named=()):
+    """The most valuable candidate stat that the narration hasn't leaned on yet.
+
+    Always taking the strongest signature stat makes every line say the same
+    thing — one stat usually dominates the effect sizes AND is hit by nearly
+    every five (the defensive keys barely move between lineups), so the honest
+    read gets buried under repetition. Preferring an unsaid stat keeps each line
+    true while letting the reader see the whole win formula over the game."""
+    pool = [k for k in cands if k not in named] or list(cands)
+    return max(pool, key=lambda k: gw.get(k, 0.0)) if pool else None
+
+
+def _narrate(segments, goals, gw, ctxp):
+    """Write each stint's reasoning with knowledge of the stints before it.
+
+    A per-block rule can only ever describe THIS five, so it repeats. Narrating
+    after the fact lets each line say what actually changed: who checked in, the
+    first stat to reach the floor, what a rest stint gives up. Every line is
+    still derived from that five's own projection — this varies the telling, not
+    the truth."""
+    import helpers.lineup_projection as LP
+    short = short_names(ctxp, {p for s in segments for p in s["five"]})
+
+    def nm(p):
+        return short.get(p, str(p))
+
+    def lbl(k):
+        return LP.KEY_LABELS.get(k, k)
+
+    # Verbs rotate and the last two stats named are off-limits, so consecutive
+    # stints can't land on the same sentence. RECENT is deliberately short: over
+    # a 32-minute game a stat SHOULD come up more than once — it just shouldn't
+    # come up twice in a row.
+    VERBS = ("holds", "keeps", "protects", "leans on")
+    RECENT = 2
+    covered, named, anchors, vi = set(), [], 0, 0
+    clock = {}
+    prev = None
+    for s in segments:
+        hit = set(s["goals_hit"])
+        if s["role"] == CLOSE:
+            text = "Closing five — the game is decided here."
+        elif s["role"] == ANCHOR:
+            anchors += 1
+            text = ("Anchor five — open the game with your best group."
+                    if anchors == 1 else
+                    "Anchor five — out of the half with the group that started.")
+        else:
+            parts = []
+            if prev:
+                came = [p for p in s["five"] if p not in prev["five"]]
+                gone = [p for p in prev["five"] if p not in s["five"]]
+                if came and len(came) <= 3:
+                    line = " & ".join(nm(p) for p in came) + " in"
+                    if gone and len(gone) <= 3:
+                        line += " for " + " & ".join(nm(p) for p in gone)
+                    parts.append(line)
+            recent = named[-RECENT:]
+            fresh = [k for k in hit if k not in covered]
+            lost = sorted(set(prev["goals_hit"]) - hit) if prev else []
+            if fresh:
+                k = _pick(fresh, gw, recent)
+                named.append(k)
+                parts.append(f"first look at {lbl(k)} — nothing has covered it yet")
+            elif hit and vi % 2:
+                # the coverage clock: same truth, told as floor time — and it
+                # moves every stint, so it never reads as the same sentence
+                k = _pick(hit, gw, recent)
+                named.append(k)
+                mins = clock.get(k, 0.0) + (s["end"] - s["start"])
+                parts.append(f"{lbl(k)} on the floor {mins:.0f} of "
+                             f"{GAME_MIN:.0f} minutes")
+            elif len(hit) >= 2:
+                a = _pick(hit, gw, recent)
+                b = _pick([x for x in hit if x != a], gw, recent + [a])
+                named += [a, b]
+                parts.append(f"{VERBS[vi % len(VERBS)]} {lbl(a)} and {lbl(b)} "
+                             "together")
+            elif hit:
+                k = _pick(hit, gw, recent)
+                named.append(k)
+                parts.append(f"{VERBS[vi % len(VERBS)]} {lbl(k)} on the floor")
+            if lost:
+                parts.append(f"you give up {lbl(_pick(lost, gw))} for these minutes")
+            if not parts:
+                parts.append("rest window — bench legs while nothing is at stake"
+                             f" (Net {(s['net'] or 0):+.1f})")
+            vi += 1
+            text = "; ".join(parts)
+            text = text[0].upper() + text[1:] + "."
+        for k in hit:
+            clock[k] = clock.get(k, 0.0) + (s["end"] - s["start"])
+        s["why"] = text
+        covered |= hit
+        prev = s
+    return segments
 
 
 def _merge_segments(blocks):
@@ -414,8 +509,8 @@ def _merge_segments(blocks):
         out.append({"start": b["start"], "end": b["end"], "blocks": 1,
                     "five": list(b["five"]), "label": b["label"],
                     "preset": b["preset"], "net": b["net"],
-                    "goals_hit": b["goals_hit"], "why": b["why"],
-                    "quarter": b["quarter"]})
+                    "goals_hit": b["goals_hit"], "why": "",
+                    "role": b["role"], "quarter": b["quarter"]})
     return out
 
 
@@ -445,6 +540,9 @@ def _stints(blocks, ctxp):
                 row["segments"][-1] = (s, b["end"], lbl)
             else:
                 row["segments"].append((b["start"], b["end"], b["label"]))
+    short = short_names(ctxp, segs)
+    for p, row in segs.items():
+        row["short"] = short.get(p, row["name"])
     return sorted(segs.values(), key=lambda r: -r["minutes"])
 
 

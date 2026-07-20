@@ -182,3 +182,121 @@ The 2 boys games missing from the local DB (`#15344` Kansas 12/16, `#13947` Inol
 local `analytics.db` has **not** been touched. Syncing it is a separate decision —
 prod is a superset for tracked games and carries richer `game_type` tags, but
 overwriting a working DB is not something to do without the go-ahead.
+
+---
+
+# Addendum — 2026-07-20: the completed boys set, and the one-team gate
+
+## The boys set is complete (8 games), and the verdict did not move
+
+The 2 games listed under "Open item" landed, plus 2 more. The boys tracked set is
+now the full home-and-home against 4 opponents — Inola, Jay, Kansas, Adair — and
+the local `analytics.db` has been synced from prod (backup:
+`analytics.pre-sync-20260720.db`; prod verified a strict superset first, no
+local-only rows or field values in any of the 26 tables).
+
+Coverage improved exactly as predicted, and it changed nothing:
+
+| | 6 games (07-19) | 8 games (07-20) |
+|---|---|---|
+| LOO coverage | 4/6 | **8/8 (100%)** |
+| hub_share | 1.00 | **1.00** |
+| score engine MAE | — | 10.43 |
+| tracked engine MAE (LOO) | — | 12.78 |
+| best blend | w=? | w=0.22 → 10.14 |
+| shrink-only control | explained the gain | **k=0.28 → 7.65** |
+| verdict | NO | **NO** |
+
+**Coverage was never the binding constraint.** Every game is now LOO-predictable
+and the tracked engine is still beaten by a control that uses no tracked data at
+all — by 2.49 MAE. The sweep makes the mechanism unmissable: `vs ctrl` is
+negative in **all 28 configs**, and tracked MAE improves monotonically as `reg`
+climbs (12.93 at reg=0.5 → 8.60 at reg=32) toward the pick-'em baseline of 8.62.
+The tracked engine looks best precisely where regularization has erased its
+signal. That is not tuning; that is the engine being switched off.
+
+Two further readings from this set, both cautionary:
+
+- Tracked LOO **r = −0.13**. The tracked engine's spreads are *anti-correlated*
+  with outcomes here. With 8 observations spent on 5 free team strengths, that is
+  what an unidentified model looks like.
+- Score engine MAE 10.43 is **worse than pick-'em (8.62)** on these 8 games.
+  Margins were 3, 6, 29, 4, 15, 6, 5, 1 — a near-coin-flip subset. Any estimator
+  validated on these 8 games is being validated on the hardest possible sample.
+  n=8 does not support a verdict flip in *either* direction.
+
+`hybrid_ratings` stays off. Nothing here is a reason to reopen it.
+
+## The gate can never open for a single-team coach. That is correct — and it is
+## also the wrong question
+
+`hub_share < 0.5` is unreachable for a coach tracking only their own team: their
+team is an endpoint of every game they log, so `hub_share = 1.0` permanently, by
+construction and not by accident. The gate as written can never open for the
+primary user. Three claims about that:
+
+**1. For the job the gate actually guards — ranking — the gate is right, and
+loosening it would be a bug.**
+
+`hybrid_ratings` makes an *ordinal, cross-team* claim: it moves teams relative to
+each other. A star graph cannot support one. With every game sharing the hub, the
+design matrix identifies the *differences* `hub − opponent_i` but not the
+opponents against each other, and the hub's own level is confounded with the mean
+of its opponents. Tonight's r = −0.13 is that rank-deficiency showing up as
+noise, on a set with perfect coverage.
+
+The scale problem is worse than the identification problem. 5 of 748 boys teams
+have any tracked data. Blending would perturb 5 rows against 743 untouched ones.
+That is not a re-ranked league; it is 5 teams jumped for a reason no other team's
+rating reflects. No value of `hub_share` makes that sound.
+
+**2. "Rate MY team better" is a genuinely different estimand, and it is
+better-posed, not worse.**
+
+For the league question, `hub_share = 1.0` is a defect. For the my-team question
+it is *the design*: the hub is the only team we have a real sample on, and the
+opponents are nuisance parameters. And critically — those opponents are not
+unknown. Each has a full season of score data (~20–30 games) behind a score
+engine validated at 7.26 MAE league-wide.
+
+So the right model for "how good is my team, using my tracked possessions" holds
+opponent strength **fixed** at the score engine's estimate and frees exactly one
+parameter: the hub's tracked strength. That is 8 observations for 1 parameter —
+well-posed — versus the 8-for-5 that `tracked_ratings` is currently solving and
+losing.
+
+This is the load-bearing point: **relaxing the gate while keeping the estimator
+would be strictly wrong.** `tracked_ratings` free-estimates all 5 teams, so under
+a loosened gate it would spend a scarce 8-game sample re-deriving 4 opponents the
+score engine already knows far better. The one-team case needs a different
+*estimator*, and only then a different gate. A gate change alone is the worst of
+the available options.
+
+**3. The my-team case probably should not route through `hybrid_ratings` at all.**
+
+The gate exists to protect a ranking. The my-team question does not make an
+ordinal cross-team claim, so it does not need that protection — and the parts of
+the tracked engine a coach actually wants (possessions, four factors, lineups,
+WPA, play-type splits) make no cross-team claim either and are already ungated.
+The spec's original framing holds: the tracked engine's value is **diagnostic,
+not ordinal**. "How good are we?" is answered by the score engine at 7.26 MAE.
+"Why are we good, and what do we fix?" is answered by the tracked layer, and
+neither answer requires a blended rating.
+
+### Recommendation (not implemented)
+
+- Keep `hub_share < 0.5` exactly as written for `hybrid_ratings`. Do not add a
+  one-team exemption. It correctly reports that a one-team sample cannot rank a
+  league.
+- Do **not** relax the gate for the my-team case. If a tracked my-team rating is
+  wanted, it is a separate function — opponent strengths fixed from the score
+  engine, one free hub parameter — with its own gate and its own shrink-only
+  control, not a loosened `hybrid_ratings`.
+- Any such gate needs a minimum-games condition that 8 does not obviously clear,
+  and it cannot be validated on this particular 8-game set (score engine loses to
+  pick-'em on it). Grow the sample first.
+
+The tracking *pattern* is right, and worth saying plainly to the coach: the boys
+set — home-and-home against 4 opponents — is the shape the girls set lacks.
+Repeat matchups are what separate improvement from noise. More games in that
+shape is the correct next move; more games around a single hub is not.

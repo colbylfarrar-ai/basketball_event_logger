@@ -229,6 +229,10 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
         "team_dshot_avg": team_dshot_avg, "team_stl_pm_avg": team_stl_pm_avg,
         "goals": goals, "d_by_key": d_by_key, "sig_available": sig_available,
         "stars": stars, "career_note": career_note, "season_used": season,
+        # the ratings table this context was built from — carried so the
+        # rotation scheduler can build preset fives without a second full
+        # player_stat_table pass over the same games.
+        "table": table,
     }
 
 

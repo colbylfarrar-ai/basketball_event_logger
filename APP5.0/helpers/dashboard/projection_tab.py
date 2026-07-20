@@ -112,6 +112,119 @@ def _rotation_table(opt, ctxp, names):
     st.markdown(dense_table(mrows), unsafe_allow_html=True)
 
 
+def _suggested_rotation(tid, ctxp, opt, names, deep=False):
+    """The Suggested Rotation — the optimizer's minutes laid across the clock as
+    preset fives, drawn with the same stint-chart language as the box score's
+    rotation timeline so a coach reads the plan the way they read the game.
+
+    Both depths call this; `deep` adds the block-by-block reasoning table and the
+    signature-coverage read (the War Room lab), while the dashboard keeps the
+    chart plus the headline segments."""
+    import helpers.rotation_schedule as RS
+    st.markdown("<div class='pl-hdr'>Suggested rotation — who's on the floor, "
+                "minute by minute</div>", unsafe_allow_html=True)
+    st.caption(
+        "The recommended minutes above, scheduled. Your anchor five opens each "
+        "half and closes the game; between those, the engine plays whichever "
+        "**preset five** covers the signature win stat that's had the least "
+        "floor time so far. Totals match the recommendation exactly — a plan "
+        "you can't run isn't a plan.")
+
+    try:
+        sched = RS.suggest_rotation(tid, ctxp, opt,
+                                    game_ids=ctxp.get("game_ids"))
+    except Exception:
+        st.caption("Couldn't build a schedule from these minutes.")
+        return
+    if sched.get("gated"):
+        st.caption(f"No schedule yet — {sched['gated']}.")
+        return
+
+    # ── the chart: one row per player, one bar per stint, colored by unit ─────
+    try:
+        import plotly.graph_objects as go
+        from helpers import ui as _uit
+        units = sched["units"]
+        color = {u["label"]: _uit.PALETTE[i % len(_uit.PALETTE)]
+                 for i, u in enumerate(units)}
+        drawn = set()
+        fig = go.Figure()
+        for r in sched["stints"]:
+            last = (r["name"].split()[-1] if r["name"] else str(r["pid"]))
+            lbl = f"{last} · {r['minutes']:.0f}"
+            for (s, e, unit) in r["segments"]:
+                fig.add_trace(go.Bar(
+                    x=[e - s], y=[lbl], base=s, orientation="h",
+                    marker_color=color.get(unit, _uit.PALETTE[0]),
+                    marker_line_width=0, name=unit,
+                    showlegend=unit not in drawn,
+                    hovertemplate=(f"{r['name']} · {unit}<br>"
+                                   f"{s:.0f}–{e:.0f} min · {r['minutes']:.0f} "
+                                   f"total over {r['entries']} trip"
+                                   f"{'s' if r['entries'] != 1 else ''}"
+                                   f"<extra></extra>")))
+                drawn.add(unit)
+        for qb in (8, 16, 24):
+            fig.add_vline(x=qb, line=dict(color="#30363d", dash="dot"))
+        fig.update_layout(barmode="overlay", template="plotly_dark",
+                          height=max(220, 26 * len(sched["stints"]) + 110),
+                          paper_bgcolor="rgba(0,0,0,0)",
+                          plot_bgcolor=_uit.CARD_BG,
+                          margin=dict(l=46, r=22, t=46, b=42),
+                          legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                      x=0, bgcolor="rgba(0,0,0,0)"),
+                          font=dict(size=12, color="#c9d1d9"), bargap=0.22)
+        fig.update_xaxes(title="Game minute", range=[0, RS.GAME_MIN],
+                         dtick=4, gridcolor=_uit.GRID, showline=False)
+        fig.update_yaxes(autorange="reversed", gridcolor=_uit.GRID,
+                         showline=False)
+        st.plotly_chart(fig, width="stretch", key=f"proj_rotsched_{tid}")
+        st.caption("Dotted lines = quarter breaks. Each color is one five; the "
+                   "number after a name is that player's scheduled minutes. "
+                   "Adjacent bars of different colors mean the five around a "
+                   "player changed — not that they came off.")
+    except Exception:
+        pass
+
+    # ── the segments: what's on, when, and why ───────────────────────────────
+    segs = sched["segments"]
+    rows = []
+    for s in segs:
+        rows.append({
+            "Min": f"{s['start']:.0f}–{s['end']:.0f}",
+            "Q": s["quarter"],
+            "Five": s["label"],
+            "On the floor": " · ".join(names.get(p, str(p)) for p in s["five"]),
+            **({"Net": f"{s['net']:+.1f}" if s["net"] is not None else "—",
+                "Why": s["why"]} if deep else {}),
+        })
+    st.markdown(dense_table(rows), unsafe_allow_html=True)
+
+    if not deep:
+        return
+
+    # ── signature coverage: no win stat should sit uncovered all game ────────
+    goals = ctxp.get("goals") or []
+    if goals:
+        crows = []
+        for g in goals:
+            cov = sched["coverage"].get(g["key"], 0.0)
+            crows.append({
+                "Signature stat": LP.KEY_LABELS.get(g["key"], g["key"]),
+                "Covered minutes": f"{cov:.0f} / {RS.GAME_MIN:.0f}",
+                "": ("✅ covered" if cov >= RS.GAME_MIN * 0.5 else
+                     ("⚠️ thin" if cov > 0 else "❌ never on the floor")),
+            })
+        st.markdown("<div class='pl-hdr'>Signature coverage — how much of the "
+                    "game each win stat is on the floor</div>",
+                    unsafe_allow_html=True)
+        st.markdown(dense_table(crows), unsafe_allow_html=True)
+        if sched["uncovered"]:
+            miss = " · ".join(LP.KEY_LABELS.get(k, k) for k in sched["uncovered"])
+            st.caption(f"⚠️ No five in this rotation projects to hit **{miss}** — "
+                       "that's a roster gap, not a scheduling one.")
+
+
 def _star_note(tid, ctxp):
     # use the ctx-resolved, season-scoped game ids (gids may be None for an open
     # archive / own team — star_coverage would otherwise read the 'Current' season)
@@ -164,6 +277,7 @@ def render(ctx):
 
     _headline(tid, ctxp, opt, force=_force)
     _rotation_table(opt, ctxp, names)
+    _suggested_rotation(tid, ctxp, opt, names)
 
     # ── the best five + its give-and-take vs the season line ─────────────────
     top5 = sorted(opt["minutes"], key=lambda p: -opt["minutes"][p])[:5]
@@ -266,6 +380,7 @@ def render_deep(ctx):
             st.markdown(dense_table(rows), unsafe_allow_html=True)
 
     _rotation_table(opt, ctxp, names)
+    _suggested_rotation(tid, ctxp, opt, names, deep=True)
 
     # ── what-if: coach sets the minutes, sees the projected difference ────────
     with st.expander("🎛️ Try your own minutes — see the difference"):

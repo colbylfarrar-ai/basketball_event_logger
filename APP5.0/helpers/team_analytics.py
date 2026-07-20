@@ -1889,13 +1889,16 @@ def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None,
 # Each preset = the roster's top five by one lens, run through the same
 # possession-calibrated lineup_prediction as a manual pick. Identical fives
 # collapse (their lens labels merge), so a coach sees every distinct five once.
-def preset_lineups(player_rows, ctx, team_id, spacing_map=None, size=5):
+def preset_lineups(player_rows, ctx, team_id, spacing_map=None, size=5,
+                   predict=True):
     """Generate ranked preset fives from a team's player_stat_table rows.
 
     ``player_rows`` are PR.player_stat_table dicts each carrying ``_pid`` (the
     War Room shape). ``ctx`` is lineup_engine_context(...). ``spacing_map`` is an
     optional {pid: {index,...}} from spacing.league_player_spacing for the "Floor
-    spacing" lens. Returns a list of
+    spacing" lens. ``predict=False`` skips the projection entirely (``pred`` is
+    None) — for callers that only want the FIVES and will run their own engine,
+    so they don't pay for the league-wide lineup_engine_context. Returns a list of
     {labels:[...], players:[{pid,name,num}], pred: lineup_prediction(...) | None},
     one row per DISTINCT five (sorted by projected Net desc), or [] when the team
     has fewer than ``size`` rated players. Pure data + the shared predictor."""
@@ -1943,10 +1946,12 @@ def preset_lineups(player_rows, ctx, team_id, spacing_map=None, size=5):
         if key in seen:
             out[seen[key]]["labels"].append(label)
             continue
-        try:
-            pred = lineup_prediction(rated, [r["_pid"] for r in five], ctx, team_id)
-        except Exception:
-            pred = None
+        pred = None
+        if predict:
+            try:
+                pred = lineup_prediction(rated, [r["_pid"] for r in five], ctx, team_id)
+            except Exception:
+                pred = None
         seen[key] = len(out)
         out.append({
             "labels": [label],

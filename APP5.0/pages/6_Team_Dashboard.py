@@ -454,6 +454,7 @@ _season_opts = SEAS.season_options()
 if len(_season_opts) > 1:
     _slbl = c2.selectbox(
         "Season", [l for _v, l in _season_opts], key="ta_season",
+        index=SEAS.default_read_season_index(_season_opts),
         help="View a past season's data. The whole dashboard scopes to it — "
              "ratings, play style, defense, situational and player profiles are "
              "that season's. (The Scout sheet and the Lab → Build tab stay "

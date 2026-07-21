@@ -66,6 +66,34 @@ def season_options() -> list[tuple[str, str]]:
     return opts
 
 
+def default_read_season() -> str:
+    """The season an ANALYTICS/READ picker should DEFAULT to.
+
+    Normally the active season. But right after a rollover the active season has
+    no finished games yet, and defaulting a read page to it shows a blank
+    "no games" page over a full database — which reads as data loss. In that gap,
+    fall back to the most recently PLAYED season that actually has finished
+    games. Write pages (Input Hub, Game Tracker) do NOT use this — a new game
+    must still default to the active season. Mirrors tracked_default_season_sql()
+    for the finished-games (not tracked-only) case."""
+    if query("SELECT 1 FROM games WHERE season=? AND home_score IS NOT NULL "
+             "LIMIT 1", (ACTIVE,)):
+        return ACTIVE
+    r = query("SELECT season FROM games WHERE home_score IS NOT NULL "
+              "AND season!=? ORDER BY season DESC LIMIT 1", (ACTIVE,))
+    return r[0]["season"] if r else ACTIVE
+
+
+def default_read_season_index(opts) -> int:
+    """Index into `opts` ([(value,label)]) of default_read_season(), 0 if absent.
+    For seeding a season selectbox's `index=` so it opens on a populated season."""
+    want = default_read_season()
+    for i, (v, _l) in enumerate(opts):
+        if v == want:
+            return i
+    return 0
+
+
 # ── Season-of-a-game: tag on creation, resolve when tracking ─────────────────────
 #: Month a new HS season opens (founder rule: seasons run Oct 1 → Apr 30). A game
 #: dated Oct–Dec belongs to the season OPENING that calendar year; Jan–Sep belongs

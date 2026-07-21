@@ -1354,6 +1354,9 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             # logged (screen-created, credit unassigned).
             "PotAST": b["SC_pass"], "PotAST/G": pg(b["SC_pass"]),
             "ScrAST": b["SCR_AST"], "ScrAST/G": pg(b["SCR_AST"]),
+            # HAST = hockey assist (the pass that fed the assister on a made
+            # shot). Opt-in capture (game_events.hockey_from_id) -> 0 until tagged.
+            "HAST": b["HAST"], "HAST/G": pg(b["HAST"]),
             "ScrnFGA": b["scr_tag_FGA"], "ScrnFGM": b["scr_tag_FGM"],
             "FeedConv%": (_pct(_safe(b["AST"], b["SC_pass"]))
                           if b["SC_pass"] else None),

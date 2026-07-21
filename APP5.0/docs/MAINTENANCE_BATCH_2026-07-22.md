@@ -84,6 +84,19 @@ until caught, and +/- is snapshotted per event, so the error persists.
 ---
 
 ## 3. FEATURE — Hockey assists (secondary assist)  ⚠ needs new capture; LOW priority
+### My additive READ path ✅ BUILT + verified on branch, NOT deployed (founder wires live capture Wed)
+Built the opt-in, purely-additive read side: migration `game_events.hockey_from_id`
+(nullable INTEGER REFERENCES players, NULL everywhere on existing DBs → HAST reads 0
+until tagged); HAST slot in the `helpers/stats.py` box builder (`_blank_box` seeds
+0; credited to `hockey_from_id` on a MADE shot, sibling to AST/SCR_AST, `.get()`-guarded
+so hand-built event dicts don't KeyError); `P` mapping `HAST`/`HAST/G` in
+`helpers/player_ratings.py:player_stat_table`; surfaced next to ScrAST in
+`helpers/dashboard/player_card.py` render_card (row appears ONLY when HAST>0 — no
+clutter pre-capture); glossary entry (Playmaking/Paid). Unit `tracker/test_hockey_assist.py`
+(RED→GREEN, 9 asserts). Smoke: real DB → 242 players build P (HAST=0 everywhere);
+render_card runs no-exception both branches; row hides at 0, draws `3 (1.0/g)` at >0.
+STILL FOUNDER'S (Wed): capture tap on the 3 trackers (PWA app.js, Streamlit
+2_Game_Tracker.py, Event Editor 3_Event_Editor.py) writing hockey_from_id.
 
 **Need:** credit the pass that led to the assist (the "hockey assist").
 

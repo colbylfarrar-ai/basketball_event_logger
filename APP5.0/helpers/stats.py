@@ -95,6 +95,9 @@ def _blank_box():
         "2PA": 0, "2PM": 0, "3PA": 0, "3PM": 0,
         "FTA": 0, "FTM": 0,
         "AST": 0, "AST2": 0, "AST3": 0, "ORB": 0, "DRB": 0,
+        # hockey assist (secondary assist): the pass that fed the assister on a
+        # MADE shot (game_events.hockey_from_id). Opt-in capture — 0 until tagged.
+        "HAST": 0,
         "STL": 0, "BLK": 0, "TOV": 0, "PF": 0,
         # Shots Created components
         "SC_shoot": 0, "SC_pass": 0, "SC_screen": 0,
@@ -195,6 +198,12 @@ def aggregate_player_boxes(game_ids=None, events=None):
                 sb["SC_screen"] += 1
                 if made:
                     sb["SCR_AST"] += 1
+
+            # hockey assist (pass before the assist): the fed the assister slot,
+            # credited only on a MADE shot (mirrors AST). NULL until captured, so
+            # this is a no-op on every existing event.
+            if made and e.get("hockey_from_id") is not None:
+                boxes[e["hockey_from_id"]]["HAST"] += 1
 
             # block credited to defender
             if e["blocked_by_id"] is not None:

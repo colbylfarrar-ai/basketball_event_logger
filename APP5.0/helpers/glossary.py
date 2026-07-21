@@ -137,6 +137,14 @@ STAT_DEFS = [
      "with the credit unassigned.",
      "The big who sets bone-rattling picks finally gets a number. Volume-"
      "dependent on tagging.", True),
+    ("HAST",  "Hockey Assists",   "Playmaking", "the pass before the assist, made shots",
+     "The secondary assist — the pass that fed the assister on a made basket "
+     "(borrowed from hockey). It rewards the ball-mover who starts the advantage "
+     "that someone else finishes with the assist. Not derivable from the shot "
+     "alone (a pass isn't its own event), so it's an opt-in tap in the tracker; "
+     "reads 0 until a coach starts capturing it.",
+     "Surfaces the connector who swings the extra pass but rarely gets the "
+     "assist. Volume-dependent on tagging.", True),
     ("SCE",   "Self-Creation %",  "Playmaking", "self-created shots / FGA",
      "Share of a player's own shots they created off the dribble (no pass into "
      "the shot).", "Higher = shot-maker who doesn't need setup.", False),

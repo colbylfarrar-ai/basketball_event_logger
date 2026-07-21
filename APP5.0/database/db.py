@@ -288,6 +288,14 @@ def initialize_database():
             # breakdown engine lights up only as coaches tag. Orthogonal to
             # play_type — the set call stays the "extra layer" on turnovers.
             "ALTER TABLE game_events     ADD COLUMN turnover_type TEXT",
+            # Hockey assist (secondary assist): the "pass before the pass" on a
+            # made, assisted shot — the player who fed the assister. NOT derivable
+            # (passes aren't standalone events), so it needs its own captured slot,
+            # a SIBLING to pass_from_id (assist) and shot_created_by_id (screen).
+            # Nullable + opt-in: every existing shot stays NULL and the HAST box
+            # stat (helpers/stats.py) reads 0 until a coach starts tagging it in
+            # the trackers. Credit mirrors AST — counted only on a MADE shot.
+            "ALTER TABLE game_events     ADD COLUMN hockey_from_id INTEGER REFERENCES players(id)",
             # "Assistant scorer" guest links (the link IS the token; log-only,
             # resolves to the owner coach). Separate from app_users.tracker_token
             # so revoking an assistant never touches the coach's own credential.

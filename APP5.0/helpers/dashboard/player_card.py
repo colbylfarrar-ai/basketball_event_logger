@@ -1086,6 +1086,11 @@ def render_card(ctx):
                        if P.get("FeedConv%") is not None else ")")},
                 _row("Screen assists", "ScrAST", "int") | {"Value":
                     f"{P['ScrAST']} ({P['ScrAST/G']:.1f}/g)"},
+                # hockey assist (pass before the assist) — opt-in capture, so the
+                # row appears only once a player has one (0 for everyone until a
+                # coach starts tagging it would be pure clutter)
+                *([_row("Hockey assists", "HAST", "int") | {"Value":
+                    f"{P['HAST']} ({P['HAST/G']:.1f}/g)"}] if P.get("HAST") else []),
                 _row("Guarded% (on court)", "Guarded%", "pct"),
                 _row("Defended FG% allowed", "DSHOT%", "pct"),
             ]

@@ -332,8 +332,11 @@ gender = gender_radio()
 # helpers read.
 _season_opts = SEAS.season_options()
 if len(_season_opts) > 1:
+    # Default to the newest season that HAS games: post-rollover the active
+    # season is empty, and opening on it shows a blank page over a full DB.
     _slbl = st.selectbox(
         "Season", [l for _v, l in _season_opts], key="rk_season",
+        index=SEAS.default_read_season_index(_season_opts),
         help="View a past season's rankings. Past seasons are an open archive — "
              "free, full depth, to everyone.")
     season_pick = next(v for v, l in _season_opts if l == _slbl)

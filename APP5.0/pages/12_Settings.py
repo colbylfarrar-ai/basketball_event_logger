@@ -427,6 +427,91 @@ else:
             st.success("Overrides cleared — the committed constants apply on "
                        "the next app restart.")
 
+    # ── Coaches online + server capacity (batch item 5) ──────────────────────
+    # 5a: how many coaches are actively using the main app right now (the load
+    # signal). 5b: is the box close to needing an upgrade — /proc read, plus a
+    # rolling weekly peak concurrent persisted here (admin render only, so the DB
+    # write stays off the hot path). See the batch doc §5c for the baseline.
+    with st.expander("📊 Coaches online & server capacity"):
+        import helpers.presence as _PR
+        import helpers.server_control as _SCAP
+        from datetime import datetime as _dt
+
+        _now_online = _PR.online_count()
+        _peak = _PR.peak()
+
+        # roll the weekly peak: read the stored high-water, reset on a new ISO
+        # week, merge this process's in-memory peak, and merge THIS render's
+        # live count (so an admin looking now counts too).
+        _wk = _dt.now().strftime("%G-W%V")
+        _row = query("SELECT value FROM app_settings WHERE key='coach_peak_week'")
+        _wp = {"week": _wk, "peak": 0, "at": ""}
+        if _row and _row[0]["value"]:
+            try:
+                import json as _json
+                _d = _json.loads(_row[0]["value"])
+                if isinstance(_d, dict) and _d.get("week") == _wk:
+                    _wp = _d
+            except (ValueError, TypeError):
+                pass
+        _cand = max(_now_online, _peak.get("peak", 0))
+        if _cand > _wp.get("peak", 0):
+            _wp = {"week": _wk, "peak": _cand,
+                   "at": _dt.now().strftime("%Y-%m-%d %H:%M")}
+            import json as _json
+            execute("INSERT OR REPLACE INTO app_settings (key, value) "
+                    "VALUES (?, ?)",
+                    ("coach_peak_week",
+                     _json.dumps(_wp, separators=(",", ":"))))
+
+        _cc = st.columns(3)
+        _cc[0].metric("Coaches online now", _now_online,
+                      help="Distinct coaches whose page rendered in the last "
+                           "~90 s — actively using the app, the number that "
+                           "drives load. An idle open tab ages out (Streamlit "
+                           "only reruns on interaction).")
+        _cc[1].metric("Peak this week", _wp.get("peak", 0),
+                      help="Highest concurrent coaches seen this ISO week "
+                           f"({_wk}). Resets Monday; survives app restarts."
+                      + (f" Last at {_wp['at']}." if _wp.get("at") else ""))
+        _cc[2].metric("Peak since restart", _peak.get("peak", 0),
+                      help="Highest concurrent coaches since app5-web last "
+                           "started (in-memory).")
+        if _now_online:
+            st.caption("Active now: " + ", ".join(_PR.online()))
+
+        st.divider()
+        _cap = _SCAP.server_capacity()
+        if not _cap.get("available"):
+            st.caption(f"Server capacity read unavailable — {_cap.get('reason')}.")
+        else:
+            _badge = {"healthy": "🟢 Healthy",
+                      "watch": "🟡 Watch",
+                      "upgrade-soon": "🔴 Upgrade soon"}[_cap["status"]]
+            _why = (f" — driven by {', '.join(_cap['drivers'])}"
+                    if _cap["drivers"] else "")
+            st.markdown(f"**Box status: {_badge}**{_why}  "
+                        f"({_cap['ncpu']} vCPU)")
+            _gc = st.columns(3)
+            _gc[0].metric("CPU load (1m / vCPU)", f"{_cap['load_ratio']:.2f}",
+                          help="1-minute load average ÷ vCPU count. Above 1.0 "
+                               "means reruns are queuing on the core — the "
+                               "binding constraint on this box. "
+                               f"Raw load {_cap['load1']:.2f}/"
+                               f"{_cap['load5']:.2f}/{_cap['load15']:.2f}.")
+            _gc[1].metric("RAM used", f"{_cap['ram_pct']:.0f}%",
+                          help=f"{_cap['ram_total_mb'] - _cap['ram_avail_mb']}"
+                               f" / {_cap['ram_total_mb']} MB used "
+                               f"({_cap['ram_avail_mb']} MB available). "
+                               "No swap on this box, so watched for the OOM "
+                               "edge.")
+            _gc[2].metric("Disk used", f"{_cap['disk_pct']:.0f}%")
+            st.caption("CPU is weighted hardest: Streamlit reruns are "
+                       "CPU-bound and serialize on one core, so more vCPUs — "
+                       "not RAM or a GPU — is the scale path. A cold-cache "
+                       "halftime spike can read high here without meaning the "
+                       "box is too small; pair this with the ↻ render time.")
+
     # ── Restart the app — makes "next restart" actually happen ────────────────
     # The two buttons above both end with "takes effect on the next app
     # restart"; this is that restart, without an SSH session.

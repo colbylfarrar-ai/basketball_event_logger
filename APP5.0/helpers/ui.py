@@ -153,7 +153,16 @@ def page_chrome(title: str = None):
     apply_theme_css(cfg)
     refresh_theme_tokens()
     from helpers.auth import require_login
-    require_login()
+    _ident = require_login()
+    # Coaches-online presence (batch item 5a): stamp this coach as active in the
+    # process-shared in-memory store. Runs on every page render but is a single
+    # dict write (no DB) and swallows its own errors — presence must never be
+    # able to break page boot.
+    try:
+        from helpers import presence as _presence
+        _presence.mark((_ident or {}).get("email"))
+    except Exception:
+        pass
     # Always-available data refresh — kept LAST in page_chrome. Clearing stamps
     # a session time string; first run of a session shows no caption.
     if st.sidebar.button("↻ Refresh data", key="_chrome_refresh"):

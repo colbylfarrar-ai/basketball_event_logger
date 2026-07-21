@@ -821,8 +821,9 @@ def _render_command_center():
                     _rpts[_e["primary_player_id"]] = \
                         _rpts.get(_e["primary_player_id"], 0) + 1
         _ros = query(
-            "SELECT id, name, number, team_id FROM players "
-            "WHERE team_id IN (?,?) ORDER BY team_id, number", (t1id, t2id))
+            f"SELECT id, name, number, team_id FROM players "
+            f"WHERE team_id IN (?,?) AND {_roster_c} ORDER BY team_id, number",
+            (t1id, t2id, *_roster_p))
         st.markdown("#### Rosters")
         _rc1, _rc2 = st.columns(2)
         for _col, _tid, _tnm in ((_rc1, t1id, t1name), (_rc2, t2id, t2name)):

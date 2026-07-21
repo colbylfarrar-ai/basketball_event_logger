@@ -112,3 +112,92 @@ def do_restart() -> None:
     is reported by the ABSENCE of a new timestamp after reconnect."""
     subprocess.Popen(RESTART_ARGV, start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# ── Capacity monitor (batch item 5b) ──────────────────────────────────────────
+# "Is the box close to needing an upgrade?" read straight from /proc — zero deps
+# (no psutil, pip-only ethos). The binding constraint on this droplet is the 1
+# vCPU (Streamlit reruns are CPU-bound and serialize on one core), so LOAD vs
+# nproc is weighted the heaviest; RAM is comfortable at ~2 GB but watched for the
+# no-swap OOM edge. Linux-only — returns available=False elsewhere so the card
+# can explain rather than error. See the batch doc §5c for the measured baseline.
+
+def _meminfo() -> dict:
+    """Parse /proc/meminfo → {key: kB int}. Empty on any read failure."""
+    out = {}
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                k, _, rest = line.partition(":")
+                out[k.strip()] = int(rest.strip().split()[0])
+    except Exception:
+        return {}
+    return out
+
+
+def server_capacity() -> dict:
+    """Point-in-time box health for the admin capacity card.
+
+    Returns {'available': bool, 'reason': str, 'ncpu': int,
+             'load1', 'load5', 'load15': float, 'load_ratio': float,
+             'ram_pct', 'disk_pct': float, 'ram_total_mb', 'ram_avail_mb': int,
+             'status': 'healthy'|'watch'|'upgrade-soon',
+             'drivers': [str]}.
+    `load_ratio` = 1-min load average / vCPU count (>1 means work is queuing on
+    the core). `status` is the worst of the three axes; `drivers` names which
+    axis/axes pushed it there so the founder sees WHY, not just a colour."""
+    if sys.platform != "linux":
+        return {"available": False,
+                "reason": f"not a Linux host ({sys.platform}) — prod only"}
+
+    ncpu = os.cpu_count() or 1
+    try:
+        load1, load5, load15 = os.getloadavg()
+    except (OSError, AttributeError):
+        load1 = load5 = load15 = 0.0
+    load_ratio = load1 / ncpu if ncpu else load1
+
+    mi = _meminfo()
+    ram_total = mi.get("MemTotal", 0)                     # kB
+    ram_avail = mi.get("MemAvailable", mi.get("MemFree", 0))
+    ram_pct = (ram_total - ram_avail) * 100.0 / ram_total if ram_total else 0.0
+
+    try:
+        sv = os.statvfs("/")
+        disk_total = sv.f_blocks * sv.f_frsize
+        disk_free = sv.f_bavail * sv.f_frsize
+        disk_pct = (disk_total - disk_free) * 100.0 / disk_total \
+            if disk_total else 0.0
+    except OSError:
+        disk_pct = 0.0
+
+    # thresholds: CPU weighted hardest (the 1-vCPU bottleneck), RAM watched for
+    # the no-swap edge, disk a slow-moving backstop.
+    drivers = []
+    status = "healthy"
+
+    def _bump(level):
+        nonlocal status
+        order = {"healthy": 0, "watch": 1, "upgrade-soon": 2}
+        if order[level] > order[status]:
+            status = level
+
+    if load_ratio > 1.5:
+        _bump("upgrade-soon"); drivers.append("CPU load")
+    elif load_ratio > 0.8:
+        _bump("watch"); drivers.append("CPU load")
+    if ram_pct > 90:
+        _bump("upgrade-soon"); drivers.append("RAM")
+    elif ram_pct > 75:
+        _bump("watch"); drivers.append("RAM")
+    if disk_pct > 90:
+        _bump("upgrade-soon"); drivers.append("disk")
+    elif disk_pct > 80:
+        _bump("watch"); drivers.append("disk")
+
+    return {"available": True, "reason": "", "ncpu": ncpu,
+            "load1": load1, "load5": load5, "load15": load15,
+            "load_ratio": load_ratio,
+            "ram_pct": ram_pct, "disk_pct": disk_pct,
+            "ram_total_mb": ram_total // 1024, "ram_avail_mb": ram_avail // 1024,
+            "status": status, "drivers": drivers}

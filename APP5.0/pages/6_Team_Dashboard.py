@@ -463,6 +463,9 @@ if len(_season_opts) > 1:
 else:
     season_pick = SEAS.ACTIVE
 _is_cur_season = SEAS.is_current(season_pick)
+# Declare the (gender, season) pool this dashboard is viewing so a live-game
+# write to a DIFFERENT pool doesn't cold-bust our warm cache (batch #6a).
+_uimod.declare_scope(gender, season_pick)
 
 with st.spinner("Crunching team ratings…"):
     scored = _score_ratings(gender, season_pick)

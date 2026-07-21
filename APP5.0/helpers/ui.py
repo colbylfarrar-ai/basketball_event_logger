@@ -118,20 +118,48 @@ refresh_theme_tokens()
 def _sync_external_writes():
     """Mobile-tracker writes happen in another process, so they can't call
     st.cache_data.clear() the way the Streamlit pages do. The tracker API bumps
-    app_settings.data_version instead; when this session sees the value move,
-    it clears the global data cache once. First sight in a session just records
-    the value — the ttl=600 on every cache bounds any staleness from before
-    the session started."""
+    per-scope counters (helpers.game_events.bump_data_version) instead; when a
+    scope THIS session is viewing moves, we clear the expensive dashboard cache.
+
+    Scoped (batch #6a): a live-game write only invalidates its own
+    (gender, season) pool, so one team's Friday game no longer cold-busts every
+    other coach's warm cache. A page declares what it is viewing via
+    declare_scope(); until it does (or if it never does), any external move
+    clears — safe, just not warm. First sight in a session records only; the
+    ttl=600 on every cache bounds any staleness from before the session started.
+
+    The global data_version still moves on every write and still drives the
+    CHEAP settings memo (settings_utils) — kept stamped here — but no longer
+    triggers the expensive clear on its own."""
     from database.db import query
+    from helpers import game_events as GE
     try:
-        row = query("SELECT value FROM app_settings WHERE key='data_version'")
+        rows = query("SELECT key, value FROM app_settings "
+                     "WHERE key='data_version' OR key LIKE 'dv::%'")
     except Exception:
         return
-    ver = row[0]["value"] if row else "0"
-    seen = st.session_state.get("_data_version_seen")
-    if seen is not None and seen != ver:
+    scopes = {r["key"]: r["value"] for r in rows}
+    st.session_state["_data_version_seen"] = scopes.get("data_version", "0")
+    current = {k: v for k, v in scopes.items() if k.startswith("dv::")}
+    seen = st.session_state.get("_dv_scopes")
+    if seen is None:                      # first sight: record, don't clear
+        st.session_state["_dv_scopes"] = current
+        return
+    if GE.cache_clear_decision(current, seen, st.session_state.get("_dv_my_scope")):
         st.cache_data.clear()
-    st.session_state["_data_version_seen"] = ver
+    st.session_state["_dv_scopes"] = current
+
+
+def declare_scope(gender=None, season=None):
+    """Tell the cross-process cache gate which analytics pool THIS page is
+    viewing so a live-game write to a DIFFERENT (gender, season) no longer
+    clears this session's warm cache. Call once per run after the page resolves
+    its gender + season, passing the SAME season value handed to the engines
+    (the 'Current' sentinel or an archived label) so the read-side scope key
+    matches the write-side one. Pages that never declare keep the old
+    clear-on-any-write behavior — safe, just not warm."""
+    from helpers import game_events as GE
+    st.session_state["_dv_my_scope"] = {GE.data_scope_key(gender, season)}
 
 
 # ── Page boot ───────────────────────────────────────────────────────────────────

@@ -395,7 +395,7 @@ def undo(game_id: int):
         raise HTTPException(status_code=404, detail="no such game")
     eid = GE.undo_last_event(game_id)
     if eid:
-        GE.bump_data_version()
+        GE.bump_data_version(game_id)
         PF.clear_cache()   # fan feed reflects the undo on the very next poll
     return {"deleted_event_id": eid, "live": _scoreboard(game_id)}
 
@@ -486,7 +486,7 @@ def finish(game_id: int, user: dict = Depends(require_full_user)):
     # link reuses it); the final SCORE stays public on the scoreboard/team page.
     execute("UPDATE games SET is_public=0 WHERE id=?", (game_id,))
     PF.clear_cache()
-    GE.bump_data_version()
+    GE.bump_data_version(game_id)
     return {"ok": True, "home": hp, "away": ap}
 
 
@@ -550,7 +550,7 @@ def create_game(g: NewGame, user: dict = Depends(require_full_user)):
         "VALUES (?,?,?,?,?,?,?)",
         (g.team1_id, g.team2_id, date, (g.location or "").strip() or None,
          g.video_url.strip(), (user.get("email") or ""), szn))
-    GE.bump_data_version()
+    GE.bump_data_version(gid)
     return {"id": gid, "created": True, "season": szn, "duplicate_of": dup}
 
 
@@ -585,7 +585,7 @@ def quick_add_player(game_id: int, p: NewPlayer,
          gszn, 0 if SEAS.is_current(gszn) else 1, SEAS.default_grad_year(gszn)))
     if not SEAS.is_current(gszn):
         IDN.auto_link(pid)
-    GE.bump_data_version()
+    GE.bump_data_version(game_id)
     return {"id": pid, "created": True}
 
 
@@ -601,7 +601,7 @@ def set_player_handedness(game_id: int, player_id: int, body: HandednessUpdate,
         raise HTTPException(status_code=404, detail="player not in this game")
     hand = "left" if body.handedness == "left" else "right"
     execute("UPDATE players SET handedness=? WHERE id=?", (hand, player_id))
-    GE.bump_data_version()
+    GE.bump_data_version(game_id)
     return {"id": player_id, "handedness": hand}
 
 
@@ -673,7 +673,7 @@ def edit_event(game_id: int, event_id: int, vals: EventEdit,
         was_in_sync = _score_in_sync(game_id)
         EL.update_event(game_id, event_id, d, pid2team)
         drift = _post_edit_rescore(game_id, was_in_sync)
-        GE.bump_data_version()
+        GE.bump_data_version(game_id)
         changed = True
     else:
         changed = False
@@ -690,7 +690,7 @@ def remove_event(game_id: int, event_id: int,
     was_in_sync = _score_in_sync(game_id)
     EL.delete_event(game_id, event_id, EL.game_people(game_id)["pid2team"])
     drift = _post_edit_rescore(game_id, was_in_sync)
-    GE.bump_data_version()
+    GE.bump_data_version(game_id)
     return {"deleted": True, "drift": drift, "live": _scoreboard(game_id)}
 
 
@@ -704,7 +704,7 @@ def rescore(game_id: int, _: dict = Depends(require_full_user)):
     scores = EL.recompute_final_score(game_id)
     if scores is None:
         raise HTTPException(status_code=422, detail="game has no events")
-    GE.bump_data_version()
+    GE.bump_data_version(game_id)
     return {"home": scores[0], "away": scores[1], "live": _scoreboard(game_id)}
 
 

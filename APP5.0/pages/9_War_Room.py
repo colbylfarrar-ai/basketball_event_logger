@@ -116,6 +116,7 @@ if len(_season_opts) > 1:
 else:
     season_pick = SEAS.ACTIVE
 _is_cur_season = SEAS.is_current(season_pick)
+_uimod.declare_scope(gender, season_pick)   # scope cache to this pool (batch #6a)
 
 # Entitlement wrappers: identical to ENT on the current season; a PAST season is
 # an open archive, so the per-team / per-game tracked checks answer True.

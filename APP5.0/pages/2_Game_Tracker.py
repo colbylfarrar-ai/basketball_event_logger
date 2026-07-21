@@ -434,7 +434,7 @@ def _confirm_end(game_id, t1name, t2name):
     c1, c2 = st.columns(2)
     if c1.button("End game", type="primary", width="stretch", key="dlg_end_yes"):
         GE.finish_game(game_id)
-        GE.bump_data_version()
+        GE.bump_data_version(game_id)
         st.cache_data.clear()
         st.rerun()
     if c2.button("Cancel", width="stretch", key="dlg_end_no"):
@@ -449,7 +449,7 @@ def _confirm_reopen(game_id):
     c1, c2 = st.columns(2)
     if c1.button("Reopen", type="primary", width="stretch", key="dlg_reo_yes"):
         GE.reopen_game(game_id)
-        GE.bump_data_version()
+        GE.bump_data_version(game_id)
         st.cache_data.clear()
         st.rerun()
     if c2.button("Cancel", width="stretch", key="dlg_reo_no"):

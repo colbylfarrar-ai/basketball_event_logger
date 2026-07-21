@@ -267,14 +267,88 @@ def live_state(game_id: int, n_events: int = 25) -> dict:
     }
 
 
-def bump_data_version():
+# ── Per-scope cache invalidation (batch #6a) ──────────────────────────────────
+# The global data_version below still moves on every write (public_feed's live
+# payload and settings_utils' per-session memo both key on it). But clearing the
+# EXPENSIVE dashboard cache (st.cache_data) is now scoped: a live-game write only
+# invalidates its own (gender, season) pool, so one team's Friday game no longer
+# cold-busts every other coach's warm cache. Read side: helpers/ui.py page_chrome.
+DATA_SCOPE_ALL = "dv::*"          # always-relevant: every session clears on it
+
+
+def _canon_season(season) -> str:
+    """Canonicalize a season the SAME way the season-scoped engines do
+    (helpers/seasons.game_pool et al.: the ACTIVE sentinel for the current
+    season, else the stripped label) so a write-side scope key and the read-side
+    declared scope rendezvous instead of silently missing (a miss = stale data)."""
+    import helpers.seasons as SEAS
+    return SEAS.ACTIVE if SEAS.is_current(season) else str(season).strip()
+
+
+def data_scope_key(gender, season) -> str:
+    """The app_settings counter key for one (gender, season) analytics pool.
+    A missing gender collapses to the always-relevant ALL scope (safe over-clear
+    rather than a bad narrow key)."""
+    if not gender:
+        return DATA_SCOPE_ALL
+    return f"dv::{gender}::{_canon_season(season)}"
+
+
+def _game_scope_key(game_id) -> str:
+    """Resolve the (gender, season) scope a game belongs to. Gender comes from
+    team1 (both teams share a gender in this app); season is the game's own
+    column. Falls back to the ALL scope if the game can't be resolved."""
+    row = query("SELECT t.gender AS gender, g.season AS season "
+                "FROM games g JOIN teams t ON t.id = g.team1_id "
+                "WHERE g.id = ?", (game_id,))
+    if not row:
+        return DATA_SCOPE_ALL
+    return data_scope_key(row[0]["gender"], row[0]["season"])
+
+
+def cache_clear_decision(current_scopes: dict, seen: dict, my_scopes) -> bool:
+    """Pure gate: should this session clear its st.cache_data now?
+
+    current_scopes / seen — {scope_key: version} now vs when this session last
+    looked. my_scopes — the scopes this session declared it is viewing (a set),
+    or None when it hasn't declared one yet.
+
+    A scope that moved and that this session cares about (or the ALL scope, or
+    ANY move when the session hasn't declared a scope) forces a clear. A move to
+    a scope the session isn't viewing is ignored — that is the warmth win. The
+    ONLY unsafe direction is missing a clear, so an undeclared session and the
+    ALL scope both fall back to clearing."""
+    moved = {s for s, v in current_scopes.items() if seen.get(s) != v}
+    if not moved:
+        return False
+    if my_scopes is None:
+        return True
+    if DATA_SCOPE_ALL in moved:
+        return True
+    return bool(moved & set(my_scopes))
+
+
+def bump_data_version(game_id=None, scope=None):
     """Signal that data changed OUTSIDE the Streamlit process (mobile tracker
-    API). page_chrome() in helpers/ui.py watches app_settings.data_version and
-    clears st.cache_data when it moves, so phone writes reach the dashboards
-    without waiting out cache TTLs. Called on finish/undo/edits/creates — not
-    per logged event, mirroring when the Streamlit pages call cache_data.clear()."""
+    API). page_chrome() in helpers/ui.py watches these counters and clears
+    st.cache_data when a scope the session cares about moves, so phone writes
+    reach the dashboards without waiting out cache TTLs. Called on
+    finish/undo/edits/creates — not per logged event, mirroring when the
+    Streamlit pages call cache_data.clear().
+
+    Pass ``game_id`` (or an explicit ``scope`` key) to invalidate only that
+    game's (gender, season) analytics pool; with neither, the write is treated
+    as global (roster/officials/rollover) and bumps the ALL scope so every
+    session refreshes. The global ``data_version`` always moves too — it drives
+    public_feed's live payload and the cheap settings memo, not the expensive
+    dashboard clear."""
     execute("""INSERT INTO app_settings (key, value) VALUES ('data_version', '1')
                ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1""")
+    key = scope or (_game_scope_key(game_id) if game_id is not None
+                    else DATA_SCOPE_ALL)
+    execute("""INSERT INTO app_settings (key, value) VALUES (?, '1')
+               ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1""",
+            (key,))
 
 
 def finish_game(game_id: int) -> tuple:

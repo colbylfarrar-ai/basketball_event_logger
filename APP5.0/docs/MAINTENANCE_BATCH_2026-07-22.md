@@ -274,3 +274,128 @@ caches (`helpers/public_feed.py:38 CACHE_TTL`, state/scoreboard/team/directory) 
 
 **Order:** #1 + #2 = the spike-readiness core (stay warm + stop reconnect churn).
 #3-#5 harden. #6-#8 cleanup. All safe to bank now, independent of what 5a/5b measure.
+
+---
+
+## 7. FEATURE FAMILY — Cross-sport analytics (ball movement & value-per-action)  ⚠ SCOPED, NOT BUILT
+
+Origin: coach meeting asked for a **ball-movement metric**. Explored cheap paths;
+locked the decisions below. These are **scoped, not shipped** — the batch's actual
+built/deploying items are #1–#6. #7 is the next-session backlog.
+
+### Taxonomy — LOCKED (do NOT re-litigate)
+- **"Secondary" rename → REJECTED.** Collapsing screen / hockey / off-ball into one
+  bucket loses specialty info and doesn't answer the ask.
+- **Play-type-derived hockey assist → SCRAPPED.** Play type is a valid proxy for
+  "a screen occurred," INVALID for "a 2nd pass occurred" (iso guarantees no 2nd
+  pass → a false-positive machine, not a floor).
+- **Hockey assist → SEPARATE FIELD** (founder building Wed). New
+  `game_events.hockey_from_id` + capture tap on all 3 trackers (PWA
+  `tracker/static/app.js`, Streamlit `pages/2_Game_Tracker.py`, Event Editor
+  `pages/3_Event_Editor.py`); slot HAST into the `helpers/stats.py` box builder.
+  Full detail in item #3.
+
+**Two-axis model (the mental lock):**
+- **Axis 1 = what the action IS** — typed slots: `screen_assist` = today's
+  `shot_created_by_id`; `hockey_from_id` = a SIBLING slot, never an overload of it.
+- **Axis 2 = play type (scheme).**
+- Orthogonal — neither axis defines the other.
+
+### Ship candidates — OPEN, need a code read before sizing
+- **7a — xA (expected assists).** The real ball-movement answer. Likely ~90% already
+  built: `helpers/stats.py:791 xPPS_created` may BE it. Verify **surface-vs-build**
+  before scoping.
+- **7b — EPA / value-per-action.** Check whether `expected_points_per_shot`
+  (`helpers/stats.py:760`) + Tier-2 `possession_value` (`:1697`) already yield it.
+  ~30-min read to classify.
+- **7d — Corsi** (on-floor attempt differential) — reuses the +/- plumbing. Cheap.
+- **7e — forced / unforced TO — FREE, no schema.** `stolen_by_id` already present →
+  a `steal-forced` bucket (name it exactly that — it's a floor, not true "forced").
+  Hooks `helpers/defenses.py:336 team_defense_turnovers`.
+
+**Next action on resume:** the **7a / 7b code read** — confirm what's derivable from
+existing engines vs genuinely new. That read is the GATE before any of #7 gets sized
+for a batch.
+
+---
+
+## 7. FEATURE — Cross-sport analytics steals (coach-meeting "ball movement" ask)
+
+Origin: coach meeting asked for a **ball-movement metric**. Decided NOT to solve it
+by renaming `shot_created_by_id` → a generic "secondary" bucket — that collapses
+distinct actions (hockey assist ≠ screen assist ≠ swing pass), destroys specialty
+film, and doesn't answer the ask. Instead: purpose-built metrics below. Ranked by
+effort:win. #7c (hockey assist) is the pre-existing item #3 — needs new capture, stays LOW.
+
+### 7a. xA — expected assists  ✅ derivable, no schema — HIGHEST win
+Value a completed assist by the **shot quality it created**, not whether it dropped.
+Passer credit that survives a teammate's cold night = the real ball-movement read.
+- **Data:** already there. Shots store the terminal pass (`pass_from_id` = assist);
+  shot-quality engine exists (`helpers/stats.py:760 expected_points_per_shot`,
+  `:791 xPPS_created` — "expected value of the LOOKS a passer sets up").
+- **Scope:** xA ≈ sum of `expected_points_per_shot` over shots where this player is
+  `pass_from_id`. `xPPS_created` may already BE this or 90% of it — **verify before
+  building** (it may only need surfacing + an AST-side label, not new math).
+- **Surface:** playmaking block, `helpers/dashboard/player_card.py:1058` next to
+  AST/PotAST/ScrAST; add `AST − xA` (finishing luck on your passes) as the verdict line.
+
+### 7b. EPA-style value-per-action (NFL steal)  ⚠ check-first, likely partial
+Points-per-possession value added by each action vs expected. The engine may already
+exist: `helpers/stats.py:760 expected_points_per_shot` + Tier-2 `possession_value` /
+`concession` helpers (`:1697`). **Investigate before scoping as new** — if EP-per-
+possession is computed, "action-level EPA" is an aggregation + surfacing job, not a
+build. If it's genuinely missing, it's a bigger lift (needs a possession-value model) —
+defer. Action: 30-min code read to classify (surface vs build), THEN size.
+
+### 7c. Hockey assist — SEPARATE-FIELD CAPTURE (decided 2026-07-21). See item #3.
+Founder decision: build it as a real captured field (`game_events.hockey_from_id`),
+NOT derived. Play-type derivation was explored and **scrapped** — see the taxonomy
+decision below for why it's impossible to floor. New field + capture tap on the three
+trackers (per #3). Priority stays where #3 puts it; slot HAST into the playmaking box
+(`helpers/stats.py` box builder) once captured.
+
+### Taxonomy decision (2026-07-21) — LOCK THIS, do not re-litigate
+Explored making "secondary" play-type-aware / play-type-derived to avoid new capture.
+Conclusion:
+- **Two orthogonal axes.** Axis 1 = what the action IS (screen assist / hockey assist /
+  off-ball / DHO — each its own typed slot). Axis 2 = play type (the scheme). Neither
+  defines the other. `shot_created_by_id` today = the `screen_assist` slot specifically;
+  hockey assist is a SIBLING slot (`hockey_from_id`), never an overload of that field.
+- **Play type is a valid proxy for "a screen occurred," an INVALID proxy for "a 2nd
+  pass occurred."** PnR / Off Screen / DHO literally ARE screen actions → deriving a
+  `screen_assist` floor from them is a definition, one-directional, safe (engines/helpers
+  only, no schema). But "pass before the assist" is a possession-CHAIN fact no play type
+  encodes; **Isolation guarantees its ABSENCE**, so mapping iso/post/spot-up → hockey
+  assist FABRICATES ball-movement signal (false positives, not a floor). Fails the floor
+  test → scrapped.
+- **Mapping bugs found (if the screen floor is ever built):** Putback is NOT a screen
+  (pull it); BLOB/SLOB are often scripted screen SETS (lean Screen, not "Secondary");
+  Duck In / Post Up are weak/maybe.
+- **The ball-movement ask coaches actually made is carried by xA (7a), not hockey
+  assist** — xA is derivable from the already-stored terminal assist pass, floor-clean,
+  no capture. Hockey assist is a separate nice-to-have, captured, additive.
+- **Design B rule (if secondary ever gets a play-type view):** measure the action FLAT
+  (always computes), SPLIT by play type only when tagged + min-N guard. Never make an
+  action's value REQUIRE play type (that's "Design A" = death: couples two independent
+  taps, shatters a thin HS-girls sample across an empty grid).
+
+### 7d. Corsi-style on-floor shot-attempt differential (NHL steal)  ✅ small
+On/off already exists (+/- snapshotted per event, `helpers/game_events.py:47`).
+Add attempt-differential (shots FOR − AGAINST while player on floor, made+missed) —
+a lower-variance running-mate to +/- (rewards generating/suppressing attempts, not
+just makes). Reuses `game_event_lineup`; no new capture. Cheap once +/- plumbing is
+understood.
+
+### 7e. Forced vs unforced TO split (tennis steal)  ✅ FREE, no schema — do first
+Proxy: `stolen_by_id` present → **steal-forced**; null → **unforced**. Zero new
+capture (`charges.py:140`, `defenses.py:350` already carry it). Hooks the existing
+disruption engine (`defenses.py:336 team_defense_turnovers` already tallies "forced
+per defense").
+- **Honest naming:** call it `steal-forced TO%`, NOT `forced TO%`. Bias is one-
+  directional: pressured-but-no-steal (bad pass OOB, 8-sec, forced charge) tags as
+  unforced → **forced is a floor (undercount), unforced inflated.** A floor is
+  defensible; a random error is not. Ship the proxy, note the floor, upgrade to a
+  real forced flag only if coaches push.
+
+**Batch verdict:** 7e (free) + 7a (derivable, may already exist) = ship candidates.
+7b + 7d = scope-then-size. 7c = separate-field capture (founder building it), see #3.

@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -167,19 +168,51 @@ def get_db_path() -> Path:
 
 
 # ── Connection factory ────────────────────────────────────────────────────────
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(get_db_path(), timeout=5.0)
+# Thread-local pool of persistent connections, keyed by db path (batch #6b).
+# The old factory opened a NEW connection + ran 4 PRAGMAs + closed on EVERY
+# query()/execute() — hundreds of reconnects per cold dashboard render on the
+# 1-vCPU box. Streamlit's ScriptRunner and uvicorn's threadpool both run each
+# request on ONE thread, so a per-thread persistent connection is safe under
+# WAL (readers never block the writer) and honours sqlite's check_same_thread.
+# Keyed by path so a season swap (different db_file) transparently re-opens
+# against the new file instead of reusing a stale handle.
+_conn_local = threading.local()
+
+
+def _open_connection(path) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
     # Reliability hardening (matters even single-user on a laptop):
     #   WAL        — readers never block the writer and vice-versa; far fewer
     #                "database is locked" errors when an antivirus / backup / a
     #                second Streamlit tab touches the file mid-write.
     #   busy_timeout — wait up to 5s for a lock instead of erroring instantly.
     #   synchronous=NORMAL — safe under WAL, noticeably faster writes.
+    conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA busy_timeout = 5000;")
     conn.execute("PRAGMA synchronous = NORMAL;")
+    # Perf PRAGMAs — only worth setting because the connection now PERSISTS.
+    #   cache_size=-65536 — 64 MB page cache per connection (negative = KiB),
+    #                       so a cold render's hundreds of reads stay in-cache
+    #                       instead of re-hitting the OS page cache each query.
+    #   mmap_size=256 MB   — memory-map the db file for read, cutting syscall
+    #                       overhead. Both would be net-negative rebuilt on
+    #                       every per-call connect; they pay off only reused.
+    conn.execute("PRAGMA cache_size = -65536;")
+    conn.execute("PRAGMA mmap_size = 268435456;")
+    return conn
+
+
+def get_connection() -> sqlite3.Connection:
+    path = get_db_path()
+    key = str(path)
+    cache = getattr(_conn_local, "conns", None)
+    if cache is None:
+        cache = _conn_local.conns = {}
+    conn = cache.get(key)
+    if conn is None:
+        conn = cache[key] = _open_connection(path)
     return conn
 
 
@@ -689,14 +722,14 @@ def initialize_database():
 
 
 # ── SELECT ─────────────────────────────────────────────────────────────────────
+# The connection now PERSISTS (thread-local, see get_connection) — it is NOT
+# closed after each call. A SELECT opens no write transaction, so a failed read
+# leaves the connection clean; write paths roll back on error so a persistent
+# connection can never carry a half-applied / aborted transaction forward.
 def query(sql: str, params: tuple = ()) -> list:
     conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        return [dict(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
+    cur = conn.execute(sql, params)
+    return [dict(row) for row in cur.fetchall()]
 
 
 # ── INSERT / UPDATE / DELETE ───────────────────────────────────────────────────
@@ -709,8 +742,9 @@ def execute(sql: str, params: tuple = ()):
         _audit_write(conn, sql, params, _lr, _rc)   # attribute the write to the actor
         conn.commit()
         return _lr
-    finally:
-        conn.close()
+    except Exception:
+        conn.rollback()                             # clear the aborted txn on the shared conn
+        raise
 
 
 # ── Batch INSERT / UPDATE / DELETE ─────────────────────────────────────────────
@@ -723,8 +757,9 @@ def executemany(sql: str, seq_of_params: list) -> int:
         _audit_write(conn, sql, (), None, _rc)
         conn.commit()
         return _rc
-    finally:
-        conn.close()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 # ── Player removal (delete-or-archive) ─────────────────────────────────────────

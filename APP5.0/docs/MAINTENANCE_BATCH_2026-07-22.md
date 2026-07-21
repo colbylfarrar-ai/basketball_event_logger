@@ -102,7 +102,7 @@ this look." If built: opt-in, purely additive, no derivation shortcut exists.
 
 ---
 
-## 4. FEATURE — Pull rebounding enrichment from Players page onto the Team Glass subtab
+## 4. FEATURE — Pull rebounding enrichment from Players page onto the Team Glass subtab  ✅ built + smoke-verified on branch (commit 262b36d), NOT deployed
 
 **Need:** the richer rebounding reads added to the Players page aren't on the Team
 Dashboard Glass subtab.
@@ -129,7 +129,7 @@ dashboard's season game pool:
 
 ---
 
-## 5. FEATURE — Coaches online on the MAIN app + capacity monitor
+## 5. FEATURE — Coaches online on the MAIN app + capacity monitor  ✅ 5a+5b built + smoke-verified on branch (commit db78dca), NOT deployed. Cache-scoping (action-order #1) belongs to item #6 → Wednesday.
 
 Scope narrowed (founder steer 2026-07-20): the live/fan/tracker side does NOT
 matter (tracker works offline). What matters is the **main coaching app**

@@ -751,6 +751,36 @@ def _reb_geography(tid, gids):
     return out
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _reb_enrich_team(tid, gids, pids):
+    """Team-level rebounding enrichment (founder batch item 6 → Team Glass):
+    the same tag-derived reads surfaced per-player on the Players page, rolled
+    up to one team over its season game pool `gids`. `pids` = this team's
+    player ids (passed explicitly so the cache key is complete).
+
+    Returns {'boxout': {secure_team, onball, pct} | None,
+             'profile': team_long_rebound_profile(...),
+             'roles': pnr_rebound_roles(team_id=tid, ...)}.
+    Box-out payoff aggregates player_rebounding's on-ball defender outcomes
+    across THIS team's players (who was guarding on a miss → did the team end
+    the possession); the 3PA long-carom profile and PnR roles are already /
+    now team-scoped."""
+    import helpers.rebounding as RB
+    g = list(gids)
+    if not g:
+        return {"boxout": None, "profile": None, "roles": None}
+    P = RB.player_rebounding(game_ids=g)
+    secure = sum(P[pid]["def_secure_team"] for pid in pids if pid in P)
+    onball = sum(P[pid]["onball_misses"] for pid in pids if pid in P)
+    boxout = ({"secure_team": secure, "onball": onball,
+               "pct": secure * 100.0 / onball} if onball else None)
+    return {
+        "boxout": boxout,
+        "profile": RB.team_long_rebound_profile(tid, game_ids=g),
+        "roles": RB.pnr_rebound_roles(game_ids=g, team_id=tid),
+    }
+
+
 def _reb_map(shots, title, key):
     """Half-court map of missed-shot origins, colored by who got the board."""
     fig = go.Figure()
@@ -2516,6 +2546,75 @@ if _tdview == "Charts":
                            "sits at the spot of the offensive board, so this "
                            "doubles as an OREB location map. Small sample: "
                            "directional.")
+
+            # ── Rebounding enrichment (batch item 6) — the Players-page tag
+            #    reads rolled up to the team. Paid depth (tracked gate); scoped
+            #    to this season's entitlement-visible tracked pool. ───────────
+            if has_tracked:
+                _re = _reb_enrich_team(
+                    team_id, tuple(bundle["tracked_ids"]),
+                    tuple(sorted(p["_pid"] for p in players)))
+                _re_prof, _re_roles = _re["profile"], _re["roles"]
+                _re_box = _re["boxout"]
+                _has_prof = _re_prof and (_re_prof["three"]["misses"] >= 4
+                                          or _re_prof["two"]["misses"] >= 4)
+                _has_box = _re_box and _re_box["onball"] >= 5
+                _has_roles = _re_roles and _re_roles["misses"] >= 4
+                if _has_prof or _has_box or _has_roles:
+                    st.markdown("<div class='lab-hdr'>Rebounding enrichment — "
+                                "from the tags you already log</div>",
+                                unsafe_allow_html=True)
+                    st.caption("Derived from the boards you tag on missed shots "
+                               "(rebound-by, guarded-by, play-type) — no extra "
+                               "tracking. Box-out payoff, long-carom leak on 3s "
+                               "vs 2s, and how the ball-screen carom splits.")
+
+                    _em = st.columns(3)
+                    if _has_box:
+                        _em[0].metric(
+                            "Box-out payoff", f"{_re_box['pct']:.0f}%",
+                            help="When one of our players is the on-ball "
+                                 "defender on a miss, how often the team ends "
+                                 "the possession (secures the board). "
+                                 f"{_re_box['onball']} contested misses.")
+                    if _has_prof:
+                        _e3 = _re_prof["three"]["oreb_pct"]
+                        _e2 = _re_prof["two"]["oreb_pct"]
+                        _em[1].metric(
+                            "OREB% on our 3PT misses", _pctf(_e3 / 100.0),
+                            help="Offensive-rebound rate on our own 3-point "
+                                 "misses (long caroms) — "
+                                 f"{_re_prof['three']['misses']} tracked 3 "
+                                 "misses.")
+                        _em[2].metric(
+                            "OREB% on our 2PT misses", _pctf(_e2 / 100.0),
+                            help="Offensive-rebound rate on our own 2-point "
+                                 "misses (interior scrum) — "
+                                 f"{_re_prof['two']['misses']} tracked 2 "
+                                 "misses.")
+                    if _has_prof and _re_prof["three"]["misses"] >= 4 \
+                            and _re_prof["two"]["misses"] >= 4:
+                        _leak = _re_prof["three"]["oreb_pct"] - \
+                            _re_prof["two"]["oreb_pct"]
+                        _lw = ("we chase long caroms as well as interior boards"
+                               if abs(_leak) < 4 else
+                               "we crash long 3-point caroms harder than "
+                               "interior misses" if _leak > 0 else
+                               "long 3-point caroms leak — we recover far fewer "
+                               "of our own 3 misses than our 2 misses")
+                        st.caption(f"Long-carom read: {_lw} "
+                                   f"({_leak:+.0f} pts of OREB% on 3s vs 2s).")
+
+                    if _has_roles:
+                        _r, _tot = _re_roles, _re_roles["misses"]
+                        st.markdown(
+                            f"**PnR carom** ({_tot} tagged ball-screen misses): "
+                            f"handler {_r['handler']} · roll/pop man (screener) "
+                            f"{_r['screener']} · other offense {_r['other_off']} "
+                            f"· defense {_r['defense']}.")
+                        st.caption("On our missed pick-and-rolls, who chased the "
+                                   "board — roll/pop man credited via the "
+                                   "shot-creator tag.")
 
         # ───────────────────────────────────────────── DEFENSE ──────────────
         with ch_df:

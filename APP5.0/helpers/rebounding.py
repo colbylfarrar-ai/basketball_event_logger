@@ -147,11 +147,15 @@ def team_long_rebound_profile(team_id, game_ids=None, events=None):
     return out
 
 
-def pnr_rebound_roles(gender=None, game_ids=None, events=None):
+def pnr_rebound_roles(gender=None, game_ids=None, events=None, team_id=None):
     """On missed PnR-tagged shots (play_type='pnr'): who secures the board.
     {'misses', 'handler', 'screener', 'other_off', 'defense'} — handler = the
     shooter, screener = shot_created_by (the roll/pop man); the single 'pnr'
-    play_type key means roles come from the creator tag, not the set call."""
+    play_type key means roles come from the creator tag, not the set call.
+
+    `team_id` (optional) scopes to ONE team's own PnR misses (shooter on
+    team_id) — "who chases OUR ball-screen caroms" for the team dashboard;
+    default None keeps the league-wide read used on the Players page."""
     if events is None:
         events = S.fetch_events(game_ids) if game_ids is not None \
             else S.fetch_events()
@@ -163,6 +167,8 @@ def pnr_rebound_roles(gender=None, game_ids=None, events=None):
            "defense": 0}
     for e, is_oreb in _miss_rows(events):
         if (e.get("play_type") or "") != "pnr":
+            continue
+        if team_id is not None and e["shooter_team_id"] != team_id:
             continue
         out["misses"] += 1
         if not is_oreb:

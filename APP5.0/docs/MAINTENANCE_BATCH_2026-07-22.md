@@ -56,7 +56,17 @@ quick-add opponents by number, real names unknown. Identity linking intact.
 
 ---
 
-## 2. FEATURE — Correct the on-court five (fix a missed sub)
+## 2. FEATURE — Correct the on-court five (fix a missed sub)  ✅ BUILT + verified on branch (commit 82638de), NOT deployed
+
+**Built:** engine in `helpers/event_log.py` (`recompute_game_plus_minus` — from-scratch
++/- rebuild, proven == live incremental on all 43 real games; `floor_run` — contiguous
+stale-run detection; `correct_floor_forward` — dedupe + roster-validate + re-snapshot the
+run + recompute; `floor_integrity` — flags != 5 floors for IMPROVEMENTS #5). UI: "Fix a
+missed substitution" panel in `pages/3_Event_Editor.py` (pick anchor event + team, edit the
+pre-filled five, auto-range preview, Apply). Model chosen: editable-five + auto contiguous
+run (id-order). Unit `tracker/test_retro_floor.py`; click-path smoke-verified on a live-DB copy.
+
+
 
 **Need:** coach misses a substitution → events get credited to the wrong five
 until caught, and +/- is snapshotted per event, so the error persists.

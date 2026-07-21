@@ -237,26 +237,30 @@ caches (`helpers/public_feed.py:38 CACHE_TTL`, state/scoreboard/team/directory) 
 `@st.cache_data(ttl=600)` (20+ funcs).
 
 ### Tier A — biggest leverage, do first
-1. **Scope cache invalidation (app).** THE spike win. Today any `data_version` bump
-   does a GLOBAL `st.cache_data.clear()` (`helpers/ui.py:118-134`), so one live-game
-   write busts every coach's warm cache → everyone cold-recomputes on 1 core. Make
-   the version per-scope (per-game / per-team) so a game only invalidates its own
-   reads; season aggregates for other teams stay warm. (Same fix flagged in 5b — it
-   is the #1 item.)
-2. **Reuse DB connections (app + tracker + live).** `db.query()`/`execute()` open a
-   NEW connection + 4 PRAGMAs + close on EVERY call (`database/db.py:170-183,
-   692-713`). A cold dashboard render fires hundreds of queries → hundreds of
-   reconnects on 1 vCPU. Use a thread-local persistent connection (safe under WAL;
-   Streamlit ScriptRunner + uvicorn threadpool are per-thread — key the cache by db
-   path so a season swap re-opens). Then set once per connection:
-   `PRAGMA cache_size=-65536` (64 MB) + `PRAGMA mmap_size` (e.g. 256 MB). Helps all
-   three surfaces since they all route through `db.query`.
+1. **Scope cache invalidation (app).**  ✅ BUILT + verified on branch (commit 11e4682),
+   NOT deployed. THE spike win. Was a GLOBAL `st.cache_data.clear()` on any
+   `data_version` bump; now per-`(gender, season)` counters + a `declare_scope()` gate
+   (`helpers/ui.py`, `helpers/game_events.py`). A live game only clears its own pool;
+   other genders/seasons stay warm. Grain is (gender, season), NOT per-team (per-team
+   needs fragile per-func arg-versioning — deliberately avoided; miss = stale data).
+   Write side threads `game_id` through the 8 game-scoped tracker bumps + both desktop
+   bumps; roster/officials/rollover stay ALL-scope. Rendezvous (read key == write key)
+   smoke-verified on the real dashboard. Unit: `tracker/test_scope_invalidation.py`.
+   NOTE: in-page desktop-edit clears (Event Editor / Input Hub `st.cache_data.clear()`)
+   are still global in-process — acceptable (rare during the phone-tracked Friday
+   spike), a possible follow-on.
+2. **Reuse DB connections (app + tracker + live).**  ✅ BUILT + verified on branch
+   (commit f0a0cf2), NOT deployed. Thread-local persistent connection keyed by db path
+   + `cache_size=-65536` + `mmap_size=256MB` set once per connection, rollback-on-error
+   so a persistent conn never carries an aborted txn. Real Team Dashboard render =
+   2 sqlite opens (was hundreds). Unit: `tracker/test_conn_reuse.py`.
 
 ### Tier B — strong
-3. **Lazy-gate dashboard tabs (app).** No `st.fragment` anywhere today, so Streamlit
-   computes every tab's engines on each render even though the coach views one.
-   Gate so only the open tab computes (per-tab `st.fragment`, or a session_state
-   guard). Cuts cold-render CPU roughly by tab-count.
+3. **Lazy-gate dashboard tabs (app).**  ⚠ MOSTLY MOOT — code read (2026-07-21) shows
+   Team Dashboard ALREADY gates every view behind `if _tdview == "X":` (only the open
+   view's engines run). The unconditional pre-gate cost is just the shared
+   league-ratings header (cached + now scope-warm via #6a). `st.fragment` would add
+   little; skipped. Re-check the other pages only if measurement flags a specific view.
 4. **Cache pre-warmer (app).** Small background job: after a bump settles, precompute
    current-season league aggregates so the FIRST coach open on a busy night is warm,
    not cold. Turns cold-Friday into warm-Friday.

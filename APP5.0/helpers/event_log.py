@@ -458,3 +458,126 @@ def recompute_final_score(game_id):
     execute("UPDATE games SET home_score=?, away_score=? WHERE id=?",
             (hp_ap[0], hp_ap[1], game_id))
     return hp_ap
+
+
+# ── on-court-five correction (batch #2) ───────────────────────────────────────
+def recompute_game_plus_minus(game_id):
+    """Rebuild game_lineup_players.plus_minus for a game FROM SCRATCH off the
+    current game_event_lineup snapshots — the single source of truth after any
+    lineup mutation, avoiding fragile incremental delta bookkeeping. For each
+    scoring event the scoring team is the scorer's own on-floor team; every
+    on-floor player gets +pts (same team) or -pts (opponent). Verified to
+    reproduce the live incremental credit exactly (tracker/test_retro_floor)."""
+    # Every player that appears on any floor must have a row to accumulate into.
+    execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) "
+            "SELECT ge.game_id, gel.team_id, gel.player_id "
+            "FROM game_event_lineup gel JOIN game_events ge ON ge.id = gel.event_id "
+            "WHERE ge.game_id = ?", (game_id,))
+    execute("UPDATE game_lineup_players SET plus_minus = 0 WHERE game_id = ?", (game_id,))
+    evs = query("SELECT id, event_type, shot_result, shot_type, primary_player_id "
+                "FROM game_events WHERE game_id = ? ORDER BY id", (game_id,))
+    for ev in evs:
+        pts = event_points(ev)
+        if not pts:
+            continue
+        # scoring team = the scorer's team on that event's floor (fall back to
+        # the roster team if the scorer somehow isn't in their own snapshot).
+        strow = query("SELECT team_id FROM game_event_lineup "
+                      "WHERE event_id=? AND player_id=?",
+                      (ev["id"], ev["primary_player_id"]))
+        if strow:
+            stid = strow[0]["team_id"]
+        else:
+            prow = query("SELECT team_id FROM players WHERE id=?",
+                         (ev["primary_player_id"],))
+            if not prow:
+                continue
+            stid = prow[0]["team_id"]
+        for r in query("SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?",
+                       (ev["id"],)):
+            delta = pts if r["team_id"] == stid else -pts
+            execute("UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
+                    "WHERE game_id=? AND player_id=?",
+                    (delta, game_id, r["player_id"]))
+
+
+def _team_floor(event_id, team_id):
+    """The set of player ids snapshotted on the floor for one team at one event."""
+    return frozenset(r["player_id"] for r in query(
+        "SELECT player_id FROM game_event_lineup WHERE event_id=? AND team_id=?",
+        (event_id, team_id)))
+
+
+def floor_run(game_id, from_event_id, team_id):
+    """The contiguous run of event ids (log order) starting at ``from_event_id``
+    over which ``team_id`` carries the SAME floor it has at the anchor — i.e. the
+    stale stretch a missed sub affects, ending where the five next changes in the
+    log (or at the game's last event). Empty if the anchor has no floor for the
+    team. Used both to preview the range in the editor and to apply the fix."""
+    S0 = _team_floor(from_event_id, team_id)
+    if not S0:
+        return []
+    run = []
+    for e in query("SELECT id FROM game_events WHERE game_id=? AND id>=? ORDER BY id",
+                   (game_id, from_event_id)):
+        if _team_floor(e["id"], team_id) != S0:
+            break
+        run.append(e["id"])
+    return run
+
+
+def correct_floor_forward(game_id, from_event_id, team_id, new_pids):
+    """Correct one team's on-court five from ``from_event_id`` forward across the
+    contiguous run of events that share that team's stale floor (the stretch
+    after a missed sub, ending where the five next changes in the log or at the
+    game's last event), then recompute the game's +/-.
+
+    ``new_pids`` is deduped and validated against the team's roster. Returns a
+    summary dict {events_changed, size, range, old_five, new_five} for the
+    editor's confirmation. Raises ValueError on an off-roster player or an
+    anchor event that has no floor for the team."""
+    deduped = []
+    for p in new_pids:
+        if p not in deduped:
+            deduped.append(p)
+    valid = {r["id"] for r in query("SELECT id FROM players WHERE team_id=?", (team_id,))}
+    bad = [p for p in deduped if p not in valid]
+    if bad:
+        raise ValueError(f"players {bad} are not on team {team_id}'s roster")
+
+    S0 = _team_floor(from_event_id, team_id)
+    if not S0:
+        raise ValueError(f"event {from_event_id} has no floor for team {team_id}")
+
+    run = floor_run(game_id, from_event_id, team_id)
+
+    for eid in run:
+        execute("DELETE FROM game_event_lineup WHERE event_id=? AND team_id=?",
+                (eid, team_id))
+        for pid in deduped:
+            execute("INSERT OR IGNORE INTO game_event_lineup (event_id, player_id, team_id) "
+                    "VALUES (?,?,?)", (eid, pid, team_id))
+            execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) "
+                    "VALUES (?,?,?)", (game_id, team_id, pid))
+
+    recompute_game_plus_minus(game_id)
+    return {"events_changed": run, "size": len(run),
+            "range": (run[0], run[-1]) if run else None,
+            "old_five": sorted(S0), "new_five": sorted(deduped)}
+
+
+def floor_integrity(game_id):
+    """Events whose on-floor snapshot for a team is not exactly 5 players — a
+    dedupe failure (6+), an under-pick (<5), or an unsnapshotted gap. The
+    discovery aid for IMPROVEMENTS #5 ('warn when the lineup is not exactly 5').
+    Returns [{event_id, team_id, n, quarter, time}] in event order. (A clean
+    5-for-5 missed sub is NOT flagged here — that is found by the coach and
+    fixed via correct_floor_forward.)"""
+    return [dict(r) for r in query("""
+        SELECT gel.event_id AS event_id, gel.team_id AS team_id, COUNT(*) AS n,
+               ge.quarter AS quarter, ge.time AS time
+        FROM game_event_lineup gel JOIN game_events ge ON ge.id = gel.event_id
+        WHERE ge.game_id = ?
+        GROUP BY gel.event_id, gel.team_id
+        HAVING n != 5
+        ORDER BY ge.id""", (game_id,))]

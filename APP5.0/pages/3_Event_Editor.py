@@ -150,6 +150,79 @@ if live is not None:
 
 st.divider()
 
+# ── correct the on-court five (retro missed-sub fix, batch #2) ─────────────────
+# Miss a sub live and the wrong five is credited (+/-, minutes) until you catch
+# it — and +/- is snapshotted per event, so the error sticks. Pick the event
+# where the sub SHOULD have happened, fix that team's five, and it applies
+# forward across the stale run (until the five next changes in the log), then
+# recomputes the game's +/- from scratch (helpers/event_log.correct_floor_forward).
+with st.expander("🔁 Fix a missed substitution — correct the on-court five"):
+    _fx = _q("SELECT t1.id i1, t1.name n1, t2.id i2, t2.name n2 "
+             "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+             "JOIN teams t2 ON t2.id=g.team2_id WHERE g.id=?", (gid,))[0]
+    # Lineup-integrity flag (IMPROVEMENTS #5): any team-floor that isn't exactly 5.
+    _bad = EL.floor_integrity(gid)
+    if _bad:
+        def _bad_lbl(b):
+            _q_ = b["quarter"]
+            _tn = _fx["n1"] if b["team_id"] == _fx["i1"] else _fx["n2"]
+            return f"{('Q'+str(_q_)) if _q_ <= 4 else ('OT'+str(_q_-4))} {b['time']} {_tn} ({b['n']})"
+        _shown = ", ".join(_bad_lbl(b) for b in _bad[:8])
+        st.warning(f"{len(_bad)} event-floor(s) are not exactly 5 players "
+                   f"(a mis-pick or unsnapshotted event): {_shown}"
+                   + ("  …" if len(_bad) > 8 else ""))
+    st.caption("Pick the event where the sub should have happened, fix that "
+               "team's five, and it applies forward until the five next changes "
+               "in the log. Plus-minus is recomputed from the corrected floors.")
+    _all_ev = EL.load_events(gid, None)
+
+    def _ev_label(e):
+        _q_ = e["quarter"]
+        _ql = f"Q{_q_}" if _q_ <= 4 else f"OT{_q_ - 4}"
+        _who = pid2label.get(e["primary_player_id"], "—")
+        return f"{_ql} {e['time']} · {e['event_type'].replace('_', ' ')} · {_who}  [#{e['id']}]"
+
+    _anchor = st.selectbox("Sub should have happened at…", _all_ev,
+                           format_func=_ev_label, key="ee_fix_anchor")
+    _tlbl = st.radio("Whose five?", [_fx["n1"], _fx["n2"]], horizontal=True,
+                     key="ee_fix_team")
+    _tid = _fx["i1"] if _tlbl == _fx["n1"] else _fx["i2"]
+    _roster = [p for p in people["players"] if p["team_id"] == _tid]
+    _lbl2pid = {p["label"]: p["id"] for p in _roster}
+    _cur = [r["player_id"] for r in _q(
+        "SELECT player_id FROM game_event_lineup WHERE event_id=? AND team_id=?",
+        (_anchor["id"], _tid))]
+    _cur_lbls = [pid2label.get(p) for p in _cur if pid2label.get(p) in _lbl2pid]
+    _pick = st.multiselect(f"{_tlbl} on-court five (from this event forward)",
+                           list(_lbl2pid.keys()), default=_cur_lbls,
+                           key=f"ee_fix_five_{_anchor['id']}_{_tid}",
+                           max_selections=5)
+    _newpids = [_lbl2pid[l] for l in _pick]
+    _run = EL.floor_run(gid, _anchor["id"], _tid)
+    if _run:
+        _first = next(e for e in _all_ev if e["id"] == _run[0])
+        _last = next(e for e in _all_ev if e["id"] == _run[-1])
+        _fq = lambda e: (f"Q{e['quarter']}" if e['quarter'] <= 4 else f"OT{e['quarter']-4}") + f" {e['time']}"
+        st.caption(f"Applies to **{len(_run)} event(s)** — {_fq(_first)} → {_fq(_last)}.")
+    if len(_pick) != 5:
+        st.warning(f"{len(_pick)} players selected — a full five is 5. "
+                   "You can still apply (e.g. after an ejection), but check this.")
+    _same = _cur and set(_newpids) == set(_cur)
+    if st.button("Apply correction", type="primary", key="ee_fix_apply",
+                 disabled=(not _newpids or _same)):
+        try:
+            _res = EL.correct_floor_forward(gid, _anchor["id"], _tid, _newpids)
+        except ValueError as _ex:
+            st.error(str(_ex))
+        else:
+            st.cache_data.clear()
+            _out = sorted(set(_res["old_five"]) - set(_res["new_five"]))
+            _in = sorted(set(_res["new_five"]) - set(_res["old_five"]))
+            _names = lambda ids: ", ".join(pid2label.get(i, str(i)) for i in ids) or "—"
+            st.success(f"Corrected {_tlbl}'s five across {_res['size']} event(s). "
+                       f"Out: {_names(_out)} · In: {_names(_in)}. +/- recomputed.")
+            st.rerun()
+
 # ── tag-coverage chips — how much of this game the tag engines can read ────────
 # Film-review taggers are the coverage engine's best users; show the gap where
 # they fix it. Whole game (not the quarter/type filters below); definitions

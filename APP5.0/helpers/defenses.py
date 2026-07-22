@@ -338,13 +338,17 @@ def team_defense_turnovers(team_id, gender=None, game_ids=None, events=None,
     """Turnovers tagged under each scheme — the press/trap disruption PPP-on-shots
     can't show. offense=False = TOs the team's defense FORCED (opponent lost it
     under the scheme); offense=True = TOs the team COMMITTED vs each scheme.
-    Returns {'rows':[{key,label,family,tovs,share}],'total'} sorted by volume —
-    only schemes with at least one tagged turnover."""
+    Returns {'rows':[{key,label,family,tovs,forced,unforced,share}],'total'}
+    sorted by volume — only schemes with at least one tagged turnover.
+    ``forced``/``unforced`` = the per-scheme steal-forced split (same floor
+    semantics as team_turnover_forced_split below: steal logged -> forced;
+    forced + unforced == tovs)."""
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
     own = None if offense else TA.event_team_games(team_id, events)
     counts = {}
+    stolen = {}
     total = 0
     for e in events:
         if e["event_type"] != "turnover" or e["shooter_team_id"] is None:
@@ -359,9 +363,12 @@ def team_defense_turnovers(team_id, gender=None, game_ids=None, events=None,
         if not d:
             continue
         counts[d] = counts.get(d, 0) + 1
+        if e.get("stolen_by_id") is not None:
+            stolen[d] = stolen.get(d, 0) + 1
         total += 1
     rows = [{"key": k, "label": _LABEL.get(k, k), "family": _FAMILY.get(k, "other"),
-             "tovs": n, "share": _safe(n, total)}
+             "tovs": n, "forced": stolen.get(k, 0),
+             "unforced": n - stolen.get(k, 0), "share": _safe(n, total)}
             for k, n in counts.items()]
     rows.sort(key=lambda r: -r["tovs"])
     return {"rows": rows, "total": total}

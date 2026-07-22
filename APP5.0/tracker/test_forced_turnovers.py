@@ -44,18 +44,21 @@ FLOOR = [(101, 1), (102, 1), (103, 1), (104, 1), (105, 1),
          (201, 2), (202, 2), (203, 2), (204, 2), (205, 2)]
 
 
-def tov(committer, stolen_by=None):
+def tov(committer, stolen_by=None, defense=None):
     ev = {"event_type": "turnover", "quarter": 1, "time": "5:00",
-          "primary_player_id": committer, "stolen_by_id": stolen_by}
+          "primary_player_id": committer, "stolen_by_id": stolen_by,
+          "defense": defense}
     return GE.log_event(G, ev, FLOOR)
 
 
 # HOME commits 3 turnovers: 2 stolen (by away 201/202), 1 unforced (dead-ball).
-tov(101, stolen_by=201)
-tov(102, stolen_by=202)
-tov(103, stolen_by=None)
-# AWAY commits 2 turnovers: 1 stolen (by home 101), 1 unforced.
-tov(201, stolen_by=101)
+# Defense tags = the AWAY scheme home faced (per-scheme split feeds §G's card).
+tov(101, stolen_by=201, defense="man_press")
+tov(102, stolen_by=202, defense="zone_23")
+tov(103, stolen_by=None, defense="man_press")
+# AWAY commits 2 turnovers: 1 stolen (by home 101, under home's man), 1 unforced
+# and UNTAGGED (drops out of the per-scheme rows, still counts in the flat split).
+tov(201, stolen_by=101, defense="man")
 tov(202, stolen_by=None)
 
 print("offense=True -> the team's OWN turnovers, split by steal")
@@ -77,5 +80,24 @@ ok(h["forced"] + h["unforced"] == h["total"], "forced + unforced == total (no do
 print("empty pool -> forced_pct is None, not a divide-by-zero")
 empty = D.team_turnover_forced_split(1, game_ids=[], offense=True)
 ok(empty["total"] == 0 and empty["forced_pct"] is None, "empty pool safe")
+
+print("8a: per-scheme rows carry the steal-forced/unforced split (stacked card)")
+pv = D.team_defense_turnovers(1, game_ids=[G], offense=True)
+prow = {r["key"]: r for r in pv["rows"]}
+ok(set(prow) == {"man_press", "zone_23"},
+   f"home's tagged TOs sit under 2 schemes, got {sorted(prow)}")
+ok(prow["man_press"]["tovs"] == 2 and prow["man_press"]["forced"] == 1
+   and prow["man_press"]["unforced"] == 1,
+   f"man_press = 1 stolen + 1 unforced, got {prow['man_press']}")
+ok(prow["zone_23"]["forced"] == 1 and prow["zone_23"]["unforced"] == 0,
+   f"zone_23 = 1 stolen / 0 unforced, got {prow['zone_23']}")
+ok(all(r["forced"] + r["unforced"] == r["tovs"] for r in pv["rows"]),
+   "per-scheme forced + unforced == tovs (stack sums to the old bar)")
+
+dv = D.team_defense_turnovers(1, game_ids=[G], offense=False)
+drow = {r["key"]: r for r in dv["rows"]}
+ok(set(drow) == {"man"} and drow["man"]["forced"] == 1
+   and drow["man"]["unforced"] == 0,
+   f"home defense forced 1 steal-TO under man (untagged TO excluded), got {drow}")
 
 print(f"\nALL {PASS} ASSERTS PASS")

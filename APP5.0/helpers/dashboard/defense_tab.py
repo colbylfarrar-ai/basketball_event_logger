@@ -599,18 +599,36 @@ def render(ctx):
         st.markdown("<div class='pl-hdr'>Disruption — turnovers " +
                     ("forced" if not _off else "committed") + " per scheme</div>",
                     unsafe_allow_html=True)
-        tfig = go.Figure(go.Bar(
-            x=[r["label"] for r in tvrows], y=[r["tovs"] for r in tvrows],
-            marker_color=[_FAM_COLOR.get(r["family"], "#8b949e") for r in tvrows],
-            marker_line_width=0, text=[r["tovs"] for r in tvrows],
-            textposition="outside"))
+        # Stacked: steal-forced (family colour, the active takeaway) on top of
+        # unforced (grey, the giveaway). Stack always sums to the old single bar.
+        _tx = [r["label"] for r in tvrows]
+        tfig = go.Figure([
+            go.Bar(
+                name="Steal-forced", x=_tx,
+                y=[r.get("forced", 0) for r in tvrows],
+                marker_color=[_FAM_COLOR.get(r["family"], "#8b949e")
+                              for r in tvrows],
+                marker_line_width=0,
+                hovertemplate="%{x}: %{y} steal-forced<extra></extra>"),
+            go.Bar(
+                name="Unforced", x=_tx,
+                y=[r.get("unforced", 0) for r in tvrows],
+                marker_color="rgba(139,148,158,0.45)", marker_line_width=0,
+                text=[r["tovs"] for r in tvrows], textposition="outside",
+                hovertemplate="%{x}: %{y} unforced<extra></extra>"),
+        ])
+        tfig.update_layout(barmode="stack")  # legend styled by style_fig
         tfig.update_yaxes(title="Turnovers " + ("forced" if not _off else "committed"))
         style_fig(tfig, 300)
         st.plotly_chart(tfig, width="stretch", key="def_tovs")
         st.caption("The press/trap value PPP-on-shots can't show — "
                    + ("turnovers your defense forces" if not _off else
                       "turnovers you cough up") + " under each scheme "
-                   f"({tv.get('total', 0)} tagged).")
+                   f"({tv.get('total', 0)} tagged). Coloured = **steal-forced** "
+                   "(a steal was logged — an active takeaway); grey = unforced "
+                   "as far as the log knows. Steal-forced is a *floor*: a "
+                   "pressured giveaway with no steal (bad pass out of bounds, "
+                   "8-second) still reads unforced.")
 
     # ══ §G2 — fouls per scheme (the line-risk read) ══════════════════════════
     fl = ctx.def_fouls(g, tid, _off) or {}

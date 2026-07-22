@@ -524,7 +524,13 @@ Design (combines the founder's same-player trick with an explicit tag):
 Order when picked up: 8a (free engine, card-only) → 8e (coach-visible, small) →
 8b → 8c → 8d (gate runs last, needs the branch).
 
-### BUILT 2026-07-22 (this session), NOT deployed — all five landed
+### DEPLOYED 2026-07-22 — 8a/8b/8c/8d live (prod 8c4ed63). **8e HELD, not deployed**
+Founder call: deploy all but 8e. 8e reverted on main (revert 8c4ed63) so prod
+excludes it; the build stays intact at d3ce273. To ship 8e later:
+`git revert 8c4ed63` (revert-of-revert restores all 13 files incl. sw v52),
+re-run `tracker/test_tech_foul.py`, deploy.
+
+### BUILT 2026-07-22 (this session) — all five landed
 - **8a**  ✅ (a9e6f92). Per-scheme `forced`/`unforced` ride `team_defense_turnovers`
   rows (additive keys, floor semantics shared with `team_turnover_forced_split`);
   §G bars stack coloured steal-forced over grey unforced + honest-floor caption.

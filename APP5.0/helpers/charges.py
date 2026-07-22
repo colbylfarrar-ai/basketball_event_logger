@@ -47,7 +47,10 @@ def is_charge(e):
     The single source of truth for the encoding. Everything else in the app that
     wants to know "was this a charge" must come through here.
     """
+    # A technical (foul_type='technical', logged fouled == fouler) can carry
+    # stray other/other sticky tags — it is never a charge.
     return (e.get("event_type") == "foul"
+            and e.get("foul_type") != "technical"
             and e.get("play_type") == "other"
             and e.get("defense") == "other")
 

@@ -1249,7 +1249,7 @@ function resetFlow(mode) {
     expand: false,                                  // quick-mode: details revealed for this entry
     shooter: null,
     details: { pass_from_id: null, shot_created_by_id: null, hockey_from_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
-    fouled: null, fouler: null, official: null,
+    fouled: null, fouler: null, official: null, foulTech: false,
     player: null, stolen: null, tovKind: null
   };
   if (window.Court) Court.clearMarker();
@@ -1636,7 +1636,14 @@ function renderFlow() {
     }
 
   } else if (f.mode === 'foul') {
-    wrap.appendChild(chipRow('Fouled', players, f.fouled, function (id) { f.fouled = id; renderFlow(); }));
+    // Tech toggle: a player technical needs only the FOULER — the payload
+    // self-sets fouled = fouler (the same-player trick) + foul_type='technical'
+    wrap.appendChild(optRow('Type',
+      [{ v: false, label: 'Common' }, { v: true, label: 'Technical' }],
+      f.foulTech, function (v) { f.foulTech = v; renderFlow(); }, true));
+    if (!f.foulTech) {
+      wrap.appendChild(chipRow('Fouled', players, f.fouled, function (id) { f.fouled = id; renderFlow(); }));
+    }
     wrap.appendChild(chipRow('Fouler', players, f.fouler, function (id) { f.fouler = id; renderFlow(); }));
     const offIds = S.lineup.officials.length
       ? S.lineup.officials
@@ -1646,8 +1653,9 @@ function renderFlow() {
       wrap.appendChild(chipRow('Official', offIds, f.official,
         function (id) { f.official = id; renderFlow(); }, { allowNone: true, labelFn: oLabel }));
     }
-    if (f.fouled != null && f.fouler != null) {
-      wrap.appendChild(flowBtn('LOG FOUL', 'btn primary big', logFoul));
+    if (f.fouler != null && (f.foulTech || f.fouled != null)) {
+      wrap.appendChild(flowBtn(f.foulTech ? 'LOG TECHNICAL' : 'LOG FOUL',
+        'btn primary big', logFoul));
     }
 
   } else if (f.mode === 'tov') {
@@ -1692,6 +1700,7 @@ function baseEvent(type) {
     blocked_by_id: null, guarded_by_id: null,
     play_type: S.playType,                       // sticky current set call (see PLAY_TYPES)
     secondary_player_id: null, official_id: null, stolen_by_id: null,
+    foul_type: null,                             // 'technical' on a player tech
     defense: S.defense,                          // sticky current defense (see DEFENSES)
     on_court: onCourtIds(),
     officials_on: S.lineup.officials.slice(),
@@ -1756,8 +1765,18 @@ async function logFT(result) {
 async function logFoul() {
   const f = S.flow;
   const ev = baseEvent('foul');
-  ev.primary_player_id = f.fouled;     // fouled player
-  ev.secondary_player_id = f.fouler;   // fouler
+  if (f.foulTech) {
+    // same-player trick + tag: fouled = fouler keeps every non-null assumption
+    // downstream; the tag makes the row explainable. Dead-ball — no set/scheme.
+    ev.primary_player_id = f.fouler;
+    ev.secondary_player_id = f.fouler;
+    ev.foul_type = 'technical';
+    ev.play_type = null;
+    ev.defense = null;
+  } else {
+    ev.primary_player_id = f.fouled;     // fouled player
+    ev.secondary_player_id = f.fouler;   // fouler
+  }
   ev.official_id = f.official;
   // the picked official may come from the all-officials fallback list — make
   // sure the event's snapshot includes them so the lineup row gets written
@@ -1765,7 +1784,8 @@ async function logFoul() {
     ev.officials_on.push(f.official);
   }
   await queueEvent(ev);
-  toast('Foul — ' + pLabel(f.fouler) + ' on ' + pLabel(f.fouled));
+  toast(f.foulTech ? 'Technical — ' + pLabel(f.fouler)
+                   : 'Foul — ' + pLabel(f.fouler) + ' on ' + pLabel(f.fouled));
   resetFlow('foul');
   renderFlow();
 }
@@ -1870,7 +1890,10 @@ function evBody(ev) {
       (ev.zone ? ' · ' + ev.zone : '');
   }
   if (ev.event_type === 'free_throw') return who + ' FT ' + (ev.shot_result || '');
-  if (ev.event_type === 'foul') return 'Foul by ' + pLabel(ev.secondary_player_id) + ' on ' + who;
+  if (ev.event_type === 'foul') {
+    if (ev.foul_type === 'technical') return 'Technical — ' + pLabel(ev.secondary_player_id);
+    return 'Foul by ' + pLabel(ev.secondary_player_id) + ' on ' + who;
+  }
   if (ev.event_type === 'turnover') {
     return who + ' turnover' + (ev.stolen_by_id ? ' (stl ' + pLabel(ev.stolen_by_id) + ')' : '');
   }

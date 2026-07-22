@@ -9,7 +9,7 @@ Rates every eligible player on FIVE numbers, each on a 0-100 scale where
     OFFENSE      Shooting · Finishing · scoring VOLUME (PPG · PRF/G)
     DEFENSE      Steals · Blocks · Guarded% · DSHOT%(inv) · Fouls(inv)
                  · RimProt · PerimD (FG% saved vs league at the rim / arc)
-    PLAYMAKING   Assists · Shots Created · SC-Pass · AST/TOV · TOV%(inv) · pass look-quality
+    PLAYMAKING   Assists · Shots Created · SC-Pass · AST/TOV · TOV%(inv) · pass look-quality · xA
     REBOUNDING   OREB · DREB · REB · REB% · OREB% · DREB%
 
 Each rating is built bottom-up in THREE passes so the spread is real, not
@@ -327,6 +327,7 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
     pcomp = S.passer_completion(events=events)   # FG%/xFG%/Open% on the passer's feeds
+    xam = S.expected_assists(events=events)      # xA — candidate leaf (gate #8d)
     asr = S.assist_rate(game_ids, events=events)  # AST% (on-court teammate FGM share)
     wtov = S.playmaking_weighted_tov(events=events)  # type-weighted TOs (playmaking)
     rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
@@ -488,6 +489,12 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "PassFG%": pc["fg_pct"] if pc else None,
             "PassxFG%": pc["xfg_pct"] if pc else None,
             "PassOpen%": pc["open_pct"] if pc else None,
+            # candidate leaves (#8d gate — in _PLAYMAKING only if the lean-T2
+            # rho gate clears): expected assists per game (make-independent
+            # feed quality, event-only) + hockey assists per game (opt-in
+            # capture; None until the player's pool tags any, CHG/G pattern).
+            "xA/G": per_g(xam.get(pid, {}).get("xA", 0.0)),
+            "HAST/G": per_g(b["HAST"]) if b["HAST"] else None,
             # ── REBOUNDING ──────────────────────────────────────────
             "OREB/G": cper_g(cb["ORB"]),                 # box (combined)
             "DREB/G": cper_g(cb["DRB"]),
@@ -554,7 +561,15 @@ _PLAYMAKING = [("AST%", 1.25, False),   # on-court assist rate (share of teammat
                # actual FG% and OPEN% of the shots the passer sets up. Rewards
                # creating good, uncontested shots even when poor shooters miss.
                ("SCPassQ", 0.75, False), ("PassFG%", 0.6, False),
-               ("PassOpen%", 0.5, False)]
+               ("PassOpen%", 0.5, False),
+               # xA/G — expected assists per game (make-independent feed value).
+               # Gate-adopted 2026-07-22 (#8d, tools/gate_xa_hast.py): lean-T2
+               # rho 0.681 vs 0.678 baseline; the xA-replaces-SCPassQ variant
+               # scored LOWER (0.680) so both stay — they price different
+               # things (per-feed look quality vs per-game feed volume·value).
+               # HAST/G tested same gate: inert (0 tagged) — re-gate once the
+               # opt-in capture has data before adding it here.
+               ("xA/G", 0.75, False)]
 # OFFENSIVE REBOUNDING — second chances. OREB% (on-court, event) + total/per-game.
 _OREB = [("OREB%", 1.25, False), ("OREB/G", 1.0, False)]
 # DEFENSIVE REBOUNDING — closing possessions. DREB% + total/per-game.

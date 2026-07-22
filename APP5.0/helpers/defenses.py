@@ -367,6 +367,48 @@ def team_defense_turnovers(team_id, gender=None, game_ids=None, events=None,
     return {"rows": rows, "total": total}
 
 
+def team_turnover_forced_split(team_id, gender=None, game_ids=None, events=None,
+                               offense=True):
+    """Split a team's turnovers into STEAL-FORCED vs UNFORCED (tennis's forced/
+    unforced error, floored to what the data can prove).
+
+    A turnover with a steal logged (``stolen_by_id`` present) was actively taken;
+    one without was a self-inflicted giveaway as far as the log knows.
+
+    offense=True  → turnovers the team COMMITTED: how many the defense stole off
+                    them (steal-forced) vs their own unforced errors.
+    offense=False → turnovers the team's DEFENSE caused: how many came via a
+                    STEAL (an active takeaway) vs the opponent's unforced error.
+
+    HONEST NAMING — this is ``steal-forced``, NOT true "forced". The bias is one-
+    directional: a pressured giveaway with no steal (bad pass out of bounds,
+    8-second, a forced charge) logs as unforced, so steal-forced UNDERCOUNTS
+    truly-forced turnovers and unforced is inflated. A floor (undercount) is
+    defensible; a random error is not. Name it steal-forced everywhere it shows.
+
+    Returns {forced, unforced, total, forced_pct} (forced_pct is None at total 0),
+    mirroring the orientation of ``team_defense_turnovers`` above."""
+    if events is None:
+        gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
+        events = S.fetch_events(gids) if gids else []
+    own = None if offense else TA.event_team_games(team_id, events)
+    forced = unforced = 0
+    for e in events:
+        if e["event_type"] != "turnover" or e["shooter_team_id"] is None:
+            continue
+        if offense != (e["shooter_team_id"] == team_id):
+            continue
+        if own is not None and e["game_id"] not in own:
+            continue
+        if e.get("stolen_by_id") is not None:
+            forced += 1
+        else:
+            unforced += 1
+    total = forced + unforced
+    return {"forced": forced, "unforced": unforced, "total": total,
+            "forced_pct": _safe(forced, total) if total else None}
+
+
 def team_defense_fouls(team_id, gender=None, game_ids=None, events=None,
                        offense=True):
     """Fouls tagged under each scheme — the line-risk read (a press/trap that

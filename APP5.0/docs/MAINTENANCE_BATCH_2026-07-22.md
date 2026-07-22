@@ -523,3 +523,36 @@ Design (combines the founder's same-player trick with an explicit tag):
 
 Order when picked up: 8a (free engine, card-only) → 8e (coach-visible, small) →
 8b → 8c → 8d (gate runs last, needs the branch).
+
+### BUILT 2026-07-22 (this session), NOT deployed — all five landed
+- **8a**  ✅ (a9e6f92). Per-scheme `forced`/`unforced` ride `team_defense_turnovers`
+  rows (additive keys, floor semantics shared with `team_turnover_forced_split`);
+  §G bars stack coloured steal-forced over grey unforced + honest-floor caption.
+  Unit extended to 12 asserts; real-DB smoke (106 tagged TOs render).
+- **8e**  ✅ (d3ce273). Trick + tag exactly as designed; capture on all 3 writers
+  (PWA Type: Common/Technical fouler-only flow; tracker checkbox; editor Tech?
+  column + insert toggle) + a SERVER gate in `post_events` (enforces fouled=fouler,
+  strips sticky tags — dead-ball). Consumers: PF counts (NFHS), drawn excludes
+  (`player_foul_ft` + per-player `tech` count, playtypes FD), `is_charge` guarded,
+  `team_defense_fouls` excludes on BOTH orientations — **found in build: the
+  same-player trick makes shooter_team_id the tech'd player's own team, so the
+  committed-side scheme read would attribute an opponent's tech to US**; PBP
+  labels on all three surfaces. `tracker/test_tech_foul.py` (20, incl. API gate).
+  PWA cache v52.
+- **8b**  ✅ (2b3f179). Verdict card after Passer quality (verdict_card reuse):
+  ΣxA-vs-AST finishing-luck verdict, HAST count (honest empty state), best/worst
+  Corsi% (min 50 attempts) as a lineup lever. Real read at build: 101.8 xA vs
+  96 AST → "cold finishing is hiding good movement".
+- **8c**  ✅ (58b37db). Charts → Offense → Playmaking: AST-vs-xA scatter on the
+  y=x line (above = under-converted, below = luck) with owed/boosted verdicts +
+  Corsi% h-bars (50% line, good/bad tint). One cached fetch feeds both.
+- **8d**  ✅ GATE CLEARED, adopted (f75e854, merged 2c2e3f8). Lean-T2 rho n=48:
+  baseline 0.678 → +xA 0.6/0.75 = **0.681**; xA-replaces-SCPassQ = 0.680 (lower
+  → BOTH stay, they price different things); adopted `xA/G` 0.75 (aggressive on
+  tie). **HAST INCONCLUSIVE — leaf inert, 0 tagged in pool; not adopted.**
+  Profile leaves ship (`xA/G`, `HAST/G` None-until-tagged); `_PLAYMAKING` now in
+  the backtest REGISTRY; re-run `tools/gate_xa_hast.py` once HAST capture has
+  data. Corsi skipped by design (RAPM impact duplicate).
+- **Side find:** `tracker/test_charges.py` real-book check fails on clean HEAD
+  (same-team drawer/committer rows among the 55 tagged charges — data drift,
+  pre-dates this batch). Spun off as its own investigation task.

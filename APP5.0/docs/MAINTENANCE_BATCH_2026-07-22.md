@@ -328,21 +328,38 @@ built/deploying items are #1–#6. #7 is the next-session backlog.
 - **Axis 2 = play type (scheme).**
 - Orthogonal — neither axis defines the other.
 
-### Ship candidates — OPEN, need a code read before sizing
-- **7a — xA (expected assists).** The real ball-movement answer. Likely ~90% already
-  built: `helpers/stats.py:791 xPPS_created` may BE it. Verify **surface-vs-build**
-  before scoping.
-- **7b — EPA / value-per-action.** Check whether `expected_points_per_shot`
-  (`helpers/stats.py:760`) + Tier-2 `possession_value` (`:1697`) already yield it.
-  ~30-min read to classify.
+### Ship candidates — CODE READ DONE (2026-07-21), classified surface-vs-build
+- **7a — xA (expected assists).**  ✅ DERIVABLE, SURFACE not build. The math already
+  runs — it's just being AVERAGED away. `passer_completion` (`helpers/stats.py:831`)
+  already sums `c["xsum"] = Σ make-rate[(zone,creation,guarded)]` over a passer's fed
+  shots, then divides into `xfg_pct`. **That un-divided sum IS xA** (expected assist
+  COUNT). And `passer_look_quality`/`xPPS_created` (`:799`) already sums
+  `c["xpts"] = Σ rate*shot_value` (expected assist POINTS = the ball-movement value),
+  divided into its per-feed average. So xA + xA-points = exposing the running sums the
+  two engines already compute — no new math, no schema. Scope: extract the sums →
+  map `xA` / `xA_pts` into the `player_stat_table` P dict → row next to AST/PotAST in
+  `player_card.py`, with `AST − xA` (finishing luck on the passer's feeds) as the
+  verdict line (both terms already in P). SMALL. Ship candidate.
+- **7b — EPA / value-per-action.**  ⚠ SPLIT. True NFL-style EPA (EP(state_after) −
+  EP(state_before) per action) = BUILD **and a poor fit**: it needs a possession-
+  VALUE-STATE model, but the app ends a possession on shot/turnover with NO tracked
+  intermediate states (no down/distance analog), and HS possessions are short — the
+  state model has nothing to price. `helpers/possession_value.py` is a team possession
+  LEDGER (points-sources + outcome mix + PPP), not per-action EP. **Defer true EPA.**
+  A pragmatic "value-added per action vs baseline" IS cheap, though: shot action value
+  = `expected_points_per_shot` (`:769`, xPPS) − league/team baseline PPP
+  (`possession_ledger` ppp / `_league_ppp_by_type`); turnover = the ledger's empty-trip
+  leak. That's an AGGREGATION of existing engines, optional cheap surface if coaches
+  ask for "value per action" — but 7a is the better ball-movement answer.
 - **7d — Corsi** (on-floor attempt differential) — reuses the +/- plumbing. Cheap.
 - **7e — forced / unforced TO — FREE, no schema.** `stolen_by_id` already present →
   a `steal-forced` bucket (name it exactly that — it's a floor, not true "forced").
   Hooks `helpers/defenses.py:336 team_defense_turnovers`.
 
-**Next action on resume:** the **7a / 7b code read** — confirm what's derivable from
-existing engines vs genuinely new. That read is the GATE before any of #7 gets sized
-for a batch.
+**Read verdict (GATE cleared):** 7a = SURFACE (small, ship candidate — the real
+ball-movement answer coaches asked for). 7b = defer true EPA (build + poor data fit);
+optional cheap "value-vs-baseline" surface only if asked. 7e still the free first step.
+Batch order when #7 gets picked up: 7e (free) → 7a (surface) → 7d (cheap) → 7b optional.
 
 ---
 

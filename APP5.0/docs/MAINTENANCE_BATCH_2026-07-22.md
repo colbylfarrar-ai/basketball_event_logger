@@ -465,3 +465,61 @@ per defense").
 
 **Batch verdict:** 7e (free) + 7a (derivable, may already exist) = ship candidates.
 7b + 7d = scope-then-size. 7c = separate-field capture (founder building it), see #3.
+
+---
+
+## 8. NEXT BATCH — #7 surfacing scope (APPROVED 2026-07-21) + tech-foul capture
+
+Scoped in-session 2026-07-21 (post-deploy). Approach A approved by founder — extend
+existing surfaces in place, no new nav (matches the 10→6 Charts consolidation
+direction). Ratings changes gated per the recal-round-2 rule: no constant/leaf
+change ships without the walk-forward gates.
+
+### 8a. 7e → disruption card split
+`helpers/dashboard/defense_tab.py:595` (§G, Charts → Defense): the per-scheme
+turnover bars become STACKED steal-forced vs unforced (engine:
+`defenses.team_turnover_forced_split`, both orientations) + the honest-floor
+caption (steal-forced = floor, undercounts truly-forced; name it steal-forced
+everywhere it shows).
+
+### 8b. Insights "Ball movement" verdict card
+One new verdict-first card (reuse `_verdict_lines` / `_lg_delta`): team ΣxA vs
+actual AST (finishing luck ±), HAST tagged count (opt-in capture — likely thin
+early), best/worst on-floor Corsi. Dies if it just restates numbers — every line
+must carry a plain-word verdict.
+
+### 8c. Charts → Offense: xA/Corsi treatment
+xA-vs-AST per-player scatter (above the line = feeds under-converted / cold
+shooters, below = finishing luck) + Corsi% player bars. Player-level trio gets
+its team-context read here; player table + cards already carry the raw columns.
+
+### 8d. Ratings gate-test — xA + HAST leaves (Corsi SKIPPED)
+Branch, add candidate leaves to PLAYMAKING: xA (weight sweep 0.4/0.6/0.75) and
+HAST/G (0.2/0.3, CHG/G rare-event pattern). Run the lean-T2 rho gate
+(`tools/sweep_recal.py` Phase B harness) with/without; sweep must also test
+xA-vs-SCPassQ redundancy (both-in vs xA-replaces). Adopt only if rho ≥ baseline.
+Corsi deliberately skipped: duplicates the RAPM `impact` leaf (opponent+teammate
+adjusted where Corsi is raw); revisit only as a RAPM-fallback if coverage gaps
+show.
+
+### 8e. Technical-foul capture (design settled, founder idea + tag)
+Constraint: tracker foul flow requires BOTH fouled + fouler (`app.js:1649`);
+mapping is `primary=fouled`, `secondary=fouler`. Player techs only — coach techs
+explicitly out of scope (no player row to hang them on; a later
+`foul_type='technical_coach'` with NULL player would slot into the same column).
+
+Design (combines the founder's same-player trick with an explicit tag):
+- "Tech" toggle in the foul flow. ON → fouled chip row hides, UI auto-sets
+  `fouled = fouler` (satisfies the both-filled gate + every non-null assumption
+  downstream, zero null-audit).
+- Payload carries `foul_type='technical'` → the RESERVED `game_events.foul_type`
+  column (`db.py:521`) — already migrated on prod, sits empty.
+- Consumers: PF count reads fouler — already correct (NFHS: player tech = personal
+  foul, no engine change). Fouls-DRAWN reads exclude `foul_type='technical'` so
+  nobody "draws" their own tech. Play-by-play label: "Technical — {player}"
+  instead of "Foul by X on X".
+- Rationale: same-player alone = unexplainable self-foul rows later; tag alone =
+  null-handling audit across every foul consumer. Trick + tag = cheap AND honest.
+
+Order when picked up: 8a (free engine, card-only) → 8e (coach-visible, small) →
+8b → 8c → 8d (gate runs last, needs the branch).

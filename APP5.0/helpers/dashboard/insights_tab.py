@@ -23,7 +23,7 @@ import helpers.insights as IN
 import helpers.insights_team as INT
 import helpers.playtypes as PT
 import helpers.wpa as WPA
-from helpers.cards import dense_table, conf_dot
+from helpers.cards import dense_table, conf_dot, verdict_card
 
 
 def _b(t):
@@ -305,6 +305,25 @@ def _passers(gender, season_gp=None, fp=None):
     return INT.passer_quality(
         gender=gender,
         game_ids=(list(season_gp) if season_gp is not None else None))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _ball_movement(gender, tids, fp=None):
+    """Ball-movement reads over this team's tracked games (#8b):
+    (expected_assists map, corsi map, {pid: hockey-assist count}). One
+    fetch_events feeds all three; `fp` keys the cache to the data version."""
+    if not tids:
+        return {}, {}, {}
+    events = S.fetch_events(list(tids))
+    xa = S.expected_assists(events=events)
+    corsi = S.corsi_all(events=events)
+    hast = {}
+    for e in events:
+        h = e.get("hockey_from_id")
+        if h is not None and e["event_type"] == "shot" \
+                and e["shot_result"] == "make":
+            hast[h] = hast.get(h, 0) + 1
+    return xa, corsi, hast
 
 
 def _pct(v):
@@ -608,6 +627,73 @@ def render(ctx):
                    f"({_best[1]['xPPS_created']:.2f} xPPS created on "
                    f"{_best[1]['feeds']} feeds). Feeds this metric into the "
                    "playmaking read.")
+
+    # ── ball movement — the verdict card (#8b): xA vs AST, hockey assists,
+    #    on-floor attempt tilt. Every line carries a plain-word verdict. ───────
+    _bm_tids = tuple(getattr(ctx, "tracked_ids", None) or ())
+    _xa_map, _corsi_map, _hast_map = _ball_movement(ctx.gender, _bm_tids, fp=_fp)
+    _pidset = set(pids)
+    _team_xa = [(pid, _xa_map[pid]) for pid in pids if pid in _xa_map]
+    if _team_xa:
+        _bm_lines = []
+        # 1) team ΣxA vs actual AST — finishing luck on the looks created
+        _sx = sum(v["xA"] for _, v in _team_xa)
+        _sa = sum(v["AST"] for _, v in _team_xa)
+        _sf = sum(v["feeds"] for _, v in _team_xa)
+        _luck = _sa - _sx
+        if _luck >= 1.5:
+            _vtxt = ("shooters are <b>over-converting the looks</b> — raw "
+                     "assists flatter the movement a touch; expect some to "
+                     "come back to earth")
+        elif _luck <= -1.5:
+            _vtxt = ("<b>cold finishing is hiding good movement</b> — the "
+                     "looks are there, trust the process (and xA), not the "
+                     "assist column")
+        else:
+            _vtxt = ("finishing is running <b>right at expectation</b> — the "
+                     "assist column is an honest read of the movement")
+        _bm_lines.append((
+            "Ball movement", _sf,
+            f"created <b>{_sx:.1f} expected assists</b> vs {_sa} actual "
+            f"({_luck:+.1f} finishing luck): {_vtxt}."))
+        # 2) hockey assists — opt-in capture, honest about thinness
+        _hn = sum(_hast_map.get(pid, 0) for pid in pids)
+        if _hn:
+            _hl = max(((pid, _hast_map.get(pid, 0)) for pid in pids),
+                      key=lambda t: t[1])
+            _bm_lines.append((
+                "2nd pass", _hn,
+                f"<b>{_hn} hockey assist{'s' if _hn != 1 else ''}</b> tagged — "
+                f"<b>{table[_hl[0]]['name']}</b> leads ({_hl[1]}). The pass "
+                "before the pass is getting credited."))
+        else:
+            _bm_lines.append((
+                "2nd pass", 0,
+                "no hockey assists tagged yet — it's an opt-in tap (the pass "
+                "before the assist on a made shot); tag a few and the swing "
+                "passers get their credit here."))
+        # 3) attempt tilt — best/worst on-floor Corsi% with a real sample
+        _cr = [(pid, c) for pid, c in ((p, _corsi_map.get(p)) for p in pids)
+               if c and (c["cf"] + c["ca"]) >= 50 and c["corsi_pct"] is not None]
+        if len(_cr) >= 2:
+            _cb = max(_cr, key=lambda t: t[1]["corsi_pct"])
+            _cw = min(_cr, key=lambda t: t[1]["corsi_pct"])
+            _bm_lines.append((
+                "Attempt tilt", _cb[1]["cf"] + _cb[1]["ca"],
+                f"the floor tilts hardest with <b>{table[_cb[0]]['name']}</b> on "
+                f"({_cb[1]['corsi_pct'] * 100:.0f}% of attempts ours, "
+                f"{_cb[1]['corsi']:+d}) and leaks most with "
+                f"<b>{table[_cw[0]]['name']}</b> "
+                f"({_cw[1]['corsi_pct'] * 100:.0f}%, {_cw[1]['corsi']:+d}) — "
+                "shot volume, not shooting luck, so it's a lineup lever you "
+                "can actually pull."))
+        st.markdown("<div class='lab-hdr'>Ball movement — verdict</div>",
+                    unsafe_allow_html=True)
+        st.markdown(verdict_card(_bm_lines), unsafe_allow_html=True)
+        st.caption("xA values every feed by the LOOK it created (league "
+                   "make-rate for that zone/creation/contest), so a teammate's "
+                   "cold night can't erase good passing. Corsi = shot attempts "
+                   "for − against while on the floor (min 50 attempts).")
 
     # ── boards: force-hand + space dependence ─────────────────────────────────
     bc1, bc2 = st.columns(2)

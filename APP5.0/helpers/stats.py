@@ -828,6 +828,51 @@ def passer_look_quality(game_ids=None, events=None, rates=None, min_feeds=8):
             for pid, c in agg.items() if c["feeds"] >= min_feeds}
 
 
+def expected_assists(game_ids=None, events=None, rates=None, min_feeds=0):
+    """{passer_id: {"xA","xA_pts","AST","feeds"}} — EXPECTED ASSISTS.
+
+    The ball-movement read coaches asked for: value a completed feed by the shot
+    QUALITY it created, not whether the teammate finished. Each shot a player fed
+    (pass_from_id) is scored by the league make-rate for its (zone, creation,
+    contested?) bucket — the same rate table behind xPPS:
+      xA     = Σ make-rate over the passer's feeds   (expected assist COUNT — an
+               assist is one per made shot, so summing make-PROBABILITY = the
+               assists the passer should get)
+      xA_pts = Σ make-rate * shot_value              (expected assist POINTS — the
+               scoring value the passing created)
+    AST (the feeds that actually dropped) rides along so callers can show the
+    finishing-luck gap AST − xA: positive = the passer's shooters over-converted,
+    negative = cold finishers wasted good looks. Because xA is make-INDEPENDENT it
+    survives a teammate's cold night, unlike raw AST.
+
+    This SURFACES sums the passer engines already compute (passer_look_quality's
+    xpts, passer_completion's xsum) — it doesn't re-derive the model. Passers
+    below ``min_feeds`` fed attempts are omitted (default 0 = keep all)."""
+    if events is None:
+        events = fetch_events(game_ids)
+    if rates is None:
+        rates = shot_quality_rates(events=events)
+    agg = defaultdict(lambda: {"xA": 0.0, "xA_pts": 0.0, "AST": 0, "feeds": 0})
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        passer = e.get("pass_from_id")
+        if passer is None:
+            continue
+        key = (e["zone"],
+               _creation_bucket(True, e["shot_created_by_id"] is not None),
+               e["guarded_by_id"] is not None)
+        rate = rates.get(key, {}).get("pct", 0.0)
+        val = 3 if e["shot_type"] == 3 else 2
+        c = agg[passer]
+        c["feeds"] += 1
+        c["xA"] += rate
+        c["xA_pts"] += rate * val
+        if e["shot_result"] == "make":
+            c["AST"] += 1
+    return {pid: dict(c) for pid, c in agg.items() if c["feeds"] >= min_feeds}
+
+
 def passer_completion(game_ids=None, events=None, rates=None, min_feeds=8):
     """{passer_id: {"fg_pct","xfg_pct","open_pct","feeds"}} — how the shots a
     passer sets up actually resolve, three playmaking signals in one walk:

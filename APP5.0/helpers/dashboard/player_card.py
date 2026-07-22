@@ -1084,6 +1084,13 @@ def render_card(ctx):
                     f"{P['PotAST']} ({P['PotAST/G']:.1f}/g"
                     + (f" · {_fmt(P['FeedConv%'], 'pct')} finished)"
                        if P.get("FeedConv%") is not None else ")")},
+                # xA = expected assists (feeds scored by look quality, make-
+                # independent) with the finishing-luck gap AST − xA. Only for
+                # players who fed shots (None otherwise).
+                *([_row("Expected assists (xA)", "xA", "f1") | {"Value":
+                    f"{P['xA']:.1f}  (AST {P['AST']} · "
+                    f"{'+' if P['AST-xA'] >= 0 else ''}{P['AST-xA']:.1f} vs xA)"}]
+                  if P.get("xA") is not None else []),
                 _row("Screen assists", "ScrAST", "int") | {"Value":
                     f"{P['ScrAST']} ({P['ScrAST/G']:.1f}/g)"},
                 # hockey assist (pass before the assist) — opt-in capture, so the

@@ -145,6 +145,15 @@ STAT_DEFS = [
      "reads 0 until a coach starts capturing it.",
      "Surfaces the connector who swings the extra pass but rarely gets the "
      "assist. Volume-dependent on tagging.", True),
+    ("xA",    "Expected Assists", "Playmaking", "feeds scored by the look quality they created",
+     "Values every pass into a shot by the league make-rate for that look (its "
+     "zone, how it was created, contested or not) — the assists a passer SHOULD "
+     "get, independent of whether the teammate finished. A great passer on a cold-"
+     "shooting night reads well here even as raw AST stays low. AST − xA is the "
+     "finishing luck on the passer's feeds: positive = shooters over-converted, "
+     "negative = good looks went begging.",
+     "The truest ball-movement read the box can give — reward the pass, not the "
+     "teammate's jumper. No tagging required.", True),
     ("SCE",   "Self-Creation %",  "Playmaking", "self-created shots / FGA",
      "Share of a player's own shots they created off the dribble (no pass into "
      "the shot).", "Higher = shot-maker who doesn't need setup.", False),

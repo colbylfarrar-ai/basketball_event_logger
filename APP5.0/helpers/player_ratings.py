@@ -1241,6 +1241,10 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     # team possessions across the sample (denominator for USG%), over ALL of a
     # team's players, not just the ones who clear the games filter.
     all_boxes = S.aggregate_player_boxes(game_ids, events=events)
+    # xA (expected assists) — value each feed by the look it created, so a passer
+    # survives cold finishers. Same rate table as xPPS (qual_rates). Passer-level,
+    # mapped per player below; AST − xA is the finishing-luck read.
+    xa_map = S.expected_assists(game_ids, events=events, rates=qual_rates)
     team_of = {r["id"]: r["team_id"]
                for r in query("SELECT id, team_id FROM players")}
     team_poss = defaultdict(float)
@@ -1266,6 +1270,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         shot_rt = S.shot_rating(pid, events=events, rates=diff_rates)
         xpps    = S.expected_points_per_shot(pid, events=events, rates=qual_rates) if has_fga else None
         xfg     = xfg_all.get(pid) if has_fga else None
+        _xa     = xa_map.get(pid)                     # expected assists (None if no feeds)
 
         # impact / usage
         pmin   = mins.get(pid, 0.0)
@@ -1357,6 +1362,11 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             # HAST = hockey assist (the pass that fed the assister on a made
             # shot). Opt-in capture (game_events.hockey_from_id) -> 0 until tagged.
             "HAST": b["HAST"], "HAST/G": pg(b["HAST"]),
+            # xA = expected assists (feeds scored by the look quality they created,
+            # make-independent). AST−xA = finishing luck on this passer's feeds.
+            "xA": _round(_xa["xA"]) if _xa else None,
+            "xA_pts": _round(_xa["xA_pts"]) if _xa else None,
+            "AST-xA": _round(b["AST"] - _xa["xA"]) if _xa else None,
             "ScrnFGA": b["scr_tag_FGA"], "ScrnFGM": b["scr_tag_FGM"],
             "FeedConv%": (_pct(_safe(b["AST"], b["SC_pass"]))
                           if b["SC_pass"] else None),

@@ -172,22 +172,21 @@ try {
       <button id="btn-subs" class="btn ghost">Subs</button>
       <button id="btn-board" class="btn ghost">Board</button>
     </div>
+    <!-- Clock folded into the sticky header (with score + quarter): the coach
+         keeps game time pinned while the court/flow scroll, instead of hunting
+         for it. Still the LAST thing updated after an event, and every event
+         stamps time = clockStr(), so a running clock keeps that accurate. -->
+    <div class="clock" aria-label="Game clock">
+      <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
+      <button id="clk-min-minus" class="btn sq" type="button" aria-label="Minute down">&minus;</button>
+      <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
+      <button id="clk-min-plus" class="btn sq" type="button" aria-label="Minute up">+</button>
+      <span class="clock-colon">:</span>
+      <button id="clk-sec-minus" class="btn sq" type="button" aria-label="Second down">&minus;</button>
+      <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
+      <button id="clk-sec-plus" class="btn sq" type="button" aria-label="Second up">+</button>
+    </div>
   </header>
-
-  <!-- Clock sits right under the header, paired with the quarter stepper: the coach
-       keeps the game time in view while logging instead of scrolling to the bottom.
-       Still the LAST thing updated after an event, and every event stamps
-       time = clockStr(), so a running clock keeps that accurate automatically. -->
-  <div class="clock" aria-label="Game clock">
-    <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
-    <button id="clk-min-minus" class="btn sq" type="button" aria-label="Minute down">&minus;</button>
-    <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
-    <button id="clk-min-plus" class="btn sq" type="button" aria-label="Minute up">+</button>
-    <span class="clock-colon">:</span>
-    <button id="clk-sec-minus" class="btn sq" type="button" aria-label="Second down">&minus;</button>
-    <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
-    <button id="clk-sec-plus" class="btn sq" type="button" aria-label="Second up">+</button>
-  </div>
 
   <!-- In-place subs: swap the on-court five without leaving the tracker, so minutes
        and +/- (which key off the lineup snapshot) stay correct. -->
@@ -247,8 +246,12 @@ try {
   <p id="coverage-badge" class="status" style="display:none"
      title="Share of tonight's events carrying the optional one-tap tags. Tag play type and defense (detailed mode) to unlock the play-type, scheme and shot-quality analytics for this game."></p>
 
-  <h3 class="pbp-h">Play-by-play</h3>
-  <ul id="pbp" class="pbp"></ul>
+  <!-- Play-by-play collapses by default (the last ~10 events, capped): keeps the
+       long feed tail off the main logging scroll. Tap to expand. -->
+  <button id="pbp-toggle" class="pbp-h" type="button" aria-expanded="false" aria-controls="pbp">
+    <span class="pbp-caret" aria-hidden="true">&#9656;</span> Play-by-play
+  </button>
+  <ul id="pbp" class="pbp" hidden></ul>
 </section>
 
 <!-- Screen 4: Event editor -->

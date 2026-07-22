@@ -264,7 +264,19 @@ button {
 .ed-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
 
 /* ---- tracker header ---- */
-#track-head { margin-bottom: 8px; }
+/* Sticky top bar: score + quarter + clock stay pinned while the court and flow
+   scroll under them, so the coach never scrolls up to read game time or the
+   score. Solid bg + bottom edge so scrolled content doesn't bleed through.
+   z-index below the one-time iOS banner (20) and toast (30). */
+#track-head {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: var(--bg);
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--edge);
+}
 #score-line {
   display: flex;
   align-items: baseline;
@@ -288,6 +300,11 @@ button {
 .q-stepper span { min-width: 38px; text-align: center; font-weight: 700; }
 
 .clock { display: flex; align-items: center; justify-content: center; gap: 3px; margin: 8px 0; }
+/* clock folded into the sticky header: narrower controls so the whole widget
+   fits one phone row under the score (tap height stays >=44px). */
+#track-head .clock { margin: 6px 0 0; }
+#track-head .clock .btn.sq { width: 34px; min-height: 40px; }
+#track-head .clock input { width: 46px; min-height: 40px; }
 .clock-colon { margin: 0 4px; font-weight: 700; }
 .clock input {
   width: 54px;
@@ -358,17 +375,17 @@ button {
 .court-gold { stroke: var(--gold); stroke-width: 0.25; fill: none; }
 .court-marker { fill: var(--gold); stroke: #ffffff; stroke-width: 0.18; }
 
-.caption { text-align: center; color: var(--gold); min-height: 1.3em; margin: 6px 0; font-weight: 600; }
+.caption { text-align: center; color: var(--gold); min-height: 1.3em; margin: 4px 0; font-weight: 600; }
 
 /* ---- mode + flow ---- */
-#mode-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 8px; }
+#mode-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 6px; }
 .btn.mode { font-weight: 700; color: var(--muted); }
 .btn.mode.active { background: var(--gold); color: var(--bg); border-color: var(--gold); }
 
 /* Sticky "current defense" bar — set once, every event inherits it. Sits just
    above the flow with a subtle accent edge so it reads as a persistent setting,
    not a per-event picker. Empty (#defense-bar with no children) collapses. */
-#defense-bar { margin-bottom: 8px; }
+#defense-bar { margin-bottom: 6px; }
 #defense-bar:empty { display: none; }
 #defense-bar .chip-label { display: inline-block; margin: 0 0 4px; }
 
@@ -394,7 +411,7 @@ button {
   vertical-align: middle;
   margin-left: 6px;
 }
-#playtype-bar { margin-bottom: 8px; }
+#playtype-bar { margin-bottom: 6px; }
 #playtype-bar:empty { display: none; }
 #playtype-bar .chip-label { display: inline-block; margin: 0 0 4px; }
 
@@ -408,10 +425,28 @@ button {
 .btn.miss { min-height: 64px; font-size: 1.2rem; font-weight: 800; background: var(--bg3); border-color: var(--red); color: var(--red); }
 
 /* ---- actions / play-by-play ---- */
-#to-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0 0; }
-#action-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0 4px; }
+#to-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 8px 0 0; }
+#action-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 8px 0 4px; }
 
-.pbp-h { margin-top: 14px; }
+/* Play-by-play is now a collapse toggle (default collapsed). Full-width, muted,
+   left-aligned; caret rotates when open. */
+.pbp-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 2px;
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.pbp-caret { display: inline-block; transition: transform 0.15s ease; }
+#pbp-toggle[aria-expanded="true"] .pbp-caret { transform: rotate(90deg); }
+.pbp[hidden] { display: none; }
 .pbp { list-style: none; margin: 0; padding: 0; font-size: 0.85rem; }
 .pbp li { padding: 7px 4px; border-bottom: 1px solid var(--bg3); color: var(--fg); }
 .pbp li.pbp-queued { color: var(--gold); }

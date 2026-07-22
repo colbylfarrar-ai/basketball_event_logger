@@ -2380,6 +2380,15 @@ function bindUI() {
 
   // tracker header
   $('btn-subs').addEventListener('click', function () { toggleSubsPanel(); });
+  // play-by-play collapse: default collapsed (markup), tap to expand. renderPBP
+  // still fills the list; this only shows/hides it, keeping the feed tail off
+  // the main logging scroll.
+  $('pbp-toggle').addEventListener('click', function () {
+    const ul = $('pbp');
+    const open = ul.hidden;                 // about to open if currently hidden
+    ul.hidden = !open;
+    this.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
   // courtside whiteboard overlay (wb.js) — same tap-in/tap-out feel as Subs
   $('btn-board').addEventListener('click', function () {
     if (window.WB) window.WB.toggle();

@@ -1238,6 +1238,10 @@ else:
                             zone      = r2a.selectbox("Zone", ZONES)
                             pass_from = r2b.selectbox("Pass From", all_opts)
                             created   = r2c.selectbox("Shot Created By", all_opts)
+                        # hockey assist (the pass before the assist) — optional,
+                        # opt-in: only meaningful on a made, assisted shot.
+                        hockey_from = st.selectbox(
+                            "Hockey Assist (pass before the assist)", all_opts)
                         # player pickers
                         r3a, r3b, r3c = st.columns(3)
                         guarded   = r3a.selectbox("Guarded By", all_opts)
@@ -1314,6 +1318,7 @@ else:
                               shot_type=int(shot_type), zone=zone,
                               pass_from_id=plookup(pass_from, all_id),
                               shot_created_by_id=plookup(created, all_id),
+                              hockey_from_id=plookup(hockey_from, all_id),
                               rebound_by_id=plookup(rebound, all_id),
                               blocked_by_id=plookup(blocked, all_id),
                               guarded_by_id=plookup(guarded, all_id))

@@ -373,6 +373,7 @@ def _disp(ev):
         "Play": key2play.get(ev["play_type"], "—"),
         "Defense": key2def.get(ev["defense"], "—"),
         "Pass": pid2label.get(ev["pass_from_id"], "—"),
+        "Hockey": pid2label.get(ev["hockey_from_id"], "—"),
         "Created": pid2label.get(ev["shot_created_by_id"], "—"),
         "Guarded": pid2label.get(ev["guarded_by_id"], "—"),
         "Rebound": pid2label.get(ev["rebound_by_id"], "—"),
@@ -422,6 +423,9 @@ edited = st.data_editor(
                                                     help="Defense in effect (shots & "
                                                          "turnovers) — man, 2-3, press …"),
         "Pass": st.column_config.SelectboxColumn("Pass from", options=player_opts),
+        "Hockey": st.column_config.SelectboxColumn("Hockey assist", options=player_opts,
+                                                   help="The pass before the assist "
+                                                        "(hockey assist) — made shots"),
         "Created": st.column_config.SelectboxColumn("Created by", options=player_opts),
         "Guarded": st.column_config.SelectboxColumn("Guarded by", options=player_opts),
         "Rebound": st.column_config.SelectboxColumn("Rebound by", options=player_opts),
@@ -460,6 +464,7 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
             "defense": def2key.get(r["Defense"]),
             "primary_player_id": label2pid.get(r["Primary"]),
             "pass_from_id": label2pid.get(r["Pass"]),
+            "hockey_from_id": label2pid.get(r["Hockey"]),
             "shot_created_by_id": label2pid.get(r["Created"]),
             "guarded_by_id": label2pid.get(r["Guarded"]),
             "rebound_by_id": label2pid.get(r["Rebound"]),
@@ -675,6 +680,8 @@ with st.form(f"ins_form_{gid}", clear_on_submit=True):
         ins_guarded = s7.selectbox("Guarded by", player_opts)
         ins_rebound = s8.selectbox("Rebound by", player_opts)
         ins_blocked = s9.selectbox("Blocked by", player_opts)
+        ins_hockey = st.selectbox("Hockey assist", player_opts,
+                                  help="The pass before the assist (made shots)")
         i_pd1, i_pd2 = st.columns(2)
         ins_play = i_pd1.selectbox("Play type", play_opts,
                                    help="One-tap set call (optional)")
@@ -721,6 +728,7 @@ if ins_go:
                       zone=None if ins_zone == "—" else ins_zone,
                       pass_from_id=label2pid.get(ins_pass),
                       shot_created_by_id=label2pid.get(ins_created),
+                      hockey_from_id=label2pid.get(ins_hockey),
                       guarded_by_id=label2pid.get(ins_guarded),
                       rebound_by_id=label2pid.get(ins_rebound),
                       blocked_by_id=label2pid.get(ins_blocked),

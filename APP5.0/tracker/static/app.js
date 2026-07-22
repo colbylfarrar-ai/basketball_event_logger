@@ -149,7 +149,7 @@ function qDelete(uuids) {
 /* ---------- sync engine ---------- */
 
 const SERVER_FIELDS = ['uuid', 'event_type', 'quarter', 'time', 'primary_player_id', 'shot_result',
-  'shot_x', 'shot_y', 'shot_type', 'zone', 'pass_from_id', 'shot_created_by_id', 'rebound_by_id',
+  'shot_x', 'shot_y', 'shot_type', 'zone', 'pass_from_id', 'shot_created_by_id', 'hockey_from_id', 'rebound_by_id',
   'blocked_by_id', 'guarded_by_id', 'secondary_player_id', 'official_id', 'stolen_by_id',
   'play_type', 'defense', 'turnover_type', 'on_court', 'officials_on', 'official_slots'];
 
@@ -1248,7 +1248,7 @@ function resetFlow(mode) {
     noLoc: false, manualType: 2, manualZone: null,  // location-less shot entry
     expand: false,                                  // quick-mode: details revealed for this entry
     shooter: null,
-    details: { pass_from_id: null, shot_created_by_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
+    details: { pass_from_id: null, shot_created_by_id: null, hockey_from_id: null, rebound_by_id: null, blocked_by_id: null, guarded_by_id: null, play_type: null },
     fouled: null, fouler: null, official: null,
     player: null, stolen: null, tovKind: null
   };
@@ -1400,6 +1400,7 @@ function makeMissRow(onResult) {
 
 const SHOT_DETAILS = [
   ['pass_from_id', 'Pass from'],
+  ['hockey_from_id', 'Hockey assist'],
   ['shot_created_by_id', 'Set up by'],
   ['rebound_by_id', 'Rebound by'],
   ['blocked_by_id', 'Blocked by'],
@@ -1687,7 +1688,7 @@ function baseEvent(type) {
     primary_player_id: null,
     shot_result: null,
     shot_x: null, shot_y: null, shot_type: null, zone: null,
-    pass_from_id: null, shot_created_by_id: null, rebound_by_id: null,
+    pass_from_id: null, shot_created_by_id: null, hockey_from_id: null, rebound_by_id: null,
     blocked_by_id: null, guarded_by_id: null,
     play_type: S.playType,                       // sticky current set call (see PLAY_TYPES)
     secondary_player_id: null, official_id: null, stolen_by_id: null,
@@ -1975,6 +1976,7 @@ function formFromEvent(ev) {
     zone: ev.zone || null,
     pass_from_id: ev.pass_from_id != null ? ev.pass_from_id : null,
     shot_created_by_id: ev.shot_created_by_id != null ? ev.shot_created_by_id : null,
+    hockey_from_id: ev.hockey_from_id != null ? ev.hockey_from_id : null,
     rebound_by_id: ev.rebound_by_id != null ? ev.rebound_by_id : null,
     blocked_by_id: ev.blocked_by_id != null ? ev.blocked_by_id : null,
     guarded_by_id: ev.guarded_by_id != null ? ev.guarded_by_id : null,
@@ -2209,6 +2211,7 @@ async function saveEdit(eid) {
     zone: f.zone,
     pass_from_id: f.pass_from_id,
     shot_created_by_id: f.shot_created_by_id,
+    hockey_from_id: f.hockey_from_id,
     rebound_by_id: f.rebound_by_id,
     blocked_by_id: f.blocked_by_id,
     guarded_by_id: f.guarded_by_id,

@@ -361,6 +361,28 @@ ball-movement answer coaches asked for). 7b = defer true EPA (build + poor data 
 optional cheap "value-vs-baseline" surface only if asked. 7e still the free first step.
 Batch order when #7 gets picked up: 7e (free) → 7a (surface) → 7d (cheap) → 7b optional.
 
+### BUILT 2026-07-21 (this session), NOT deployed — 7a + 7d + 7e shipped, 7b deferred
+- **7e — steal-forced vs unforced TO split.**  ✅ BUILT. `helpers/defenses.py
+  team_turnover_forced_split` (both orientations), FREE off `stolen_by_id`, honest
+  floor naming. Unit `tracker/test_forced_turnovers.py` (7). Engine ready; Team-
+  Dashboard disruption-card surface is a small follow-on.
+- **7a — xA (expected assists).**  ✅ BUILT + SURFACED. `helpers/stats.py
+  expected_assists` (Σ make-rate over feeds = xA; Σ rate*value = xA points; AST−xA =
+  finishing luck). Mapped into `player_stat_table` P (`xA`/`xA_pts`/`AST-xA`), row in
+  `player_card.py` next to Potential assists, glossary entry. Unit
+  `tracker/test_expected_assists.py` (9). Real DB: 182 passers, max xA 77.1.
+- **7d — Corsi (on-floor attempt ±).**  ✅ BUILT + SURFACED. `helpers/stats.py
+  corsi_all` reuses `game_event_lineup` (CF−CA). P fields `Corsi`/`CorsiFor`/
+  `CorsiAgainst`/`Corsi%`, `player_card.py` row, glossary. Unit `tracker/test_corsi.py`
+  (8). Real DB: range −80..289.
+- **7b — EPA / value-per-action.**  ⛔ DEFERRED (not built, by design). True per-action
+  EPA needs a possession-value-STATE model the data can't feed (possessions end on
+  shot/turnover, no intermediate tracked states, short HS trips — nothing to price the
+  states with). The cheap "value-vs-baseline" alternative (xPPS − baseline PPP) would
+  largely DUPLICATE already-shipped signal (xPPS, SMOE, the possession_value.py ledger),
+  so building it adds clutter, not insight. Ship only if a coach explicitly asks for a
+  named per-action-value read; otherwise xA (7a) already carries the value ask.
+
 ---
 
 ## 7. FEATURE — Cross-sport analytics steals (coach-meeting "ball movement" ask)

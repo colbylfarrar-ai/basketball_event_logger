@@ -1853,6 +1853,45 @@ def player_rebound_onoff(player_id, team_id, game_ids=None):
     return out
 
 
+def corsi_all(game_ids=None, events=None):
+    """{player_id: {"cf","ca","corsi","corsi_pct"}} — on-floor shot-attempt
+    differential (NHL Corsi), reusing the game_event_lineup snapshot the +/-
+    plumbing already writes.
+
+    For every shot (make OR miss) a player was on the floor for: +1 CF if their
+    team took the attempt, +1 CA if the opponent did. corsi = CF − CA;
+    corsi_pct = CF / (CF+CA). A lower-variance running mate to +/- — it rewards
+    GENERATING and SUPPRESSING attempts, not just whether they fell, so a shot-
+    volume advantage shows even on a cold night. No new capture."""
+    if events is None:
+        events = fetch_events(game_ids)
+    shot_team = {e["id"]: e["shooter_team_id"] for e in events
+                 if e["event_type"] == "shot" and e["shooter_team_id"] is not None}
+    if not shot_team:
+        return {}
+    clause, params = _game_filter(game_ids)
+    rows = query(
+        f"""SELECT gel.event_id eid, gel.player_id pid, gel.team_id tid
+            FROM game_event_lineup gel JOIN game_events ge ON ge.id = gel.event_id
+            WHERE ge.event_type='shot'{clause}""", params)
+    agg = defaultdict(lambda: {"cf": 0, "ca": 0})
+    for r in rows:
+        st = shot_team.get(r["eid"])
+        if st is None:
+            continue
+        a = agg[r["pid"]]
+        if r["tid"] == st:
+            a["cf"] += 1
+        else:
+            a["ca"] += 1
+    out = {}
+    for pid, a in agg.items():
+        tot = a["cf"] + a["ca"]
+        out[pid] = {"cf": a["cf"], "ca": a["ca"], "corsi": a["cf"] - a["ca"],
+                    "corsi_pct": (a["cf"] / tot) if tot else None}
+    return out
+
+
 def player_playmaking_onoff(player_id, team_id, game_ids=None):
     """
     Team ball-movement and ball-security with the player ON vs OFF the floor.

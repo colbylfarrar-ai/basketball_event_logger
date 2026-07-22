@@ -1100,6 +1100,12 @@ def render_card(ctx):
                     f"{P['HAST']} ({P['HAST/G']:.1f}/g)"}] if P.get("HAST") else []),
                 _row("Guarded% (on court)", "Guarded%", "pct"),
                 _row("Defended FG% allowed", "DSHOT%", "pct"),
+                # Corsi — on-floor shot-attempt differential, a lower-variance
+                # running mate to +/- (only when the player logged floor time)
+                *([_row("Corsi (attempt ±)", "Corsi", "int") | {"Value":
+                    f"{'+' if P['Corsi'] >= 0 else ''}{P['Corsi']} "
+                    f"({P['CorsiFor']}/{P['CorsiAgainst']} · {_fmt(P['Corsi%'], 'pct')})"}]
+                  if P.get("Corsi") is not None else []),
             ]
             # rim / perimeter defended splits (only when the player has faced
             # shots in the bucket); ± = FG points saved vs a league-average

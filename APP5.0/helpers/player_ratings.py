@@ -1245,6 +1245,9 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     # survives cold finishers. Same rate table as xPPS (qual_rates). Passer-level,
     # mapped per player below; AST − xA is the finishing-luck read.
     xa_map = S.expected_assists(game_ids, events=events, rates=qual_rates)
+    # Corsi — on-floor shot-attempt differential (CF−CA), the lower-variance
+    # running mate to +/-. Reuses the game_event_lineup snapshot.
+    corsi_map = S.corsi_all(game_ids, events=events)
     team_of = {r["id"]: r["team_id"]
                for r in query("SELECT id, team_id FROM players")}
     team_poss = defaultdict(float)
@@ -1271,6 +1274,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         xpps    = S.expected_points_per_shot(pid, events=events, rates=qual_rates) if has_fga else None
         xfg     = xfg_all.get(pid) if has_fga else None
         _xa     = xa_map.get(pid)                     # expected assists (None if no feeds)
+        _cor    = corsi_map.get(pid)                  # Corsi (None if never on floor)
 
         # impact / usage
         pmin   = mins.get(pid, 0.0)
@@ -1367,6 +1371,12 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "xA": _round(_xa["xA"]) if _xa else None,
             "xA_pts": _round(_xa["xA_pts"]) if _xa else None,
             "AST-xA": _round(b["AST"] - _xa["xA"]) if _xa else None,
+            # Corsi — on-floor shot-attempt differential (CF−CA), a lower-variance
+            # running mate to +/- (rewards generating/suppressing attempts).
+            "Corsi": _cor["corsi"] if _cor else None,
+            "CorsiFor": _cor["cf"] if _cor else None,
+            "CorsiAgainst": _cor["ca"] if _cor else None,
+            "Corsi%": _pct(_cor["corsi_pct"]) if _cor else None,
             "ScrnFGA": b["scr_tag_FGA"], "ScrnFGM": b["scr_tag_FGM"],
             "FeedConv%": (_pct(_safe(b["AST"], b["SC_pass"]))
                           if b["SC_pass"] else None),

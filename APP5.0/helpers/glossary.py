@@ -154,6 +154,14 @@ STAT_DEFS = [
      "negative = good looks went begging.",
      "The truest ball-movement read the box can give — reward the pass, not the "
      "teammate's jumper. No tagging required.", True),
+    ("Corsi", "Corsi (attempt ±)", "Playmaking", "on-floor shot attempts for − against",
+     "Borrowed from hockey: every shot attempt (make OR miss) taken while the "
+     "player is on the floor — plus one when their team shoots, minus one when the "
+     "opponent does. It rewards generating and suppressing ATTEMPTS, so a shot-"
+     "volume edge shows even on a cold-shooting night that flattens raw +/-. A "
+     "lower-variance running mate to plus/minus; no new tracking.",
+     "Steadier than +/- on a short book — who tilts the shot count when they play.",
+     True),
     ("SCE",   "Self-Creation %",  "Playmaking", "self-created shots / FGA",
      "Share of a player's own shots they created off the dribble (no pass into "
      "the shot).", "Higher = shot-maker who doesn't need setup.", False),

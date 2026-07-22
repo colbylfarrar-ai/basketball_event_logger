@@ -141,3 +141,79 @@ more detailed read with noise sorted.
 5. Tier taxonomy tag on the leaf registry (mechanical, no behavior change).
 6. Per-category evidence + tier chips — the real build; gate before adopt.
 7. Backtest per-tier cohort reporting — proves the commitment.
+
+---
+
+## Part 4 — Backend deep-dive: idea backlog (surveyed 2026-07-22)
+
+Founder ask: full engine/helper look for untried uses of the event table —
+ball movement, cross-sport steals, player combos ("triples, groups of 4").
+
+Inventory fact: 90 helpers. Existing combo coverage: PAIRS
+(`networks.py` — pair net per 100, solo-net baseline) and FULL FIVES
+(`lineups.py` — observed 5-man units, EB prior, min-poss guard). Trios and
+quads are the missing middle — same possession-share machinery
+(`itertools.combinations(five, 3|4)`), no new capture.
+
+DEDUPE RULE for the deep-dive session: before building ANY idea below, read
+the full docstring of every adjacent helper (they are rich) — several past
+"new ideas" already existed (runs, GEI, late_game, situational,
+scheme_situational, spacing, exploit, hoopwar, fatigue-as-rest-days).
+
+### Combos (the direct ask)
+- **4a. Trio / quad units.** Extend `lineups.py`/`networks.py` possession
+  walk to 3-man and 4-man groups. Sparser samples → higher min-poss +
+  the `_NET_PRIOR_POSS` EB pattern. Surfaces: best/worst trio; and the
+  killer coach tool — **"finisher finder"**: given a strong 4-man core,
+  rank candidate 5th players by that unit's observed net. Rotation lever,
+  pure fun, zero new capture.
+- **4b. Synergy above expectation.** Pair/trio net MINUS what the members'
+  solo nets predict — chemistry as an interaction term, not raw net (raw
+  net just re-ranks good players standing together).
+
+### Ball movement
+- **4c. Connection matrix.** Who→whom assist counts (`pass_from → shooter`),
+  xA-weighted; with `hockey_from` tagged, 3-node chains ("who ignites
+  whom" — extends Part 1 §3 pairs into a team passing graph). Hockey
+  line-combo / soccer key-pass-combo steal. Surfable as a heat-grid on
+  Charts → Offense.
+- **4d. Involvement rate** (soccer build-up involvement): % of team scored
+  possessions where the player has ANY fingerprint (scorer, assister,
+  hockey, screen assist, OREB). Cheap walk over existing tags; the
+  "do-it-all" team-play twin of the §2 rebounding read.
+
+### Cross-sport steals not yet used
+- **4e. Kill counts** (Miami Heat defensive metric): 3+ consecutive stops =
+  a "kill"; team per-game + on-floor credit. `runs.py` is POINTS-based;
+  stop-strings are not built. Complements the founder's "long runs ARE
+  strings of stops" note in runs.py — this names the stops directly.
+- **4f. Answer rate** (volleyball side-out%): after an opponent score, how
+  often does the next possession score? Team + on-floor split; the
+  momentum-stopper stat, finer-grained than runs.momentum.
+- **4g. Quality stints** (hockey shift length): within-game stint detection
+  from `game_event_lineup` sub sequences — stint net by length, optimal
+  shift length per player, fatigue WITHIN a game (`fatigue.py` is
+  schedule-level only). Feeds rotation_plan.
+- **4h. Shot-diet shaping** (hockey high-danger chances): rim-attempt share
+  ALLOWED while a lineup/player is on floor — Corsi machinery × zone tags.
+  Defense that funnels to bad shots, visible per unit.
+- **4i. Foul-trouble drag** (basketball-native): team net while a starter
+  carries 2+/3+ fouls + minutes lost; links `fouls.py` to the on-floor
+  data. Coaches argue this daily; no engine answers it.
+
+Already covered — do NOT rebuild: clutch/LI (wpa), Corsi, forced TO split,
+xA/HAST, runs+momentum, GEI (excitement), late-game, rest-day fatigue,
+lineup SIMULATION (team_analytics/lineup_projection), pass-quality
+(SCPassQ/xPPS_created), hoopwar (WAR).
+
+### Ranking (fun × effort, founder taste: verdict-first, depth not clutter)
+1. 4a trios/quads + finisher finder — the ask itself, machinery exists.
+2. 4e kills + 4f answer rate — one possession-walk pass builds both.
+3. 4c connection matrix — ball-movement ask, builds on §3 chains.
+4. 4i foul-trouble drag — high coach resonance, small.
+5. 4g stints — rotation value, medium.
+6. 4d involvement — small, fun, do-it-all tie-in.
+7. 4b synergy, 4h shot-diet — nice-to-have depth.
+
+None are rating leaves initially — all surfaces. Any later rating entry
+goes through the Part 2 gate protocol like everything else.

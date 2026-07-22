@@ -125,26 +125,20 @@ def player_foul_ft(game_ids=None, events=None):
     # discipline reads (nsPF) don't punish a coach-ordered strategy foul
     strategic = (LG.strategic_foul_event_ids(events)
                  if any(e["event_type"] == "foul" for e in events) else set())
-    out = defaultdict(lambda: {"PF": 0, "drawn": 0, "strategic": 0, "tech": 0,
+    out = defaultdict(lambda: {"PF": 0, "drawn": 0, "strategic": 0,
                                "FTA": 0, "FTM": 0,
                                "FTA_1h": 0, "FTM_1h": 0, "FTA_2h": 0, "FTM_2h": 0,
                                "cFTA": 0, "cFTM": 0, "and1": 0, "and1_made": 0})
     for e in events:
         et = e["event_type"]
         if et == "foul":
-            # A player TECH is logged fouled == fouler + foul_type='technical'
-            # (the same-player trick). It IS a personal foul (NFHS) so PF counts,
-            # but nobody "draws" their own tech — the drawn side skips it.
-            is_tech = e.get("foul_type") == "technical"
             fouler = e["secondary_player_id"]
             fouled = e["primary_player_id"]
             if fouler is not None:
                 out[fouler]["PF"] += 1
-                if is_tech:
-                    out[fouler]["tech"] += 1
                 if e["id"] in strategic:
                     out[fouler]["strategic"] += 1
-            if fouled is not None and not is_tech:
+            if fouled is not None:
                 out[fouled]["drawn"] += 1
         elif et == "free_throw":
             sh = e["primary_player_id"]

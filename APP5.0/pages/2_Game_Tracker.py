@@ -950,11 +950,8 @@ def _render_command_center():
             desc = f"{pn(ev['primary_player_id']) or '—'} {verb} FT"
             if ev["rebound_by_id"]: desc += f" · reb {pn(ev['rebound_by_id'])}"
         elif et == "foul":
-            if ev.get("foul_type") == "technical":
-                desc = f"Technical — {pn(ev['secondary_player_id']) or '—'}"
-            else:
-                desc = f"Foul on {pn(ev['secondary_player_id']) or '—'}"
-                if ev["primary_player_id"]: desc += f" (fouled {pn(ev['primary_player_id'])})"
+            desc = f"Foul on {pn(ev['secondary_player_id']) or '—'}"
+            if ev["primary_player_id"]: desc += f" (fouled {pn(ev['primary_player_id'])})"
             if ev["official_id"]: desc += f" · ref {on_(ev['official_id'])}"
         elif et == "turnover":
             desc = f"Turnover {pn(ev['primary_player_id']) or '—'}"
@@ -1266,11 +1263,6 @@ else:
                         fouled   = c1.selectbox("Player Fouled", all_opts[1:])
                         fouler   = c2.selectbox("Player Who Fouled", all_opts[1:])
                         official = c3.selectbox("Official", off_opts)
-                        foul_tech = st.checkbox(
-                            "Technical foul",
-                            help="A player tech: only 'Player Who Fouled' is "
-                                 "used (nobody is fouled on a tech). Counts as "
-                                 "a personal foul per NFHS.")
 
                     elif event_type == "Turnover":
                         c1, c2, c3 = st.columns([2, 2, 1])
@@ -1342,24 +1334,11 @@ else:
                               rebound_by_id=plookup(rebound, all_id))
 
                 elif event_type == "Foul":
-                    if foul_tech:
-                        # same-player trick + tag (see helpers/game_events):
-                        # fouled = fouler keeps every non-null assumption, the
-                        # tag keeps the row honest. Dead-ball — no set/scheme.
-                        _tp = plookup(fouler, all_id)
-                        ev.update(event_type="foul",
-                                  primary_player_id=_tp,
-                                  secondary_player_id=_tp,
-                                  foul_type="technical",
-                                  play_type=None, defense=None,
-                                  official_id=(off_eid.get(official)
-                                               if official and official != "—" else None))
-                    else:
-                        ev.update(event_type="foul",
-                                  primary_player_id=plookup(fouled, all_id),
-                                  secondary_player_id=plookup(fouler, all_id),
-                                  official_id=(off_eid.get(official)
-                                               if official and official != "—" else None))
+                    ev.update(event_type="foul",
+                              primary_player_id=plookup(fouled, all_id),
+                              secondary_player_id=plookup(fouler, all_id),
+                              official_id=(off_eid.get(official)
+                                           if official and official != "—" else None))
 
                 elif event_type == "Turnover":
                     _tov_key = {lbl: k for k, lbl in TOV.TURNOVER_TYPES}

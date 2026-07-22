@@ -473,16 +473,12 @@ def _play_text(ev: dict, pmap: dict) -> str | None:
     et = ev["event_type"]
     if et == "foul":
         # lead with the FOULER (secondary_player_id); primary is the fouled
-        # player, noted as who drew it when both jerseys resolve. A technical
-        # is logged fouled == fouler, so it gets its own line instead of the
-        # nonsense "#N foul (on #N)".
+        # player, noted as who drew it when both jerseys resolve.
         fouler = _num(pmap, ev["secondary_player_id"])
         fouled = _num(pmap, ev["primary_player_id"])
         who = fouler or fouled
         if not who:
             return None
-        if ev.get("foul_type") == "technical":
-            return f"{who} technical foul"
         return f"{fouler} foul (on {fouled})" if (fouler and fouled) else f"{who} foul"
     who = _num(pmap, ev["primary_player_id"])
     if not who:

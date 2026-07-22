@@ -379,7 +379,6 @@ def _disp(ev):
         "Rebound": pid2label.get(ev["rebound_by_id"], "—"),
         "Blocked": pid2label.get(ev["blocked_by_id"], "—"),
         "Fouler": pid2label.get(ev["secondary_player_id"], "—"),
-        "Tech?": ev["foul_type"] == "technical",
         "Stolen": pid2label.get(ev["stolen_by_id"], "—"),
         "TOkind": key2tov.get(ev["turnover_type"], "—"),
         "Official": oid2name.get(ev["official_id"], "—"),
@@ -432,11 +431,6 @@ edited = st.data_editor(
         "Rebound": st.column_config.SelectboxColumn("Rebound by", options=player_opts),
         "Blocked": st.column_config.SelectboxColumn("Blocked by", options=player_opts),
         "Fouler": st.column_config.SelectboxColumn("Fouler", options=player_opts),
-        "Tech?": st.column_config.CheckboxColumn(
-            "Tech?", width="small",
-            help="Player technical (fouls only). Saved with fouled = fouler + "
-                 "foul_type='technical' — counts as a PF, never as a drawn "
-                 "foul or a charge."),
         "Stolen": st.column_config.SelectboxColumn("Stolen by", options=player_opts),
         "TOkind": st.column_config.SelectboxColumn("TO kind", options=tov_opts,
                                                    width="small",
@@ -479,14 +473,7 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
             "stolen_by_id": label2pid.get(r["Stolen"]),
             "turnover_type": tov2key.get(r["TOkind"]),
             "official_id": name2oid.get(r["Official"]),
-            "foul_type": "technical" if bool(r["Tech?"]) else None,
         }
-        # A tech carries the same-player trick: fouled = fouler (prefer the
-        # Fouler pick), and no set/scheme — a tech is dead-ball.
-        if vals["event_type"] == "foul" and vals["foul_type"] == "technical":
-            _tp = vals["secondary_player_id"] or vals["primary_player_id"]
-            vals["primary_player_id"] = vals["secondary_player_id"] = _tp
-            vals["play_type"] = vals["defense"] = None
         # Tap-captured shots: the stored x/y is the source of truth for WHERE,
         # so a manual Zone/2-3 dropdown change re-derives from the location
         # instead (move the shot in the fixer below). Only rows the user
@@ -712,10 +699,6 @@ with st.form(f"ins_form_{gid}", clear_on_submit=True):
         ins_off = f3.selectbox("Official", official_opts)
         ins_def = f4.selectbox("Defense", def_opts,
                                help="Defense in effect (optional)")
-        ins_tech = st.checkbox(
-            "Technical foul",
-            help="Player tech: only 'Player who fouled' is used — saved as "
-                 "fouled = fouler + foul_type='technical'.")
     else:  # turnover
         f1, f2, f3 = st.columns(3)
         ins_primary = f1.selectbox("Turnover by", player_opts[1:])
@@ -755,15 +738,9 @@ if ins_go:
             ev.update(shot_result=ins_result,
                       rebound_by_id=label2pid.get(ins_rebound))
         elif ins_type == "foul":
-            if ins_tech:
-                _tp = label2pid.get(ins_fouler) or label2pid.get(ins_primary)
-                ev.update(primary_player_id=_tp, secondary_player_id=_tp,
-                          foul_type="technical",
-                          official_id=name2oid.get(ins_off), defense=None)
-            else:
-                ev.update(secondary_player_id=label2pid.get(ins_fouler),
-                          official_id=name2oid.get(ins_off),
-                          defense=def2key.get(ins_def))
+            ev.update(secondary_player_id=label2pid.get(ins_fouler),
+                      official_id=name2oid.get(ins_off),
+                      defense=def2key.get(ins_def))
         else:
             ev.update(stolen_by_id=label2pid.get(ins_stolen),
                       defense=def2key.get(ins_def))

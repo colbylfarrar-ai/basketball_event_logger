@@ -141,7 +141,6 @@ class EventIn(BaseModel):
     play_type: str | None = None
     defense: str | None = None
     turnover_type: str | None = None
-    foul_type: str | None = None
     on_court: list[int] = Field(default_factory=list)
     officials_on: list[int] = Field(default_factory=list)
     official_slots: list[OfficialSlot] = Field(default_factory=list)
@@ -172,7 +171,6 @@ class EventEdit(BaseModel):
     play_type: str | None = None
     defense: str | None = None
     turnover_type: str | None = None
-    foul_type: str | None = None
 
 
 class NewGame(BaseModel):
@@ -365,17 +363,6 @@ def post_events(game_id: int, batch: EventBatch,
         if ev.event_type == "free_throw":
             payload["play_type"] = None
             payload["defense"] = None
-        # A technical is dead-ball: no set call, no scheme. Enforce the trick
-        # (fouled == fouler) server-side so every non-null assumption holds
-        # even if a client misses it, and strip stray sticky tags.
-        if ev.event_type == "foul" and payload.get("foul_type") == "technical":
-            payload["primary_player_id"] = (payload.get("secondary_player_id")
-                                            or payload.get("primary_player_id"))
-            payload["secondary_player_id"] = payload["primary_player_id"]
-            payload["play_type"] = None
-            payload["defense"] = None
-        elif ev.event_type != "foul":
-            payload["foul_type"] = None
         try:
             eid = GE.log_event(
                 game_id, payload,

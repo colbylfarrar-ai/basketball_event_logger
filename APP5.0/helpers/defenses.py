@@ -429,12 +429,7 @@ def team_defense_fouls(team_id, gender=None, game_ids=None, events=None,
     shooter_team_id = the FOULED (offensive) team. So (shooter_team_id==team_id)
     ==offense means: offense=True -> we were fouled (drew it); offense=False ->
     the opponent was fouled, i.e. WE committed it under our scheme. The same
-    convention every other split here uses, so the orientation matches.
-
-    Technicals (foul_type='technical') are excluded on BOTH orientations: the
-    same-player trick (fouled == fouler) makes shooter_team_id the TECH'D
-    player's own team, so the committed-side read would attribute an opponent's
-    tech to us — and a tech is dead-ball, so no scheme context exists anyway."""
+    convention every other split here uses, so the orientation matches."""
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
         events = S.fetch_events(gids) if gids else []
@@ -442,8 +437,7 @@ def team_defense_fouls(team_id, gender=None, game_ids=None, events=None,
     counts = {}
     total = 0
     for e in events:
-        if e["event_type"] != "foul" or e["shooter_team_id"] is None \
-                or e.get("foul_type") == "technical":
+        if e["event_type"] != "foul" or e["shooter_team_id"] is None:
             continue
         if offense != (e["shooter_team_id"] == team_id):
             continue

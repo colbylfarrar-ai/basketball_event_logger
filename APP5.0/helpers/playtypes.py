@@ -269,8 +269,6 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
             tagged += 1
             continue
         if et == "foul":
-            if e.get("foul_type") == "technical":
-                continue             # dead-ball; same-player trick flips sides
             cell["FD"] += 1          # drawn (offense) / committed (defense)
             continue
         tagged += 1
@@ -337,9 +335,6 @@ def player_named_playtypes(game_ids=None, events=None):
             continue
         if pt not in _NAMED_KEYS:
             pt = "other"
-        if e["event_type"] == "foul" and e.get("foul_type") == "technical":
-            continue                 # nobody draws their own tech (before
-            #                          _cell so no zero row appears either)
         cell = _cell(e["primary_player_id"], pt)
         if e["event_type"] == "turnover":
             cell["TOV"] += 1

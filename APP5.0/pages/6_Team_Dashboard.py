@@ -725,6 +725,15 @@ def _passer_quality(g, gids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _xa_corsi(g, gids):
+    """Per-player expected assists + on-floor Corsi over this team's tracked
+    games (#8c Charts → Offense → Playmaking; render filters to the roster).
+    One fetch_events feeds both engines."""
+    ev = S.fetch_events(list(gids)) if gids else []
+    return S.expected_assists(events=ev), S.corsi_all(events=ev)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _strength_split(g, tid, gids, season):
     """Offense vs top-half / bottom-half opponents (charts port of the Insights
     strength deep-dive)."""
@@ -3819,6 +3828,96 @@ def _fx_playmaking():
                        "Result = what those looks actually produced. Result "
                        "below quality = good passes going unrewarded — a "
                        "shooter problem, not a passer problem. Min 5 feeds.")
+
+        # ── xA vs actual assists — the finishing-luck scatter (#8c) ─────
+        _xam, _crm = _xa_corsi(gender, tuple(bundle["tracked_ids"]))
+        _xa_rows = [(full_by[p], v) for p, v in (_xam or {}).items()
+                    if p in full_by and (v.get("feeds") or 0) >= 5]
+        if _xa_rows:
+            st.markdown("<div class='lab-hdr'>Expected Assists — who's owed "
+                        "assists</div>", unsafe_allow_html=True)
+            _lucky = max(_xa_rows, key=lambda t: t[1]["AST"] - t[1]["xA"])
+            _owed = min(_xa_rows, key=lambda t: t[1]["AST"] - t[1]["xA"])
+            _xa_lines = []
+            if _owed[1]["AST"] - _owed[1]["xA"] < -0.5:
+                _xa_lines.append((
+                    "owed", _owed[1]["feeds"],
+                    f"<b>{_owed[0]}</b> is owed assists — "
+                    f"{_owed[1]['xA']:.1f} expected vs {_owed[1]['AST']} actual "
+                    "(good feeds, cold finishers)."))
+            if _lucky[1]["AST"] - _lucky[1]["xA"] > 0.5:
+                _xa_lines.append((
+                    "boosted", _lucky[1]["feeds"],
+                    f"<b>{_lucky[0]}</b>'s assist total runs ahead of the looks "
+                    f"({_lucky[1]['AST']} vs {_lucky[1]['xA']:.1f} expected) — "
+                    "shooters are bailing the number out."))
+            if _xa_lines:
+                _verdict_lines(_xa_lines)
+            xasc = go.Figure()
+            _mx = max(max(v["AST"] for _, v in _xa_rows),
+                      max(v["xA"] for _, v in _xa_rows)) * 1.12 + 1
+            xasc.add_trace(go.Scatter(
+                x=[0, _mx], y=[0, _mx], mode="lines",
+                line=dict(color="#30363d", dash="dot"), hoverinfo="skip",
+                showlegend=False))
+            xasc.add_trace(go.Scatter(
+                x=[v["AST"] for _, v in _xa_rows],
+                y=[v["xA"] for _, v in _xa_rows],
+                mode="markers+text",
+                marker=dict(size=11, color=ACCENT,
+                            line=dict(width=1, color="#0d1117")),
+                text=[nm.split()[0] for nm, _ in _xa_rows],
+                textposition="top center", textfont=dict(size=10),
+                hovertext=[f"{nm}<br>{v['AST']} AST · {v['xA']:.1f} xA · "
+                           f"{v['feeds']} feeds<br>luck {v['AST'] - v['xA']:+.1f}"
+                           for nm, v in _xa_rows],
+                hovertemplate="%{hovertext}<extra></extra>",
+                showlegend=False))
+            xasc.update_xaxes(title="Actual assists", range=[0, _mx])
+            xasc.update_yaxes(title="Expected assists (xA)", range=[0, _mx])
+            _style(xasc, 430)
+            st.plotly_chart(xasc, width="stretch", key="adv_xa_scatter")
+            st.caption("Each dot is a passer (min 5 feeds). Above the dotted "
+                       "line = feeds under-converted (cold shooters — the "
+                       "passing is better than the assist column shows); below "
+                       "= finishing luck is padding the assist total. xA values "
+                       "every feed by the league make-rate of the look it "
+                       "created.")
+
+        # ── on-floor attempt tilt — Corsi% bars (#8c) ────────────────────
+        _cr_rows = sorted(
+            ((full_by[p], c) for p, c in (_crm or {}).items()
+             if p in full_by and (c["cf"] + c["ca"]) >= 50
+             and c["corsi_pct"] is not None),
+            key=lambda t: -t[1]["corsi_pct"])
+        if _cr_rows:
+            st.markdown("<div class='lab-hdr'>Attempt Tilt — Corsi% on the "
+                        "floor</div>", unsafe_allow_html=True)
+            crf = go.Figure(go.Bar(
+                x=[c["corsi_pct"] * 100 for _, c in reversed(_cr_rows)],
+                y=[nm for nm, _ in reversed(_cr_rows)],
+                orientation="h",
+                marker_color=[GOOD if c["corsi_pct"] >= 0.5 else BAD
+                              for _, c in reversed(_cr_rows)],
+                marker_line_width=0,
+                text=[f"{c['corsi_pct'] * 100:.0f}% ({c['corsi']:+d})"
+                      for _, c in reversed(_cr_rows)],
+                textposition="auto",
+                hovertext=[f"{nm}<br>{c['cf']} attempts for · {c['ca']} "
+                           f"against<br>Corsi {c['corsi']:+d}"
+                           for nm, c in reversed(_cr_rows)],
+                hovertemplate="%{hovertext}<extra></extra>"))
+            crf.add_vline(x=50, line=dict(color="#30363d", dash="dot"))
+            crf.update_xaxes(title="Share of shot attempts that were ours "
+                                   "while on the floor (%)")
+            _style(crf, 90 + 40 * len(_cr_rows))
+            crf.update_layout(margin=dict(l=4, r=14, t=8, b=30))
+            st.plotly_chart(crf, width="stretch", key="adv_corsi_bars")
+            st.caption("Corsi = shot attempts for − against while the player "
+                       "is on the floor (makes AND misses, min 50 attempts). "
+                       "Over 50% = the floor tilts toward your basket with "
+                       "them on — a volume read that survives cold shooting "
+                       "nights, the lower-variance running mate to +/−.")
 
         # ── possession-outcome Sankey ───────────────────────────────────
         st.markdown("<div class='lab-hdr'>How Every Possession Ends</div>",

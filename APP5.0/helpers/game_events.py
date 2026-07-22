@@ -87,7 +87,8 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
     type-specific fields below (missing keys read as None):
       shot:       primary_player_id, shot_result, shot_x, shot_y,
                   shot_type, zone (both derived from x/y when present),
-                  pass_from_id, shot_created_by_id, rebound_by_id,
+                  pass_from_id, shot_created_by_id, hockey_from_id
+                  (the pass before the assist), rebound_by_id,
                   blocked_by_id, guarded_by_id, play_type, defense
       free_throw: primary_player_id, shot_result, rebound_by_id
       foul:       primary_player_id (fouled), secondary_player_id (fouler),
@@ -127,13 +128,13 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
             shot_type = int(g("shot_type") or 2)
         eid = execute("""INSERT INTO game_events
             (game_id,event_type,quarter,time,possession_secs,primary_player_id,
-             shot_type,shot_result,pass_from_id,shot_created_by_id,
+             shot_type,shot_result,pass_from_id,shot_created_by_id,hockey_from_id,
              rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y,
              play_type,defense,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (game_id, "shot", q, t, poss,
              g("primary_player_id"), shot_type, g("shot_result"),
-             g("pass_from_id"), g("shot_created_by_id"),
+             g("pass_from_id"), g("shot_created_by_id"), g("hockey_from_id"),
              g("rebound_by_id"), g("blocked_by_id"),
              g("guarded_by_id"), zone, sx, sy,
              g("play_type"), g("defense"), client_uuid))

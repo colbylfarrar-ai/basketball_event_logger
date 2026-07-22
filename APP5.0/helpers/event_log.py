@@ -29,8 +29,9 @@ EVENT_TYPES = ("shot", "free_throw", "foul", "turnover")
 # can't leave stale columns (a turnover keeping a zone, a foul keeping a result).
 _FIELDS_BY_TYPE = {
     "shot": ("primary_player_id", "shot_type", "shot_result", "zone",
-             "pass_from_id", "shot_created_by_id", "rebound_by_id",
-             "blocked_by_id", "guarded_by_id", "play_type", "defense"),
+             "pass_from_id", "shot_created_by_id", "hockey_from_id",
+             "rebound_by_id", "blocked_by_id", "guarded_by_id",
+             "play_type", "defense"),
     "free_throw": ("primary_player_id", "shot_result", "rebound_by_id"),
     # defense (the scheme in effect) AND play_type (the offense's set call) are
     # captured on fouls + turnovers too, not just shots — a press forces both,
@@ -43,10 +44,10 @@ _FIELDS_BY_TYPE = {
 
 # Every nullable column the editor manages (written on each update).
 _ALL_FIELDS = ("primary_player_id", "shot_type", "shot_result", "zone",
-               "pass_from_id", "shot_created_by_id", "rebound_by_id",
-               "blocked_by_id", "guarded_by_id", "secondary_player_id",
-               "stolen_by_id", "official_id", "play_type", "defense",
-               "turnover_type")
+               "pass_from_id", "shot_created_by_id", "hockey_from_id",
+               "rebound_by_id", "blocked_by_id", "guarded_by_id",
+               "secondary_player_id", "stolen_by_id", "official_id",
+               "play_type", "defense", "turnover_type")
 # Text columns among _ALL_FIELDS; the rest are integer ids / shot_type.
 _STR_FIELDS = ("shot_result", "zone", "play_type", "defense", "turnover_type")
 
@@ -98,8 +99,8 @@ def game_people(game_id):
     # missed (defensive — keeps every historical edit resolvable).
     _seen = {r["id"] for r in rows}
     _cols = ("primary_player_id", "secondary_player_id", "rebound_by_id",
-             "pass_from_id", "shot_created_by_id", "blocked_by_id",
-             "guarded_by_id", "stolen_by_id")
+             "pass_from_id", "shot_created_by_id", "hockey_from_id",
+             "blocked_by_id", "guarded_by_id", "stolen_by_id")
     _refd = set()
     for c in _cols:
         for r in query(f"SELECT DISTINCT {c} pid FROM game_events "

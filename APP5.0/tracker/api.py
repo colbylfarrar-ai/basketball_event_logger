@@ -131,6 +131,7 @@ class EventIn(BaseModel):
     zone: str | None = None
     pass_from_id: int | None = None
     shot_created_by_id: int | None = None
+    hockey_from_id: int | None = None
     rebound_by_id: int | None = None
     blocked_by_id: int | None = None
     guarded_by_id: int | None = None
@@ -160,6 +161,7 @@ class EventEdit(BaseModel):
     zone: str | None = None
     pass_from_id: int | None = None
     shot_created_by_id: int | None = None
+    hockey_from_id: int | None = None
     rebound_by_id: int | None = None
     blocked_by_id: int | None = None
     guarded_by_id: int | None = None
@@ -299,8 +301,8 @@ def game_detail(game_id: int):
         (g["team1_id"], g["team2_id"], *_rp))
     _seen = {p["id"] for p in roster}
     _ref_cols = ("primary_player_id", "secondary_player_id", "rebound_by_id",
-                 "pass_from_id", "shot_created_by_id", "blocked_by_id",
-                 "guarded_by_id", "stolen_by_id")
+                 "pass_from_id", "shot_created_by_id", "hockey_from_id",
+                 "blocked_by_id", "guarded_by_id", "stolen_by_id")
     _refd = set()
     for _c in _ref_cols:
         for r in query(f"SELECT DISTINCT {_c} pid FROM game_events "

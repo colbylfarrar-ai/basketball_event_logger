@@ -217,3 +217,77 @@ lineup SIMULATION (team_analytics/lineup_projection), pass-quality
 
 None are rating leaves initially — all surfaces. Any later rating entry
 goes through the Part 2 gate protocol like everything else.
+
+---
+
+## Part 5 — Schema-correlation + cross-sport brain-dump (2026-07-22, pre-limit)
+
+Unfiltered but schema-grounded. Same dedupe rule as Part 4 (check adjacent
+helpers first — flagged where overlap is likely). All surfaces-first.
+
+### Schema fields × fields nobody has crossed yet
+- **5a. Timeout effectiveness.** `game_timeouts` exists but is only PBP
+  decoration. Walk: net points in the 2-3 possessions after OWN timeout vs
+  the 3 before — "do your timeouts stop the bleeding?" Team + situation
+  (mid-run vs routine). Killer verdict line for the runs card.
+- **5b. Height differential × outcomes.** `players.height/wingspan` ×
+  `guarded_by`: make% vs shooter-minus-defender height delta ("mouse in
+  the house" quantified); rebound winners by height gap (does length
+  actually win HS girls' boards? myth-buster). Also **death-lineup
+  detector**: lineup net × avg unit height — small-ball vs size, per team.
+- **5c. Crew × style interaction.** `ref_tendencies` crew whistle-rates ×
+  team style (drive-heavy FTR, press defense): "this Friday's crew calls
+  tight → your drives are worth +X FTA". Pre-game scout line; nobody
+  cross-references officials with scheme.
+- **5d. Halftime adjustment index.** Q3-vs-Q2 net swing per team, season
+  aggregate — coaching-adjustment read from the `quarter` field alone.
+  Quarter profiles generally (slow starters, 4th-quarter fade) — dedupe
+  vs `situational.py`/`late_game.py` first.
+- **5e. Chained possessions.** Event ordering within game →
+  steal→transition conversion (points on the possession right after own
+  steal — per-player "theft value"; dedupe vs `defenses.py`
+  points-off-TO), OREB→putback vs kick-out-3 split, second-chance PPP by
+  rebounder ("her board becomes points"). Extends Part 1 rebounding.
+- **5f. Sub-shock / instant offense.** `game_event_lineup` sub sequences
+  (same walk as 4g stints): net in first 2 possessions after a multi-player
+  sub (does mass-subbing cost points? hockey line-change steal) +
+  per-player first-stint scoring rate ("super-sub / instant offense" —
+  bench award candidate).
+
+### More cross-sport
+- **5g. Four factors** (Dean Oliver, the canonical one). eFG% / TOV% /
+  OREB% / FT-rate, team vs opp, + WHICH factor decides YOUR games
+  (per-game factor differential vs result). Dedupe vs
+  `adj_efficiency`/`team_analytics` — if absent it's the classic missing
+  piece, cheap and famous.
+- **5h. Pythagorean luck** (baseball). Expected wins from point diff vs
+  actual — "you're 2 games lucky/unlucky" banner. Dedupe vs `predictor.py`.
+- **5i. Hot hand / streakiness** (baseball hot streak). P(make | previous
+  make) vs base rate per player, within-game shot sequences — the classic
+  test run on their own kids. Fun page material, honest small-n caption.
+- **5j. Hero-ball index / assist Gini** (soccer possession networks).
+  Gini coefficient on team scoring + assist distribution: "system offense
+  vs hero ball" one-number read; pairs with 4c connection matrix and the
+  networks.py graph. Also screen-partnership pairs (`shot_created_by` ×
+  shooter) as the off-ball edge set.
+- **5k. Hustle composite** ("hard-hat award"). Charges + steal-forced TOs +
+  off-ball DREB crash + kills participation (4e) + own-miss recovery →
+  weekly award via `awards.py`. Pure surfaces, founder's do-it-all theme.
+
+### Meta — the one that scales
+- **5l. League winning-formula miner.** Small engine: correlate every team
+  P-dict stat with game outcomes WITHIN a league/gender pool → ranked
+  "what actually wins games in THIS league" (e.g. "your league is won on
+  the glass, not the arc"). Auto-updates as data grows; ridge-regularized
+  per ML_LAYER_ROADMAP small-data rules; verdict-first card on Insights.
+  Turns the whole stat table into one coach sentence — the "massive data
+  table, fun uses" ask answered directly.
+
+### Part 5 ranking (founder taste filter)
+1. 5l winning-formula miner — highest wow-per-line, uses everything.
+2. 5a timeouts — table already there, zero capture, coach-daily question.
+3. 5g four factors (if truly absent) + 5h pythag — famous, cheap, honest.
+4. 5e chained possessions — extends already-approved rebounding work.
+5. 5b height × outcomes — myth-buster fun, physical data finally earns use.
+6. 5f sub-shock + 5j hero-ball + 5k hustle award — depth.
+7. 5c crew × style — needs officials data maturity; 5i hot hand — fun page.

@@ -32,9 +32,13 @@ the walk-forward gate** (lean-T2 rho ≥ baseline; T6/T4 where relevant).
   may cite the read.
 
 ### §3 HAST context surfaces + pre-registered re-gate
-- Chain-pairs helper: `hockey_from → assister → shooter` triples on made
-  shots; "who ignites whom" row (honest empty state until tagged).
+- Chain-pairs helper: `hockey_from → assister → shooter` triples. HAST
+  (made) is the headline; misses count as POTENTIAL hockey assists
+  (PotHAST — same relationship PotAST has to AST, capture is make-or-miss,
+  see §4). "Who ignites whom" row (honest empty state until tagged).
 - Coverage line in snapshot/admin: "HAST tagged: N — re-gate at ≥50".
+  N counts ALL tagged rows (make or miss — capture coverage), while the
+  gate's HAST/G leaf stays make-only.
 - Re-gate: `tools/gate_xa_hast.py` unchanged, re-run at n ≥ 50; weights
   0.2/0.3 already defined. Adoption ONLY through the gate.
 - Status: capture wired 2026-07-22 (founder); local DB shows 0 tagged.
@@ -45,8 +49,17 @@ the walk-forward gate** (lean-T2 rho ≥ baseline; T6/T4 where relevant).
 - New field `xA2` ("hockey xA"): λ = 0.5 × the shot's expected-make value,
   credited to `hockey_from_id`. Separate P keys `xA2` / `xA2_pts`; surfaced
   beside xA (player card + glossary).
-- Honesty: HAST captured only on MADE shots → xA2 is make-conditioned (a
-  floor), unlike xA. Caption states it.
+- CAPTURE FACT (verified 2026-07-22): `hockey_from_id` is logged make OR
+  miss — PWA `SHOT_DETAILS` offers it on every shot flow (app.js:1403),
+  Streamlit selectbox ungated (2_Game_Tracker.py:1243; its "only meaningful
+  on made" comment is stale — update it). Only the HAST STAT is make-only
+  (sibling of AST, correct by definition).
+- Therefore xA2 = Σ expected-make value over ALL hockey-tagged shots, make
+  or miss — genuinely make-independent, same construction as xA. NOT a
+  make-conditioned floor (earlier draft wrong).
+- Honesty caption: tag-selection bias instead — coaches may tag the second
+  pass more often when the shot DROPS; state it, revisit once tag volume
+  shows the make/miss tag mix.
 - Coverage gate: render only when team has HAST tags in ≥ 3 games; else
   honest empty state. No cross-team pool comparison until league coverage
   is real. Ratings entry (if ever) = its own gate sweep.

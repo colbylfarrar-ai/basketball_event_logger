@@ -283,6 +283,20 @@ helpers first — flagged where overlap is likely). All surfaces-first.
   Turns the whole stat table into one coach sentence — the "massive data
   table, fun uses" ask answered directly.
 
+- **5m. Style-shift fingerprint** ("when X comes in they play different").
+  Per player: team tendency VECTOR on-floor vs off-floor — pace (poss/min),
+  3PR, rim/zone mix, assisted-FG%, hero-ball Gini, play-type mix, defense
+  scheme mix, steal-forced rate, FTR both ways, OREB crash. Delta on−off,
+  min-poss + EB shrink. Scalar on top: style-shift MAGNITUDE (vector
+  distance) → "who changes team identity most" roster ranking (the
+  press-igniter / pace-pusher, not necessarily the best player). Verdict:
+  "With #12: +6 pace, +14% rim rate, more PnR, presses more." Timing axis
+  (entry minute, stint onset) rides on 4g/5f machinery. HONESTY: raw
+  on/off style is teammate-confounded (RAPM adjusts net points only, not
+  style) — ship as captioned deltas, never causal claims. Dedupe:
+  `selfscout.py` (team drift), `spacing.py` (gravity),
+  `rotation_schedule.py` (entry timing) before build. Zero new capture.
+
 ### Part 5 ranking (founder taste filter)
 1. 5l winning-formula miner — highest wow-per-line, uses everything.
 2. 5a timeouts — table already there, zero capture, coach-daily question.

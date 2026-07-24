@@ -310,11 +310,45 @@ helpers first — flagged where overlap is likely). All surfaces-first.
   `selfscout.py` (team drift), `spacing.py` (gravity),
   `rotation_schedule.py` (entry timing) before build. Zero new capture.
 
+- **5n. Defensive mirror — WHERE a defender gets attacked.** Founder ask:
+  "can't guard an iso, doesn't close out on spot-ups — a defensive twin for
+  every offensive insight?" Answer: YES but collapsed, not mirrored.
+  MEASURED 2026-07-22 (live DB): 2,891 guarded shots (2,676 w/ play_type,
+  100% w/ zone), but 260 defenders at MEDIAN 5 guarded shots — only 40 have
+  ≥20, 12 have ≥50; per-defender × play_type cells with n≥10 = **39
+  league-wide**. Full 11-type × per-player mirror = the "Design A death"
+  the taxonomy lock forbids (couples two taps, shatters a thin sample).
+  DESIGN:
+  * **Split share from rate.** SHARE (what fraction of a defender's faced
+    shots are iso / closeout / post) is a low-variance TENDENCY — readable
+    ~n≥20. RATE (FG% allowed in that bucket) needs ~n≥50 + EB shrink to
+    the pool. Ship share widely, rate gated. Target share is itself the
+    insight: offenses hunt weak defenders, so "she faces 36 isos, most on
+    the team" is a scouting fact before any percentage.
+  * **Two buckets, not eleven.** ON-BALL CREATION (iso/pnr/post/dho ≈1,030
+    guarded shots) vs OFF-BALL CLOSEOUT (spot/offscreen/cut/transition
+    ≈1,190). Both fat enough to split. Zone already collapses via existing
+    RimProt / PerimD (rim vs arc) — reuse, don't duplicate.
+  * **Team level is the honest home for the fine grain.** Per-team ×
+    play_type has real n (iso 633, spot 577, transition 400 league-wide) →
+    "what gets run AT us and what scores" as the defensive twin of
+    self-scout. Dedupe FIRST vs `exploit.py` (exploit matrix),
+    `defenses.py`, `scheme_situational.py`, `matchups.py` — likely
+    partially built.
+  * Surfaces: player card defense block gets a faced-mix line + gated
+    allowed-FG% by bucket; Charts → Defense gets the team attacked-at grid.
+    Verdict-first: "Hunted in iso (36 faced, most on team); holds up on
+    closeouts."
+  * NOT a rating leaf initially. DSHOT%/RimProt/PerimD already carry
+    defense in ratings; bucket rates could be gate-swept later ONLY if
+    coverage grows (re-measure the n≥50 defender count first).
+
 ### Part 5 ranking (founder taste filter)
 1. 5l winning-formula miner — highest wow-per-line, uses everything.
 2. 5a timeouts — table already there, zero capture, coach-daily question.
 3. 5g four factors (if truly absent) + 5h pythag — famous, cheap, honest.
 4. 5e chained possessions — extends already-approved rebounding work.
-5. 5b height × outcomes — myth-buster fun, physical data finally earns use.
+5. 5n defensive mirror (share half) + 5b height × outcomes — myth-buster
+   fun, physical data finally earns use.
 6. 5f sub-shock + 5j hero-ball + 5k hustle award — depth.
 7. 5c crew × style — needs officials data maturity; 5i hot hand — fun page.

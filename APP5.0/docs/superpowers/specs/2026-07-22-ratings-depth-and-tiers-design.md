@@ -352,3 +352,53 @@ helpers first — flagged where overlap is likely). All surfaces-first.
    fun, physical data finally earns use.
 6. 5f sub-shock + 5j hero-ball + 5k hustle award — depth.
 7. 5c crew × style — needs officials data maturity; 5i hot hand — fun page.
+
+---
+
+## Part 6 — WHERE new insights live (load-time budget)
+
+Founder constraint (2026-07-22): Parts 4-5 add a lot of engines; the box is
+1 vCPU / 2 GB, CPU-bound, and reruns serialize (see [[droplet-capacity]]).
+Placement is now a design decision, not an afterthought.
+
+### The rule
+**Default home for a new insight = a Charts subtab**, because Charts already
+gates every view behind `if _tdview == "X":` — only the OPEN view's engines
+run (verified code read 2026-07-21, batch doc #6 Tier B). An insight parked
+there costs zero until a coach clicks it.
+
+**Eager surfaces are the scarce resource** — anything that renders on page
+open (Insights cards, player card blocks, dashboard headers). Adding an
+engine there taxes EVERY coach on EVERY open, warm or cold.
+
+Promotion test — an insight earns an eager slot only if ALL hold:
+1. it answers a question a coach has BEFORE they know to look for it
+   (verdict-first, e.g. "cold finishing is hiding good movement");
+2. its engine is cheap or shares a fetch already on the eager path;
+3. it survived as a Charts subtab first and got used.
+
+Otherwise: Charts subtab, one cached fetch feeding every panel in the view
+(the #8c pattern — one fetch drove both the xA scatter and Corsi bars).
+
+### Applying it to Parts 4-5
+- **Charts subtabs (default):** 4a trios/quads + finisher finder, 4c
+  connection matrix, 4g stints, 4h shot diet, 5b height, 5e chains, 5f
+  sub-shock, 5i hot hand, 5j Gini, 5m style-shift, 5n defensive mirror.
+- **Eager candidates (earn it, one at a time):** 5l winning-formula miner
+  (one sentence, top of Insights — the whole point is you didn't ask),
+  5a timeouts (cheap, rides the runs card already rendering).
+- **Awards/digest path, no page cost:** 5k hustle composite via
+  `awards.py` (weekly job, not a render).
+
+### Load-time follow-ups (own investigation, needs measurement)
+- Per-view render timing instrumented before/after each batch — the 5a/5b
+  capacity monitor already plans a "last render time" read; extend it
+  per-view so a heavy new subtab is visible immediately.
+- `st.fragment` for the heaviest Charts subtabs so a control change
+  reruns ONE panel, not the view (previously judged low-value at the tab
+  gate level; per-panel is the remaining win).
+- Cache pre-warmer (batch doc #6 Tier B item 4) matters more as engine
+  count grows — cold Friday cost scales with how many engines a view owns.
+- Re-check: are any Parts 4-5 engines full-season event walks that could
+  share ONE cached event fetch per view instead of each re-fetching?
+  Bundle at build time; retrofitting is harder.

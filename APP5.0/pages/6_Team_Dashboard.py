@@ -73,6 +73,7 @@ import helpers.wpa as WP
 import helpers.networks as NW
 import helpers.lineups as LU
 import helpers.stops as ST
+import helpers.winning_formula as WF
 import helpers.playtypes as PT
 import helpers.defenses as DEF
 import helpers.exploit as EXPL
@@ -978,6 +979,18 @@ def _stops(tid, _tids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _wf_rows(g, season):
+    """Per-game four-factor differentials for the whole gender pool (spec 5l).
+
+    Cached on (gender, season) rather than per team, because BOTH the league fit
+    and every team fit read the same rows — one event walk serves the lot. The
+    league pool is the right scope even on a team page: "your league is won on
+    turnovers" is only meaningful against the full field.
+    """
+    return WF.game_rows(gender=g, season=season)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _scout(tid, g, limit=7, excl=(), vis=None, season="Current", season_gp=None):
     # `vis` (tuple of game ids, or None) scopes the hot-zone / shot-creation views
     # to what the viewer may see (None = own team / admin = full depth). `season`
@@ -1574,9 +1587,9 @@ if _tdview == "Charts":
     # blocks scattered below — a `with ch_x:` routes output into whichever tab
     # owns the object regardless of where the body sits in the file, so only
     # THIS block drives what the user sees.
-    (tab_off, ch_ps, tab_def, ch_sit, ch_tr, ch_qt) = st.tabs(
+    (tab_off, ch_ps, tab_def, ch_sit, ch_tr, ch_qt, ch_wf) = st.tabs(
         ["Offense", "Play Style", "Defense", "Situational", "Trends",
-         "Quarters"])
+         "Quarters", "Winning Formula"])
     with tab_off:
         (ch_sc, ch_sh, ch_play) = st.tabs(
             ["Scoring", "Shooting", "Playmaking"])
@@ -3782,6 +3795,126 @@ def _fx_stops():
 if _tdview == "Charts":
     with ch_stops:
         _fx_stops()
+
+
+@st.fragment
+def _fx_formula():
+    """Charts ▸ Winning Formula — which edge actually decides games (spec 5l).
+
+    Own fragment, behind the Charts view gate, so it costs nothing until opened.
+    The spec listed 5l as an EAGER candidate (one sentence at the top of
+    Insights). Part 6's promotion test says an insight earns an eager slot only
+    after it has survived as a Charts subtab and been used — nothing here has
+    shipped yet, so it starts where the rule says it starts. Promoting it is a
+    later, cheap decision: the verdict is already one sentence.
+    """
+    if not has_tracked:
+        st.info("Tracked games needed to fit the four factors.")
+        return
+    rows = _wf_rows(gender, season_pick)
+    if not rows:
+        st.caption("No tracked games in this season's pool yet.")
+        return
+    league = WF.league_formula(rows=rows)
+    team = WF.team_formula(team_id, rows=rows)
+
+    _v = WF.verdict_lines(team, league)
+    if _v:
+        _verdict_lines(_v)
+
+    st.caption(
+        "Dean Oliver's four factors — shooting, turnovers, offensive rebounding "
+        "and free throws — come with published weights (40/25/20/15) fitted on "
+        "the NBA. Those get quoted in high-school gyms every winter. This "
+        "re-fits them on **this** pool, so the interesting number is not the "
+        "ranking, it is how far the ranking sits from the textbook.")
+
+    show = team if (team.get("valid") and team.get("enough")) else league
+    scope_lbl = ("your games" if show is team else "the league")
+    if not show.get("valid"):
+        st.info(WF.verdict(show, scope=scope_lbl)["text"])
+        return
+
+    st.markdown(f"**The exchange rate — {scope_lbl}** "
+                f"({show['n_games']} tracked games)")
+    _fdf = pd.DataFrame([{
+        "Factor": f["label"],
+        "Share of pull": f["share"],
+        "Oliver (NBA)": f["oliver"],
+        "Gap": f["gap"],
+        "Pts per SD": f["beta"],
+        "Raw r": f["r"],
+    } for f in show["factors"]])
+    st.dataframe(_fdf, hide_index=True, width="stretch",
+                 column_config={
+                     "Share of pull": st.column_config.ProgressColumn(
+                         "Share of pull", format="%.0f%%", min_value=0.0,
+                         max_value=1.0,
+                         help="This factor's share of the four factors' "
+                              "combined effect on margin, fitted here."),
+                     "Oliver (NBA)": st.column_config.NumberColumn(
+                         "Oliver (NBA)", format="%.0f%%",
+                         help="Dean Oliver's published weight."),
+                     "Gap": st.column_config.NumberColumn(
+                         "Gap", format="%+.0f%%",
+                         help="How much more (or less) this pool leans on the "
+                              "factor than the textbook."),
+                     "Pts per SD": st.column_config.NumberColumn(
+                         "Pts per SD", format="%.1f",
+                         help="Points of margin per one standard deviation of "
+                              "edge in this factor."),
+                     "Raw r": st.column_config.NumberColumn(
+                         "Raw r", format="%.2f",
+                         help="Plain correlation with margin, before the other "
+                              "three factors are accounted for."),
+                 })
+
+    st.caption(
+        "**Read this as an exchange rate, not a discovery.** The four factors "
+        "reconstruct point margin almost exactly by arithmetic — if you shoot "
+        "better, turn it over less, rebound more of your misses and get to the "
+        "line more, you outscored them. What is genuinely unknown, and what "
+        "this measures, is which of those edges is worth the most **per unit of "
+        "effort available in this league**. It is not a claim about cause: a "
+        "team told to 'stop turning it over' cannot simply decide to.")
+
+    _sup = WF.suppressors(show)
+    if _sup:
+        _names = ", ".join(s["label"].split(" (")[0] for s in _sup)
+        st.caption(
+            f"⚠︎ **{_names}** carries a fitted share and a raw correlation that "
+            "point OPPOSITE ways. That is usually game state rather than a "
+            "contradiction — trailing teams get fouled deliberately late, so "
+            "free-throw volume travels with losing even though winning the "
+            "free-throw battle helps. The fitted column is the one that has "
+            "the other three factors held constant.")
+
+    if show["context"]:
+        st.markdown("**Travels with winning, but not part of the formula**")
+        st.dataframe(pd.DataFrame([{
+            "Read": c["label"],
+            "r with margin": c["r"],
+            "Team-games": c["n"],
+        } for c in show["context"]]), hide_index=True, width="stretch")
+        st.caption(
+            "These are correlations only, deliberately kept OUT of the fit. "
+            "Most are downstream of the four factors — a steal is an opponent "
+            "turnover — so including them would let overlap quietly redistribute "
+            "the four-factor weights. Disruption correlating hard with margin "
+            "while adding nothing on top of turnovers is the right answer, not "
+            "a missing factor.")
+
+    if show is team and league.get("valid"):
+        st.caption(
+            f"League fit for comparison: "
+            + " · ".join(f"{f['noun']} {f['share'] * 100:.0f}%"
+                         for f in league["factors"])
+            + f" (over {league['n_games']} tracked games).")
+
+
+if _tdview == "Charts":
+    with ch_wf:
+        _fx_formula()
 
 
 @st.fragment

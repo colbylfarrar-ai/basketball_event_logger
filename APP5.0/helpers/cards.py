@@ -180,6 +180,36 @@ def conf_dot(n, k=3.0, sig=None, *, title=None):
             f"title='{html.escape(str(tip))}'></span>")
 
 
+#: reliability level -> the same three dot classes conf_dot already ships, so
+#: the two evidence models share one visual vocabulary instead of teaching a
+#: coach a second one. "withhold" has no dot because it has no number.
+_REL_CLS = {"stable": "conf-stable", "fair": "conf-fair", "weak": "conf-weak"}
+
+
+def conf_dot_r(sb, *, metric=None):
+    """A confidence dot keyed on measured RELIABILITY, not on volume.
+
+    ``conf_dot`` above answers "how precisely was this estimated" (n against a
+    prior weight). This answers the prior question: "does this metric predict
+    itself at all". They are not the same, and for the shot-kind rates they
+    disagree sharply — a player's rim FG% is estimated from more attempts than
+    any other cell in the book and predicts itself at SB .11.
+
+    ``sb`` is a Spearman-Brown corrected split-half r, normally from
+    ``reliability.measured(...)``. Returns "" when the read is below the floor:
+    a dot on noise still puts the noise on screen, so the caller must withhold
+    the number rather than decorate it. The hover text prints the r, so a
+    hollow dot is a claim a coach can check.
+    """
+    import helpers.reliability as REL
+    lvl = REL.level(sb)
+    if lvl == "withhold":
+        return ""
+    tip = REL.caption(sb, metric=metric)
+    return (f"<span class='conf-dot {_REL_CLS[lvl]}' "
+            f"title='{html.escape(str(tip))}'></span>")
+
+
 def stat_kpi(label, value, *, ovrl=None, pct=None, conf_n=None, conf_k=3.0,
              sig=None, sub=""):
     """The Phase-0 headline KPI tile: a number that knows its RANK and its

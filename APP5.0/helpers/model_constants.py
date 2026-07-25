@@ -48,6 +48,15 @@ def _posint(v):
     return i
 
 
+def _ft(v):
+    """A distance-from-hoop boundary in feet. Bounded by the half-court itself so
+    a corrupt row can never make every 2 a 'rim' shot or every one a 'mid'."""
+    f = float(v)
+    if not 0.5 <= f <= 30.0:
+        raise ValueError("court distance out of range")
+    return f
+
+
 REGISTRY = {
     "team_ratings.DEFAULT_REG":         ("helpers.team_ratings", "DEFAULT_REG", _NUM),
     "team_ratings.DEFAULT_SOS_WEIGHT":  ("helpers.team_ratings", "DEFAULT_SOS_WEIGHT", _NUM),
@@ -55,6 +64,13 @@ REGISTRY = {
     "player_ratings.TEAM_PRIOR_LAMBDA": ("helpers.player_ratings", "TEAM_PRIOR_LAMBDA", _NUM),
     "player_ratings.ARCH_ANCHOR_BLEND": ("helpers.player_ratings", "ARCH_ANCHOR_BLEND", _NUM),
     "player_ratings._OVERALL_PARTS":    ("helpers.player_ratings", "_OVERALL_PARTS", _parts),
+    # Shot-kind depth boundaries (feet from the hoop). Tuned to the measured
+    # cliff in this league, not to NBA convention, so a recal should be able to
+    # move them as the book grows. The corner-3 boundary is deliberately NOT
+    # here: it lives in court_geom, derived from the real NFHS arc, and there is
+    # exactly one definition of it in the app.
+    "shot_kinds.RIM_FT":                ("helpers.shot_kinds", "RIM_FT", _ft),
+    "shot_kinds.FLOATER_FT":            ("helpers.shot_kinds", "FLOATER_FT", _ft),
 }
 
 

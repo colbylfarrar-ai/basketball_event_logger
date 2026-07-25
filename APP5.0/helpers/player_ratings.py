@@ -416,6 +416,19 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "TS%":   S.ts(cb) if (cFGA or cb["FTA"]) else None,
             "eFG%":  S.efg(cb) if cFGA else None,
             "FTR":   S.ftr(cb) if cFGA else None,
+            # FT% — conversion once at the line, the sibling of FTR (how OFTEN
+            # you get there). player_stat_table has carried an FT% for DISPLAY
+            # since forever, but the RATINGS read `profiles`, so a leaf needs it
+            # here. Combined box like every other box-derivable neighbour above,
+            # so boxed games count — this is the most box-derivable skill there
+            # is (spec Part 3, T1 BOX).
+            # NOTE the display twin at player_stat_table reads the TRACKED box
+            # (`b = prof["box"]`) because it sits beside the tracked FTM/FTA it
+            # must agree with. So a box-only player can rate on FT% while the
+            # table shows none — the same pre-existing split that already makes
+            # P's TS% combined but its FTM/FTA tracked. Not introduced here;
+            # logged to the maintenance batch rather than widened.
+            "FT%":   _safe(cb["FTM"], cb["FTA"]) if cb["FTA"] else None,
             # SMOE — shot-making over expected (event-only: needs the shot-quality
             # baseline from tracked events). Read the TRACKED box.
             "SMOE":  ((_safe(b["FGM"], b["FGA"]) - xfg[pid])
@@ -526,6 +539,16 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
 # box so boxed games count.
 _SHOOTING  = [("TS%", 1.5, False), ("3P%", 1.0, False), ("eFG%", 1.0, False),
               ("SMOE", 1.0, False), ("3PA/G", 0.5, False), ("FTR", 0.5, False),
+              # FT% — gate-adopted 2026-07-24 (tools/gate_ft_shooting.py):
+              # lean-T2 rho 0.685 at 0.5 vs 0.681 baseline. All three swept
+              # weights passed and the curve was MONOTONE to the band edge
+              # (0.3 → .683, 0.5 → .685, 0.75 → .686), so the optimum may lie
+              # above 0.75. Adopted the pre-registered 0.5 anyway rather than
+              # the best-scoring 0.75: picking the band edge after seeing the
+              # numbers is weight-shopping, and 0.5 puts FT% at parity with
+              # FTR — how often you reach the line and how well you convert,
+              # weighted the same. Extending the band belongs to a full recal.
+              ("FT%", 0.5, False),
               ("3PR", 0.4, False)]
 # FINISHING — interior scoring. Paint FG% + how many rim/paint tries per game,
 # points-per-shot, scoring efficiency, and shot-making over expected. Event-only

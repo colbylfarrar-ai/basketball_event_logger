@@ -562,3 +562,63 @@ re-run `tracker/test_tech_foul.py`, deploy.
 - **Side find:** `tracker/test_charges.py` real-book check fails on clean HEAD
   (same-team drawer/committer rows among the 55 tagged charges — data drift,
   pre-dates this batch). Spun off as its own investigation task.
+
+---
+
+## 9. RATINGS DEPTH — overnight run 2026-07-24 (spec Part 8 order)
+
+Design: `docs/superpowers/specs/2026-07-22-ratings-depth-and-tiers-design.md`
+(Part 8 is the live build order; it supersedes the Part 3 list). Discipline
+unchanged: **no leaf ships without the walk-forward gate.**
+
+**Run baseline:** lean-T2 rho **0.681 (n=48)** on **43 tracked games**, focus
+team `(1, 'F', 24)`. Deeper pool than #8d (0.678 / 39 games). One lean-T2
+variant costs ~22s, so the whole night's gate compute is minutes —
+`tools/backtest.py:57` pins `SEASON = "2025-2026"`, so gates score the real
+pool regardless of the empty ACTIVE season.
+
+- **9-prep** ✅ (84f535d). Registered every leaf group in the backtest
+  REGISTRY — only `_OVERALL_PARTS` and `_PLAYMAKING` were there, so any gate
+  naming another group KeyError'd inside `override()` before scoring. Added
+  `LEAF_TIER` (T1 box / T2 possession / T3 tagged, spec Part 3) as a SIDE
+  TABLE, because `group_z` unpacks 3-tuples and the `_*_PARTS` lists are
+  2-tuples — a 4th tuple element breaks both. `tracker/test_leaf_tiers.py`
+  (11 checks) fails if any leaf lands untagged or unregistered. rho 0.681
+  before and after: zero behavior change.
+
+- **9a  FT% → `_SHOOTING`** ✅ **GATE CLEARED, adopted** (`tools/gate_ft_shooting.py`).
+  Lean-T2 rho n=48: baseline 0.681 → **0.683 / 0.685 / 0.686** at weights
+  0.3 / 0.5 / 0.75. All three PASS.
+  **Adopted 0.5 (rho 0.685)**, not the best-scoring 0.75: the curve is
+  monotone to the band edge, so the optimum probably sits above 0.75, and
+  picking the edge after seeing the numbers is the weight-shopping the gate
+  exists to prevent. 0.5 was the spec's pre-registered value and puts FT% at
+  parity with FTR — how often you reach the line vs how well you convert,
+  weighted the same. Extending the band belongs to a full recal sweep.
+  Coverage: 140 of 256 shooters have ≥1 tracked FTA (manual box adds more).
+  **Every later gate in this run baselines at 0.685, not 0.681.**
+
+  **Spec correction found here:** Part 2 called FT% "zero plumbing — computed
+  in P (`player_ratings.py:1411`)". That conflated two dicts. The RATINGS read
+  `profiles`, not `player_stat_table`, and `profiles` had no `FT%` — the first
+  gate run died on `KeyError: 'FT%'` inside `zcol`. Added `"FT%"` to `profiles`
+  off the COMBINED box, matching every box-derivable neighbour (`TS%`, `eFG%`,
+  `FTR`, `3P%`), which is what earns it the T1 BOX tier: a hand-entered box
+  score now deepens SHOOTING, exactly the Part 3 commitment.
+
+  **Pre-existing wart, logged not widened:** `player_stat_table`'s display
+  `FT%` reads the TRACKED box (`b = prof["box"]`) because it sits beside the
+  tracked FTM/FTA it must agree with, while the new leaf reads combined. So a
+  box-only player can rate on FT% while the table shows none. This is the same
+  split that already makes P's `TS%` combined but its `FTM`/`FTA` tracked — not
+  introduced by this change. Fix would be to source P's FT%/FTM/FTA from the
+  combined box together; needs a display-semantics decision, so it waits.
+
+- **Rollover follow-up (spec Part 7 gap d):** `database/db.py:813` archives with
+  `UPDATE players SET archived=1` and does NOT stamp `season`, while the
+  rollover path (`helpers/seasons.py:299`) sets both. A player removed
+  mid-season therefore keeps `season='Current'` with `archived=1`, so a literal
+  **"Current"** entry appears in the archived-seasons dropdown at
+  `pages/1_Input_Hub.py:1095`. Ratings unaffected (both `roster_clause`
+  branches correctly exclude the row). One-line fix, but it changes delete
+  semantics for every coach → supervised deploy, not an overnight change.

@@ -803,13 +803,112 @@ def expected_fg_pct_all(game_ids=None, events=None, rates=None):
     return {pid: _safe(exp[pid], att[pid]) for pid in att}
 
 
-def shot_quality_rates(game_ids=None, events=None):
+# ── shot-quality regularization (MEASURED 2026-07-26, live book) ─────────────
+# The rate table below used to be a raw per-cell make-rate with NO minimum cell
+# size and NO shrinkage, and every consumer resolved a missing key with
+# `.get(key, {}).get("pct", 0.0)` — scoring an unseen look as CERTAIN TO MISS.
+#
+# Out-of-sample on the girls' 2025-2026 book (fit on odd games, score even, and
+# the reverse, pooled; 3,246 shots), varying only how the cell is regularized:
+#
+#     location term    raw, miss=0.0   raw, miss=global   floor 20   hier EB k=50
+#     zone                 0.67343          0.67105        0.62595      0.62388
+#     KIND (shipped)       0.66613          0.65250        0.60787      0.60455
+#     BANDS                0.65408          0.64270        0.60584      0.60445
+#     no location at all   0.63549          0.63549        0.63504      0.63466
+#
+# Two things to read off that table:
+#   1. Regularizing is worth ~9.2% of log loss (.6661 → .6046). The kind-vs-zone
+#      reprice that was considered worth shipping bought 2.3%.
+#   2. UNREGULARIZED, THE LOCATION TERM IS ACTIVELY HARMFUL — the bottom row
+#      (drop location entirely) beats both zone and kind. The whole shot-kind
+#      taxonomy only pays once the cells are regularized. Shipping the taxonomy
+#      without this was net-negative against no taxonomy at all.
+#
+# The scheme is a three-level empirical-Bayes backoff, each level shrunk toward
+# its parent by K phantom attempts at the parent's rate:
+#
+#     global  →  (kind)  →  (kind, guarded)  →  (kind, creation, guarded)
+#
+# so a thin cell borrows from the nearest thing that IS well-sampled instead of
+# reporting its own 2-for-3, and a cell that was never seen at all resolves to
+# its parent rather than to zero.
+#
+# K swept on both genders; the curve is flat from ~40 to ~100 on the girls' book
+# (best 0.60420 at k=80) and peaks at 40-50 on the boys' (742 shots). 50 is
+# within 0.0004 log loss of the F optimum and is the M optimum for KIND, so one
+# constant serves both.
+SQ_PRIOR_K = 50.0
+
+
+class _RateBook(dict):
+    """{(loc, creation, guarded): {"FGA","FGM","pct"}} that CANNOT return zero
+    for a look it has not seen.
+
+    `pct` on a present cell is the EB-shrunk rate (see SQ_PRIOR_K); the raw
+    FGA/FGM counts ride along untouched so callers can still show the sample.
+    A key that isn't present resolves down the backoff chain — (loc, guarded),
+    then (loc), then the pooled rate — and is returned as a synthetic cell with
+    FGA/FGM of 0, so the caller can tell "unseen, priced from the parent" from
+    "seen, this is the rate".
+
+    `get()` is overridden as well as `__missing__` because every consumer in the
+    app calls `rates.get(key, {}).get("pct", 0.0)`. That default of 0.0 is the
+    bug this class exists to remove: the caller's default is deliberately
+    IGNORED for a well-formed 3-tuple key, because there is no such thing as a
+    shot that is certain to miss. A malformed key still falls back to the
+    caller's default rather than raising.
     """
-    Empirical make-rate for each (shot KIND, creation-bucket, guarded?)
-    combination, across the whole sample. This is the engine behind Shot Rating
-    / expected points per shot — it scores a shot purely by what kind of look it
-    was, how it was created, and whether it was contested.
-    Returns {(kind, bucket, guarded_bool): {"FGA","FGM","pct"}}.
+
+    __slots__ = ("_locg", "_loc", "_glob")
+
+    def __init__(self, cells, locg, loc, glob):
+        super().__init__(cells)
+        self._locg, self._loc, self._glob = locg, loc, glob
+
+    def backoff_pct(self, key):
+        """The best available make-rate for `key`, whether or not it is present."""
+        cell = dict.get(self, key)
+        if cell is not None:
+            return cell["pct"]
+        try:
+            loc, _creation, guarded = key
+        except (TypeError, ValueError):
+            return self._glob
+        v = self._locg.get((loc, guarded))
+        if v is None:
+            v = self._loc.get(loc)
+        return self._glob if v is None else v
+
+    def __missing__(self, key):
+        return {"FGA": 0, "FGM": 0, "pct": self.backoff_pct(key), "backoff": True}
+
+    def get(self, key, default=None):
+        cell = dict.get(self, key)
+        if cell is not None:
+            return cell
+        if isinstance(key, tuple) and len(key) == 3:
+            return self.__missing__(key)
+        return default
+
+    @property
+    def overall_pct(self):
+        """The pooled make-rate this book shrinks toward."""
+        return self._glob
+
+
+def shot_quality_rates(game_ids=None, events=None, k=SQ_PRIOR_K):
+    """
+    Make-rate for each (shot KIND, creation-bucket, guarded?) combination across
+    the sample, EMPIRICAL-BAYES SHRUNK toward progressively coarser parents.
+    This is the engine behind Shot Rating / expected points per shot — it scores
+    a shot purely by what kind of look it was, how it was created, and whether
+    it was contested.
+
+    Returns a `_RateBook`: a dict of {(kind, bucket, guarded): {"FGA","FGM",
+    "pct"}} that resolves an UNSEEN key to its parent's rate instead of to zero.
+    See the SQ_PRIOR_K comment above for the measurement — an unregularized
+    version of this table made the location term net-harmful.
 
     The location term was `zone` until 2026-07-25. Zone is an ANGLE system with
     no depth — zone C alone spans 2.5–7.7 ft — so it priced layups and floaters
@@ -833,10 +932,38 @@ def shot_quality_rates(game_ids=None, events=None):
         agg[key]["FGA"] += 1
         if e["shot_result"] == "make":
             agg[key]["FGM"] += 1
-    out = {}
-    for k, v in agg.items():
-        out[k] = {"FGA": v["FGA"], "FGM": v["FGM"], "pct": _safe(v["FGM"], v["FGA"])}
-    return out
+    return _shrink_rate_cells(agg, k=k)
+
+
+def _shrink_rate_cells(agg, k=SQ_PRIOR_K):
+    """Build the `_RateBook` for raw {(loc, creation, guarded): {FGA,FGM}} cells.
+
+    Three EB levels, each toward its parent at `k` phantom attempts:
+        p(loc)                = (FGM_loc  + k·p_global)   / (FGA_loc  + k)
+        p(loc, guarded)       = (FGM_lg   + k·p(loc))     / (FGA_lg   + k)
+        p(loc, creation, gd)  = (FGM_cell + k·p(loc, gd)) / (FGA_cell + k)
+    """
+    tot_a = sum(v["FGA"] for v in agg.values())
+    tot_m = sum(v["FGM"] for v in agg.values())
+    glob = _safe(tot_m, tot_a)
+    loc_c, locg_c = defaultdict(lambda: [0, 0]), defaultdict(lambda: [0, 0])
+    for (loc, _creation, guarded), v in agg.items():
+        loc_c[loc][0] += v["FGA"]
+        loc_c[loc][1] += v["FGM"]
+        locg_c[(loc, guarded)][0] += v["FGA"]
+        locg_c[(loc, guarded)][1] += v["FGM"]
+    p_loc = {loc: (m + k * glob) / (a + k) for loc, (a, m) in loc_c.items()}
+    p_locg = {lg: (m + k * p_loc[lg[0]]) / (a + k) for lg, (a, m) in locg_c.items()}
+    cells = {}
+    for key, v in agg.items():
+        loc, _creation, guarded = key
+        parent = p_locg[(loc, guarded)]
+        cells[key] = {
+            "FGA": v["FGA"], "FGM": v["FGM"],
+            "pct": (v["FGM"] + k * parent) / (v["FGA"] + k),
+            "raw_pct": _safe(v["FGM"], v["FGA"]),
+        }
+    return _RateBook(cells, p_locg, p_loc, glob)
 
 
 def expected_points_per_shot(player_id, game_ids=None, events=None, rates=None):

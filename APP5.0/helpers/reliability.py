@@ -209,7 +209,87 @@ MEASURED = {
     # number (it is the season's record) and declines to claim it repeats.
     # Setting it to the measured value would assert "team shooting is noise",
     # which this book cannot support in either direction.
+
+    # ── DEFENDER reads (measured 2026-07-26, helpers/defense_profile.py) ──────
+    # See DEFENSIVE SHARES ARE NOT OFFENSIVE SHARES below. These are the
+    # per-defender assignment reads off `guarded_by_id`.
+    ("defender", "assignment_share"): 0.26,   # the FINE band cut — floor, withheld
+    ("defender", "area_share"): 0.578,        # interior-vs-perimeter, the coarse cut
+    ("defender", "load"): 0.574,              # DLOAD% — share of tagged contests
+    ("defender", "play_share"): -0.15,        # which ACTION they are asked to guard
+    ("defender", "allowed_fg"): 0.399,
+    ("defender", "allowed_pps"): 0.437,
+    ("defender", "footprint"): -0.06,         # on/off opponent-diet delta
 }
+
+
+# ── DEFENSIVE SHARES ARE NOT OFFENSIVE SHARES ────────────────────────────────
+# Measured 2026-07-26, same method as everything above: 200 random half-splits
+# of the tracked games, Spearman-Brown corrected, defenders needing >=8
+# contested shots in each half. Two scopes, and the book takes the LOWER of the
+# two per metric (the F pool is what the app renders; the whole book rests on
+# more units; taking the min keeps the more-units column from laundering a
+# weak read).
+#
+#     defender read                 F/2025-26 SB   whole-book SB   book value
+#     paint_share (interior)             .595           .643          .578*
+#     three_share (perimeter)            .578           .640          .578
+#     DLOAD%  (share of contests)        .574           .579          .574
+#     arc3 assignment share              .438           .461          .438
+#     PPS allowed                        .437           .604          .437
+#     spot-up assignment share           .418           .532          .418
+#     FG% allowed                        .399           .559          .399
+#     pick-&-roll assignment share       .354           .309          .309
+#     rim04 assignment share             .260           .313          .260
+#     4ft-to-arc assignment share        .172           .228          .172
+#     off-the-dribble share             -.017           .153         -.017
+#     ISOLATION assignment share        -.061          -.150         -.150
+#     on/off delta, opp rim share       -.030          -.077         -.060
+#     on/off delta, opp three share      .099           .071          .071
+#     on/off delta, opp PPS              .028           .130          .028
+#     (* area_share is stored at the three_share value, the lower of the pair)
+#
+# THE FINDING, AND IT IS THE OPPOSITE OF THE OFFENSIVE ONE
+# -------------------------------------------------------
+# On offense, SHARES are the reliable currency: a player's own band shares
+# measure SB .70-.92 while their band FG% collapses to SB .11. The obvious move
+# was to port that wholesale — express every defensive read as a share and
+# inherit the reliability. IT DOES NOT PORT. Defensive assignment shares come
+# back .17 to .64, and the two most quotable ones are the worst in the table.
+#
+# The reason is structural, not a sample-size problem, and it is worth stating
+# because it will keep being tempting: AN OFFENSIVE SHARE IS A CHOICE THE
+# PLAYER MAKES; A DEFENSIVE ASSIGNMENT SHARE IS A CHOICE THE OPPONENT MAKES. A
+# guard who hunts floaters hunts floaters every night. A defender whose
+# assignment took 60% isolations last week drew a different opponent's offense
+# this week, and the number moves with the schedule rather than with her. What
+# split-half reliability is detecting here is exactly that: the metric is a
+# property of the fixture, not of the player.
+#
+# Two things survive it, and they survive for the same reason — both are
+# aggregated over WHO the opponent is:
+#   * the coarse interior/perimeter axis (SB .578). Whether a player defends in
+#     the paint or on the line is a role the coach assigns, so it repeats. The
+#     FINE band cut inside it (rim04 .26, two419 .17) does not — that split is
+#     the opponent's shot selection wearing the defender's name.
+#   * DLOAD% (SB .574) — the share of her own team's tagged contests a player
+#     accounts for. Being hunted is a property of the defender.
+#
+# WHAT THIS FORBIDS. "She is an isolation defender" is the single most natural
+# sentence this data suggests and it is NOT SUPPORTED — iso assignment share
+# measures SB -.15, anti-correlated, worse than the anti-correlated
+# above-break-3 FG% that got withheld in the offensive book. Same for "the
+# defense tightens when she checks in": all three on/off footprint deltas land
+# between -.06 and .23, the identical failure mode as raw offensive on/off
+# (r = -.096, see insights.ONOFF_PRIOR_POSS). Those reads still RENDER — they
+# are a record of the games that were played — but they render descriptively,
+# with their n, and no generator turns them into a trait.
+MEASURED_DEFENDER_NOTE = (
+    "Defensive assignment shares measure far weaker than offensive ones "
+    "(SB .17-.64 vs .70-.92) because the assignment is chosen by the opponent, "
+    "not by the player. Only the coarse interior/perimeter split and DLOAD% "
+    "clear the floor."
+)
 
 #: Per-band overrides where a band's own reliability differs materially from
 #: its family's floor. Keyed (unit, metric, band).

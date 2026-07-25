@@ -478,6 +478,17 @@ def render(ctx):
                    "average on the tracked splits, or needs more games.")
     _seen_persist()   # stamp today's first-sight dates (one write, if any)
 
+    # ── the deep-dive half: the defensive board (new engine) + every other
+    #    tab's verdict, gathered here. Insights is the one page a new coach is
+    #    pointed at, so the reads live here even though the charts do not move.
+    try:
+        from helpers.dashboard import insights_deep as _DEEP
+        _DEEP.render_defense_board(ctx, pids, table, fp=_fp)
+        _DEEP.render_foul_rates(pids, table)
+        _DEEP.render_ported(ctx, fp=_fp)
+    except Exception as _exc:      # never let the deep half blank the feed above
+        st.caption(f"Deep-dive sections unavailable — {type(_exc).__name__}: {_exc}")
+
     # ── deep dive: offense vs TOP-half vs BOTTOM-half opponents ────────────────
     _tids = getattr(ctx, "tracked_ids", None)
     _ss = _strength(ctx.gender, ctx.team_id, _tids,

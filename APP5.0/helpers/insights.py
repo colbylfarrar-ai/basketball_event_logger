@@ -932,13 +932,244 @@ def _g_onoff_def(row, pools, d):
             "metric": "On/off defense", "n": onp + offp}
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  DEFENSIVE READS — the offensive profile, ported (helpers/defense_profile.py)
+# ══════════════════════════════════════════════════════════════════════════════
+# Everything a player DOES on offense has a defensive twin if it is expressed as
+# a share of their own workload, and that was the premise these were built on.
+# The premise held for exactly two of them. See `reliability`'s
+# DEFENSIVE SHARES ARE NOT OFFENSIVE SHARES block for the measurement: a
+# defender's assignment mix is chosen by the OPPONENT, so it tracks the schedule
+# rather than the player, and the reads that survive a split season are the two
+# aggregated over who the opponent was — the coarse interior/perimeter axis
+# (SB .578) and DLOAD% (SB .574). "She's an isolation defender", the most
+# natural sentence in this data, measures SB -.15 and does not ship as a claim.
+#
+# The generators below therefore split into two kinds, and the split is
+# deliberate rather than cosmetic:
+#   * VERDICT generators (load, area, allowed) assert a trait.
+#   * DESCRIPTIVE generators carry `"descriptive": True` and say what happened
+#     with the sample attached, without claiming it repeats. They exist because
+#     the density is genuinely wanted — a coach reading "guarded 18 isolations,
+#     41% of her assignments" learns something real about the games played, and
+#     the line itself says why that is not a projection.
+
+def _lc(label):
+    """Lower-case a label for mid-sentence use, but leave acronyms alone.
+
+    Play-type labels mix prose ("Off screen") with acronyms ("DHO", "BLOB",
+    "SLOB"), and a blanket `.lower()` turns the second kind into "drew the dho
+    action", which reads as a typo rather than as a term.
+    """
+    s = str(label or "")
+    return s if (s.isupper() and len(s) <= 5) else s.lower()
+
+
+def _g_def_load(row, pools, d):
+    """DLOAD% — the share of the team's tagged contests this player accounts for.
+
+    The defensive twin of USG%, and it needs no pool to read: five players share
+    every possession, so 20% is average BY CONSTRUCTION. Measured SB .574 —
+    being hunted is a property of the defender, unlike who they happen to draw.
+    """
+    dl = d.get("def_load")
+    if not dl or (dl.get("denom") or 0) < 60:
+        return None
+    load, n = dl["load"], int(dl["denom"])
+    z = (load - 0.20) / 0.06          # league mean is 0.20 by construction
+    if abs(z) < MIN_Z:
+        return None
+    c = int(dl["contested"])
+    if z >= 0:
+        txt = (f"**The point of attack** — contests **{load:.0%} of this team's "
+               f"guarded shots** while on the floor ({c} of {n}); an average "
+               f"defender sees 20%. The offense is hunting them — screen them "
+               f"off the ball and their legs go before the fourth.")
+    else:
+        txt = (f"**The offense avoids them** — only **{load:.0%} of the team's "
+               f"contests** while on the floor ({c} of {n}) against a 20% "
+               f"share; either they're hidden on the weakest man, or ball "
+               f"screens are moving them off the action every trip.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Def load", "n": n}
+
+
+def _g_def_area(row, pools, d):
+    """Interior vs perimeter assignment — the one defensive diet cut that repeats.
+
+    Paint share (rim + 4ft-to-arc) against the pool of defenders. The FINE band
+    cut inside it measures SB .17-.26 and is withheld; this coarse axis is the
+    role a coach assigns, so it survives at SB .578.
+    """
+    dd = d.get("def_diet")
+    if not dd or dd["n"] < 25:
+        return None
+    paint = dd["paint_share"]
+    z = _z(paint, pools.get("def_paint_share"))
+    if abs(z) < MIN_Z:
+        return None
+    n, three = dd["n"], dd["three_share"]
+    if z >= 0:
+        txt = (f"**Interior assignment** — **{paint:.0%} of what they guard is "
+               f"inside the arc** ({n} contests, {three:.0%} threes); a post and "
+               f"drive defender. Drag them out to the level of the screen and "
+               f"the paint opens behind them.")
+    else:
+        txt = (f"**Perimeter assignment** — **{three:.0%} of what they guard "
+               f"comes from three** and only {paint:.0%} inside ({n} contests); "
+               f"a chaser, not a wall — attack them downhill off the catch.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Def area", "n": n}
+
+
+def _g_def_assignment(row, pools, d):
+    """The most extreme thing a defender was ASKED to guard — descriptive.
+
+    This is the "iso defender / screen navigator / closeout specialist" read,
+    and it is the one the measurement refused: which action a defender draws is
+    the opponent's game plan, measured SB -.15 for isolations. So the line
+    reports the season's assignment with its count and says plainly that it is a
+    record rather than a tendency. It is not withheld, because a coach preparing
+    for THESE games is entitled to know what happened in them.
+    """
+    ed = d.get("def_edge")
+    if not ed:
+        return None
+    if ed["axis"] not in ("play", "kind") or ed["n"] < 6 or abs(ed["z"]) < 1.2:
+        return None
+    label, share, lg, n = ed["label"], ed["share"], ed["lg_share"], ed["n"]
+    what = "action" if ed["axis"] == "play" else "look"
+    if ed["z"] > 0:
+        txt = (f"**Drew the {_lc(label)} {what}** — **{n} of their contests "
+               f"({share:.0%})** came against it, against {lg:.0%} for the "
+               f"average defender. A record of these games, not a trait: which "
+               f"{what} a defender draws is the opponent's call and does not "
+               f"repeat across a split season.")
+    else:
+        txt = (f"**Rarely saw the {_lc(label)} {what}** — {share:.0%} of "
+               f"their contests vs {lg:.0%} leaguewide ({n}). Descriptive only "
+               f"— assignment mix follows the schedule, not the player.")
+    return {"text": txt, "score": abs(ed["z"]) * 0.6, "z": ed["z"],
+            "metric": "Assignment", "n": n, "descriptive": True}
+
+
+def _g_foulrate(row, pools, d):
+    """Fouls committed per 32 minutes.
+
+    MEASURED RELIABLE (SB .68-.84, the strongest player-level defensive signal
+    in the whole book) and until now surfaced NOWHERE — the foul clock reports
+    WHEN a player's fouls land, never how often they come. A high rate is a
+    rotation constraint before it is a discipline note: it is the number that
+    decides whether a coach can play someone 28 minutes.
+    """
+    pf, mins = _num(row, "PF"), _num(row, "MIN")
+    gp = _num(row, "GP") or 0
+    if pf is None or not mins or mins < 60 or gp < 3:
+        return None
+    rate = pf / mins * 32.0
+    z = _z(rate, pools.get("pf32"))
+    if abs(z) < MIN_Z:
+        return None
+    pfg = _num(row, "PF/G")
+    pfg_bit = f" ({pfg:.1f} a game)" if pfg is not None else ""
+    if z >= 0:
+        txt = (f"**Foul-prone** — **{rate:.1f} fouls per 32 minutes**{pfg_bit} "
+               f"over {mins:.0f} tracked minutes; the highest-variance minutes "
+               f"on the roster. Attack them early — two in the first quarter "
+               f"takes them off the floor and the bench behind them is the "
+               f"real matchup.")
+    else:
+        txt = (f"**Never in foul trouble** — **{rate:.1f} fouls per 32 "
+               f"minutes**{pfg_bit} across {mins:.0f} minutes; they can guard "
+               f"the whole game without a bench decision, so the aggressive "
+               f"assignment belongs to them.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Foul rate",
+            "n": int(mins)}
+
+
+def _g_scheme_faced(row, pools, d):
+    """The scheme a scorer handles best or worst — "cooks man, stalls vs the 2-3".
+
+    Reads `defenses.player_defenses_faced`, which already ranks a player's PPP
+    against each tagged scheme versus the league pool of players facing that
+    same scheme. Offense-only by construction: defense is a team concept, so the
+    player view asks how a SCORER handles what gets thrown at them.
+    """
+    sf = d.get("scheme_faced")
+    if not sf:
+        return None
+    poss, pct = sf.get("poss") or 0, sf.get("pct")
+    if pct is None or poss < tier_gate(14, _num(row, "GP") or 0, 6):
+        return None
+    if abs(pct - 50) < 22:
+        return None
+    label, ppp, lg = sf["label"], sf["PPP"], sf.get("lg_ppp")
+    lg_bit = f" vs {lg:.2f} leaguewide" if lg is not None else ""
+    z = (pct - 50) / 15.0
+    if pct >= 50:
+        txt = (f"**Beats the {_lc(label)}** — **{ppp:.2f} PPP** against it"
+               f"{lg_bit} ({_ORD(pct)} pctile, {poss} shots); don't sit in that "
+               f"coverage against them.")
+    else:
+        txt = (f"**Stalls against the {_lc(label)}** — only **{ppp:.2f} "
+               f"PPP**{lg_bit} ({_ORD(pct)} pctile, {poss} shots); it is the "
+               f"look to show them when they get going.")
+    return {"text": txt, "score": abs(pct - 50) / 15.0, "z": z,
+            "metric": "Vs scheme", "n": poss}
+
+
+def _g_def_footprint(row, pools, d):
+    """What the opponent's shot diet did while this player was on the floor.
+
+    DESCRIPTIVE, and firmly so. All three on/off deltas measure between -.06 and
+    .23 across a split season — the same failure mode as raw offensive on/off
+    (r = -.096), and for the same reason: the four teammates move with them. It
+    renders because "the rim closed while she was out there" is a true fact
+    about the games played and a coach asked for it; it does not render as a
+    reason to change a rotation.
+    """
+    fp = d.get("def_footprint")
+    if not fp:
+        return None
+    on, off = fp["on"], fp["off"]
+    if on["n"] < 80 or off["n"] < 80:
+        return None
+    drim = fp["delta"]["rim_share"]
+    dthree = fp["delta"]["three_share"]
+    big = drim if abs(drim) >= abs(dthree) else dthree
+    if abs(big) < 0.06:
+        return None
+    n = on["n"] + off["n"]
+    if big is drim:
+        word = ("dropped" if drim < 0 else "rose")
+        txt = (f"**Opponent rim share {word} {abs(drim) * 100:.0f} pts with them "
+               f"on** — {on['rim_share']:.0%} of opponent shots came at the rim "
+               f"over {on['n']} attempts with them out there vs "
+               f"{off['rim_share']:.0%} over {off['n']} without. Unadjusted for "
+               f"the four teammates beside them, and on/off splits of this kind "
+               f"do not repeat across a split season — a description of these "
+               f"minutes, not a rotation argument.")
+    else:
+        word = ("fell" if dthree < 0 else "climbed")
+        txt = (f"**Opponent three-point share {word} "
+               f"{abs(dthree) * 100:.0f} pts with them on** — "
+               f"{on['three_share']:.0%} on ({on['n']} shots) vs "
+               f"{off['three_share']:.0%} off ({off['n']}). Teammate-confounded "
+               f"and unrepeatable across a split season; read it as what "
+               f"happened, not as what they cause.")
+    return {"text": txt, "score": abs(big) / 0.06 * 0.5, "z": big / 0.06,
+            "metric": "Def footprint", "n": n, "descriptive": True}
+
+
 _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                _g_consistency, _g_defense, _g_playtype, _g_playstyle,
                _g_situational, _g_impact, _g_matchup, _g_totype, _g_ftdraw,
                _g_clutchft, _g_pnr_role, _g_spacing,
                _g_rimdef, _g_perimdef, _g_rebound,
                _g_selfcreate, _g_playmaking, _g_disruption, _g_rimfinish,
-               _g_usage, _g_garbage, _g_stints, _g_form, _g_onoff, _g_onoff_def]
+               _g_usage, _g_garbage, _g_stints, _g_form, _g_onoff, _g_onoff_def,
+               # defensive port (see the block above for what measured and what
+               # did not) + the two reads that already existed and were unused
+               _g_def_load, _g_def_area, _g_def_assignment, _g_def_footprint,
+               _g_foulrate, _g_scheme_faced]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -958,7 +1189,8 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
                     playstyles=None, situational=None, impact=None,
                     matchup=None, totypes=None, foulft=None, pnr=None,
                     spacing=None, garbage=None, stints=None, form=None,
-                    onoff=None, top=3):
+                    onoff=None, def_diet=None, def_edge=None, def_load=None,
+                    def_footprint=None, scheme_faced=None, top=3):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
@@ -1007,6 +1239,16 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
             d["form"] = form[pid]
         if onoff and pid in onoff:
             d["onoff"] = onoff[pid]
+        if def_diet and pid in def_diet:
+            d["def_diet"] = def_diet[pid]
+        if def_edge and pid in def_edge:
+            d["def_edge"] = def_edge[pid][0]      # the single most extreme
+        if def_load and pid in def_load:
+            d["def_load"] = def_load[pid]
+        if def_footprint and pid in def_footprint:
+            d["def_footprint"] = def_footprint[pid]
+        if scheme_faced and pid in scheme_faced:
+            d["scheme_faced"] = scheme_faced[pid]
         derived[pid] = d
 
     # pools over the derived + raw metrics the generators z-score against
@@ -1035,6 +1277,14 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
         "USG%": col(lambda p, r: _num(r, "USG%")),
         "garbage_share": col(
             lambda p, r: (derived[p].get("garbage") or {}).get("garbage_share")),
+        # fouls per 32 min — the measured-reliable read (SB .68-.84) nothing
+        # surfaced until now. MIN is tracked floor time, so the gate is minutes.
+        "pf32": col(lambda p, r: ((_num(r, "PF") / _num(r, "MIN") * 32.0)
+                                  if (_num(r, "PF") is not None
+                                      and (_num(r, "MIN") or 0) >= 60)
+                                  else None)),
+        "def_paint_share": col(
+            lambda p, r: (derived[p].get("def_diet") or {}).get("paint_share")),
     }
 
     out = {}
@@ -1371,6 +1621,63 @@ def onoff_edges(events):
     return out
 
 
+def defense_diet_edges(events):
+    """{pid: diet} — each defender's assignment SHARE profile
+    (defense_profile.defender_diets). Empty until shots carry the nearest-
+    defender tap."""
+    import helpers.defense_profile as DP
+    return DP.defender_diets(events)
+
+
+def defense_edge_map(events):
+    """{pid: [edge, ...]} — each defender's most extreme assignment shares vs
+    the league of defenders, shrunk so a five-possession cell cannot headline."""
+    import helpers.defense_profile as DP
+    return DP.diet_edges(DP.defender_diets(events))
+
+
+def defense_load_map(events):
+    """{pid: DLOAD row} — the share of the team's tagged contests a player takes
+    on while they are on the floor. Needs the per-event lineup snapshots."""
+    import helpers.defense_profile as DP
+    gids = list({e["game_id"] for e in events if e.get("game_id") is not None})
+    if not gids:
+        return {}
+    return DP.defender_load(events, game_ids=gids)
+
+
+def defense_footprint_map(events):
+    """{pid: on/off opponent-diet split}. Descriptive only — see
+    `_g_def_footprint` and the reliability book."""
+    import helpers.defense_profile as DP
+    gids = list({e["game_id"] for e in events if e.get("game_id") is not None})
+    if not gids:
+        return {}
+    return DP.defensive_footprint(events, game_ids=gids)
+
+
+def scheme_faced_edges(events):
+    """{pid: the single most extreme scheme this scorer faces} — reads
+    `defenses.player_defenses_faced` and keeps each player's biggest |pctile-50|
+    outlier among the schemes they have real volume against. Empty until games
+    carry a defense tag."""
+    import helpers.defenses as DEF
+    per = DEF.player_defenses_faced(events=events)
+    out = {}
+    for pid, by_scheme in per.items():
+        best = None
+        for _key, c in by_scheme.items():
+            pct, poss = c.get("pct"), c.get("poss") or 0
+            if pct is None or poss < 6:
+                continue
+            edge = abs(pct - 50)
+            if best is None or edge > best[0]:
+                best = (edge, c)
+        if best is not None:
+            out[pid] = best[1]
+    return out
+
+
 #: the event-derived split builders, in the order build_feed runs them:
 #: (league_insights kwarg, function, needs_table).
 _FEED_STAGES = (
@@ -1388,6 +1695,13 @@ _FEED_STAGES = (
     ("stints",      stint_edges,             False),
     ("form",        form_edges,              True),
     ("onoff",       onoff_edges,             False),
+    # the defensive port — diet/edge share one defender_diets pass in practice
+    # because both are cheap loops over the same shot list
+    ("def_diet",      defense_diet_edges,      False),
+    ("def_edge",      defense_edge_map,        False),
+    ("def_load",      defense_load_map,        False),
+    ("def_footprint", defense_footprint_map,   False),
+    ("scheme_faced",  scheme_faced_edges,      False),
 )
 
 

@@ -331,6 +331,12 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     asr = S.assist_rate(game_ids, events=events)  # AST% (on-court teammate FGM share)
     wtov = S.playmaking_weighted_tov(events=events)  # type-weighted TOs (playmaking)
     rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
+    import helpers.rebounding as RB
+    # guarded_by × rebound_by: when this player is the ON-BALL DEFENDER on a
+    # miss, does their TEAM end the possession (box-out payoff)? Rides the
+    # `events` already fetched above — no second walk. Optional-tag data, so
+    # the rates are None below RB.MIN_ONBALL and drop out of the mean.
+    reb = RB.player_rebounding(events=events)
     import helpers.charges as CHG
     # {pid: charges drawn per game}. Only players on teams that TAG charges are
     # keyed; everyone else is absent so the leaf drops out of their mean instead
@@ -403,6 +409,11 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         usg = (S.usage_pct(S.estimate_possessions(b), pmin, tposs, gmin_t)
                if pmin > 0 and tposs > 0 else None)
         pc = pcomp.get(pid)
+        # tagged rebounding row. Absent entirely for a player whose team never
+        # tags guarded_by, so default to {} and let the volume gates below
+        # decide — an untagged player must read None, never 0.
+        _rb = reb.get(pid) or {}
+        _ob = _rb.get("onball_misses", 0)
 
         profiles[pid] = {
             **m,
@@ -515,6 +526,34 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "OREB%": o.get("oreb_pct") if o.get("oreb_avail") else None,  # event
             "DREB%": o.get("dreb_pct") if o.get("dreb_avail") else None,
             "REB%":  o.get("reb_pct") if o.get("reb_avail") else None,
+            # box-out payoff (T3 TAGGED — needs guarded_by AND rebound_by):
+            # when this player is the on-ball defender on a miss, how often the
+            # TEAM ends the possession. The credit is deliberately TEAM-wide,
+            # not self-only: walling your shooter off so a teammate collects the
+            # board is the whole point of a box-out, and def_secure_self_pct
+            # would punish the player who does it properly.
+            # `_stab` is the EB-shrunk twin (rebounding.py shrinks toward the
+            # pool mean at MIN_ONBALL) — the stabilized value is what a leaf may
+            # read, per spec Part 3 mechanism 4. Rates are None below
+            # RB.MIN_ONBALL so they drop out of the weighted mean rather than
+            # scoring a thin sample as real.
+            "def_secure_team_stab": (_rb.get("def_secure_team_stab")
+                                     if _ob >= RB.MIN_ONBALL else None),
+            "def_secure_team_pct": (_rb.get("def_secure_team_pct")
+                                    if _ob >= RB.MIN_ONBALL else None),
+            # share of this player's DREBs taken off their OWN assignment vs
+            # weak-side crashes — a STYLE axis, surface-only by design (spec
+            # Part 1 §1: never a leaf, high on-ball share is not "better").
+            "onball_share": (_rb.get("onball_share")
+                             if _rb.get("dreb", 0) >= 3 else None),
+            # chasing down your own miss — a rare event, surface-only.
+            "own_miss_rec_pct": (_rb.get("own_miss_rec_pct")
+                                 if _rb.get("own_misses", 0) >= 3 else None),
+            # volumes: the badge/surface eligibility gates, and the honest "n"
+            # to print beside every rate above.
+            "onball_misses": _ob,
+            "own_misses": _rb.get("own_misses", 0),
+            "tagged_dreb": _rb.get("dreb", 0),
             # ── PRODUCTION (feeds OVERALL) — combined box ───────────
             "GS/G":  cper_g(S.game_score(cb)),
             "EFF/G": cper_g(S.eff(cb)),
@@ -699,6 +738,8 @@ LEAF_TIER = {
     "CHG/G": T3_TAGGED, "CHG/Gz": T3_TAGGED,
     "SCPassQ": T3_TAGGED, "PassFG%": T3_TAGGED, "PassOpen%": T3_TAGGED,
     "xA/G": T3_TAGGED, "HAST/G": T3_TAGGED,
+    # box-out payoff: needs guarded_by AND rebound_by on the same miss
+    "def_secure_team_stab": T3_TAGGED,
 
     # ── composites: MAX tier of their own leaves ─────────────────────────
     "shooting": T3_TAGGED,     # SMOE
@@ -1586,6 +1627,25 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "PerimDShots": prof["PerimD_FGA"],
             "RimProt": _pct(prof["RimProt"]),
             "PerimD": _pct(prof["PerimD"]),
+            # ── tagged rebounding: box-out payoff + style (helpers/rebounding) ──
+            # Already computed in `profiles` (one shared events walk), so these
+            # are pass-throughs, not a second engine run. Surfaced here because
+            # badges.py ranks off THIS table, and the pages read it too.
+            # Rates arrive pre-gated (None below RB.MIN_ONBALL / 3 boards) —
+            # the volume columns are the honest n to print beside them.
+            # NOTE these are ALREADY 0-100: rebounding.py multiplies by 100
+            # itself (`* 100.0` on every rate it returns), unlike `profiles`
+            # rates such as 3P%/TS% which are fractions and need _pct() here.
+            # Wrapping these in _pct() scales them twice — it read 6940% on the
+            # live book before this was caught.
+            "BoxOut%": _round(prof["def_secure_team_pct"], 1),
+            "BoxOut%stab": _round(prof["def_secure_team_stab"], 1),
+            "def_secure_team_stab": prof["def_secure_team_stab"],
+            "onball_misses": prof["onball_misses"],
+            "OnBallDREB%": _round(prof["onball_share"], 1),
+            "OwnMissRec%": _round(prof["own_miss_rec_pct"], 1),
+            "own_misses": prof["own_misses"],
+            "TaggedDREB": prof["tagged_dreb"],
             # clutch line trips + and-1s
             "ClutchFTA": prof["cFTA"],
             "ClutchFT%": (_pct(_safe(prof["cFTM"], prof["cFTA"]))

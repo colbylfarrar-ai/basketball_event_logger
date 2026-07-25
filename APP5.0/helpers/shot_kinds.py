@@ -311,6 +311,57 @@ def player_table(player_id, gender=None, game_ids=None, events=None, shots=None)
     return kind_table([s for s in shots if s.get("player_id") == player_id])
 
 
+def kind_by_tag(events, tag, team_id=None, offense=True, min_n=MIN_KIND_RATE_ATT):
+    """Cross-tab of shot kind against an event tag — {tag_value: kind_table}.
+
+    Works off raw EVENTS rather than a mapped-shots list because the tags this
+    is for (`defense`, `play_type`) live on the event and are dropped by the
+    shot feeds. `offense=False` reads the shots the team ALLOWED, whose
+    `defense` tag is the scheme THIS team was running — which is the whole
+    point of the defensive view.
+
+    The rates inside each returned table are gated exactly as everywhere else,
+    so a scheme with 30 tagged shots reports its shares and withholds its
+    percentages. `min_n` drops tag values too thin to list at all; on the live
+    book that removes the long tail of one-off scheme tags (matchup, diamond1,
+    press_221 and friends all sit in single digits) rather than rendering a row
+    per novelty.
+    """
+    buckets = defaultdict(list)
+    for e in events:
+        if e.get("event_type") != "shot":
+            continue
+        v = e.get(tag)
+        if not v:
+            continue
+        st_ = e.get("shooter_team_id")
+        if team_id is not None and (st_ == team_id) != bool(offense):
+            continue
+        buckets[v].append({
+            "x": e.get("shot_x"), "y": e.get("shot_y"),
+            "value": 3 if e.get("shot_type") == 3 else 2,
+            "make": e.get("shot_result") == "make",
+        })
+    return {v: kind_table(sh) for v, sh in buckets.items()
+            if len(sh) >= min_n}
+
+
+def kind_by_shot_tag(shots, tag, min_n=MIN_KIND_RATE_ATT):
+    """kind_by_tag over an already-built shot list — {tag_value: kind_table}.
+
+    located_shots() carries `defense` and `play_type`, so a caller that already
+    holds a scoped shot feed (the Defense tab does, cached) crosses it here
+    instead of taking a second pass over the event stream. On a 1 vCPU box that
+    difference is the whole reason this variant exists.
+    """
+    buckets = defaultdict(list)
+    for s in shots:
+        v = s.get(tag)
+        if v:
+            buckets[v].append(s)
+    return {v: kind_table(sh) for v, sh in buckets.items() if len(sh) >= min_n}
+
+
 def diet(team_id=None, player_id=None, gender=None, game_ids=None, events=None,
          shots=None, offense=True):
     """A team's or player's kind SHARES against the league's, with the gate.

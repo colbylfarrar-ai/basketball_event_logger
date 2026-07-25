@@ -39,6 +39,7 @@ from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
+import helpers.dashboard.shot_diet as _shot_diet
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 
@@ -365,6 +366,18 @@ def render(ctx):
         elif n_untagged:
             st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — set "
                        "the defense in the tracker to sharpen the by-scheme court.")
+
+    # ── what the scheme concedes, by DEPTH ───────────────────────────────────
+    # The court above shows where shots came from; this says what KIND they
+    # were, which is the difference between "gives up the paint" and "gives up
+    # layups". Reuses the `shots` feed already loaded for the court rather than
+    # taking another event pass. `shots` follows the side toggle, so own_side
+    # is the inverse of _off exactly as the rebound map below reads it.
+    if shots:
+        _shot_diet.render_concedes(
+            shots, labels=_DEF_LABEL, own_side=not _off,
+            heading=("What each scheme gives up — by depth" if not _off else
+                     "What you get against each defense — by depth"))
 
     # ── charges — the discrete defensive play ────────────────────────────────
     _render_charges(ctx, g, tid)

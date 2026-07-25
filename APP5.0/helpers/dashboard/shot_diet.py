@@ -153,6 +153,59 @@ def render(shots, team_id, *, games=None, key_prefix="sd", offense=True,
             f"describe.")
 
 
+def render_concedes(shots, *, labels=None, own_side=True,
+                    heading="What each scheme gives up — by depth"):
+    """Shot kind × defensive scheme: what the tag actually concedes.
+
+    The cross-tab the zones could never give, because "gives up the paint" and
+    "gives up layups" are the same sentence in a five-wedge system and two very
+    different things on the floor.
+
+    `shots` is the tab's already-scoped located feed — shots ALLOWED when
+    own_side is True (the `defense` tag is then the scheme this team ran), or
+    the team's own attempts when False (the tag is the scheme it faced).
+    """
+    xt = SK.kind_by_shot_tag(shots, "defense")
+    if not xt:
+        st.caption(
+            "No scheme has enough tagged located shots yet for a depth "
+            f"cross-tab (needs {SK.MIN_KIND_RATE_ATT} per scheme). Tag the "
+            "Defense in the tracker and this fills in.")
+        return
+    st.markdown(f"<div class='lab-hdr'>{html.escape(heading)}</div>",
+                unsafe_allow_html=True)
+
+    rows = sorted(xt.items(), key=lambda kv: -kv[1]["_meta"]["located"])
+    head = ("<table class='mini'><tr><th>Scheme</th><th>Shots</th>"
+            + "".join(f"<th>{html.escape(SK.KIND_LABELS[k].split(' /')[0])}</th>"
+                      for k in SK.KINDS)
+            + "<th>PPS</th></tr>")
+    body = ""
+    for key, t in rows:
+        n = t["_meta"]["located"]
+        if not n:
+            continue
+        pts = sum(t[k]["pts"] for k in SK.KINDS)
+        cells = ""
+        for k in SK.KINDS:
+            sh = t[k]["share"]
+            col = _KIND_COLOR.get(k, "#8b949e")
+            cells += (f"<td style='color:{col}'>{_pct(sh, 1)}</td>")
+        lbl = (labels or {}).get(key, key)
+        body += (f"<tr><td>{html.escape(str(lbl))}</td><td>{n}</td>{cells}"
+                 f"<td><b>{pts / n:.3f}</b></td></tr>")
+    st.markdown(head + body + "</table>", unsafe_allow_html=True)
+    _verb = "concedes" if own_side else "gets"
+    st.caption(
+        f"Share of shots from each depth band each scheme {_verb}, and the "
+        "points per shot that comes with it. Rim shots are worth about 1.09 "
+        "points a trip in this league and the 4–10 ft band about 0.57, so two "
+        "schemes can allow the same shot COUNT and be half a point apart. "
+        f"Schemes under {SK.MIN_KIND_RATE_ATT} tagged located shots are left "
+        "off rather than shown at a sample that moves on one game. Located "
+        "shots only — untagged and unlocated attempts are not in these rows.")
+
+
 def league_reference():
     """The league kind table as a standalone caption block.
 

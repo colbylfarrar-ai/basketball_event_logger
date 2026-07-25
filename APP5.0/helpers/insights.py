@@ -222,25 +222,56 @@ def _g_defense(row, pools, d):
 
 
 def _g_playtype(row, pools, d):
-    """Signature action: the play_type set a player is most extreme on (vs the
-    league pool of players on that same action). pct=league percentile."""
+    """Signature action — led by the SHARE, with the efficiency attached.
+
+    This generator used to lead with the play-type PPP percentile ("Go-to:
+    Isolation — scores 1.20 PPP, 78th pctile") and it was the third most-fired
+    read in the app. Measured 2026-07-26, play-type PPP does not predict itself:
+    isolation .425, spot-up **-.135** (anti-correlated), the grouped families
+    .14-.29 — the rim-FG% failure on a different axis, with plenty of attempts
+    behind the estimate and no stability in it.
+
+    The SHARE of a player's shots that come from a set measures .76-.88 within
+    team, because on offence the player chooses the action. So the claim is now
+    built on the share — WHAT THEY RUN, which repeats — and the PPP rides along
+    as a record of how it went, explicitly marked as not a projection. That
+    keeps the density and drops the part the data would not carry.
+    """
     pt = d.get("playtype")
-    if not pt or pt.get("pct") is None \
-            or (pt.get("poss") or 0) < tier_gate(8, _num(row, "GP") or 0, 4):
+    if not pt:
         return None
-    pct, poss = pt["pct"], pt["poss"]
-    if abs(pct - 50) < 20:
+    share, poss = pt.get("share"), pt.get("poss") or 0
+    if share is None or share <= 0:
         return None
-    label, ppp = pt["label"], pt["PPP"]
-    z = (pct - 50) / 15.0
-    if pct >= 50:
-        txt = (f"**Go-to: {label}** — scores **{ppp:.2f} PPP** on {label.lower()} "
-               f"({_ORD(pct)} pctile, {poss} poss); their bread-and-butter.")
-    else:
-        txt = (f"**Take away the {label.lower()}** — only **{ppp:.2f} PPP** "
-               f"({_ORD(pct)} pctile, {poss} poss); make them beat you another way.")
-    return {"text": txt, "score": abs(pct - 50) / 15.0, "z": z,
-            "metric": "PlayType", "n": poss}
+    # A SHARE is determined by its DENOMINATOR, so the gate belongs on the
+    # player's total tagged shots, not on the set's own possessions — that is
+    # also the sample the reliability was measured at (>=8 per half, so ~16
+    # across the season). Gating the numerator instead threw away two-thirds of
+    # the reads for no statistical reason, while still letting a 60%-of-9
+    # accident through, because 9 clears a numerator gate of 8.
+    total_tagged = poss / share
+    if total_tagged < 15 or poss < 6:
+        return None
+    label, ppp, pct = pt["label"], pt.get("PPP"), pt.get("pct")
+    # the claim: this set is a big part of what they run. Shares are compared
+    # against a neutral spread across the tagged sets rather than a pool,
+    # because the pool of players on one action is thin and self-selecting.
+    if share < 0.25:
+        return None
+    z = (share - 0.25) / 0.10
+    if abs(z) < MIN_Z:
+        return None
+    eff = ""
+    if ppp is not None:
+        pct_bit = f", {_ORD(pct)} pctile" if pct is not None else ""
+        eff = (f" It has produced **{ppp:.2f} PPP**{pct_bit} — a record of "
+               f"these possessions, not a forecast: efficiency on a single set "
+               f"does not repeat across a split season.")
+    txt = (f"**Signature set: {_lc(label)}** — **{share:.0%} of their tagged "
+           f"shots** come out of it ({poss} of {total_tagged:.0f} tagged); "
+           f"this is what they run.{eff}")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "PlayType",
+            "n": poss}
 
 
 def _g_playstyle(row, pools, d):
@@ -1020,6 +1051,86 @@ def _g_def_area(row, pools, d):
     return {"text": txt, "score": abs(z), "z": z, "metric": "Def area", "n": n}
 
 
+def _g_def_family(row, pools, d):
+    """ON-BALL vs OFF-BALL assignment — the grouped action axis.
+
+    Individually these do not repeat (isolation share SB -.15). Rolled into the
+    two groups that describe the JOB rather than the play-call — contain a live
+    dribble, or navigate screens and close out — they measure .373 / .347 within
+    team, which clears the floor. Scored against her OWN TEAMMATES because the
+    raw share carries her team's defensive scheme inside it.
+    """
+    dd = d.get("def_diet")
+    if not dd or (dd.get("family_total") or 0) < 20:
+        return None
+    resid = dd.get("onball_share_vs_team")
+    if resid is None:
+        return None
+    z = _z(resid, pools.get("def_onball_resid"))
+    if abs(z) < MIN_Z:
+        return None
+    on, off = dd["onball_share"], dd["offball_share"]
+    n = int(dd["family_total"])
+    mean = dd.get("onball_share_team_mean")
+    # Branch on the RESIDUAL, not on z. z is ranked against the league pool of
+    # residuals and can carry the opposite sign to the residual itself, which
+    # produced lines reading "guards off the ball" for a player ABOVE her own
+    # team's on-ball share. And quote the on-ball share on both sides so the
+    # number and its team mean are always the same quantity — the first pass
+    # printed the off-ball share against the on-ball mean.
+    mean_bit = (f", against **{mean:.0%}** across the roster"
+                if mean is not None else "")
+    if resid >= 0:
+        txt = (f"**Guards the ball** — **{on:.0%} of their assignments are "
+               f"on-ball actions**{mean_bit} — isolations, ball screens, "
+               f"post-ups, hand-offs — over {n} tagged contests. The one asked "
+               f"to contain a live dribble; screen them and somebody else has "
+               f"to do it.")
+    else:
+        txt = (f"**Guards off the ball** — on-ball actions are just "
+               f"**{on:.0%} of their assignments**{mean_bit}; {off:.0%} is "
+               f"off-ball work — spot-ups, cuts, off-screen curls — over {n} "
+               f"tagged contests. A chaser and a closeout defender; put them "
+               f"in a ball screen and find out.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Def role", "n": n}
+
+
+def _g_def_scheme(row, pools, d):
+    """Which SCHEME a player's floor time lands in, relative to her teammates.
+
+    Pooled, man-share measures SB .734 — and .321 once each player is compared
+    to her own team. Nearly all of the pooled number was which team she plays
+    for, so this is scored on the within-team residual and says "used more in
+    the zone THAN HER TEAMMATES", never "plays a lot of zone".
+
+    Press share is deliberately not offered: .541 pooled, .050 demeaned.
+    """
+    dd = d.get("def_diet")
+    if not dd or (dd.get("scheme_total") or 0) < 20:
+        return None
+    resid = dd.get("zone_share_vs_team")
+    if resid is None:
+        return None
+    z = _z(resid, pools.get("def_zone_resid"))
+    if abs(z) < MIN_Z or abs(resid) < 0.08:
+        return None
+    zone, mean = dd["zone_share"], dd.get("zone_share_team_mean")
+    n = int(dd["scheme_total"])
+    mean_bit = (f" against a roster average of {mean:.0%}"
+                if mean is not None else "")
+    if resid >= 0:
+        txt = (f"**Zone minutes** — **{zone:.0%} of their contests come with "
+               f"the team in a zone**{mean_bit} ({n} tagged). They are on the "
+               f"floor more when the scheme changes — worth knowing before "
+               f"assuming a man-to-man scouting read applies to them.")
+    else:
+        txt = (f"**Man-to-man minutes** — only **{zone:.0%} of their contests "
+               f"come in a zone**{mean_bit} ({n} tagged); their defensive book "
+               f"is almost entirely on-the-ball man coverage.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Def scheme",
+            "n": n}
+
+
 def _g_def_assignment(row, pools, d):
     """The most extreme thing a defender was ASKED to guard — descriptive.
 
@@ -1169,7 +1280,9 @@ _GENERATORS = [_g_poe, _g_selection, _g_hand, _g_guarded, _g_q4, _g_three,
                # defensive port (see the block above for what measured and what
                # did not) + the two reads that already existed and were unused
                _g_def_load, _g_def_area, _g_def_assignment, _g_def_footprint,
-               _g_foulrate, _g_scheme_faced]
+               _g_foulrate, _g_scheme_faced,
+               # the GROUPED axes — the cuts that survived a split season
+               _g_def_family, _g_def_scheme]
 
 
 # ── pool + per-player derivation ──────────────────────────────────────────────
@@ -1285,6 +1398,16 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
                                   else None)),
         "def_paint_share": col(
             lambda p, r: (derived[p].get("def_diet") or {}).get("paint_share")),
+        # WITHIN-TEAM residuals: the raw scheme/assignment share is dominated
+        # by which team a player is on (man share pooled SB .734, demeaned
+        # .321), so the pool these are z-scored against is the pool of
+        # residuals, not of raw shares.
+        "def_onball_resid": col(
+            lambda p, r: (derived[p].get("def_diet") or {}).get(
+                "onball_share_vs_team")),
+        "def_zone_resid": col(
+            lambda p, r: (derived[p].get("def_diet") or {}).get(
+                "zone_share_vs_team")),
     }
 
     out = {}
@@ -1623,10 +1746,15 @@ def onoff_edges(events):
 
 def defense_diet_edges(events):
     """{pid: diet} — each defender's assignment SHARE profile
-    (defense_profile.defender_diets). Empty until shots carry the nearest-
-    defender tap."""
+    (defense_profile.defender_diets), with the within-team residuals attached.
+
+    `team_relative` is what makes the scheme and grouped-action reads mean what
+    they say: pooled, a defender's man-defense share measures SB .734 and
+    almost all of it is her coach's scheme choice rather than anything about
+    her. The residual against her own teammates measures .321 and is the part
+    that is hers. Empty until shots carry the nearest-defender tap."""
     import helpers.defense_profile as DP
-    return DP.defender_diets(events)
+    return DP.team_relative(DP.defender_diets(events))
 
 
 def defense_edge_map(events):

@@ -69,7 +69,7 @@ def _def_board(tids, fp=None):
     if not ev:
         return {}, {}, {}, {}, {}
     gids = list(tids)
-    diets = DP.defender_diets(ev)
+    diets = DP.team_relative(DP.defender_diets(ev))
     return (diets, DP.diet_edges(diets),
             DP.defender_load(ev, game_ids=gids),
             DP.defensive_footprint(ev, game_ids=gids),
@@ -109,9 +109,10 @@ def render_defense_board(ctx, pids, table, fp=None):
             "DLOAD%": (f"{l['load'] * 100:.0f}%" if l else "—"),
             "Contests": (d["n"] if d else (l["contested"] if l else 0)),
             "Inside arc": (_pct(d["paint_share"]) if d else "—"),
-            "At rim": (_pct(d["rim_share"]) if d else "—"),
             "Threes": (_pct(d["three_share"]) if d else "—"),
-            "Off dribble": (_pct(d["drive_share"]) if d else "—"),
+            "On-ball": (_pct(d["onball_share"]) if d else "—"),
+            "Off-ball": (_pct(d["offball_share"]) if d else "—"),
+            "Zone mins": (_pct(d["zone_share"]) if d else "—"),
             "FG% allowed": (_pct(d["FG%"]) if d else "—"),
             "PPS allowed": (f"{d['PPS']:.2f}" if d else "—"),
             "_sort": (l["load"] if l else -1),
@@ -130,14 +131,22 @@ def render_defense_board(ctx, pids, table, fp=None):
     _sb_area = REL.measured("defender", "area_share")
     _sb_fine = REL.measured("defender", "assignment_share")
     _sb_fg = REL.measured("defender", "allowed_fg")
+    _sb_fam = REL.measured("defender", "family_share")
+    _sb_sch = REL.measured("defender", "scheme_share")
     st.caption(
-        f"{conf_dot_r(_sb_load)} **DLOAD%** r={_sb_load:.2f} · "
         f"{conf_dot_r(_sb_area)} **inside-arc / threes** r={_sb_area:.2f} · "
-        f"{conf_dot_r(_sb_fine)} **at-rim share** r={_sb_fine:.2f} · "
-        f"{conf_dot_r(_sb_fg)} **FG% allowed** r={_sb_fg:.2f} — measured over "
-        "200 random half-splits of this season. The coarse inside/outside split "
-        "repeats; the finer cut inside it does not, because which look a "
-        "defender draws is the opponent's call, not hers.",
+        f"{conf_dot_r(_sb_load)} **DLOAD%** r={_sb_load:.2f} · "
+        f"{conf_dot_r(_sb_sch)} **zone minutes** r={_sb_sch:.2f} · "
+        f"{conf_dot_r(_sb_fam)} **on-ball / off-ball** r={_sb_fam:.2f} · "
+        f"{conf_dot_r(_sb_fg)} **FG% allowed** r={_sb_fg:.2f} · "
+        f"{conf_dot_r(_sb_fine)} **at-rim share** r={_sb_fine:.2f} — measured "
+        "over 200 random half-splits. Two rules are doing the work here. "
+        "**Coarse survives where fine does not**: inside-vs-outside repeats, "
+        "the band cut inside it does not, and on-ball-vs-off-ball repeats where "
+        "*isolation* alone measures −0.15. And **on-ball / off-ball / zone "
+        "minutes are compared to this player's OWN TEAMMATES**, not the league "
+        "— pooled leaguewide, man-defense share measures .73 and almost all of "
+        "it is which team she plays for rather than anything about her.",
         unsafe_allow_html=True)
 
     with st.expander("Assignment mix — what actions each defender drew "

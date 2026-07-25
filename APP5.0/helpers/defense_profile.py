@@ -71,6 +71,36 @@ CREATION_LABELS = {
     "both": "off an action & a pass",
 }
 
+# ── the ACTION grouping (measured 2026-07-26) ────────────────────────────────
+# Individual play-type assignment shares do not repeat: isolation share measures
+# SB -.15, worse than anything in the offensive book. Rolled up to ON-BALL vs
+# OFF-BALL they do — .373 / .347 within team — which is the same lesson the band
+# axis taught (rim04 alone .26, rolled up to paint .578). Two groups is the
+# right coarseness: splitting on-ball back into ball-screen and iso/post
+# collapses it again (.215 / .088), because that split is once more the
+# opponent's call rather than the defender's job.
+#
+# The distinction the two groups encode is a real difference in what a defender
+# is asked to do: contain a live dribble, or navigate screens and close out.
+PLAY_FAMILIES = {
+    "iso": "onball", "pnr": "onball", "post": "onball", "dho": "onball",
+    "spot": "offball", "offscreen": "offball", "cut": "offball",
+    "duckin": "offball",
+    "transition": "transition",
+    "putback": "broken", "blob": "broken", "slob": "broken",
+}
+
+PLAY_FAMILY_LABELS = {
+    "onball": "on the ball", "offball": "off the ball",
+    "transition": "in transition", "broken": "in broken play",
+}
+
+#: Scheme families whose per-defender share survives the within-team test, and
+#: therefore says something about the PLAYER rather than about her coach.
+#: `press` is deliberately absent: pooled it measures SB .541, but demeaned
+#: within its own team it is .050 — it was entirely "which team she plays for".
+PLAYER_SCHEME_FAMILIES = ("man", "zone")
+
 
 def _shares(counts):
     """{key: count} → ({key: share}, total). Empty in, ({} , 0) out."""
@@ -121,9 +151,12 @@ def defender_diets(events, min_shots=MIN_CONTESTED, team_id=None):
         roster = {r["id"] for r in
                   query("SELECT id FROM players WHERE team_id=?", (team_id,))}
 
+    import helpers.defenses as DEF
+
     raw = defaultdict(lambda: {
         "band": defaultdict(int), "kind": defaultdict(int),
         "play": defaultdict(int), "creation": defaultdict(int),
+        "family": defaultdict(int), "scheme": defaultdict(int),
         "FGA": 0, "FGM": 0, "PTS": 0, "three_FGA": 0, "three_FGM": 0,
         "paint": 0,
     })
@@ -141,6 +174,14 @@ def defender_diets(events, min_shots=MIN_CONTESTED, team_id=None):
         c["kind"][kind] += 1
         if e.get("play_type"):
             c["play"][e["play_type"]] += 1
+            fam = PLAY_FAMILIES.get(e["play_type"])
+            if fam:
+                c["family"][fam] += 1
+        _d = DEF._norm(e.get("defense"))
+        if _d:
+            _fam = DEF._FAMILY.get(_d)
+            if _fam:
+                c["scheme"][_fam] += 1
         c["creation"][S._creation_bucket(e["pass_from_id"] is not None,
                                          e["shot_created_by_id"] is not None)] += 1
         c["FGA"] += 1
@@ -163,6 +204,8 @@ def defender_diets(events, min_shots=MIN_CONTESTED, team_id=None):
         kind_sh, _ = _shares(c["kind"])
         play_sh, play_n = _shares(c["play"])
         cre_sh, _ = _shares(c["creation"])
+        fam_sh, fam_n = _shares(c["family"])
+        sch_sh, sch_n = _shares(c["scheme"])
         n = c["FGA"]
         out[did] = {
             "n": n, "FGA": n, "FGM": c["FGM"], "PTS": c["PTS"],
@@ -174,6 +217,15 @@ def defender_diets(events, min_shots=MIN_CONTESTED, team_id=None):
             "play": dict(play_sh), "play_n": dict(c["play"]),
             "play_total": play_n,
             "creation": dict(cre_sh), "creation_n": dict(c["creation"]),
+            # the grouped axes — the cuts that survived a split season
+            "family": dict(fam_sh), "family_n": dict(c["family"]),
+            "family_total": fam_n,
+            "scheme": dict(sch_sh), "scheme_n": dict(c["scheme"]),
+            "scheme_total": sch_n,
+            "onball_share": fam_sh.get("onball", 0.0),
+            "offball_share": fam_sh.get("offball", 0.0),
+            "man_share": sch_sh.get("man", 0.0),
+            "zone_share": sch_sh.get("zone", 0.0),
             "three_share": S._safe(c["three_FGA"], n),
             "rim_share": band_sh.get("rim04", 0.0),
             "paint_share": S._safe(c["paint"], n),
@@ -181,6 +233,56 @@ def defender_diets(events, min_shots=MIN_CONTESTED, team_id=None):
             "catch_share": cre_sh.get("pass", 0.0) + cre_sh.get("both", 0.0),
         }
     return out
+
+
+#: The reads whose pooled reliability is dominated by WHICH TEAM a player is on,
+#: and which therefore have to be scored against her own teammates rather than
+#: against the league. Man-defense share is the clearest case: pooled it
+#: measures SB .734, demeaned within its team .321 — so a league-scored line
+#: saying "she plays a lot of man" would mostly be saying "her team plays man".
+TEAM_RELATIVE = ("onball_share", "offball_share", "man_share", "zone_share")
+
+#: A team needs this many qualifying defenders before a within-team comparison
+#: means anything — with two, each is just the other's mirror image.
+MIN_TEAMMATES = 3
+
+
+def team_relative(diets, team_of=None, keys=TEAM_RELATIVE,
+                  min_mates=MIN_TEAMMATES):
+    """Add `<key>_vs_team` residuals: each share minus her own team's mean.
+
+    This is the form the measurement validated. The raw share repeats well for
+    scheme reads, but almost all of that repeatability is between TEAMS — a
+    coach's scheme choice, not a player trait. Subtracting the team mean leaves
+    the part that is about the player: is SHE used differently from the four
+    beside her.
+
+    Players on a team with fewer than `min_mates` qualifying defenders get no
+    residual at all rather than a zero, because with one or two teammates the
+    residual is an artefact of the arithmetic instead of a comparison.
+    """
+    if team_of is None:
+        from database.db import query
+        team_of = {r["id"]: r["team_id"]
+                   for r in query("SELECT id, team_id FROM players")}
+    by_team = defaultdict(list)
+    for pid in diets:
+        by_team[team_of.get(pid)].append(pid)
+    for tid, mates in by_team.items():
+        if tid is None or len(mates) < min_mates:
+            continue
+        for key in keys:
+            vals = [diets[p].get(key) for p in mates]
+            vals = [v for v in vals if v is not None]
+            if not vals:
+                continue
+            mean = sum(vals) / len(vals)
+            for p in mates:
+                v = diets[p].get(key)
+                if v is not None:
+                    diets[p][f"{key}_vs_team"] = v - mean
+                    diets[p][f"{key}_team_mean"] = mean
+    return diets
 
 
 def diet_pools(diets):

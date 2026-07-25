@@ -148,22 +148,87 @@ ok(not REL.shows_verdict(REL.measured("defender", "footprint")),
 ok(not REL.shows_verdict(REL.measured("defender", "assignment_share")),
    "the fine band cut does NOT clear it")
 
+# ── round 2: grouping, and the player-vs-team separation ─────────────────────
+ok(REL.shows_verdict(REL.measured("defender", "family_share")),
+   "GROUPED on-ball/off-ball clears the floor (.373) where isolation alone "
+   "(-.15) does not — coarsening rescued the action axis")
+ok(REL.measured("defender", "family_share")
+   > REL.measured("defender", "play_share"),
+   "the grouped action share outmeasures the single-action share")
+ok(REL.shows_verdict(REL.measured("defender", "scheme_share")),
+   "zone-minutes share clears the floor within team (.417)")
+ok(not REL.shows_verdict(REL.measured("defender", "press_share")),
+   "press share does NOT — .541 pooled collapses to .050 within team, so it "
+   "was entirely which team the player is on")
+# The offensive twin: the SAME statistic on the other side of the ball.
+ok(REL.measured("player", "playtype_share")
+   > REL.measured("defender", "family_share"),
+   "an offensive play-type share outmeasures the defensive one — the player "
+   "chooses the action, the opponent chooses the assignment")
+ok(not REL.shows_verdict(REL.measured("player", "playtype_ppp")),
+   "play-type PPP does NOT clear the floor (-.135, anti-correlated) — the "
+   "number _g_playtype used to lead with")
+
+_TR = DP.TEAM_RELATIVE
+ok("man_share" in _TR and "zone_share" in _TR,
+   "the scheme shares are on the team-relative list, not league-scored")
+ok("paint_share" not in _TR,
+   "paint share is NOT team-relative — it survives pooled (.643) and league "
+   "scoring is what makes 'interior assignment' mean anything")
+
 
 # ── the generators ────────────────────────────────────────────────────────────
 print("\nthe new generators fire on the real book")
 
 import helpers.player_ratings as PR       # noqa: E402
+from database.db import query             # noqa: E402
 
 TABLE = PR.player_stat_table(gender=GENDER, min_games=1, game_ids=set(GIDS))
 ok(len(TABLE) > 20, f"stat table built ({len(TABLE)} players)")
+
+# the residual-bearing diets the two grouped generators read from
+_diets_tr = DP.team_relative(DP.defender_diets(EV))
 
 diag = {}
 feed = IN.build_feed(TABLE, EV, top=None, diagnostics=diag)
 ok(not diag, f"no feed stage raised: {diag}")
 
 metrics = {ln["metric"] for lines in feed.values() for ln in lines}
-for m in ("Def load", "Def area", "Foul rate", "Vs scheme"):
+for m in ("Def load", "Def area", "Foul rate", "Vs scheme",
+          "Def role", "Def scheme"):
     ok(m in metrics, f"generator '{m}' produced at least one line")
+
+# the within-team residuals must actually be attached, or the two grouped
+# generators silently never fire and the feed just looks a bit thinner
+_res = [d for d in _diets_tr.values() if "onball_share_vs_team" in d]
+ok(len(_res) >= 5, f"team_relative attached residuals to {len(_res)} defenders")
+for _pid, _d in _diets_tr.items():
+    if "onball_share_vs_team" in _d:
+        ok(abs(_d["onball_share_vs_team"]
+               - (_d["onball_share"] - _d["onball_share_team_mean"])) < 1e-9,
+           "the residual is exactly share minus the player's own team mean")
+        break
+# a one-defender team cannot produce a residual — with nobody to compare to,
+# the arithmetic yields 0 and would read as 'exactly average'
+from collections import Counter as _C                          # noqa: E402
+_tof = {r["id"]: r["team_id"] for r in
+        query("SELECT id, team_id FROM players")}
+_sizes = _C(_tof.get(p) for p in _diets_tr)
+for _pid, _d in _diets_tr.items():
+    if _sizes[_tof.get(_pid)] < DP.MIN_TEAMMATES:
+        ok("onball_share_vs_team" not in _d,
+           "a player with too few qualifying teammates gets NO residual rather "
+           "than a manufactured zero")
+        break
+
+# _g_playtype must no longer lead with the unreliable PPP
+for ln in (l for ls in feed.values() for l in ls if l["metric"] == "PlayType"):
+    ok(ln["text"].startswith("**Signature set:"),
+       "the play-type line leads with the SHARE (measured .76-.88), not the "
+       "PPP (measured -.135)")
+    ok("not a forecast" in ln["text"],
+       "the PPP rides along explicitly marked as a record")
+    break
 
 # Descriptive lines must be FLAGGED, because they are the ones whose underlying
 # metric failed its reliability measurement and they must never be read as
@@ -250,7 +315,6 @@ if BODY is not None:
 # ── the ported verdict sections ───────────────────────────────────────────────
 print("\nthe ported engines produce lines on the real book")
 
-from database.db import query                    # noqa: E402
 from helpers.dashboard import insights_deep as DEEP   # noqa: E402
 
 _tid = query("SELECT team1_id t FROM games WHERE id=?", (GIDS[0],))[0]["t"]

@@ -214,12 +214,27 @@ MEASURED = {
     # See DEFENSIVE SHARES ARE NOT OFFENSIVE SHARES below. These are the
     # per-defender assignment reads off `guarded_by_id`.
     ("defender", "assignment_share"): 0.26,   # the FINE band cut — floor, withheld
-    ("defender", "area_share"): 0.578,        # interior-vs-perimeter, the coarse cut
+    ("defender", "area_share"): 0.643,        # interior-vs-perimeter, the coarse cut
     ("defender", "load"): 0.574,              # DLOAD% — share of tagged contests
-    ("defender", "play_share"): -0.15,        # which ACTION they are asked to guard
+    ("defender", "play_share"): -0.15,        # a SINGLE action (iso) — withheld
     ("defender", "allowed_fg"): 0.399,
     ("defender", "allowed_pps"): 0.437,
     ("defender", "footprint"): -0.06,         # on/off opponent-diet delta
+    # ── the GROUPED axes (measured 2026-07-26 round 2) ───────────────────────
+    # These are WITHIN-TEAM values — see GROUPING RESCUED TWO AXES below. They
+    # are the reliability of the residual against the player's own teammates,
+    # which is the form these reads actually ship in.
+    ("defender", "family_share"): 0.373,      # on-ball vs off-ball assignment
+    ("defender", "scheme_share"): 0.417,      # zone share; man is .321
+    ("defender", "scheme_share_man"): 0.321,
+    ("defender", "press_share"): 0.050,       # collapses within team — refused
+    ("team", "scheme_mix"): 0.650,            # a coach's choice, and it repeats
+    # ── OFFENSIVE play-type axis (measured 2026-07-26 round 2) ───────────────
+    # Never measured before today; the book covered band and kind shares and
+    # the ACTION axis was assumed. Shares behave like every other offensive
+    # share. The PPP does not — see THE ACTION AXIS, BOTH SIDES below.
+    ("player", "playtype_share"): 0.761,      # iso within-team; spot is .882
+    ("player", "playtype_ppp"): -0.135,       # spot-up PPP, the worst of them
 }
 
 
@@ -284,6 +299,78 @@ MEASURED = {
 # (r = -.096, see insights.ONOFF_PRIOR_POSS). Those reads still RENDER — they
 # are a record of the games that were played — but they render descriptively,
 # with their n, and no generator turns them into a trait.
+# ── GROUPING RESCUED TWO AXES, AND A THIRD TEST SEPARATED PLAYER FROM TEAM ───
+# Round 2, measured 2026-07-26 after the first pass refused the action axis.
+#
+# The band axis had already shown that COARSENING can rescue a defensive read:
+# rim04 alone measures SB .26, rolled up to paint-vs-perimeter it is .643. Asked
+# the same question of the ACTION axis and of the SCHEME tag:
+#
+#     defender read (grouped)              pooled SB   within-team SB
+#     paint (interior) share                  .643          .684
+#     DLOAD%                                  .579          .561
+#     zone-defense share                      .693          .417
+#     ON-BALL assignment share                .361          .373
+#     off-ball assignment share               .283          .347
+#     man-defense share                       .734          .321
+#     press share                             .541          .050
+#     isolation share alone (round 1)        -.150            —
+#
+# Two separate lessons in that table.
+#
+# 1. GROUPING WORKS ON THE ACTION AXIS, AT EXACTLY TWO GROUPS. Isolation share
+#    alone is -.15; rolled into ON-BALL (iso + pnr + post + dho) against
+#    OFF-BALL (spot + off-screen + cut + duck-in) it clears the floor. Splitting
+#    on-ball back into ball-screen and iso/post collapses it again (.215 /
+#    .088). Two groups encode a real difference in the JOB — contain a live
+#    dribble, or navigate screens and close out — and finer than that is once
+#    more the opponent's play-call.
+#
+# 2. THE WITHIN-TEAM COLUMN IS THE ONE THAT MATTERS FOR A PLAYER CLAIM, and it
+#    is not decoration. Man-defense share measures .734 pooled — the strongest
+#    defensive number in the whole book — and .321 once each player is compared
+#    to her own teammates. Almost all of that .734 was WHICH TEAM SHE PLAYS FOR.
+#    A league-scored line reading "she plays a lot of man" would have been
+#    saying "her coach plays man", dressed up as scouting. Press share is the
+#    pure case: .541 pooled, .050 demeaned, and it is refused outright.
+#
+#    So the scheme and assignment reads ship scored against a player's OWN
+#    TEAMMATES (`defense_profile.team_relative`), and the book records the
+#    within-team value. Paint share and DLOAD% survive both ways and keep their
+#    league scoring.
+#
+# ── THE ACTION AXIS, BOTH SIDES ──────────────────────────────────────────────
+# The offensive play-type axis had never been measured. It was, and the
+# comparison is the cleanest statement of the whole offence/defence asymmetry:
+#
+#     action axis          OFFENCE (shooter)      DEFENCE (assignment)
+#                         pooled   within-team    pooled   within-team
+#     isolation share       .824        .761       -.150        —
+#     spot-up share         .834        .882        .527        —
+#     on-ball grouped       .840        .826        .361      .373
+#     off-ball grouped      .844        .845        .283      .347
+#
+# ON OFFENCE THE PLAYER PICKS THE ACTION, SO THE SHARE IS RELIABLE AT EVERY
+# GRANULARITY — no grouping needed, iso share alone is .82. ON DEFENCE THE
+# OPPONENT PICKS IT, so the same statistic is noise until it is coarsened to the
+# point where it describes a job rather than a fixture. Same tag, same maths,
+# opposite conclusions, and the reason is whose decision the number records.
+#
+# THE PART THAT AFFECTS ALREADY-SHIPPED VERDICTS. The offensive play-type PPP —
+# not the share, the efficiency — measures:
+#
+#     iso PPP        .425 pooled  (within-team unmeasurable, 5.9 units)
+#     pnr PPP        unmeasurable (nobody clears 8 attempts in both halves)
+#     spot-up PPP   -.135 pooled, -.203 within-team   ANTI-CORRELATED
+#     on-ball PPP    .142 pooled,  .217 within-team
+#     off-ball PPP   .294 pooled,  .231 within-team
+#
+# `insights._g_playtype` shipped a trait claim off that number ("Go-to:
+# Isolation — scores 1.20 PPP, 78th percentile"), and it was the third
+# most-fired generator in the app. It is the rim-FG% mistake on a different
+# axis: plenty of attempts behind the estimate, and the quantity still does not
+# predict itself. The generator now leads with the SHARE, which is what the
+# measurement supports, and carries the PPP as an attached record.
 MEASURED_DEFENDER_NOTE = (
     "Defensive assignment shares measure far weaker than offensive ones "
     "(SB .17-.64 vs .70-.92) because the assignment is chosen by the opponent, "

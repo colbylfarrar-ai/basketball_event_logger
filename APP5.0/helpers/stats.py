@@ -294,6 +294,26 @@ def percentile(value, pool, higher_better=True):
     return round(100 * below / len(vals), 0)
 
 
+# ── ordinal suffixes (single source; lives here beside fmt_height because this
+# module is streamlit-free and imported by every layer, including the ones that
+# must never pull in a UI dependency) ───────────────────────────────────────────
+def ordinal(n):
+    """71 -> '71st', 3 -> '3rd', 12 -> '12th'. None / non-numeric -> None.
+
+    Fourteen surfaces used to hardcode `f"{pct}th"`, which rendered real
+    percentiles as "71th pct", "73th" and "82th" across the defense, play-style,
+    scout, overview, player-card, team-card and rankings views. Percentiles land
+    on every digit, so roughly a third of those labels were wrong at any moment.
+    """
+    try:
+        n = int(round(float(n)))
+    except (TypeError, ValueError):
+        return None
+    suf = ("th" if 11 <= abs(n) % 100 <= 13
+           else {1: "st", 2: "nd", 3: "rd"}.get(abs(n) % 10, "th"))
+    return f"{n}{suf}"
+
+
 # ── player measurables formatting (single source for every printable sheet) ─────
 def fmt_height(inches):
     """Inches → feet-inches string (74 → 6'2\"); None / 0 / non-numeric → None."""

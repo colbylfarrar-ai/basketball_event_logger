@@ -24,6 +24,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+
 # Semantic colours (the per-page ACCENT is passed in where it matters).
 # GOOD/BAD are read off helpers.ui at CALL time — page_chrome re-resolves them
 # per viewer (colorblind-safe pair when the coach set cb_safe), and pandas
@@ -100,7 +102,7 @@ def pctile_bar(label, value_str, p):
     """One percentile-bar row of HTML (uses the .pl-pct-* classes)."""
     c = pctile_color(p)
     w = 0 if p is None else max(2, min(100, p))
-    rank = f"{p}th" if p is not None else "—"
+    rank = _ORD(p) or "—"
     return (f"<div class='pl-pct'><div class='pl-pct-top'>"
             f"<span class='pl-pct-lbl'>{html.escape(str(label))}</span>"
             f"<span class='pl-pct-val'>{html.escape(str(value_str))} · "

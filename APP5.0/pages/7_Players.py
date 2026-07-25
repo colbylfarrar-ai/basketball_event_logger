@@ -59,6 +59,7 @@ import helpers.manual_box as MB
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.seasons as SEAS
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 _cfg, ACCENT = page_chrome("Players")
 # The Players page is a whole-league (multi-team) pool, so every tracked surface
@@ -730,7 +731,12 @@ with tab_lead:
                 y=[r["name"] for r in top_n], text=txt, texttemplate="%{text}",
                 textfont=dict(size=9), colorscale=HEAT, zmin=0, zmax=100,
                 colorbar=dict(title="pctile"),
-                hovertemplate="%{y} · %{x}<br>%{z}th pctile (%{text})<extra></extra>"))
+                # plotly cannot call Python per cell, so the ordinal suffix is
+                # precomputed rather than hardcoded as "th" (which rendered
+                # real percentiles as "71th", "73th", "82th")
+                customdata=[[_ORD(v) for v in row] for row in z],
+                hovertemplate=("%{y} · %{x}<br>%{customdata} pctile "
+                               "(%{text})<extra></extra>")))
             hm.update_layout(template="plotly_dark", height=max(360, 26 * len(top_n)),
                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                              margin=dict(l=4, r=4, t=10, b=30),
@@ -1578,7 +1584,7 @@ def _fx_plab():
                         f"<b>{b['name']}</b><br>"
                         f"<span style='color:{clr};font-weight:700;font-size:12px'>"
                         f"{b['tier'].upper()}</span>"
-                        f" <span style='color:#8b949e;font-size:11px'>{b['pct']}th "
+                        f" <span style='color:#8b949e;font-size:11px'>{_ORD(b['pct'])} "
                         f"pctl</span><br>"
                         f"<span style='font-size:11px;color:#8b949e'>{b['desc']}</span>"
                         f"</div>", unsafe_allow_html=True)

@@ -109,6 +109,7 @@ import helpers.seasons as SEAS
 _cfg, ACCENT = page_chrome("Team Dashboard")
 # Re-read per run AFTER page_chrome so the viewer's colorblind-safe pair lands
 import helpers.ui as _uimod
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 GOOD = _uimod.GOOD
 BAD = _uimod.BAD
 BLUE = "#58a6ff"
@@ -2508,8 +2509,8 @@ if _tdview == "Charts":
                          "holds its own on the boards")
                 _verdict_lines([(
                     "glass", None,
-                    f"Offensive glass sits at the <b>{_rb_opct:.0f}th "
-                    f"percentile</b>, defensive glass the <b>{_rb_dpct:.0f}th"
+                    f"Offensive glass sits at the <b>{_ORD(_rb_opct)} "
+                    f"percentile</b>, defensive glass the <b>{_ORD(_rb_dpct)}"
                     f"</b> — this team {_rb_w}.")])
 
             rm = st.columns(6)
@@ -2706,9 +2707,9 @@ if _tdview == "Charts":
             if _df_dpct is not None and _df_tpct is not None:
                 _df_lines.append((
                     "defense", None,
-                    f"Defense sits at the <b>{_df_dpct:.0f}th percentile</b> "
+                    f"Defense sits at the <b>{_ORD(_df_dpct)} percentile</b> "
                     f"league-wide; it forces turnovers at the "
-                    f"<b>{_df_tpct:.0f}th</b>."))
+                    f"<b>{_ORD(_df_tpct)}</b>."))
             # opponents' most valuable look vs us — points per attempt so 2s
             # and 3s compare honestly
             _df_zdt = bundle["zones_by_type"]["def"]
@@ -4628,7 +4629,10 @@ def _fx_chadv():
                 r=rvals, theta=theta, fill="toself", name=team["name"],
                 line=dict(color=CYBER, width=2.5),
                 fillcolor=f"rgba({ar},{ag},{ab},0.28)",
-                hovertemplate="%{theta}: %{r:.0f}th pct<extra></extra>"))
+                # plotly cannot call Python per point, so the ordinal suffix is
+                # precomputed into customdata rather than hardcoded as "th"
+                customdata=[_ORD(v) for v in rvals],
+                hovertemplate="%{theta}: %{customdata} pct<extra></extra>"))
             dna.update_layout(
                 template="plotly_dark", height=440,
                 paper_bgcolor="rgba(0,0,0,0)", showlegend=True,

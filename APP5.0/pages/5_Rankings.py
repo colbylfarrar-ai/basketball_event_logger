@@ -106,6 +106,7 @@ def _archive_note():
 # futuristic-lab palette (mirrors the Team Analytics advanced layer)
 # Re-read per run AFTER page_chrome so the viewer's colorblind-safe pair lands
 import helpers.ui as _uimod
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 GOOD = _uimod.GOOD
 BAD = _uimod.BAD
 BLUE = "#58a6ff"
@@ -236,7 +237,7 @@ def _pctile_bar(label, val_txt, pct):
     """One HTML percentile bar row (reuses the global .pctile-* classes)."""
     clr = _pctile_color(pct)
     width = 0 if pct is None else max(2, pct)
-    rank_txt = "—" if pct is None else f"{pct:.0f}th"
+    rank_txt = "—" if pct is None else f"{_ORD(pct)}"
     return (
         f"<div class='pctile-row'><div class='pctile-label-row'>"
         f"<span class='pctile-stat'>{label}</span>"

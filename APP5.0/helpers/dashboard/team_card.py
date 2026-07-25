@@ -23,6 +23,7 @@ import streamlit as st
 from database.db import query
 from helpers.cards import tier as _tier
 import helpers.team_analytics as TA
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 
 # ── cached data the header needs beyond ctx ─────────────────────────────────────
@@ -298,7 +299,7 @@ def render_header(ctx):
                     f"<div style='font-size:18px;font-weight:700;color:var(--text)'>"
                     f"{_gt['value']}</div>"
                     f"<div style='font-size:11px;color:{_clr};font-weight:600'>"
-                    f"{_gt['pct']}th pct</div>"
+                    f"{_ORD(_gt['pct'])} pct</div>"
                     f"<div style='font-size:11px;color:var(--subtext);margin-top:2px'>"
                     f"{_gt['tag']}</div></div>")
             st.markdown(

@@ -16,6 +16,7 @@ light up automatically.
 from __future__ import annotations
 
 import logging
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 #: Failures inside the feed builders used to be `except Exception: pass` at
 #: fourteen sites, which made a raising engine indistinguishable from an engine
@@ -234,10 +235,10 @@ def _g_playtype(row, pools, d):
     z = (pct - 50) / 15.0
     if pct >= 50:
         txt = (f"**Go-to: {label}** — scores **{ppp:.2f} PPP** on {label.lower()} "
-               f"({pct:.0f}th pctile, {poss} poss); their bread-and-butter.")
+               f"({_ORD(pct)} pctile, {poss} poss); their bread-and-butter.")
     else:
         txt = (f"**Take away the {label.lower()}** — only **{ppp:.2f} PPP** "
-               f"({pct:.0f}th pctile, {poss} poss); make them beat you another way.")
+               f"({_ORD(pct)} pctile, {poss} poss); make them beat you another way.")
     return {"text": txt, "score": abs(pct - 50) / 15.0, "z": z,
             "metric": "PlayType", "n": poss}
 

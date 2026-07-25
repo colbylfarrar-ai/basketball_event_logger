@@ -26,6 +26,7 @@ import helpers.scoutboard as SB
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.settings_utils as SU
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 
 # Sections a coach can include / exclude on their scout sheet. Applies to BOTH
@@ -812,12 +813,12 @@ def render(ctx):
             st.markdown("**Predictable & inefficient** (a scout's gift — cut or fix):")
             for r in drift["overused"]:
                 st.markdown(f"- {r['label']} — {r['share'] * 100:.0f}% of sets · "
-                            f"{r['PPP']:.2f} PPP ({r['pct']:.0f}th pctl)")
+                            f"{r['PPP']:.2f} PPP ({_ORD(r['pct'])} pctl)")
         if drift["underused"]:
             st.markdown("**Efficient but under-used** (a weapon on the shelf):")
             for r in drift["underused"]:
                 st.markdown(f"- {r['label']} — only {r['share'] * 100:.0f}% of sets · "
-                            f"{r['PPP']:.2f} PPP ({r['pct']:.0f}th pctl)")
+                            f"{r['PPP']:.2f} PPP ({_ORD(r['pct'])} pctl)")
 
     # ── should they shoot more 3s or 2s? ─────────────────────────────────────
     if _show("breakeven"):

@@ -41,6 +41,7 @@ from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile
                            gauge_dial, scoring_donut as _donut, verdict_card)
 from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            hot_zones as _hot_zones)
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 # ── shared ctx builder (Tier 2 item 13) ─────────────────────────────────────────
 # The heavy per-player feed set behind the card, cached HERE so the Players page,
@@ -1327,7 +1328,7 @@ def render_card(ctx):
 
                 def _chip(k):
                     c = _ranked[k]
-                    _pctbit = (f" · {c['pct']}th pct"
+                    _pctbit = (f" · {_ORD(c['pct'])} pct"
                                if c.get("pct") is not None else "")
                     return _glass(
                         "GO-TO SET" if k == _go_k else "TAKE-AWAY",
@@ -1677,7 +1678,7 @@ def render_card(ctx):
         rk = st.columns(3)
         rk[0].metric("League rank", f"#{P['Rank']} of {n}")
         rk[1].metric("OVERALL", f"{P['OVERALL']:.1f}")
-        rk[2].metric("Percentile", f"{pctile_ovr}th")
+        rk[2].metric("Percentile", f"{_ORD(pctile_ovr)}")
 
         rank_stats = [("OVERALL", "f1"), ("OFFENSE", "f1"), ("DEFENSE", "f1"),
                       ("PLAYMAKING", "f1"), ("REBOUNDING", "f1"), ("PPG", "f1"),
@@ -1692,7 +1693,7 @@ def render_card(ctx):
             pos = next(i for i, r in enumerate(sr, 1) if r is P)
             rrows.append({"Stat": key, "Value": _fmt(P[key], fmt),
                           "Rank": f"#{pos} of {len(pool)}",
-                          "Pctile": f"{round((len(pool)-pos)/max(len(pool)-1,1)*100)}th"})
+                          "Pctile": f"{_ORD((len(pool)-pos)/max(len(pool)-1,1)*100)}"})
         st.dataframe(pd.DataFrame(rrows), hide_index=True, width="stretch")
 
         with st.expander("OVERALL league bar — this player highlighted"):

@@ -23,6 +23,7 @@ import helpers.court_png as CPNG
 import helpers.shrinkage as SH
 import helpers.playtypes as PT
 import helpers.printouts as PO   # shared print chrome (band / KPI tiles / doc / mark)
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 e = _html.escape
 
@@ -232,7 +233,7 @@ def player_card_html(player_id, gender=None, table=None):
         if p is None:
             continue
         prows += (f"<tr><td>{e(lbl)}</td><td class='num'>{g(key)}</td>"
-                  f"<td class='num'>{p}th</td></tr>")
+                  f"<td class='num'>{_ORD(p)}</td></tr>")
     pct_html = (f"<h2>Percentile ranks</h2><table><tr><th>Stat</th>"
                 f"<th class='num'>Value</th><th class='num'>Percentile</th></tr>"
                 f"{prows}</table>") if prows else ""

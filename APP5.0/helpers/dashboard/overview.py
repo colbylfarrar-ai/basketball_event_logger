@@ -20,6 +20,7 @@ import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.manual_box as MB
 import helpers.team_analytics as TA
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 
 @st.fragment
@@ -92,7 +93,7 @@ def render(ctx):
                     x=[b[1] for b in bars], y=[b[0] for b in bars], orientation="h",
                     marker_color=[ctx.GOOD if b[1] >= 50 else ctx.BAD for b in bars],
                     marker_line_width=0,
-                    text=[f"{b[1]:.0f}th pct ({b[2]:.1f})" for b in bars],
+                    text=[f"{_ORD(b[1])} pct ({b[2]:.1f})" for b in bars],
                     textposition="auto"))
                 ef.update_xaxes(title="League percentile", range=[0, 100])
                 ctx.style(ef, 240)

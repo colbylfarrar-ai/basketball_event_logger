@@ -39,6 +39,7 @@ from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
+from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 
 
 # Identity palette per family for the distribution donut (kept separate from the
@@ -205,12 +206,12 @@ def _render_scheme_fingerprint(ctx, g, tid, off, drows, prof):
         cc = st.columns(2)
         cc[0].markdown(glass(
             "Best scheme", best["label"],
-            f"{best['PPP']:.2f} PPP · {best['pct']}th pct · {best['poss']} poss",
+            f"{best['PPP']:.2f} PPP · {_ORD(best['pct'])} pct · {best['poss']} poss",
             color=best.get("color", "var(--text)")), unsafe_allow_html=True)
         if worst["key"] != best["key"]:
             cc[1].markdown(glass(
                 "Leakiest", worst["label"],
-                f"{worst['PPP']:.2f} PPP · {worst['pct']}th pct · "
+                f"{worst['PPP']:.2f} PPP · {_ORD(worst['pct'])} pct · "
                 f"{worst['poss']} poss", color=worst.get("color", "var(--text)")),
                 unsafe_allow_html=True)
 
@@ -487,13 +488,13 @@ def render(ctx):
             cc[0].markdown(glass(
                 "Best scheme" if not _off else "We torch",
                 best["label"],
-                f"{best['PPP']:.2f} PPP · {best['pct']}th pct · {best['poss']} poss",
+                f"{best['PPP']:.2f} PPP · {_ORD(best['pct'])} pct · {best['poss']} poss",
                 color=best["color"]), unsafe_allow_html=True)
             if worst["key"] != best["key"]:
                 cc[1].markdown(glass(
                     "Leak" if not _off else "We stall vs",
                     worst["label"],
-                    f"{worst['PPP']:.2f} PPP · {worst['pct']}th pct · "
+                    f"{worst['PPP']:.2f} PPP · {_ORD(worst['pct'])} pct · "
                     f"{worst['poss']} poss", color=worst["color"]),
                     unsafe_allow_html=True)
     else:

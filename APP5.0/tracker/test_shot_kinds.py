@@ -164,8 +164,11 @@ _v = SK.verdict(team_id=1, shots=_bad, games=10)
 ok(len(_v) == 2, "a team with a real floater problem gets verdict + evidence")
 ok(_v[0]["tone"] == "bad" and _v[1]["tone"] == "info",
    "verdict first, evidence under it")
-ok("floater" in _v[0]["text"] and "layup" in _v[0]["text"],
-   "the verdict is the points-on-the-table sentence")
+ok("4 feet to the arc" in _v[0]["text"] and "layup" in _v[0]["text"],
+   "the verdict is the points-on-the-table sentence, in the band's language")
+ok("floater" in SK.verdict(team_id=1, shots=_bad, games=10,
+                           taxonomy="kind")[0]["text"],
+   "and still speaks 'floater' when asked for the kind taxonomy")
 ok("league takes" in _v[1]["text"], "the evidence line carries the league diet")
 ok("1 points" not in _v[0]["text"], "no '1 points' -- the plural agrees")
 
@@ -192,5 +195,94 @@ for bad in (0.0, 99.0, -3.0):
     except ValueError:
         pass
 ok(True, "an out-of-range override is rejected, not applied")
+ok("shot_kinds.DEEP_FT" in MC.REGISTRY, "DEEP_FT is recal-able too")
+
+print("\n-- trap 5: the 3-point bands carry NO lower edge ---------------------")
+# A corner 3 sits 19.0-19.75 ft from the hoop -- SHORTER than the arc's 19.75
+# apex, because the corner is a straight segment nearer the rim. A band floored
+# at 19 or 19.75 (as "19-23" reads literally) would contain few corner 3s or
+# none, and the corner is the most valuable 3 on the floor. shot_type gates the
+# 3-point bands instead, so the floor is unnecessary as well as wrong.
+_corner = (CG.CORNER_X + 0.2, CG.HOOP_Y)
+ok(CG.is_corner_three(*_corner), "the fixture really is a corner 3")
+ok(CG.shot_distance(*_corner) < CG.THREE_R,
+   "and it is CLOSER to the hoop than the top of the arc -- the whole trap")
+ok(SK.classify_band(*_corner, 3) == "arc3",
+   "it still lands in the at-the-arc band, not outside the taxonomy")
+ok(SK.classify(*_corner, 3) == "corner3",
+   "and the kind cut still calls it a corner 3 -- both cuts stay correct")
+
+print("\n-- the two taxonomies agree where they must -------------------------")
+
+_mixed = ([shot(0.0, CG.HOOP_Y + 1.0) for _ in range(30)]
+          + [shot(0.0, CG.HOOP_Y + 6.0) for _ in range(30)]
+          + [shot(0.0, CG.HOOP_Y + 14.0) for _ in range(30)]
+          + [shot(0.0, CG.HOOP_Y + 21.0, value=3) for _ in range(30)]
+          + [shot(0.0, CG.HOOP_Y + 25.0, value=3) for _ in range(30)])
+_b, _k = SK.kind_table(_mixed, "band"), SK.kind_table(_mixed, "kind")
+ok(_b["rim04"]["n"] == _k["rim"]["n"],
+   "the rim cell is the same shot set under both cuts")
+ok(_b["two419"]["n"] == _k["floater"]["n"] + _k["mid"]["n"],
+   "4ft-to-arc is exactly floater + midrange -- the merge loses nothing")
+ok(_b["arc3"]["n"] + _b["deep3"]["n"]
+   == _k["corner3"]["n"] + _k["abovebreak3"]["n"],
+   "and the 3s repartition without leaking")
+ok(_b["_meta"]["located"] == _k["_meta"]["located"],
+   "coverage is a property of the shots, not of the cut")
+ok(_b["_meta"]["taxonomy"] == "band" and _k["_meta"]["taxonomy"] == "kind",
+   "a table says which cut it is, so a renderer cannot mislabel it")
+ok(set(SK.both_tables(_mixed)) == {"band", "kind"},
+   "both_tables serves both cuts from one shot list")
+
+print("\n-- reliability gates the RATES, attempts alone do not ----------------")
+
+# The load-bearing case: a player with a BIG rim sample. Attempts are not the
+# binding constraint -- reliability is. Rim FG% predicts itself at SB .11.
+_many_rim = [shot(0.0, CG.HOOP_Y + 1.0, make=(i % 2 == 0), pid=7)
+             for i in range(200)]
+_pt = SK.player_table(7, shots=_many_rim, taxonomy="band")
+_rr = SK.rate_reads(_pt, unit="player")
+ok(_pt["rim04"]["n"] == 200, "the player has 200 rim attempts")
+ok(_pt["rim04"]["fg"] is not None, "which clears the ATTEMPT gate")
+ok(_rr["rim04"]["show"] is False,
+   "and the rate is STILL withheld -- attempts cannot buy stability")
+ok(_rr["rim04"]["level"] == "withhold", "the level says so explicitly")
+ok("does not predict itself" in _rr["rim04"]["caption"],
+   "and the refusal carries its reason, not a blank cell")
+
+_many_2 = [shot(0.0, CG.HOOP_Y + 8.0, make=(i % 3 == 0), pid=8)
+           for i in range(200)]
+_rr2 = SK.rate_reads(SK.player_table(8, shots=_many_2, taxonomy="band"),
+                     unit="player")
+ok(_rr2["two419"]["show"] is True,
+   "the one band that cleared the floor is shown, not hidden")
+ok(_rr2["two419"]["level"] == "weak",
+   "but hollow -- SB .52 is not a verdict")
+ok("r=" in _rr2["two419"]["caption"],
+   "and it prints its own r inline so the dot is checkable")
+
+print("\n-- shares are the robust half, and are not gated the same way --------")
+
+_sr = SK.share_reads(SK.player_table(7, shots=_many_rim, taxonomy="band"),
+                     unit="player")
+ok(_sr["rim04"]["show"] is True,
+   "the same player's rim SHARE is shown while her rim RATE is not")
+ok(_sr["rim04"]["level"] in ("stable", "fair"),
+   "and it is not hedged into invisibility")
+
+print("\n-- the reliability floor cannot be used to undo a refusal ------------")
+
+import helpers.reliability as REL                     # noqa: E402
+
+ok(REL.WEAK_SB > REL.MEASURED_BAND[("player", "fg", "floater")],
+   "the floor sits ABOVE the measured floater FG% -- the shipped refusal holds")
+ok(REL.WEAK_SB > REL.MEASURED_BAND[("player", "fg", "rim")],
+   "and above rim FG%, the most-wanted and least reliable read in the book")
+ok(REL.level(None) == "withhold",
+   "an UNMEASURED metric is withheld, not waved through")
+ok(REL.level(0.95) == "stable" and REL.level(0.65) == "fair",
+   "the bands themselves are ordered")
+ok(abs(REL.spearman_brown(0.5) - 2 / 3) < 1e-9,
+   "Spearman-Brown corrects a half-sample r to the full-sample one")
 
 print(f"\n{PASS} checks passed.\n")

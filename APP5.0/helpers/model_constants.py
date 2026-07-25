@@ -71,6 +71,7 @@ REGISTRY = {
     # exactly one definition of it in the app.
     "shot_kinds.RIM_FT":                ("helpers.shot_kinds", "RIM_FT", _ft),
     "shot_kinds.FLOATER_FT":            ("helpers.shot_kinds", "FLOATER_FT", _ft),
+    "shot_kinds.DEEP_FT":               ("helpers.shot_kinds", "DEEP_FT", _ft),
 }
 
 

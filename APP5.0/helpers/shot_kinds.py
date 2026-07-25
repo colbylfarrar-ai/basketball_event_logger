@@ -89,6 +89,54 @@ values so it fires no earlier than the evidence allows. Unit counts behind those
 correlations are small (42 players, 9 teams), so treat the r's as order-of-
 magnitude, which is exactly why the gates are set conservatively above them.
 
+THE SECOND TAXONOMY — DEPTH BANDS (added 2026-07-26)
+---------------------------------------------------
+The 5 kinds split 3s by ANGLE (corner vs above-break) and 2s by depth. The
+BANDS cut splits everything by depth: 0-4 ft, 4 ft-to-arc, a 3 at the arc, a 3
+from 23+. Both now live here, and both render — the decision was to show the
+two cuts side by side rather than replace one, because each carries information
+the other cannot.
+
+Re-measured on the live book (F / 2025-2026, 35 games, 3,246 shots) with 200
+random half-splits rather than one odd/even split, because at 24-28 qualifying
+players a single split's r has a sampling spread near +/-.2 — wider than the
+differences this choice turned on. What that found:
+
+    league table, the rendered pool
+        rim04    836  27.4%  FG 54.3  PPS 1.086
+        two419  1147  37.5%  FG 27.4  PPS 0.548
+        arc3     692  22.6%  FG 27.6  PPS 0.828
+        deep3    381  12.5%  FG 25.7  PPS 0.772
+
+    player SHARE reliability (SB)   kind cut        band cut
+        the problem band            .81 floater     .87 two419
+        the midrange                .70 mid         (merged in)
+        the deep look               .90 abovebreak3 .91 deep3
+
+    player RATE reliability (SB, whole book — the conservative column)
+        rim / rim04 FG%             .11   <- the largest sample, the worst r
+        floater FG%                 .285
+        two419 FG%                  .52   <- best available, still not a verdict
+        above-break-3 FG%          -.25
+
+1. MERGING HELPS SHARES. Folding floater+mid into one 4ft-to-arc band raises
+   the share's reliability (.81/.70 -> .87) and follows the measurement that
+   made the merge worth trying: the floater (0.569 PPS) and the midrange
+   (0.503) are the same shot, and the app was splitting a distinction the
+   league does not have.
+
+2. MERGING DOES NOT RESCUE RATES, WHICH ANSWERS THE QUESTION THIS CUT WAS FOR.
+   The open question was whether coarser cells would finally give enough n per
+   player for RATES to clear. They roughly double the qualifying players (5-6
+   -> 10-11) and lift the best band from SB .285 to .52 — real movement, and
+   still short. Player rates stay withheld or hollow-dotted; see `rate_reads`.
+
+3. THE MOST WANTED READ IS THE LEAST RELIABLE ONE. Rim FG% — "does she finish"
+   — is measured from more attempts per player than any other cell in the book
+   and predicts itself at SB .11. This is not a sample-size problem and more
+   games will not fix it, which is why the refusal is wired to a measured
+   reliability floor rather than to an attempt count.
+
 Streamlit-free.
 """
 from __future__ import annotations
@@ -107,8 +155,18 @@ RIM_FT = 4.0
 #: is no worse, so there is nothing left to separate.
 FLOATER_FT = 10.0
 
+#: The 3-point depth split. Measured on the live book, the 3s beyond 23 ft are
+#: 0.772 PPS against 0.828 inside it — a real gap, and a smaller one than the
+#: corner/above-break angular split (0.874 vs 0.784) it sits beside.
+DEEP_FT = 23.0
+
 #: Ordered for display: worst-to-best is not the order a coach reads, distance is.
 KINDS = ("rim", "floater", "mid", "corner3", "abovebreak3")
+
+#: The DEPTH taxonomy — four bands, split by distance and gated by the logged
+#: shot_type so a 2 and a 3 at the same distance are never pooled. See
+#: `classify_band` for why the 3-point bands carry no lower edge.
+BANDS = ("rim04", "two419", "arc3", "deep3")
 
 #: Shots with no coordinate. Never dropped, never folded into a real kind — they
 #: are 5.5% of the book and pretending they are zero would bias every share.
@@ -121,6 +179,22 @@ KIND_LABELS = {
     "corner3": "Corner 3",
     "abovebreak3": "Above-break 3",
     UNKNOWN: "Unlocated",
+}
+
+BAND_LABELS = {
+    "rim04": "0-4 ft",
+    "two419": "4 ft - arc",
+    "arc3": "3 at the arc",
+    "deep3": f"3 from {DEEP_FT:.0f}+ ft",
+    UNKNOWN: "Unlocated",
+}
+
+#: A coach reads a distance, not a slug. Used in captions and verdicts.
+BAND_PROSE = {
+    "rim04": "inside 4 feet",
+    "two419": "from 4 feet to the arc",
+    "arc3": "from the arc",
+    "deep3": f"from {DEEP_FT:.0f} feet and out",
 }
 
 # ── display gates, set by the split-half measurement in the docstring ─────────
@@ -188,6 +262,39 @@ def classify(x, y, shot_type):
     return "mid"
 
 
+def classify_band(x, y, shot_type):
+    """The DEPTH band of a shot — one of BANDS, or UNKNOWN.
+
+    Four bands, gated by the logged shot_type so a 2 and a 3 at the same
+    distance never share a cell:
+
+        rim04    a 2 inside RIM_FT
+        two419   a 2 beyond RIM_FT (out to the arc, by definition of a 2)
+        arc3     a 3 inside DEEP_FT
+        deep3    a 3 at DEEP_FT or beyond
+
+    WHY THE 3-POINT BANDS HAVE NO LOWER EDGE. The cut was specified as
+    0-4 / 4-19 / 19-23 / 23+, and the 19 cannot be taken literally. A corner 3
+    sits 19.0-19.75 ft from the hoop — SHORTER than the arc's 19.75 ft top,
+    because the corner is a straight segment closer to the rim than the arc's
+    apex. A band floored at 19 (or at 19.75) would therefore contain few corner
+    3s or none at all, and the corner is the most valuable 3 on the floor
+    (0.874 PPS against 0.784 above the break). With shot_type as the gate the
+    floor is redundant anyway: every logged 3 is behind the line by the coach's
+    own tap, and the book is clean — zero 3s logged inside the arc. So the 3s
+    split at DEEP_FT only.
+
+    Symmetrically, `two419`'s upper edge is not 19 but "wherever the 2 ends",
+    which is what a shot_type gate already means.
+    """
+    if x is None or y is None:
+        return UNKNOWN
+    d = CG.shot_distance(x, y)
+    if shot_type == 3:
+        return "deep3" if d >= DEEP_FT else "arc3"
+    return "rim04" if d <= RIM_FT else "two419"
+
+
 def classify_shot(shot):
     """classify() for a located_shots()/mapped_shots() dict.
 
@@ -201,20 +308,46 @@ def classify_shot(shot):
     return classify(shot.get("x"), shot.get("y"), shot.get("value"))
 
 
+def classify_band_shot(shot):
+    """classify_band() for a located_shots()/mapped_shots() dict."""
+    if shot.get("approx"):
+        return UNKNOWN
+    return classify_band(shot.get("x"), shot.get("y"), shot.get("value"))
+
+
+# ── the two taxonomies, as data so one aggregation path serves both ───────────
+#: name -> (ordered cells, labels, classifier, prose). Callers pass a taxonomy
+#: name; nothing downstream branches on which one it got. Adding a third cut
+#: means adding a row here, not forking kind_table.
+TAXONOMIES = {
+    "kind": (KINDS, KIND_LABELS, classify_shot, None),
+    "band": (BANDS, BAND_LABELS, classify_band_shot, BAND_PROSE),
+}
+
+#: The taxonomy that owns DISPLAY and PLAYER-level reads. Depth beat angle on
+#: every share-reliability comparison measured (player 4ft-to-arc share SB .87
+#: against floater .81 / mid .70) and is the only cut under which any per-player
+#: RATE clears the reliability floor at all. The 5 kinds keep the model — see
+#: stats._sq_loc — and keep their place beside these on screen, because the
+#: corner/above-break split is angular information the depth cut cannot carry.
+DISPLAY_TAXONOMY = "band"
+
+
 def _blank():
     return {"n": 0, "fgm": 0, "pts": 0.0}
 
 
-def _finish(agg, located):
-    """Turn raw {kind: {n,fgm,pts}} counters into the display dict.
+def _finish(agg, located, taxonomy="kind"):
+    """Turn raw {cell: {n,fgm,pts}} counters into the display dict.
 
-    `share` is over LOCATED attempts only (unknown cannot be assigned a kind, so
+    `share` is over LOCATED attempts only (unknown cannot be assigned a cell, so
     including it in the denominator would shrink every share by the coverage
     rate). Rates are None below MIN_KIND_RATE_ATT rather than being rounded into
     a number a caller might print.
     """
+    cells, labels, _, _ = TAXONOMIES[taxonomy]
     out = {}
-    for k in (*KINDS, UNKNOWN):
+    for k in (*cells, UNKNOWN):
         a = agg.get(k) or _blank()
         rated = a["n"] >= MIN_KIND_RATE_ATT
         out[k] = {
@@ -225,22 +358,26 @@ def _finish(agg, located):
             "fg": (a["fgm"] / a["n"]) if (rated and a["n"]) else None,
             "pps": (a["pts"] / a["n"]) if (rated and a["n"]) else None,
             "rated": rated,
-            "label": KIND_LABELS[k],
+            "label": labels[k],
         }
     return out
 
 
-def kind_table(shots):
-    """{kind: {n, fgm, pts, share, fg, pps, rated, label}} over a shot list.
+def kind_table(shots, taxonomy="kind"):
+    """{cell: {n, fgm, pts, share, fg, pps, rated, label}} over a shot list.
 
-    `shots` is a located_shots()/mapped_shots() list. Adds a "_meta" key with
+    `shots` is a located_shots()/mapped_shots() list. `taxonomy` picks the cut —
+    "kind" (the 5 angular/depth kinds) or "band" (the 4 depth bands); both are
+    aggregated by this one path so they cannot drift. Adds a "_meta" key with
     the located / total counts so every caller can print its own coverage
-    instead of guessing at it.
+    instead of guessing at it, plus the taxonomy name so a renderer handed a
+    table can label it without being told twice.
     """
+    _, _, classifier, _ = TAXONOMIES[taxonomy]
     agg = defaultdict(_blank)
     located = 0
     for s in shots:
-        k = classify_shot(s)
+        k = classifier(s)
         a = agg[k]
         a["n"] += 1
         if k != UNKNOWN:
@@ -248,25 +385,42 @@ def kind_table(shots):
         if s.get("make"):
             a["fgm"] += 1
             a["pts"] += float(s.get("value") or 2)
-    out = _finish(agg, located)
+    out = _finish(agg, located, taxonomy)
     total = sum(a["n"] for a in agg.values())
     out["_meta"] = {
         "total": total,
         "located": located,
         "located_share": (located / total) if total else None,
+        "taxonomy": taxonomy,
     }
     return out
 
 
-def league_table(gender=None, game_ids=None, events=None, shots=None):
-    """The league-wide kind table — the baseline every team read compares to.
+def band_table(shots):
+    """The depth-band table — kind_table over the 4-band taxonomy."""
+    return kind_table(shots, taxonomy="band")
+
+
+def both_tables(shots):
+    """{"band": ..., "kind": ...} in ONE pass' worth of shot list.
+
+    The display decision is to show both cuts rather than replace one with the
+    other, so this exists to make "both" the cheap call and stop a renderer from
+    fetching the shot feed twice on a 1 vCPU box.
+    """
+    return {"band": kind_table(shots, "band"), "kind": kind_table(shots, "kind")}
+
+
+def league_table(gender=None, game_ids=None, events=None, shots=None,
+                 taxonomy="kind"):
+    """The league-wide table — the baseline every team read compares to.
 
     Pooled across every tracked game, which is the only level this book can fit
-    a stable per-kind rate at.
+    a stable per-cell rate at.
     """
     if shots is None:
         shots = _shots(gender, game_ids, events)
-    return kind_table(shots)
+    return kind_table(shots, taxonomy)
 
 
 def _shots(gender=None, game_ids=None, events=None):
@@ -284,10 +438,10 @@ def _shots(gender=None, game_ids=None, events=None):
 
 
 def team_table(team_id, gender=None, game_ids=None, events=None, shots=None,
-               offense=True):
-    """Kind table for one team's own shots (offense) or its opponents' (defense).
+               offense=True, taxonomy="kind"):
+    """Table for one team's own shots (offense) or its opponents' (defense).
 
-    The defensive view is what each team CONCEDES by kind, which is the read
+    The defensive view is what each team CONCEDES by cell, which is the read
     behind "our 2-3 gives up rim".
     """
     if shots is None:
@@ -295,23 +449,91 @@ def team_table(team_id, gender=None, game_ids=None, events=None, shots=None,
     mine = [s for s in shots
             if (s.get("team_id") == team_id) == bool(offense)
             and s.get("team_id") is not None]
-    return kind_table(mine)
+    return kind_table(mine, taxonomy)
 
 
-def player_table(player_id, gender=None, game_ids=None, events=None, shots=None):
-    """Kind table for one player's shots.
+def player_table(player_id, gender=None, game_ids=None, events=None, shots=None,
+                 taxonomy="kind"):
+    """Table for one player's shots.
 
-    SHARES here are trustworthy above MIN_PLAYER_SHARE_ATT. The per-kind `fg`
+    SHARES here are trustworthy above MIN_PLAYER_SHARE_ATT. The per-cell `fg`
     and `pps` are gated by MIN_KIND_RATE_ATT and will almost always be None at
-    player level in this book — that is correct, not a bug. See the docstring's
-    reliability table: player floater FG% has r=.078 against itself.
+    player level in this book — that is correct, not a bug. Even where a rate
+    survives that attempt gate it may not survive RELIABILITY: see
+    `rate_reads`, which is the gate a renderer should actually consult.
     """
     if shots is None:
         shots = _shots(gender, game_ids, events)
-    return kind_table([s for s in shots if s.get("player_id") == player_id])
+    return kind_table([s for s in shots if s.get("player_id") == player_id],
+                      taxonomy)
 
 
-def kind_by_tag(events, tag, team_id=None, offense=True, min_n=MIN_KIND_RATE_ATT):
+def rate_reads(table, unit="player"):
+    """Per-cell display permission for the RATES in a table.
+
+    Returns {cell: {"level", "sb", "show", "glyph", "caption"}}. Two independent
+    bars, and a cell must clear both:
+
+      1. ATTEMPTS — MIN_KIND_RATE_ATT, already applied by `_finish` (a rate is
+         None below it). Precision.
+      2. RELIABILITY — does this metric predict itself at this unit and cell?
+         Stability. `helpers/reliability.py` holds the measured book.
+
+    The second bar is the one that matters and the one that was missing. A
+    player's rim FG% is estimated from more attempts than any other cell in the
+    book and still predicts itself at SB .11, so it clears bar 1 and fails bar
+    2. Attempts buy you precision about a quantity that is not stable; they
+    cannot buy you stability.
+
+    Cells above the floor but below `reliability.FAIR_SB` are SHOWN with a
+    hollow dot and their r printed inline, not hidden — the standing rule here
+    is density, and a number labelled with its own unreliability is more
+    information than a blank cell. Cells below the floor are withheld with a
+    reason, because a dot on noise still puts the noise on screen.
+    """
+    import helpers.reliability as REL
+    taxonomy = table.get("_meta", {}).get("taxonomy", "kind")
+    cells, _, _, _ = TAXONOMIES[taxonomy]
+    out = {}
+    for k in cells:
+        sb = REL.measured(unit, "fg", k)
+        lvl = REL.level(sb)
+        cell = table.get(k) or {}
+        out[k] = {
+            "level": lvl,
+            "sb": sb,
+            "show": lvl != "withhold" and cell.get("fg") is not None,
+            "glyph": REL.LEVEL_GLYPHS[lvl],
+            "caption": REL.caption(sb, metric=f"{cell.get('label', k)} FG%"),
+        }
+    return out
+
+
+def share_reads(table, unit="player"):
+    """Per-cell display permission for the SHARES in a table.
+
+    Shares are the robust half of this module — every cell, both units, both
+    taxonomies measured SB .70 or better — so this rarely withholds. It exists
+    so a renderer asks the same question of both halves of a table instead of
+    dotting rates and leaving shares naked.
+    """
+    import helpers.reliability as REL
+    taxonomy = table.get("_meta", {}).get("taxonomy", "kind")
+    cells, _, _, _ = TAXONOMIES[taxonomy]
+    out = {}
+    for k in cells:
+        sb = REL.measured(unit, "share", k)
+        if sb is None:
+            sb = REL.measured(unit, f"{'band' if taxonomy == 'band' else 'kind'}_share")
+        lvl = REL.level(sb)
+        out[k] = {"level": lvl, "sb": sb, "show": lvl != "withhold",
+                  "glyph": REL.LEVEL_GLYPHS[lvl],
+                  "caption": REL.caption(sb, metric="Share")}
+    return out
+
+
+def kind_by_tag(events, tag, team_id=None, offense=True, min_n=MIN_KIND_RATE_ATT,
+                taxonomy="kind"):
     """Cross-tab of shot kind against an event tag — {tag_value: kind_table}.
 
     Works off raw EVENTS rather than a mapped-shots list because the tags this
@@ -342,11 +564,11 @@ def kind_by_tag(events, tag, team_id=None, offense=True, min_n=MIN_KIND_RATE_ATT
             "value": 3 if e.get("shot_type") == 3 else 2,
             "make": e.get("shot_result") == "make",
         })
-    return {v: kind_table(sh) for v, sh in buckets.items()
+    return {v: kind_table(sh, taxonomy) for v, sh in buckets.items()
             if len(sh) >= min_n}
 
 
-def kind_by_shot_tag(shots, tag, min_n=MIN_KIND_RATE_ATT):
+def kind_by_shot_tag(shots, tag, min_n=MIN_KIND_RATE_ATT, taxonomy="kind"):
     """kind_by_tag over an already-built shot list — {tag_value: kind_table}.
 
     located_shots() carries `defense` and `play_type`, so a caller that already
@@ -359,11 +581,12 @@ def kind_by_shot_tag(shots, tag, min_n=MIN_KIND_RATE_ATT):
         v = s.get(tag)
         if v:
             buckets[v].append(s)
-    return {v: kind_table(sh) for v, sh in buckets.items() if len(sh) >= min_n}
+    return {v: kind_table(sh, taxonomy) for v, sh in buckets.items()
+            if len(sh) >= min_n}
 
 
 def diet(team_id=None, player_id=None, gender=None, game_ids=None, events=None,
-         shots=None, offense=True):
+         shots=None, offense=True, taxonomy="kind"):
     """A team's or player's kind SHARES against the league's, with the gate.
 
     Returns {"table", "league", "delta", "n_located", "gated", "min_att",
@@ -374,32 +597,45 @@ def diet(team_id=None, player_id=None, gender=None, game_ids=None, events=None,
     """
     if shots is None:
         shots = _shots(gender, game_ids, events)
-    lg = kind_table(shots)
+    lg = kind_table(shots, taxonomy)
     if player_id is not None:
-        tbl = player_table(player_id, shots=shots)
+        tbl = player_table(player_id, shots=shots, taxonomy=taxonomy)
         level, min_att = "player", MIN_PLAYER_SHARE_ATT
     else:
-        tbl = team_table(team_id, shots=shots, offense=offense)
+        tbl = team_table(team_id, shots=shots, offense=offense,
+                         taxonomy=taxonomy)
         level, min_att = "team", MIN_TEAM_SHARE_ATT
     n = tbl["_meta"]["located"]
+    cells, _, _, _ = TAXONOMIES[taxonomy]
     delta = {k: ((tbl[k]["share"] - lg[k]["share"])
                  if tbl[k]["share"] is not None and lg[k]["share"] is not None
                  else None)
-             for k in KINDS}
+             for k in cells}
     return {"table": tbl, "league": lg, "delta": delta, "n_located": n,
-            "gated": n >= min_att, "min_att": min_att, "level": level}
+            "gated": n >= min_att, "min_att": min_att, "level": level,
+            "taxonomy": taxonomy}
 
 
-def conversion_value(league):
-    """League points-per-shot gap between a rim look and a floater.
+#: The two cells the verdict compares, per taxonomy: the good look, and the one
+#: a team takes too many of. Under the depth cut the problem band is wider
+#: (every 2 outside 4 ft, 37.5% of the book at 0.548 PPS) and the gap it opens
+#: against the rim is correspondingly larger — +0.538 against the 5-kind cut's
+#: +0.517 — because the midrange the kind cut split off is no better than the
+#: floater and merging them stopped pretending otherwise.
+VERDICT_PAIR = {"kind": ("rim", "floater"), "band": ("rim04", "two419")}
 
-    The unit behind the verdict: what one floater turned into a layup is worth,
-    league-wide. Uses league rates rather than the team's own because per-team
-    floater PPS only reaches SB .67 while the SHARE it multiplies reaches .74 —
-    so the reliable half of the sentence carries the team-specific part and the
-    league carries the rate.
+
+def conversion_value(league, taxonomy="kind"):
+    """League points-per-shot gap between a rim look and the problem band.
+
+    The unit behind the verdict: what one bad-band shot turned into a layup is
+    worth, league-wide. Uses league rates rather than the team's own because a
+    team's own per-cell PPS only reaches SB .67 while the SHARE it multiplies
+    reaches .88 — so the reliable half of the sentence carries the team-specific
+    part and the league carries the rate.
     """
-    r, f = league["rim"]["pps"], league["floater"]["pps"]
+    good, bad = VERDICT_PAIR[taxonomy]
+    r, f = league[good]["pps"], league[bad]["pps"]
     if r is None or f is None:
         return None
     return r - f
@@ -416,19 +652,20 @@ def excess_floaters(d, league=None):
     lg = league or d["league"]
     tbl = d["table"]
     n = d["n_located"]
-    if not n or lg["floater"]["share"] is None:
+    _, bad = VERDICT_PAIR[d.get("taxonomy", "kind")]
+    if not n or lg[bad]["share"] is None:
         return None
-    raw = tbl["floater"]["share"]
+    raw = tbl[bad]["share"]
     if raw is None:
         return None
-    lgs = lg["floater"]["share"]
+    lgs = lg[bad]["share"]
     shrunk = (raw * n + lgs * SHARE_K) / (n + SHARE_K)
     return {"share": raw, "share_shrunk": shrunk, "league_share": lgs,
             "n": n, "excess": (shrunk - lgs) * n}
 
 
 def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
-            events=None, shots=None, games=None):
+            events=None, shots=None, games=None, taxonomy=None):
     """The coach sentence, or [] when the evidence does not support one.
 
     Shape: the points-on-the-table line first, the league-comparison diet line
@@ -440,11 +677,14 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
     """
     if shots is None:
         shots = _shots(gender, game_ids, events)
-    d = diet(team_id=team_id, player_id=player_id, shots=shots)
+    taxonomy = taxonomy or DISPLAY_TAXONOMY
+    d = diet(team_id=team_id, player_id=player_id, shots=shots,
+             taxonomy=taxonomy)
     if not d["gated"]:
         return []
     lg, tbl = d["league"], d["table"]
-    gap = conversion_value(lg)
+    good, bad = VERDICT_PAIR[taxonomy]
+    gap = conversion_value(lg, taxonomy)
     ex = excess_floaters(d)
     if gap is None or ex is None or ex["excess"] <= 0:
         return []
@@ -463,10 +703,14 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
     elif pts < MIN_VERDICT_PTS_TOTAL:
         return []
 
+    # Each taxonomy gets its own noun: the kind cut has a word a coach already
+    # uses ("floater"), the depth cut does not and must name the distance.
+    subject, where = ((f"shot {BAND_PROSE[bad]}", BAND_PROSE[bad])
+                      if taxonomy == "band" else ("floater", "from 4-10 feet"))
     lines = [{
         "text": (
-            f"Every floater you turn into a layup is worth "
-            f"{gap:+.2f} points. You take {tbl['floater']['n']} of them — "
+            f"Every {subject} you turn into a layup is worth "
+            f"{gap:+.2f} points. You take {tbl[bad]['n']} of them — "
             f"{ex['excess']:.0f} more than a league-average diet — which is "
             f"{pts:.0f} {'point' if round(pts) == 1 else 'points'} left on "
             f"the floor"
@@ -476,11 +720,11 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
     }]
 
     fshare, lshare = ex["share"], ex["league_share"]
-    fg = tbl["floater"]["fg"]
-    ev = (f"{fshare * 100:.0f}% of your shots come from 4-10 feet"
+    fg = tbl[bad]["fg"]
+    ev = (f"{fshare * 100:.0f}% of your shots come {where}"
           + (f", where you shoot {fg * 100:.0f}%" if fg is not None else "")
           + f". The league takes {lshare * 100:.0f}% there. "
-            f"At the rim the league is at {lg['rim']['pps']:.2f} points a shot; "
-            f"in that band it is {lg['floater']['pps']:.2f}.")
+            f"At the rim the league is at {lg[good]['pps']:.2f} points a shot; "
+            f"in that band it is {lg[bad]['pps']:.2f}.")
     lines.append({"text": ev, "tone": "info", "n": n, "confidence": conf})
     return lines

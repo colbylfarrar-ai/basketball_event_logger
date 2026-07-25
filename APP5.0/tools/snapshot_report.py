@@ -49,7 +49,8 @@ def tag_coverage(season="2025-2026"):
     ev = query(
         """SELECT ge.event_type, ge.shot_result, ge.turnover_type,
                   ge.guarded_by_id, ge.rebound_by_id, ge.stolen_by_id,
-                  ge.play_type, ge.defense, ge.official_id
+                  ge.play_type, ge.defense, ge.official_id,
+                  ge.hockey_from_id
            FROM game_events ge JOIN games g ON g.id=ge.game_id
            WHERE g.tracked=1 AND g.season=?""", (season,))
     n = defaultdict(int)
@@ -67,6 +68,13 @@ def tag_coverage(season="2025-2026"):
             n["play_type (shots)"] += e["play_type"] is not None
             d["defense (shots)"] += 1
             n["defense (shots)"] += e["defense"] is not None
+            # hockey_from is the pre-registered re-gate counter (spec Part 1
+            # §3). Denominator is ALL shots, not made ones: the tag is offered
+            # on every shot flow, so counting only makes would understate a
+            # coach's actual tagging by the league miss rate and delay the
+            # re-gate for no reason. The HAST/G leaf itself stays make-only.
+            d["hockey_from (shots)"] += 1
+            n["hockey_from (shots)"] += e["hockey_from_id"] is not None
         elif et == "turnover":
             d["turnover_type"] += 1
             n["turnover_type"] += e["turnover_type"] is not None
@@ -78,6 +86,25 @@ def tag_coverage(season="2025-2026"):
     return {k: {"n": n[k], "of": d[k],
                 "pct": round(100.0 * n[k] / d[k], 1) if d[k] else None}
             for k in d}
+
+
+def hast_regate(season="2025-2026"):
+    """Hockey-assist capture volume vs the pre-registered re-gate threshold
+    (spec Part 1 §3). The HAST/G leaf came back INCONCLUSIVE at #8d — inert
+    with 0 tagged, so rho tied the baseline exactly, which is NOT evidence of
+    no signal. This is the counter that says when re-running the gate is
+    worthwhile; adoption still happens only through tools/gate_xa_hast.py.
+
+    Counts ALL tagged shots, make or miss, because that measures a coach's
+    TAGGING. The leaf stays make-only, being a sibling of AST."""
+    import helpers.passing_chains as PC
+    ev = query(
+        """SELECT ge.event_type, ge.shot_result, ge.hockey_from_id,
+                  ge.pass_from_id, ge.game_id
+           FROM game_events ge JOIN games g ON g.id=ge.game_id
+           WHERE g.tracked=1 AND g.season=?""", (season,))
+    cov = PC.hast_coverage(events=ev)
+    return {**cov, "line": PC.coverage_line(cov)}
 
 
 def lineup_coverage(season="2025-2026"):
@@ -137,6 +164,7 @@ def main():
         "games": game_facts(),
         "tracked": [dict(r) for r in tracked_game_list(args.season)],
         "tag_coverage": tag_coverage(args.season),
+        "hast_regate": hast_regate(args.season),
         "lineup_coverage": lineup_coverage(args.season),
         "to_diagnostic": to_diagnostic(args.season),
     }
@@ -155,6 +183,7 @@ def main():
     print("\nTag coverage:")
     for k, v in rep["tag_coverage"].items():
         print(f"  {k:<22} {v['n']:>5}/{v['of']:<5} {v['pct']}%")
+    print("\n" + rep["hast_regate"]["line"])
     lc = rep["lineup_coverage"]
     print(f"\nLineup snapshots: {lc['full10']}/{lc['events']} full-10 "
           f"({lc['full10_pct']}%), {lc['partial']} partial, {lc['none']} none")

@@ -1239,7 +1239,14 @@ else:
                             pass_from = r2b.selectbox("Pass From", all_opts)
                             created   = r2c.selectbox("Shot Created By", all_opts)
                         # hockey assist (the pass before the assist) — optional,
-                        # opt-in: only meaningful on a made, assisted shot.
+                        # opt-in, and offered on EVERY shot flow, make or miss.
+                        # The old comment here claimed it was "only meaningful
+                        # on a made, assisted shot"; that describes the HAST
+                        # STAT (a sibling of AST, so make-only by definition),
+                        # not the capture. The tag is logged either way, which
+                        # is what lets xA2 price the second pass by shot
+                        # QUALITY independently of whether it dropped — exactly
+                        # how xA relates to AST. Do not gate this on `result`.
                         hockey_from = st.selectbox(
                             "Hockey Assist (pass before the assist)", all_opts)
                         # player pickers

@@ -97,7 +97,9 @@ def _blank_box():
         "AST": 0, "AST2": 0, "AST3": 0, "ORB": 0, "DRB": 0,
         # hockey assist (secondary assist): the pass that fed the assister on a
         # MADE shot (game_events.hockey_from_id). Opt-in capture — 0 until tagged.
-        "HAST": 0,
+        # PotHAST is the same tag counted on EVERY shot, make or miss — the
+        # make-independent twin, mirroring PotAST-vs-AST.
+        "HAST": 0, "PotHAST": 0,
         "STL": 0, "BLK": 0, "TOV": 0, "PF": 0,
         # Shots Created components
         "SC_shoot": 0, "SC_pass": 0, "SC_screen": 0,
@@ -202,8 +204,16 @@ def aggregate_player_boxes(game_ids=None, events=None):
             # hockey assist (pass before the assist): the fed the assister slot,
             # credited only on a MADE shot (mirrors AST). NULL until captured, so
             # this is a no-op on every existing event.
-            if made and e.get("hockey_from_id") is not None:
-                boxes[e["hockey_from_id"]]["HAST"] += 1
+            # PotHAST is the make-INDEPENDENT twin, exactly the relationship
+            # PotAST has to AST: the tag is captured on every shot flow (make or
+            # miss), so PotHAST counts the second passes a player actually made
+            # and HAST counts the ones that happened to drop. Tracking both is
+            # what lets the coverage counter report real capture volume — HAST
+            # alone undercounts tagging by the league miss rate.
+            if e.get("hockey_from_id") is not None:
+                boxes[e["hockey_from_id"]]["PotHAST"] += 1
+                if made:
+                    boxes[e["hockey_from_id"]]["HAST"] += 1
 
             # block credited to defender
             if e["blocked_by_id"] is not None:

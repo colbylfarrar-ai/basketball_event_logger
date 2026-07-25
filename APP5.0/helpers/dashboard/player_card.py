@@ -1096,8 +1096,17 @@ def render_card(ctx):
                 # hockey assist (pass before the assist) — opt-in capture, so the
                 # row appears only once a player has one (0 for everyone until a
                 # coach starts tagging it would be pure clutter)
+                # Hockey assists — opt-in capture, so the row appears only once
+                # a player has one (0 for everyone until a coach starts tagging
+                # would be pure clutter). Keyed on PotHAST, not HAST: the tag is
+                # logged on makes AND misses, so a player can have tagged second
+                # passes that simply never dropped, and keying on HAST would
+                # hide their tagging entirely.
                 *([_row("Hockey assists", "HAST", "int") | {"Value":
-                    f"{P['HAST']} ({P['HAST/G']:.1f}/g)"}] if P.get("HAST") else []),
+                    f"{P['HAST']} ({P['HAST/G']:.1f}/g)"
+                    + (f" · {P['PotHAST']} tagged incl. misses"
+                       if P.get("PotHAST", 0) > P.get("HAST", 0) else "")}]
+                  if P.get("PotHAST") else []),
                 _row("Guarded% (on court)", "Guarded%", "pct"),
                 _row("Defended FG% allowed", "DSHOT%", "pct"),
                 # Corsi — on-floor shot-attempt differential, a lower-variance
@@ -1155,6 +1164,37 @@ def render_card(ctx):
                     "style read, not a grade: weak-side crashing and cleaning up "
                     "your own assignment are different jobs. Thin samples are "
                     "shrunk toward the pool mean (the stabilized value).")
+
+        # ── "who ignites whom" — hockey-assist chains (spec Part 1 §3) ────
+        # Opt-in capture, so this renders ONLY for a player who has tagged
+        # chains. Everyone else sees nothing rather than an empty grid.
+        if paid and P.get("PotHAST"):
+            import helpers.passing_chains as _PC
+            # season-scoped like every other card fetcher (a bare default reads
+            # Current only, which is zero for an archive view)
+            _ch = [c for c in _PC.hockey_chains(
+                       game_ids=(list(_gp) if _gp is not None else None))
+                   if c["hockey_from"] == pid]
+            if _ch:
+                # player_stat_table rows carry no id (the pid is the dict key),
+                # so resolve assister names straight from the roster table
+                _ids = {c["assister"] for c in _ch}
+                _nm = {r["id"]: r["name"] for r in query(
+                    "SELECT id, name FROM players WHERE id IN "
+                    f"({','.join('?' * len(_ids))})", tuple(_ids))} if _ids else {}
+                st.markdown("**Who they ignite** — hockey-assist chains")
+                st.dataframe(pd.DataFrame([{
+                    "Assister": _nm.get(c["assister"], f"#{c['assister']}"),
+                    "Chains": c["pot_hast"],
+                    "Finished (HAST)": c["hast"],
+                    "Points": c["pts"],
+                } for c in _ch]), hide_index=True, width="stretch")
+                st.caption(
+                    "The pass BEFORE the assist: this player → the assister → "
+                    "the shot. **Chains** counts every tagged sequence, make or "
+                    "miss, because a pair can move the ball well and still be "
+                    "let down by the finish; **Finished** is the subset that "
+                    "dropped, which is the HAST stat proper.")
 
     # ── Shot diet · shot creation · quarter scoring (event-derived → Paid) ────
     if paid:

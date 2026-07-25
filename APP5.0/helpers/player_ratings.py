@@ -1565,7 +1565,13 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "ScrAST": b["SCR_AST"], "ScrAST/G": pg(b["SCR_AST"]),
             # HAST = hockey assist (the pass that fed the assister on a made
             # shot). Opt-in capture (game_events.hockey_from_id) -> 0 until tagged.
+            # PotHAST = the same tag on EVERY shot, make or miss — the
+            # make-independent twin, exactly PotAST's relationship to AST. The
+            # tag is captured on all shot flows (PWA SHOT_DETAILS + the ungated
+            # Streamlit selectbox), so PotHAST >= HAST always, and the gap is
+            # the second passes that were made but not finished.
             "HAST": b["HAST"], "HAST/G": pg(b["HAST"]),
+            "PotHAST": b["PotHAST"], "PotHAST/G": pg(b["PotHAST"]),
             # xA = expected assists (feeds scored by the look quality they created,
             # make-independent). AST−xA = finishing luck on this passer's feeds.
             "xA": _round(_xa["xA"]) if _xa else None,

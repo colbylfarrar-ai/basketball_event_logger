@@ -71,7 +71,8 @@ def shot(shooter, made, pass_from=None, hockey_from=None, three=False):
 shot(101, True, pass_from=102, hockey_from=103)
 # 101 makes another: 102 AST again, 103 HAST again -> HAST accumulates.
 shot(101, True, pass_from=102, hockey_from=103)
-# a MISS carrying hockey_from_id=104: no basket, so no hockey assist.
+# a MISS carrying hockey_from_id=104: no basket, so no hockey ASSIST — but the
+# tag WAS logged, so it counts as a potential hockey assist (see PotHAST below).
 shot(101, False, pass_from=102, hockey_from=104)
 # a MAKE with NO hockey_from_id (the common case today, NULL column): nobody HAST.
 shot(101, True, pass_from=102, hockey_from=None)
@@ -80,8 +81,17 @@ boxes = ST.aggregate_player_boxes([G])
 
 print("HAST credited to the hockey passer on made shots only")
 ok(boxes[103]["HAST"] == 2, f"103 credited 2 HAST (two made feeds), got {boxes[103]['HAST']}")
-# a miss credits nobody -> 104 never earns a box row at all
-ok(104 not in boxes, f"104's hockey pass was a MISS -> no HAST, got {boxes.get(104, {}).get('HAST')}")
+# A miss credits no HAST. 2026-07-24: it DOES credit PotHAST, the
+# make-independent twin (mirroring PotAST-vs-AST), so 104 now earns a box row
+# carrying HAST 0 / PotHAST 1 where it previously had no row at all. That is the
+# point of the twin — the tag was logged, the shot simply did not drop, and
+# counting only makes would understate what the coach actually tagged.
+ok(boxes[104]["HAST"] == 0,
+   f"104's hockey pass was a MISS -> no HAST, got {boxes[104]['HAST']}")
+ok(boxes[104]["PotHAST"] == 1,
+   f"...but it IS a potential hockey assist, got {boxes[104]['PotHAST']}")
+ok(boxes[103]["PotHAST"] == 2,
+   f"103's two made feeds count as PotHAST too, got {boxes[103]['PotHAST']}")
 
 print("the NULL / common case credits nobody")
 ok(boxes[101]["HAST"] == 0, f"shooter is never the hockey passer, got {boxes[101]['HAST']}")

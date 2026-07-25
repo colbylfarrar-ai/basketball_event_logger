@@ -83,6 +83,21 @@ REGISTRY = {
     "wpa.ONBALL_SHARE":                    (WPA, "ONBALL_SHARE"),
     "wpa.STRATEGIC_FT_DAMP":               (WPA, "STRATEGIC_FT_DAMP"),
     "late_game.WINDOW_SECS":               (LGM, "WINDOW_SECS"),
+    # 2026-07-24: the REST of the leaf groups. Only _OVERALL_PARTS and
+    # _PLAYMAKING were registered, so a gate testing a candidate leaf anywhere
+    # else (FT% -> _SHOOTING, def_secure -> _DREB, DWPA -> _DEFENSE_PARTS)
+    # KeyError'd in override() before it could score anything. Registering the
+    # whole taxonomy is a no-op until a gate names one.
+    "player_ratings._SHOOTING":             (PR, "_SHOOTING"),
+    "player_ratings._FINISHING":            (PR, "_FINISHING"),
+    "player_ratings._RIMDEF":               (PR, "_RIMDEF"),
+    "player_ratings._PERIMDEF":             (PR, "_PERIMDEF"),
+    "player_ratings._DEFENSE_PARTS":        (PR, "_DEFENSE_PARTS"),
+    "player_ratings._OREB":                 (PR, "_OREB"),
+    "player_ratings._DREB":                 (PR, "_DREB"),
+    "player_ratings._REBOUNDING_PARTS":     (PR, "_REBOUNDING_PARTS"),
+    "player_ratings._PHYSICAL":             (PR, "_PHYSICAL"),
+    "player_ratings._OFFENSE_PARTS":        (PR, "_OFFENSE_PARTS"),
 }
 
 

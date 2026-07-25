@@ -615,6 +615,112 @@ _OVERALL_PARTS = [("offense", 1.1), ("impact", 0.9), ("defense", 1.0),
                   # hurt when they swamp the production signal.
                   ("TOV/Gz", 0.2), ("nsPF/Gz", 0.2)]
 
+# ── DATA-TIER TAXONOMY (spec Part 3, tagged 2026-07-24) ──────────────────────
+# Which KIND of data a leaf needs, so the rating can eventually say "rated from:
+# box / possession / full tracked" and shrink a thin category honestly instead of
+# pretending a never-tags coach got the same depth as a full-tracking one.
+#
+#   T1 BOX        a hand-entered box score is enough (MANUAL_GAME_WEIGHT feeds it)
+#   T2 POSSESSION needs tracked events, but NO optional tags — every tracked game
+#                 supplies it (possessions, on-court shares, minutes, lineups)
+#   T3 TAGGED     needs an OPTIONAL tag a coach may never log (guarded_by,
+#                 play_type, zone-contest, shot_created_by, hockey_from, charges).
+#                 These None-skip per player today; the tier makes that visible.
+#
+# Deliberately a SIDE TABLE keyed by leaf name, not a 4th tuple element: group_z
+# unpacks `for stat, _w, lb in group` and the _*_PARTS lists are 2-tuples, so a
+# 4th element would break both shapes. Composite component names (shooting,
+# rimdef, offense, …) carry the MAX tier of their own leaves — a composite is
+# only as available as its most demanding input.
+#
+# A leaf missing from this table is a bug, not a default: test_leaf_tiers.py
+# asserts every leaf of every group is tagged, so a new leaf cannot land
+# untagged and silently break per-category evidence later.
+T1_BOX, T2_POSSESSION, T3_TAGGED = "T1", "T2", "T3"
+
+LEAF_TIER = {
+    # ── T1: box-derivable ────────────────────────────────────────────────
+    # Shooting rates and counting stats a scorebook already yields. nsPF/G is
+    # T1 because a box coach's `strategic` count is 0, so it degrades exactly
+    # to PF/G rather than going None; events only REFINE it.
+    "TS%": T1_BOX, "3P%": T1_BOX, "eFG%": T1_BOX, "FT%": T1_BOX,
+    "3PA/G": T1_BOX, "FTR": T1_BOX, "3PR": T1_BOX, "ScEff": T1_BOX,
+    "PPG": T1_BOX, "PPP": T1_BOX, "PPSA": T1_BOX, "VPS": T1_BOX,
+    "AST/G": T1_BOX, "AST/pmTOV": T1_BOX, "BLK/G": T1_BOX, "STL/G": T1_BOX,
+    "OREB/G": T1_BOX, "DREB/G": T1_BOX,
+    "PF/G": T1_BOX, "PF/Gz": T1_BOX, "nsPF/G": T1_BOX, "nsPF/Gz": T1_BOX,
+    "TOV/G": T1_BOX, "TOV/Gz": T1_BOX,
+    "GS/G": T1_BOX, "EFF/G": T1_BOX, "FIC/G": T1_BOX,
+    # roster measurables — no game data at all, so the lowest barrier there is
+    "height": T1_BOX, "wingspan": T1_BOX, "physical": T1_BOX,
+
+    # ── T2: tracked events, no optional tag ──────────────────────────────
+    # Shot location (zone) is captured on effectively every tracked shot, so
+    # paint reads sit here rather than in T3.
+    "Paint%": T2_POSSESSION, "PaintSh/G": T2_POSSESSION, "PPS": T2_POSSESSION,
+    "USG%": T2_POSSESSION, "MPG": T2_POSSESSION, "PRF/G": T2_POSSESSION,
+    "AST%": T2_POSSESSION, "pmTOV%": T2_POSSESSION,
+    "SC/G": T2_POSSESSION, "SCPass/G": T2_POSSESSION,
+    "OREB%": T2_POSSESSION, "DREB%": T2_POSSESSION, "REB%z": T2_POSSESSION,
+    "DRtg": T2_POSSESSION, "DRtgz": T2_POSSESSION,
+    "impact": T2_POSSESSION, "oppadj": T2_POSSESSION,
+    "oreb": T2_POSSESSION, "dreb": T2_POSSESSION, "rebounding": T2_POSSESSION,
+
+    # ── T3: needs an optional tag ────────────────────────────────────────
+    "SMOE": T3_TAGGED,
+    "RimProt": T3_TAGGED, "RimD_pct": T3_TAGGED,
+    "PerimD": T3_TAGGED, "PerimD_pct": T3_TAGGED,
+    "Guarded%": T3_TAGGED, "DSHOT%": T3_TAGGED, "DSHOT%z": T3_TAGGED,
+    # charges are event-only AND None when a team never tags them at all —
+    # that None-not-zero protection is exactly what makes this T3, not T2.
+    "CHG/G": T3_TAGGED, "CHG/Gz": T3_TAGGED,
+    "SCPassQ": T3_TAGGED, "PassFG%": T3_TAGGED, "PassOpen%": T3_TAGGED,
+    "xA/G": T3_TAGGED, "HAST/G": T3_TAGGED,
+
+    # ── composites: MAX tier of their own leaves ─────────────────────────
+    "shooting": T3_TAGGED,     # SMOE
+    "finishing": T3_TAGGED,    # SMOE
+    "rimdef": T3_TAGGED,       # RimProt
+    "perimdef": T3_TAGGED,     # PerimD
+    "playmaking": T3_TAGGED,   # SCPassQ / xA
+    "offense": T3_TAGGED,      # via shooting/finishing
+    "defense": T3_TAGGED,      # via rimdef/perimdef
+}
+
+_TIER_RANK = {T1_BOX: 1, T2_POSSESSION: 2, T3_TAGGED: 3}
+
+
+def leaf_tier(name):
+    """Tier of one leaf/component name, or None when untagged (a bug — see
+    LEAF_TIER)."""
+    return LEAF_TIER.get(name)
+
+
+def group_tier(group):
+    """The MOST demanding tier in a leaf group — what data a coach must supply
+    before the group is fully fed. `group` is any of the _SHOOTING / _*_PARTS
+    lists (3-tuples or 2-tuples; only element 0 is read)."""
+    ranks = [_TIER_RANK[LEAF_TIER[t[0]]] for t in group if t[0] in LEAF_TIER]
+    if not ranks:
+        return None
+    top = max(ranks)
+    return next(k for k, v in _TIER_RANK.items() if v == top)
+
+
+# All leaf groups, for the tier-coverage test and future per-category evidence.
+LEAF_GROUPS = {
+    "_SHOOTING": lambda: _SHOOTING, "_FINISHING": lambda: _FINISHING,
+    "_RIMDEF": lambda: _RIMDEF, "_PERIMDEF": lambda: _PERIMDEF,
+    "_DEFENSE_PARTS": lambda: _DEFENSE_PARTS,
+    "_PLAYMAKING": lambda: _PLAYMAKING,
+    "_OREB": lambda: _OREB, "_DREB": lambda: _DREB,
+    "_REBOUNDING_PARTS": lambda: _REBOUNDING_PARTS,
+    "_PHYSICAL": lambda: _PHYSICAL,
+    "_OFFENSE_PARTS": lambda: _OFFENSE_PARTS,
+    "_OVERALL_PARTS": lambda: _OVERALL_PARTS,
+}
+
+
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players
 # is meaningless) and fall back to the raw weighted-mean z.
 MIN_POOL_FOR_RESTD = 8

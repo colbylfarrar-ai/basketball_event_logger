@@ -87,7 +87,77 @@ import helpers.playbook as PB
 
 _me_email = (AUTH.current_user() or {}).get("email", "")
 
+# ── team scope ───────────────────────────────────────────────────────────────
+# Whiteboard had NO team concept at all — coach_plays keyed on coach_email
+# alone, which is why §BL2 could not put the identity banner here: a bar naming
+# a team on a page that knows nothing about teams claims a scope the page does
+# not have. A play is a thing a STAFF runs, so tying it to a team is the real
+# fix and the banner follows from it rather than the other way round.
+#
+# Schedule deliberately does NOT get this. It is the league calendar, and
+# scoping it to one program would remove the thing it is for.
+from database.db import query as _q
+
+_my_teams = AUTH.get_teams(_me_email) or []
+_team_names, _team_gender = {}, {}
+if _my_teams:
+    for r in _q("SELECT id, name, gender FROM teams WHERE id IN (%s)"
+                % ",".join("?" * len(_my_teams)), tuple(_my_teams)):
+        _team_names[r["id"]] = r["name"]
+        _team_gender[r["id"]] = r["gender"]
+
+_PRIVATE = 0
+_scope_opts = [_PRIVATE] + list(_my_teams)
+_wb_team = st.session_state.get("wb_team_scope")
+if _wb_team not in _scope_opts:
+    # Default to the coach's team when they have exactly one: a play almost
+    # always belongs to the program, and making the common case opt-OUT rather
+    # than opt-in is what stops the shared playbook staying permanently empty.
+    _wb_team = _my_teams[0] if len(_my_teams) == 1 else _PRIVATE
+_team_id = _wb_team or None
+
+if _team_id:
+    # Two traps live in this one call. The banner resolves its numbers from a
+    # SCORED POOL, so it needs the team's real gender (not None) or it looks
+    # the team up in the wrong board and silently draws nothing; and it needs
+    # the last season that actually has games, because SEAS.ACTIVE is the
+    # sentinel 'Current' and right after a rollover that pool is empty — the
+    # same failure that made War Room render blank over a full database.
+    import helpers.dashboard.team_card as _TCARD
+    import helpers.seasons as _SEAS
+    try:
+        _TCARD.render_for(_team_id, _team_gender.get(_team_id),
+                          season=_SEAS.default_read_season())
+    except Exception:
+        pass
+
 with st.expander("📓 Playbook — save & load plays", expanded=True):
+    if _my_teams:
+        sc1, sc2 = st.columns([2, 3])
+        _wb_team = sc1.selectbox(
+            "Save to", _scope_opts, key="wb_team_scope",
+            index=_scope_opts.index(_wb_team),
+            format_func=lambda t: ("🔒 Just me (private)" if not t
+                                   else f"👥 {_team_names.get(t, t)} staff"),
+            help="Where a newly saved play goes. Changing this does not move "
+                 "plays you have already saved.")
+        _team_id = _wb_team or None
+        with sc2:
+            st.markdown("<div style='height:28px'></div>",
+                        unsafe_allow_html=True)
+            if _team_id:
+                st.caption(
+                    f"⚠️ Plays saved here are visible to **every coach on "
+                    f"{_team_names.get(_team_id, 'this team')}'s staff**, not "
+                    f"only to you. They can open, run and print them; only you "
+                    f"can delete or overwrite your own. Switch to *Just me* for "
+                    f"anything you would not put on the locker-room wall.")
+            else:
+                st.caption("Plays saved here are private to you. Nobody else "
+                           "on your staff can see them.")
+    else:
+        st.caption("Plays are private to you — no team is linked to this "
+                   "account, so there is no staff to share them with.")
     _has_board = bool(_board and (_board.get("ops_half") or _board.get("ops_full")))
     c1, c2 = st.columns([3, 1])
     _pname = c1.text_input("Play name", key="wb_play_name",
@@ -97,7 +167,7 @@ with st.expander("📓 Playbook — save & load plays", expanded=True):
                  disabled=not ((_pname or "").strip() and _has_board)):
         _mode = _board.get("mode", "half")
         _ops = _board.get("ops_full" if _mode == "full" else "ops_half") or []
-        _err = PB.save_play(_me_email, _pname, _mode, _ops)
+        _err = PB.save_play(_me_email, _pname, _mode, _ops, team_id=_team_id)
         if _err:
             st.warning(_err)
         else:
@@ -116,7 +186,7 @@ with st.expander("📓 Playbook — save & load plays", expanded=True):
                       "sequence — draw the next action and hit it again."):
         _mode = _board.get("mode", "half")
         _ops = _board.get("ops_full" if _mode == "full" else "ops_half") or []
-        _err, _fidx = PB.save_frame(_me_email, _sqname, _mode, _ops)
+        _err, _fidx = PB.save_frame(_me_email, _sqname, _mode, _ops, team_id=_team_id)
         if _err:
             st.warning(_err)
         else:
@@ -125,22 +195,30 @@ with st.expander("📓 Playbook — save & load plays", expanded=True):
 
     if not _has_board:
         st.caption("Draw a play, hit **⬆ Send to app** on the board's toolbar, "
-                   "then name and save it here. Saved plays are private to you. "
-                   "Use **Save frame** repeatedly to build a step-by-step "
-                   "sequence you can play back below.")
+                   "then name and save it here. Use **Save frame** repeatedly "
+                   "to build a step-by-step sequence you can play back below.")
 
-    _plays = PB.list_plays(_me_email)
+    _plays = PB.list_plays(_me_email, _team_id)
     if _plays:
         _by_id = {p["id"]: p for p in _plays}
+
+        def _play_label(i):
+            p = _by_id[i]
+            # A shared play says whose it is. Without that the list silently
+            # mixes your board with a colleague's and the Delete button below
+            # looks broken rather than deliberately unavailable.
+            who = "" if p["mine"] else f" · {p['author'] or 'staff'}"
+            tag = "👥" if p["shared"] else "🔒"
+            return (f"{tag} {p['name']} — {p['mode']} court · "
+                    f"{p['n_ops']} marks{who}")
+
         l1, l2, l3 = st.columns([3, 1, 1])
-        _pid = l1.selectbox(
-            "Saved plays", list(_by_id), key="wb_play_pick",
-            format_func=lambda i: (f"{_by_id[i]['name']} — "
-                                   f"{_by_id[i]['mode']} court · "
-                                   f"{_by_id[i]['n_ops']} marks"),
-            label_visibility="collapsed")
+        _pid = l1.selectbox("Saved plays", list(_by_id), key="wb_play_pick",
+                            format_func=_play_label,
+                            label_visibility="collapsed")
+        _mine = _by_id[_pid]["mine"]
         if l2.button("Load onto board", key="wb_load_btn"):
-            _pl = PB.get_play(_me_email, _pid)
+            _pl = PB.get_play(_me_email, _pid, _team_id)
             if _pl:
                 st.session_state["_wb_load"] = {
                     "nonce": st.session_state.get("_wb_load", {}).get("nonce", 0) + 1,
@@ -148,11 +226,17 @@ with st.expander("📓 Playbook — save & load plays", expanded=True):
                     "ops_half": _pl["ops"] if _pl["mode"] == "half" else [],
                     "ops_full": _pl["ops"] if _pl["mode"] == "full" else []}
                 st.rerun()
-        if l3.button("Delete", key="wb_del_btn"):
+        # Visible is not deletable. A shared playbook any colleague can empty
+        # is one nobody keeps using, so the control is disabled rather than
+        # hidden — hiding it would read as a bug.
+        if l3.button("Delete", key="wb_del_btn", disabled=not _mine,
+                     help=None if _mine else
+                     "This play belongs to another coach on your staff. You "
+                     "can run and print it; only its author can delete it."):
             PB.delete_play(_me_email, _pid)
             st.toast("Play deleted")
             st.rerun()
-        _sel = PB.get_play(_me_email, _pid)
+        _sel = PB.get_play(_me_email, _pid, _team_id)
         if _sel:
             st.download_button(
                 "⬇ Print image (SVG)",
@@ -164,7 +248,7 @@ with st.expander("📓 Playbook — save & load plays", expanded=True):
                      "print on the scout sheet.")
 
 # ── 🎞 Sequence playback — step through a saved frame sequence in order ───────
-_seqs = PB.list_sequences(_me_email)
+_seqs = PB.list_sequences(_me_email, _team_id)
 if _seqs:
     with st.expander("🎞 Sequences — step through a play frame by frame",
                      expanded=False):
@@ -178,7 +262,7 @@ if _seqs:
         if len(_frames) > 1:
             _fi = st.slider("Frame", 1, len(_frames),
                             key="wb_seq_frame") - 1
-        _fr = PB.get_play(_me_email, _frames[_fi]["id"])
+        _fr = PB.get_play(_me_email, _frames[_fi]["id"], _team_id)
         if _fr:
             st.caption(f"**{_fr['name']}** · {_fr['mode']} court")
             st.image(PB.play_svg(_fr["ops"], _fr["mode"]).encode("utf-8"),

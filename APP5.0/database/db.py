@@ -596,6 +596,17 @@ def initialize_database():
             # per-coach play cap counts every frame (DB-stays-small rule).
             "ALTER TABLE coach_plays ADD COLUMN seq_name TEXT",
             "ALTER TABLE coach_plays ADD COLUMN seq_idx  INTEGER",
+            # A play belongs to a TEAM as well as to the coach who drew it
+            # (2026-07-26). Nullable on purpose and permanently: every row saved
+            # before this column existed was saved under a per-coach privacy
+            # promise, and back-filling a team onto those rows would
+            # retroactively share a coach's private board with the rest of that
+            # team's staff. NULL therefore keeps its old meaning — private to
+            # the author — and a set team_id means "shared with this team's
+            # coaches", which the Whiteboard states on screen before the first
+            # such save. No back-fill, ever.
+            "ALTER TABLE coach_plays ADD COLUMN team_id  INTEGER",
+            "CREATE INDEX IF NOT EXISTS idx_cplays_team ON coach_plays(team_id)",
             # Audit-log retention: the moderation trail only needs a season of
             # look-back; unbounded growth was bloating the DB. Runs every boot
             # (cheap — indexed on ts).

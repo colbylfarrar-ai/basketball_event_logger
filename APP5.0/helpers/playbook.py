@@ -70,15 +70,35 @@ def compact_ops(raw):
     return out
 
 
-# ── CRUD (always coach-scoped) ───────────────────────────────────────────────
+# ── CRUD (coach-scoped; team_id widens READ to that team's staff) ────────────
+#
+# THE SCOPE MODEL, because it is a privacy boundary and must not be guessed at:
+#
+#   team_id IS NULL   the original contract — private to the coach who drew it.
+#                     Every row that existed before 2026-07-26 is in this state
+#                     and is never migrated out of it, because those plays were
+#                     saved under a promise of privacy that a schema change has
+#                     no business revoking.
+#   team_id = T       shared with the coaches of team T. A play is a thing a
+#                     STAFF runs, not a thing one person owns, so this is the
+#                     natural default going forward — but it is opt-in per save
+#                     and the Whiteboard says so before the first one.
+#
+# WRITE stays author-only in both cases: a coach may read a colleague's team
+# play but may not overwrite or delete it. Shared visibility is not shared
+# custody, and the cheapest way to lose trust in a shared playbook is for
+# someone's work to vanish.
 
-def save_play(coach_email, name, mode, ops, seq_name=None, seq_idx=None):
+def save_play(coach_email, name, mode, ops, seq_name=None, seq_idx=None,
+              team_id=None):
     """Upsert a named play for one coach. Returns None on success or a
     human-readable error string (cap hit / nothing to save / bad name).
 
     `seq_name`/`seq_idx` mark the play as one FRAME of a sequence (spec 2.4);
     standalone plays leave both None. A frame is an ordinary row — the
-    per-coach cap counts every frame (DB-stays-small rule)."""
+    per-coach cap counts every frame (DB-stays-small rule).
+
+    `team_id` shares the play with that team's staff; None keeps it private."""
     name = (name or "").strip()[:60]
     if not name:
         return "Give the play a name first."
@@ -98,17 +118,19 @@ def save_play(coach_email, name, mode, ops, seq_name=None, seq_idx=None):
     blob = json.dumps(clean, separators=(",", ":"))
     sq = (seq_name or "").strip()[:60] or None
     si = int(seq_idx) if (sq and seq_idx is not None) else None
+    tid = int(team_id) if team_id else None
     if existing:
-        execute("UPDATE coach_plays SET mode=?, ops=?, seq_name=?, seq_idx=? "
-                "WHERE id=?", (mode, blob, sq, si, existing[0]["id"]))
+        execute("UPDATE coach_plays SET mode=?, ops=?, seq_name=?, seq_idx=?, "
+                "team_id=? WHERE id=?",
+                (mode, blob, sq, si, tid, existing[0]["id"]))
     else:
         execute("INSERT INTO coach_plays (coach_email, name, mode, ops, "
-                "seq_name, seq_idx) VALUES (?,?,?,?,?,?)",
-                (email, name, mode, blob, sq, si))
+                "seq_name, seq_idx, team_id) VALUES (?,?,?,?,?,?,?)",
+                (email, name, mode, blob, sq, si, tid))
     return None
 
 
-def save_frame(coach_email, seq_name, mode, ops):
+def save_frame(coach_email, seq_name, mode, ops, team_id=None):
     """Append the board as the NEXT frame of `seq_name` (creating the sequence
     on the first save). Frame names are '<seq> · <idx>' so the coach_plays
     UNIQUE(coach, name) key stays natural. Returns (error, idx)."""
@@ -120,15 +142,41 @@ def save_frame(coach_email, seq_name, mode, ops):
               "WHERE coach_email=? AND seq_name=?", (email, sq))
     idx = int(r[0]["mx"] or 0) + 1
     err = save_play(email, f"{sq} · {idx}", mode, ops,
-                    seq_name=sq, seq_idx=idx)
+                    seq_name=sq, seq_idx=idx, team_id=team_id)
     return err, (None if err else idx)
 
 
-def list_plays(coach_email):
-    """[{id, name, mode, n_ops, seq_name, seq_idx, created_at}] newest first."""
-    rows = query("SELECT id, name, mode, ops, seq_name, seq_idx, created_at "
-                 "FROM coach_plays WHERE coach_email=? ORDER BY id DESC",
-                 ((coach_email or "").strip().lower(),))
+def _rows_for(coach_email, team_id=None, extra="", params=()):
+    """The visible-play WHERE clause, in one place.
+
+    A coach sees their own plays always, plus their team's shared plays when a
+    team is in scope. `team_id IS NOT NULL` is load-bearing: without it a NULL
+    team_id on both sides would make every private play in the database visible
+    to everyone the moment a caller passed team_id=None into a comparison.
+    """
+    email = (coach_email or "").strip().lower()
+    if team_id:
+        where = "(coach_email=? OR (team_id IS NOT NULL AND team_id=?))"
+        args = (email, int(team_id))
+    else:
+        where = "coach_email=?"
+        args = (email,)
+    return where, args + tuple(params)
+
+
+def list_plays(coach_email, team_id=None):
+    """[{id, name, mode, n_ops, seq_name, seq_idx, created_at, team_id, mine,
+    shared}] newest first.
+
+    With `team_id`, also returns that team's shared plays from other coaches —
+    each flagged `mine=False` so a renderer can label whose it is and disable
+    the controls it must not offer.
+    """
+    where, args = _rows_for(coach_email, team_id)
+    rows = query("SELECT id, name, mode, ops, seq_name, seq_idx, created_at, "
+                 f"team_id, coach_email FROM coach_plays WHERE {where} "
+                 "ORDER BY id DESC", args)
+    email = (coach_email or "").strip().lower()
     out = []
     for r in rows:
         try:
@@ -137,15 +185,19 @@ def list_plays(coach_email):
             n_ops = 0
         out.append({"id": r["id"], "name": r["name"], "mode": r["mode"],
                     "n_ops": n_ops, "seq_name": r["seq_name"],
-                    "seq_idx": r["seq_idx"], "created_at": r["created_at"]})
+                    "seq_idx": r["seq_idx"], "created_at": r["created_at"],
+                    "team_id": r["team_id"],
+                    "mine": (r["coach_email"] or "").lower() == email,
+                    "shared": r["team_id"] is not None,
+                    "author": r["coach_email"]})
     return out
 
 
-def list_sequences(coach_email):
+def list_sequences(coach_email, team_id=None):
     """{seq_name: [play rows ordered by seq_idx]} — the slideshow feed.
     Deleted middle frames simply leave a gap; order is by seq_idx."""
     seqs = {}
-    for p in list_plays(coach_email):
+    for p in list_plays(coach_email, team_id):
         if p["seq_name"]:
             seqs.setdefault(p["seq_name"], []).append(p)
     for frames in seqs.values():
@@ -153,12 +205,15 @@ def list_sequences(coach_email):
     return seqs
 
 
-def get_play(coach_email, play_id):
-    """{id, name, mode, ops(list), seq_name, seq_idx} or None — never another
-    coach's play."""
-    rows = query("SELECT id, name, mode, ops, seq_name, seq_idx "
-                 "FROM coach_plays WHERE id=? AND coach_email=?",
-                 (play_id, (coach_email or "").strip().lower()))
+def get_play(coach_email, play_id, team_id=None):
+    """{id, name, mode, ops(list), seq_name, seq_idx, team_id, mine} or None.
+
+    Reads a teammate's play when it is shared with `team_id`; never reads a
+    private play belonging to someone else.
+    """
+    where, args = _rows_for(coach_email, team_id, params=(play_id,))
+    rows = query("SELECT id, name, mode, ops, seq_name, seq_idx, team_id, "
+                 f"coach_email FROM coach_plays WHERE ({where}) AND id=?", args)
     if not rows:
         return None
     r = rows[0]
@@ -167,10 +222,21 @@ def get_play(coach_email, play_id):
     except Exception:
         ops = []
     return {"id": r["id"], "name": r["name"], "mode": r["mode"], "ops": ops,
-            "seq_name": r["seq_name"], "seq_idx": r["seq_idx"]}
+            "seq_name": r["seq_name"], "seq_idx": r["seq_idx"],
+            "team_id": r["team_id"],
+            "mine": ((r["coach_email"] or "").lower()
+                     == (coach_email or "").strip().lower()),
+            "author": r["coach_email"]}
 
 
 def delete_play(coach_email, play_id):
+    """Delete one of the CALLER'S OWN plays.
+
+    Deliberately not widened by team_id. Sharing a play makes it visible to the
+    staff, not deletable by them — read access and custody are different
+    grants, and a shared playbook that any colleague can silently empty is one
+    nobody will keep using.
+    """
     execute("DELETE FROM coach_plays WHERE id=? AND coach_email=?",
             (play_id, (coach_email or "").strip().lower()))
 

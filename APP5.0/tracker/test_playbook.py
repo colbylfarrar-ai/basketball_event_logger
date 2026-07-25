@@ -98,6 +98,56 @@ check("full-court svg renders", svg_full.startswith("<svg")
       and "rotate(90)" in svg_full)
 check("O marker number rendered", ">1</text>" in svg)
 
+# ── team scope (2026-07-26) — this is a PRIVACY boundary, so pin it ──────────
+print()
+A, B, C = "a@x.com", "b@x.com", "c@y.com"
+TEAM, OTHER = 901, 902
+
+PB.save_play(A, "A private", "half", OPS)                       # no team
+PB.save_play(A, "A shared", "half", OPS, team_id=TEAM)
+PB.save_play(B, "B shared", "half", OPS, team_id=TEAM)
+PB.save_play(B, "B private", "half", OPS)
+PB.save_play(C, "C other team", "half", OPS, team_id=OTHER)
+
+_a_names = {p["name"] for p in PB.list_plays(A, TEAM)}
+check("own private play is visible to its author", "A private" in _a_names)
+check("a teammate's SHARED play is visible", "B shared" in _a_names)
+check("a teammate's PRIVATE play is NOT visible", "B private" not in _a_names)
+check("another team's shared play is NOT visible",
+      "C other team" not in _a_names)
+
+_a_solo = {p["name"] for p in PB.list_plays(A)}
+check("with no team in scope a coach sees only their own",
+      _a_solo == {"A private", "A shared"}, str(_a_solo))
+
+# The trap this guards: if the team filter were written `team_id=?` with a NULL
+# argument, NULL=NULL is not true in SQL but a careless `IS ?` or an OR without
+# the NOT NULL check would expose every private play in the database.
+_b_priv = [p for p in PB.list_plays(B) if p["name"] == "B private"][0]
+check("a private play reports itself as unshared", _b_priv["shared"] is False)
+_shared = [p for p in PB.list_plays(A, TEAM) if p["name"] == "B shared"][0]
+check("a teammate's play is flagged not-mine", _shared["mine"] is False)
+check("and carries its author so the UI can say whose it is",
+      _shared["author"] == B)
+
+check("get_play reads a teammate's shared play",
+      (PB.get_play(A, _shared["id"], TEAM) or {}).get("name") == "B shared")
+check("get_play refuses a teammate's PRIVATE play",
+      PB.get_play(A, _b_priv["id"], TEAM) is None)
+check("get_play refuses a shared play without the team in scope",
+      PB.get_play(A, _shared["id"]) is None)
+
+# Visible is not deletable.
+PB.delete_play(A, _shared["id"])
+check("a coach CANNOT delete a teammate's shared play",
+      (PB.get_play(B, _shared["id"], TEAM) or {}).get("name") == "B shared")
+PB.delete_play(B, _shared["id"])
+check("but its author can", PB.get_play(B, _shared["id"], TEAM) is None)
+
+# Pre-existing rows are never migrated into a team.
+_legacy = query("SELECT COUNT(*) n FROM coach_plays WHERE team_id IS NULL")
+check("plays saved without a team stay team-less", _legacy[0]["n"] >= 2)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURES:", *FAILS, sep="\n  ")

@@ -235,7 +235,65 @@ MEASURED = {
     # share. The PPP does not — see THE ACTION AXIS, BOTH SIDES below.
     ("player", "playtype_share"): 0.761,      # iso within-team; spot is .882
     ("player", "playtype_ppp"): -0.135,       # spot-up PPP, the worst of them
+    # ── team expected vs actual scoring (measured 2026-07-26, xPPP gate) ─────
+    # Both repeat. They just do not repeat as EACH OTHER — see
+    # SHOT QUALITY DOES NOT FORECAST SCORING ON THIS BOOK.
+    ("team", "xpps"): 0.726,
+    ("team", "pps_fg"): 0.812,
+    ("team", "xpps_forecasts_pps"): 0.176,
 }
+
+
+# ── SHOT QUALITY DOES NOT FORECAST SCORING ON THIS BOOK ──────────────────────
+# The xPPP prediction idea — predict games from expected shot quality alone,
+# taking make/miss out entirely — rests on one premise: that shot outcomes are
+# the noisy part and shot quality is the signal. That premise is TRUE AT THE
+# PLAYER LEVEL (rim FG% SB .11 against band share SB .81) and it is what made
+# the idea attractive. Measured at TEAM level, which is the level a game
+# prediction would live at, it is false.
+#
+# Self-reliability, 200 random half-splits, field goals only:
+#
+#     team xPPS (expected quality)     SB .726
+#     team PPS  (what actually fell)   SB .812
+#
+# Actual scoring already repeats BETTER than expected scoring. But
+# self-reliability is not the claim — the claim is that quality FORECASTS
+# future scoring better than past scoring does. Cross-predicting between random
+# halves settles it:
+#
+#     predictor  ->  target                      mean r
+#     expected PPS -> future ACTUAL PPS            0.176
+#     actual PPS   -> future ACTUAL PPS            0.655
+#     expected PPS -> future expected PPS          0.619
+#     actual PPS   -> future expected PPS          0.176
+#
+# Past scoring forecasts future scoring nearly FOUR TIMES better than expected
+# shot quality does. The quality-minus-results edge is -0.479.
+#
+# Read the middle two rows, because they are the interesting part and they are
+# not what a failure usually looks like: each metric predicts ITSELF at ~.62-.66
+# and predicts the OTHER at .176, symmetrically. Shot quality and shot making
+# are two nearly ORTHOGONAL, individually stable team traits — a team's shot
+# SELECTION is real and persistent, and so is its shooting SKILL, and on this
+# book the scoreboard is carried by the second one. Quality is not a noisy
+# estimate of scoring; it is a different quantity that happens to share units.
+#
+# WHAT THAT PERMITS AND FORBIDS. A forecasting surface built on xPPP is refused:
+# it would be strictly worse than the scoring margin the app already has. What
+# survives is DESCRIPTIVE — over 43 tracked games, scored out of sample, the
+# expected-points margin agrees with the scoreboard winner 72.1% of the time
+# (r = .886 with final margin), so the twelve games where it disagrees are a
+# real and legitimate artefact: "the looks were even, the makes were not". That
+# is a statement about a game that was played, and it must not be dressed up as
+# a claim about a rematch.
+#
+# CAVEATS, so this is re-testable rather than final. xPPS here is the
+# (kind, creation, guarded) rate book, so it inherits the tracker's tagging
+# consistency — `guarded_by_id` is an opt-in tap on 72% of shots. And xMargin
+# is a SUM over attempts, so it partly restates possession count rather than
+# quality per shot. Both are reasons the measurement could improve; neither is
+# a reason to ship the forecast before it does.
 
 
 # ── DEFENSIVE SHARES ARE NOT OFFENSIVE SHARES ────────────────────────────────

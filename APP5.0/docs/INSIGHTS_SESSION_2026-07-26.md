@@ -123,11 +123,76 @@ stay flagged descriptive and say so in their own sentences.
 
 ---
 
-## Still open
+---
 
-- **xPPP game prediction — not started.** Its prerequisite (the rate-book fix
-  above) is now done, which was the blocker. The premise is intact and this
-  session added a third measurement supporting it.
+## xPPP game prediction — MEASURED, AND THE PREMISE IS FALSE
+
+The idea was: predict games from expected shot quality alone, taking make/miss
+out entirely, because shot outcomes are the noisy part. That premise is **true
+at player level** (rim FG% SB .11 against band share SB .81) and it is what made
+the idea attractive. At **team** level — the level a game prediction lives at —
+it does not hold.
+
+Self-reliability, 200 random half-splits, field goals only, out of sample:
+
+```
+  team xPPS (expected quality)     SB .726
+  team PPS  (what actually fell)   SB .812
+```
+
+Actual scoring already repeats *better*. But self-reliability isn't the claim.
+The claim is that quality **forecasts future scoring** better than past scoring
+does. Cross-predicting between random halves settles it:
+
+```
+  predictor  ->  target                      mean r
+  expected PPS -> future ACTUAL PPS            0.176
+  actual PPS   -> future ACTUAL PPS            0.655
+  expected PPS -> future expected PPS          0.619
+  actual PPS   -> future expected PPS          0.176
+
+  quality-minus-results edge:                 -0.479
+```
+
+Past scoring forecasts future scoring **nearly four times better** than expected
+shot quality does.
+
+The middle two rows are the interesting part, and they are not what a failure
+usually looks like. Each metric predicts **itself** at ~.62–.66 and predicts the
+**other** at .176, symmetrically. Shot quality and shot making are two nearly
+**orthogonal, individually stable** team traits — a team's shot *selection* is
+real and persistent, and so is its shooting *skill*, and on this book the
+scoreboard is carried by the second one. Quality is not a noisy estimate of
+scoring; it is a different quantity that happens to share units.
+
+**So the forecasting surface is refused** — it would be strictly worse than the
+scoring margin the app already has.
+
+**What survives is descriptive, and it is what you actually asked for.** Over
+all 43 tracked games, scored out of sample (rate book fit on the other 42), the
+expected-points margin:
+
+- picks the **scoreboard winner 72.1%** of the time (31/43)
+- correlates with final margin at **r = .886** (the ceiling — actual FG margin —
+  is .982)
+- **disagrees on 12 of 43 games**
+
+Those twelve are a legitimate artefact: *"the looks were even, the makes were
+not."* Example from the live book — Salina beat Vinita by 3 while the
+expected-points margin favoured Vinita by 15.4. That is a statement about a game
+that was played. It must not be dressed up as a claim about a rematch.
+
+**Caveats, so this is re-testable rather than final:** xPPS here is the
+(kind, creation, guarded) rate book, so it inherits tagging consistency —
+`guarded_by_id` is an opt-in tap present on 72% of shots. And xMargin is a *sum*
+over attempts, so it partly restates possession count rather than quality per
+shot. Both are reasons the measurement could improve; neither is a reason to
+ship the forecast before it does.
+
+Harnesses: `gate_xppp.py` / `gate_xppp_cross.py` (scratchpad is session-scoped —
+the method is written into `reliability.py` so it can be rebuilt).
+
+## Still open
 - The remaining three known test failures: `test_charges`,
   `test_connection_matrix`, `test_pdf_export` (no PDF engine installed).
 - `helpers/defense_profile.py` also exposes `team_allowed_diet` (the defensive

@@ -512,6 +512,51 @@ def _rank_moves(g, season="Current"):
 if _is_cur_season:
     _snap_today(gender, RH._today())
 
+# ── rebuild history for a season already played ──────────────────────────────
+# The snapshot table was built to accrue forward from first deploy, so a season
+# that finished before this feature existed has no trajectory at all and every
+# read of it (the news feed's Power line, risers, the Overview rank chart) is
+# empty. The ratings are a pure function of the games played by a given date and
+# both engines take a game_ids filter, so that history is recoverable rather
+# than lost.
+#
+# Behind an explicit control, never automatic: it is two full rating solves per
+# week of the season (~6s for both genders on this book, and prod is 1 vCPU), so
+# it must not run on page load. The write is INSERT OR IGNORE per
+# (day, gender, system, team), which makes pressing it twice a no-op.
+with st.expander("🕘 Rating history", expanded=False):
+    _hist_days = len(RH.snapshot_days(gender, "score", season_pick))
+    if _hist_days >= 2:
+        st.caption(f"{_hist_days} snapshot days on record for "
+                   f"**{season_pick}** — trajectories and the season feed will "
+                   f"read. Rebuilding is safe (it never duplicates a day) and "
+                   f"is worth doing after a recal, since reconstructed days use "
+                   f"today's model constants.")
+    else:
+        st.caption(
+            f"No rating history for **{season_pick}** yet. Snapshots normally "
+            f"accrue one day at a time from this page, so a season played "
+            f"before that started has none — which leaves the rank trajectory "
+            f"and the season feed blank over a full database. Rebuilding "
+            f"reconstructs it weekly by re-solving each board over exactly the "
+            f"games that had been finished by that date.")
+    if st.button("Rebuild rating history", key="rk_backfill",
+                 help="Re-solves the board once per week of the season. "
+                      "Takes a few seconds; running it twice changes nothing."):
+        with st.spinner(f"Reconstructing {season_pick}…"):
+            _bf = RH.backfill_weekly(gender, season=season_pick)
+        if _bf["days"]:
+            st.success(
+                f"Rebuilt {_bf['days']} weeks ({_bf['from']} → {_bf['to']}), "
+                f"{_bf['rows']} rows written."
+                + (f" {_bf['skipped']} early weeks skipped — under "
+                   f"{RH.BACKFILL_MIN_GAMES} finished games, where a rating is "
+                   f"the sample arriving rather than anything a team did."
+                   if _bf["skipped"] else ""))
+            st.cache_data.clear()
+        else:
+            st.info("Nothing to rebuild — no finished games in this season.")
+
 if not scored:
     empty_state("No finished games for this league yet",
                 "Enter results in the Input Hub and they'll rank here.",

@@ -440,4 +440,18 @@ def render(ctx):
         st.caption(f"Results-only Rating (left) and league rank (right, 1 = "
                    f"best) by day since {_d0['day']} — they've {_word}"
                    f"{' spots' if _dr else ''} in that span. History accrues "
-                   "daily from the Rankings board.")
+                   "daily from the Rankings board; for a season already played "
+                   "it can be reconstructed weekly instead (Rankings → Rebuild "
+                   "rating history), which is what a run of exactly-weekly "
+                   "points means.")
+
+    # ── the season as a story ────────────────────────────────────────────────
+    # Last, deliberately: the feed is what a coach scrolls when they are not
+    # looking for a specific number, so it sits under the analysis rather than
+    # above it. Costs one games query plus the snapshot series already read
+    # above for the trajectory chart.
+    try:
+        import helpers.dashboard.news_feed_block as _NEWS
+        _NEWS.render(ctx)
+    except Exception:
+        pass

@@ -124,6 +124,15 @@ def run():
         ok("main line" in low, "the connection verdict box rendered")
         ok(len(at.get("plotly_chart") or []) > 0,
            "the heat-grid chart rendered alongside the node-link network")
+
+        # ── Charts > Offense > Playmaking: involvement (spec 4d) ──────────
+        ok("hand in the basket" in low, "the involvement panel rendered")
+        ok("most involved" in low, "its verdict box rendered")
+        ok("minutes stat" in low,
+           "the caption explains the on-floor denominator, which is the "
+           "whole design")
+        ok("participation is not causation" in low,
+           "and refuses the causal reading explicitly")
     finally:
         UI.gender_radio, ENT.has_paid_plan, ENT.viewer_is_league_wide = (
             real_radio, real_paid, real_wide)

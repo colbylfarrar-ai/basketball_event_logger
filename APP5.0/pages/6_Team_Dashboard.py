@@ -74,6 +74,7 @@ import helpers.networks as NW
 import helpers.lineups as LU
 import helpers.stops as ST
 import helpers.passing_chains as PC
+import helpers.involvement as IV
 import helpers.winning_formula as WF
 import helpers.playtypes as PT
 import helpers.defenses as DEF
@@ -988,6 +989,12 @@ def _conn_matrix(tid, _tids):
     to appear in.
     """
     return PC.connection_matrix(game_ids=list(_tids), team_id=tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _involvement(tid, _tids):
+    """Fingerprint-on-a-basket rate for one team (spec Part 4d)."""
+    return IV.player_involvement(game_ids=list(_tids), team_id=tid)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -4112,6 +4119,75 @@ def _fx_playmaking():
                     "while a high assist count from one pairing is a two-man "
                     "game. Both can be right for a team — they are not the "
                     "same player.")
+
+        # ── involvement — a fingerprint on the team's baskets (spec 4d) ──
+        # Sits here because a coach reading who-feeds-whom immediately wants
+        # "and who is actually IN our offence". Denominator is on-floor scoring
+        # plays, not team totals, so it is a rate rather than a minutes proxy.
+        _inv = _involvement(team_id, tuple(bundle["tracked_ids"]))
+        _ielig = {p: r for p, r in (_inv or {}).items()
+                  if r["plays_on"] >= IV.MIN_PLAYS and p in full_by}
+        if _ielig:
+            st.markdown("<div class='lab-hdr'>Involvement — a hand in the "
+                        "basket</div>", unsafe_allow_html=True)
+            _iv = IV.involvement_verdict(
+                {p: r for p, r in _inv.items() if p in full_by},
+                names=name_by)
+            if _iv:
+                _verdict_lines(_iv)
+
+            _irows = sorted(_ielig.items(), key=lambda kv: -kv[1]["rate"])
+            ivf = go.Figure()
+            _inames = [full_by.get(p, "?") for p, _r in reversed(_irows)]
+            for _lbl, _key, _col in (("Scored", "as_scorer", ACCENT),
+                                     ("Passed", "as_passer", BLUE),
+                                     ("Screened", "as_screener", PURPLE),
+                                     ("2nd chance", "as_rebounder", GOOD)):
+                ivf.add_trace(go.Bar(
+                    name=_lbl, y=_inames,
+                    x=[r[_key] for _p, r in reversed(_irows)],
+                    orientation="h", marker_color=_col, marker_line_width=0))
+            ivf.update_layout(barmode="stack",
+                              legend=dict(orientation="h", y=1.08))
+            _style(ivf, max(240, 30 * len(_irows) + 120))
+            ivf.update_xaxes(title="scoring plays with a fingerprint")
+            st.plotly_chart(ivf, width="stretch", key="adv_involvement")
+
+            st.dataframe(pd.DataFrame([{
+                "Player": full_by.get(p, "?"),
+                "Involved %": r["rate"],
+                "Involved": r["involved"],
+                "On floor for": r["plays_on"],
+                "Scored": r["as_scorer"],
+                "Passed": r["as_passer"],
+                "Screened": r["as_screener"],
+                "2nd chance": r["as_rebounder"],
+            } for p, r in _irows]), hide_index=True, width="stretch",
+                column_config={
+                    "Involved %": st.column_config.NumberColumn(
+                        "Involved %", format="%.1f%%",
+                        help="Share of the baskets scored WHILE SHE WAS ON THE "
+                             "FLOOR that she had a hand in."),
+                    "On floor for": st.column_config.NumberColumn(
+                        "On floor for",
+                        help="Team scoring plays she was on the floor for — the "
+                             "denominator.")})
+
+            _dep = IV.team_tag_dependence(_ielig)
+            st.caption(
+                "A fingerprint is scoring, passing, setting the screen, the "
+                "hockey pass, or the offensive board that directly created the "
+                "basket — counted **once per basket**, so this is *did you "
+                "touch it*, not *how many ways*. The denominator is the baskets "
+                "scored while she was on the floor, which is what stops this "
+                "from being a minutes stat: a reserve who touches half of hers "
+                "outranks a starter who touches a third."
+                + (f" Note that **{_dep * 100:.0f}%** of these credits come "
+                   f"from optional screen and hockey tags, so do not compare "
+                   f"these rates against a team that does not tag them."
+                   if _dep >= IV.TAG_DEPENDENCE_WARN else "")
+                + " Participation is not causation — being in on a basket is "
+                  "not the same as creating it.")
 
         # ── passer quality — look created vs finished (Insights port) ───
         _pqmap = _passer_quality(gender, tuple(bundle["tracked_ids"]))

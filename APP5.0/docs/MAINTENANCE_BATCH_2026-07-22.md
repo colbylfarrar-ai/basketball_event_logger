@@ -912,3 +912,70 @@ this book — see 10b. The instrument exists and is correct; the data cannot
 separate cohorts yet (no manual games, every player feeds a T3 leaf). Re-run
 `tools/sweep_recal.print_cohort_report` once a box-only or never-tagging coach
 onboards; that is the first moment the claim becomes checkable.
+
+---
+
+## 11. PARTS 4-5 (2026-07-24, continued) — first surfaces
+
+- **11a  Dedupe audit FIRST** ✅ (b5e34df, spec Part 9). The Part 4 rule paid for
+  itself twice:
+  * **5g four factors is FULLY BUILT** — `team_analytics.four_factors` +
+    `league_four_factors`, `stats.four_factor_ppp`, a dedicated Four Factors tab
+    in `box_score.py:1400`, per-quarter, scout, postgame, Rankings, ~10 dashboard
+    surfaces. The spec's "if truly absent" resolves to NOT absent. Its one
+    missing sliver ("which factor decides YOUR games") is reassigned to **5l**.
+  * **Trio/quad SCORING already existed** — `lineups.custom_unit` takes an
+    arbitrary 2-5 player set. What was missing was ENUMERATION.
+
+- **11b  4a trios/quads + finisher finder** ✅ (0b4b2b5). `networks.group_units`
+  accumulates every group of every size in ONE walk (0.2s on 24 games / 4,213
+  events); looping `custom_unit` over C(10,3)+C(10,4)=330 groups would have been
+  330 full event walks. Correctness defined as AGREEMENT with `custom_unit`
+  rather than as its own opinion — verified synthetically and on the real book
+  (trio (4,5,13): poss 76, Net +71.1 from both). min_poss rises with group size
+  (12/25/30) and `NetAdj` applies the same credibility shrink as fives.
+  `finisher_finder(core)` reports the COMBINED unit net plus `delta_vs_core`.
+  **Display gotcha:** the roster has two Schwerdfegers (#23 Ali, #24 Kodi), so
+  surname-only labels read as a duplicate-data bug. Surfaces use jersey numbers.
+
+- **11c  4e kills + 4f answer rate** ✅ (bf522bc). New `helpers/stops.py`, one
+  walk feeds both. Live book: **139 kills (5.79/game), 72% stop rate, 41% answer
+  rate, longest string 26, 106 runs allowed**.
+  **The unit is a TRIP, not a lineups "possession"** — an OREB continues the
+  trip and made FTs mean they scored, both opposite to the PPP model. Fields are
+  named `trips` so the numbers are never read against the per-100 denominator.
+  **Validated by reconciliation:** trip-derived points equal
+  `games.home_score`/`away_score` EXACTLY on all 24 tracked games (now a
+  permanent test). That is what makes the extremes believable — 72% is real for
+  a team allowing ~31/game, and the 26-trip streak is from a **65-13** game.
+  One real bug fixed: `conceded_runs` originally meant "scored twice with no
+  trip of ours between", which could essentially never fire because consecutive
+  same-team events never change possession and the walk merges them.
+
+- **11d  Surfaces** ✅. Charts ▸ Defense ▸ **Stops** (new nested subtab, own
+  `@st.fragment`) and trios/quads + finisher finder appended to **Lab ▸
+  Advanced** beside the existing five-man table.
+  **Deliberate deviation from the Part 6 default:** trios/quads went to Lab, not
+  a Charts subtab, because they belong next to the five-man units a coach is
+  already reading — comparing units across two tabs is worse than one longer
+  panel. The load-time intent is unaffected: that block sits inside
+  `if _tdview == "Lab":`, lazy-gated exactly like Charts.
+  Two bugs the headless render caught that no unit test could:
+  1. `tids` is a LOCAL inside the Lab block, so the new Charts fragment raised
+     `NameError`. Now reads `bundle["tracked_ids"]` (the season +
+     entitlement-correct set).
+  2. `verdict_card` is imported here as `_verdict_card` behind the
+     `_verdict_lines` wrapper; the bare name would have been a runtime NameError.
+  **AppTest note for future sessions:** `.streamlit/secrets.toml` EXISTS in
+  APP5.0, so AppTest hits the auth wall and silently renders a 38.8k-char
+  sign-in shell for EVERY page. Run from a cwd without secrets (e.g. the
+  scratchpad) with `sys.path` pointed at APP5.0. Identical char counts across
+  two different pages is the tell.
+
+### 11z  Parts 4-5 status
+**Built:** 4a, 4e, 4f. **Dead (already built):** 5g.
+**Not built:** 4b synergy, 4c connection matrix, 4d involvement, 4g stints,
+4h shot diet, 4i foul-trouble drag; 5a timeouts, 5b height, 5e chains, 5f
+sub-shock, 5h pythag (absent + cheap), 5i hot hand, 5j Gini, 5k hustle, 5l
+winning-formula miner (highest remaining wow; now also owns the 4-factor-vs-
+result sliver), 5m style-shift, 5n defensive mirror.

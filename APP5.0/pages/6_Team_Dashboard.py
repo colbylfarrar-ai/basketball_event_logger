@@ -72,6 +72,7 @@ import helpers.rapm as RA
 import helpers.wpa as WP
 import helpers.networks as NW
 import helpers.lineups as LU
+import helpers.stops as ST
 import helpers.playtypes as PT
 import helpers.defenses as DEF
 import helpers.exploit as EXPL
@@ -958,6 +959,25 @@ def _units(tid, _tids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _group_units(tid, _tids):
+    """Trios AND quads from ONE possession walk (spec Part 4a). Both sizes in a
+    single cached call on purpose — the walk is the cost, not the combinatorics,
+    so splitting into two fetchers would double the work for no benefit."""
+    return NW.group_units(tid, sizes=(3, 4), game_ids=list(_tids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _finisher(tid, _tids, core):
+    return NW.finisher_finder(tid, tuple(core), game_ids=list(_tids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _stops(tid, _tids):
+    """Kills + answer rate (spec Part 4e/4f) — one walk feeds both."""
+    return ST.team_stops(tid, game_ids=list(_tids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _scout(tid, g, limit=7, excl=(), vis=None, season="Current", season_gp=None):
     # `vis` (tuple of game ids, or None) scopes the hot-zone / shot-creation views
     # to what the viewer may see (None = own team / admin = full depth). `season`
@@ -1561,8 +1581,8 @@ if _tdview == "Charts":
         (ch_sc, ch_sh, ch_play) = st.tabs(
             ["Scoring", "Shooting", "Playmaking"])
     with tab_def:
-        (ch_df, ch_dscheme, ch_rb) = st.tabs(
-            ["Team Defense", "Scheme", "Glass"])
+        (ch_df, ch_dscheme, ch_rb, ch_stops) = st.tabs(
+            ["Team Defense", "Scheme", "Glass", "Stops"])
 
     # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
     # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
@@ -3692,6 +3712,79 @@ if _tdview == "Charts":
 
 
 @st.fragment
+def _fx_stops():
+    """Charts ▸ Defense ▸ Stops — kills + answer rate (spec Part 4e/4f).
+
+    Its own fragment so a control change here reruns THIS panel only, and it
+    lives behind the Charts view gate so it costs nothing until opened.
+    """
+    if not has_tracked:
+        st.info("Tracked games needed for stop-strings and answer rate.")
+        return
+    # bundle["tracked_ids"] is the season + entitlement-correct id set. `tids`
+    # exists only as a local inside the Lab block, so it is NOT in scope here.
+    _st = _stops(team_id, tuple(bundle["tracked_ids"]))
+    if not _st["trips_faced"]:
+        st.caption("No opponent trips found in the tracked games yet.")
+        return
+
+    _v = ST.stops_verdict(_st)
+    if _v:
+        _verdict_lines(_v)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Kills", _st["kills"], f"{_st['kills_per_game']}/game",
+              help=f"{_st['kill_min']}+ consecutive opponent trips without a "
+                   "point — Miami's defensive metric.")
+    k2.metric("Stop rate", f"{_st['stop_pct']:.0f}%",
+              help="Share of ALL opponent trips that produced nothing. Kills "
+                   "are a threshold stat, so this moves where the kill count "
+                   "cannot.")
+    k3.metric("Answer rate", f"{_st['answer']['rate']:.0f}%",
+              f"{_st['answer']['answered']}/{_st['answer']['chances']}",
+              help="After conceding, how often the very next trip of ours "
+                   "scores — volleyball's side-out rate.")
+    k4.metric("Longest string", _st["longest_stop_streak"],
+              f"{_st['conceded_runs_allowed']} runs allowed",
+              help="Most consecutive scoreless opponent trips. 'Runs allowed' "
+                   "counts scores on back-to-back opponent trips.")
+
+    st.caption(
+        "A **trip** here is one team's time with the ball: an offensive rebound "
+        "continues the same trip, and made free throws count as scoring. That "
+        "differs on purpose from the possession rule behind PPP and per-100 "
+        "numbers (every shot or turnover, FT points excluded), because a stop "
+        "means *they came down and did not score*. Do not read these against "
+        "the efficiency denominators.")
+
+    _pl = [p for p in _st["players"] if p["trips_on"] >= 30]
+    if _pl:
+        st.markdown("**On the floor for it** — credit at the moment the string "
+                    "completes")
+        _pnum = {p["_pid"]: f"#{p['number']}" for p in players}
+        st.dataframe(pd.DataFrame([{
+            "Player": f"{_pnum.get(p['pid'], '')} {p['name']}",
+            "Kills on": p["kills_on"],
+            "Stop%": round(p["stop_pct"], 1) if p["stop_pct"] is not None else None,
+            "Def trips": p["trips_on"],
+            "Answer%": (round(p["answer_rate"], 1)
+                        if p["answer_rate"] is not None else None),
+            "Answer n": p["answer_chances"],
+        } for p in _pl]), hide_index=True, width="stretch",
+            height=min(420, 60 + 32 * len(_pl)))
+        st.caption(
+            "A kill is credited to whoever was on the floor for the stop that "
+            "COMPLETED the string, so it stays attributable to one possession "
+            "rather than smeared across substitutions mid-string. Rows need 30+ "
+            "defensive trips.")
+
+
+if _tdview == "Charts":
+    with ch_stops:
+        _fx_stops()
+
+
+@st.fragment
 def _fx_playmaking():
     """Passing network + possession flow — the Playmaking view (moved from
     Lab -> Advanced to Charts)."""
@@ -4860,6 +4953,94 @@ if _tdview == "Lab":
                                "the raw net.")
             else:
                 st.caption("No 5-man unit cleared the minimum possessions yet.")
+
+            # ── trios / quads + finisher finder (spec Part 4a) ───────────
+            # Placed HERE rather than in a Charts subtab (the Part 6 default)
+            # because it belongs beside the five-man table a coach is already
+            # reading — comparing units across two different tabs is worse than
+            # one longer panel. The load-time intent still holds: this whole
+            # block sits inside `if _tdview == "Lab":`, so it is lazy-gated
+            # exactly like Charts and costs nothing until the view is opened.
+            st.markdown("<div class='lab-hdr' style='margin-top:18px'>"
+                        "Trios & quads — the missing middle</div>",
+                        unsafe_allow_html=True)
+            st.caption(
+                "Fives are often too specific to have a usable sample and pairs "
+                "too vague to act on; 3- and 4-man groups are where rotation "
+                "decisions actually live. **NetAdj** shrinks the raw net toward "
+                "0 by sample size, so a 25-possession group at +40 cannot "
+                "outrank a 120-possession group at +12 — trust NetAdj, and read "
+                "Net beside it. Same possession rule as the five-man table "
+                "above, so the numbers are directly comparable.")
+            _grp = _group_units(team_id, tuple(tids))
+            # Jersey numbers, NOT surnames: this roster has two Schwerdfegers
+            # (#23 and #24), and a surname-only label reads as duplicate rows.
+            _num = {p["_pid"]: f"#{p['number']}" for p in players}
+
+            def _glabel(pids):
+                return " · ".join(_num.get(p, str(p)) for p in pids)
+
+            _gtab3, _gtab4 = st.tabs(["Trios", "Quads"])
+            for _tab, _k in ((_gtab3, 3), (_gtab4, 4)):
+                with _tab:
+                    _rows = _grp.get(_k) or []
+                    if not _rows:
+                        st.caption(
+                            f"No {_k}-man group cleared "
+                            f"{NW.GROUP_MIN_POSS[_k]} possessions yet.")
+                        continue
+                    st.dataframe(pd.DataFrame([{
+                        "Group": _glabel(r["players"]),
+                        "Players": ", ".join(r["names"]),
+                        "NetAdj": r["NetAdj"], "Net": r["Net"],
+                        "ORtg": r["ORtg"], "DRtg": r["DRtg"],
+                        "Poss": r["poss"], "cred": r["cred"],
+                    } for r in _rows]), hide_index=True, width="stretch",
+                        height=min(420, 60 + 32 * len(_rows)),
+                        column_config={
+                            "NetAdj": st.column_config.NumberColumn(format="%+.1f"),
+                            "Net": st.column_config.NumberColumn(format="%+.1f"),
+                        })
+
+            # finisher finder — the rotation lever off any core the coach picks
+            st.markdown("**Finisher finder** — pick a core, see who best "
+                        "completes it")
+            _pick_opts = {f"{_num.get(p['_pid'], '')} {p['name']}": p["_pid"]
+                          for p in players}
+            _picked = st.multiselect(
+                "Core (2-4 players)", list(_pick_opts.keys()),
+                max_selections=4, key="td_ff_core",
+                help="Every teammate who shared enough floor time with this "
+                     "whole core is ranked by the COMBINED unit's net.")
+            if len(_picked) >= 2:
+                _ff = _finisher(team_id, tuple(tids),
+                                tuple(sorted(_pick_opts[k] for k in _picked)))
+                st.caption(
+                    f"Core played **{_ff['core_poss']}** possessions at "
+                    f"**{_ff['core_net']:+.1f}** net. Candidates need "
+                    f"{_ff['min_poss']}+ possessions WITH that core. "
+                    "**+/- vs core** is what the fifth adds on top of the core's "
+                    "own level — the honest read, since a strong player can "
+                    "still be the wrong fit beside a particular group.")
+                if _ff["candidates"]:
+                    st.dataframe(pd.DataFrame([{
+                        "Fifth": f"{_num.get(c['pid'], '')} {c['name']}",
+                        "NetAdj": c["NetAdj"], "Net": c["Net"],
+                        "+/- vs core": c["delta_vs_core"],
+                        "Poss": c["poss"], "cred": c["cred"],
+                    } for c in _ff["candidates"]]), hide_index=True,
+                        width="stretch",
+                        column_config={
+                            "NetAdj": st.column_config.NumberColumn(format="%+.1f"),
+                            "Net": st.column_config.NumberColumn(format="%+.1f"),
+                            "+/- vs core": st.column_config.NumberColumn(
+                                format="%+.1f"),
+                        })
+                else:
+                    st.caption("No teammate has enough floor time with that "
+                               "exact core yet — try a smaller core.")
+            elif _picked:
+                st.caption("Pick at least two players to define a core.")
 
     with h_impact:
         _fx_chimpact()

@@ -581,3 +581,59 @@ and 2, and paired a free leaf with an expensive one.
 - **Commits land on `main`, nothing pushed.** Review by `git log` before any
   deploy; today is Friday and the cadence is Wednesday
   (see [[maintenance-batch-doc]], [[deploy-flow]]).
+
+---
+
+## Part 9 — Parts 4-5 DEDUPE AUDIT (2026-07-24, before any build)
+
+The Part 4 dedupe rule says read the adjacent helpers first because several
+past "new ideas" already existed. Doing it found two of the ranked items
+already shipped. Recorded so no future session re-litigates them.
+
+### ALREADY BUILT — do not build
+- **5g four factors — FULLY BUILT, extensively.** `team_analytics.four_factors`
+  (off + def), `team_analytics.league_four_factors`, `stats.four_factor_ppp`,
+  a dedicated **Four Factors tab** in `helpers/box_score.py:1400`, per-quarter
+  factors (`team_analytics.py:308`), scout (`scout.py:702` +
+  `scout_tab.py:734`), postgame (`postgame.py:134`), Rankings
+  (`5_Rankings.py:275`) and ~10 Team Dashboard surfaces. The spec's hedge
+  ("if truly absent it's the classic missing piece") resolves to: NOT absent.
+  **The one genuinely missing sliver** is the season-level "WHICH factor
+  decides YOUR games" (per-game factor differential vs result). That is not a
+  four-factors build at all — it is a special case of **5l**, and belongs
+  there.
+- **Trio/quad SCORING — already possible.** `lineups.custom_unit(team_id,
+  player_ids, …)` scores an ARBITRARY 2-5 player set by subset match
+  (docstring: "picking 2-5 players works"). Used by `9_War_Room.py:1425/1654`,
+  `box_score.py:1193`, `lineup_projection.py:365`.
+
+### STILL MISSING — real builds
+- **4a enumeration + finisher finder.** `custom_unit` scores ONE set that the
+  caller already chose; nothing ENUMERATES trios/quads, ranks them, or answers
+  "given this 4-man core, which 5th player is best". Critically, `custom_unit`
+  re-fetches events and rebuilds `_event_floor` on EVERY call, so looping it
+  over C(10,3)+C(10,4) = 330 combos would be 330 full event walks. The build
+  must accumulate all combos in ONE walk, the way `networks.chemistry_network`
+  already does for pairs. Reuse `_NET_PRIOR_POSS` EB shrinkage and a raised
+  min-poss (a trio's sample is thinner than a pair's).
+- **4e kills (3+ consecutive stops).** Nothing exists: `runs.py` is
+  POINTS-based (>=6 unanswered points) and `defenses.py` has PPP-by-scheme and
+  forced-TO splits but no stop-STRINGS. Confirmed by grep — the only "kills" in
+  the codebase is a comment in `server_control.py`.
+- **4f answer rate (post-concession scoring).** `runs.momentum` measures net
+  points in a window after a RUN ends; answer rate is per-possession after ANY
+  opponent score. Finer-grained, genuinely absent.
+- **5h pythagorean luck.** `predictor.py` has `win_prob_from_margin` and
+  `predict_game` but no expected-wins-from-point-differential. Absent and
+  cheap.
+
+### Build order adopted for this session
+1. **4a** trios/quads + finisher finder (the founder's literal ask; scoring
+   machinery exists, enumeration does not).
+2. **4e + 4f** in ONE possession walk (the spec's own pairing).
+3. Then reassess; **5l** is the highest-wow remaining and now also owns the
+   4-factor-vs-result sliver.
+
+Placement follows Part 6: **Charts subtab by default** (`6_Team_Dashboard.py`
+gates every view behind `if _tdview == "Charts":` and each panel is an
+`@st.fragment`, so an unopened view costs nothing).

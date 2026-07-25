@@ -764,7 +764,9 @@ LEAF_TIER = {
     "USG%": T2_POSSESSION, "MPG": T2_POSSESSION, "PRF/G": T2_POSSESSION,
     "AST%": T2_POSSESSION, "pmTOV%": T2_POSSESSION,
     "SC/G": T2_POSSESSION, "SCPass/G": T2_POSSESSION,
-    "OREB%": T2_POSSESSION, "DREB%": T2_POSSESSION, "REB%z": T2_POSSESSION,
+    "OREB%": T2_POSSESSION, "DREB%": T2_POSSESSION,
+    # REB%z is the alias, REB% the resolved profile key — both need a tier
+    "REB%z": T2_POSSESSION, "REB%": T2_POSSESSION,
     "DRtg": T2_POSSESSION, "DRtgz": T2_POSSESSION,
     "impact": T2_POSSESSION, "oppadj": T2_POSSESSION,
     "oreb": T2_POSSESSION, "dreb": T2_POSSESSION, "rebounding": T2_POSSESSION,
@@ -774,6 +776,11 @@ LEAF_TIER = {
     "RimProt": T3_TAGGED, "RimD_pct": T3_TAGGED,
     "PerimD": T3_TAGGED, "PerimD_pct": T3_TAGGED,
     "Guarded%": T3_TAGGED, "DSHOT%": T3_TAGGED, "DSHOT%z": T3_TAGGED,
+    # AdjDFG% is what `DSHOT%z` actually RESOLVES to (see LEAF_ALIAS) — the
+    # shooter-adjusted contest rate. Tiered here as well as its alias, because
+    # resolve_leaves() returns the resolved name and an untiered resolved name
+    # would silently drop out of every box_share / tier_cohort computation.
+    "AdjDFG%": T3_TAGGED,
     # charges are event-only AND None when a team never tags them at all —
     # that None-not-zero protection is exactly what makes this T3, not T2.
     "CHG/G": T3_TAGGED, "CHG/Gz": T3_TAGGED,
@@ -824,6 +831,143 @@ LEAF_GROUPS = {
     "_OFFENSE_PARTS": lambda: _OFFENSE_PARTS,
     "_OVERALL_PARTS": lambda: _OVERALL_PARTS,
 }
+
+# ── CATEGORY → LEAF RESOLUTION (spec Part 3, mechanism 2) ────────────────────
+# The headline ratings are trees: DEFENSE blends `rimdef`/`perimdef` components,
+# which are themselves leaf groups. To answer "how much of DEFENSE did this
+# coach's data actually feed?" the tree has to be flattened to RAW columns with
+# their effective weights multiplied down each branch.
+
+# Composite component name -> the leaf group it stands for.
+COMPONENT_GROUPS = {
+    "shooting": "_SHOOTING", "finishing": "_FINISHING",
+    "rimdef": "_RIMDEF", "perimdef": "_PERIMDEF",
+    "oreb": "_OREB", "dreb": "_DREB", "physical": "_PHYSICAL",
+    "offense": "_OFFENSE_PARTS", "defense": "_DEFENSE_PARTS",
+    "playmaking": "_PLAYMAKING", "rebounding": "_REBOUNDING_PARTS",
+}
+
+# Parts lists name some leaves by their Z-ALIAS, which is NOT the profile key.
+# Read these off the zcol_signed() calls in player_ratings(), never guessed:
+# the contest leaf in particular is `DSHOT%z` in _DEFENSE_PARTS but resolves to
+# AdjDFG% (the shooter-adjusted twin), so assuming DSHOT% would measure DEFENSE
+# evidence against a column the rating does not actually use.
+LEAF_ALIAS = {
+    "DSHOT%z": "AdjDFG%", "DRtgz": "DRtg", "PF/Gz": "PF/G",
+    "CHG/Gz": "CHG/G", "REB%z": "REB%", "TOV/Gz": "TOV/G",
+    "nsPF/Gz": "nsPF/G",
+}
+
+# Names that are computed inside player_ratings() rather than read from a
+# profile key, so presence must be asked of the live z-map, not of `profiles`.
+DERIVED_LEAVES = ("impact", "oppadj")
+
+# Which parts list defines each headline rating.
+CATEGORY_GROUPS = {
+    "OVERALL": "_OVERALL_PARTS", "OFFENSE": "_OFFENSE_PARTS",
+    "DEFENSE": "_DEFENSE_PARTS", "PLAYMAKING": "_PLAYMAKING",
+    "REBOUNDING": "_REBOUNDING_PARTS",
+}
+
+
+def resolve_leaves(group_name, weight=1.0, _seen=None):
+    """Flatten a leaf group to {resolved_name: effective_weight}.
+
+    Composite components recurse with their weight multiplied in, so a leaf
+    buried two levels down (TS% inside shooting inside OFFENSE) carries the
+    product of the weights on its path. Names are resolved through LEAF_ALIAS,
+    so keys come back as PROFILE keys (or a DERIVED_LEAVES name).
+
+    Weights of a group are NORMALIZED before recursing: `_wavg` divides by the
+    weight it actually used, so a component contributes its own SHARE of the
+    parent, not its raw weight sum. Without this a 10-leaf component would
+    swamp a 2-leaf one purely by leaf count.
+    """
+    _seen = _seen or set()
+    if group_name in _seen:            # cycle guard; the tree is a DAG today
+        return {}
+    _seen = _seen | {group_name}
+    group = LEAF_GROUPS[group_name]()
+    total = sum(t[1] for t in group) or 1.0
+    out = defaultdict(float)
+    for leaf in group:
+        name, w = leaf[0], leaf[1]
+        share = weight * w / total
+        if name in COMPONENT_GROUPS:
+            for k, v in resolve_leaves(COMPONENT_GROUPS[name], share,
+                                       _seen).items():
+                out[k] += v
+        else:
+            out[LEAF_ALIAS.get(name, name)] += share
+    return dict(out)
+
+
+def category_leaves(category):
+    """{profile_key: effective_weight} for a headline rating (see CATEGORIES)."""
+    return resolve_leaves(CATEGORY_GROUPS[category])
+
+
+def fed_share(category, present):
+    """(share, box_share) of `category`'s leaf WEIGHT that a player actually has.
+
+    `present(name)` -> True when that column has a value for the player.
+
+    * share      — over ALL leaves: how much of the model this player's data fed.
+    * box_share  — the T1 BOX leaves that were fed, as a fraction of the WHOLE
+                   category. Note the denominator: it is the category total, not
+                   the box-leaf total. Dividing by the box total would return
+                   1.0 whenever the box leaves are present, which would credit a
+                   hand-entered game with FULL evidence for DEFENSE — exactly
+                   the inaccuracy per-category evidence exists to remove. A box
+                   score reaches only part of DEFENSE, and box_share is that
+                   part.
+
+    Mirrors `_wavg`: a missing leaf's weight simply is not counted, so `share`
+    is exactly the fraction of the weighted mean's denominator that was real.
+    """
+    leaves = category_leaves(category)
+    total = sum(leaves.values()) or 1.0
+    got = sum(w for k, w in leaves.items() if present(k))
+    box_got = sum(w for k, w in leaves.items()
+                  if LEAF_TIER.get(k) == T1_BOX and present(k))
+    return (got / total, box_got / total)
+
+
+def category_evidence(category, present, tracked_gp, manual_gp):
+    """Games-equivalent EVIDENCE for one category (spec Part 3, mechanism 2).
+
+        tracked_gp x share  +  MANUAL_GAME_WEIGHT x manual_gp x box_share
+
+    A tracked game credits the fraction of the category it actually fed; a
+    hand-entered game credits only the box-reachable fraction, still discounted
+    by MANUAL_GAME_WEIGHT. So a coach who never tags gets a DEFENSE built from
+    T1+T2 leaves, lower evidence, more shrink toward 50 — honest rather than
+    falsely precise.
+
+    A fully-tracked player with no manual games and every leaf fed has
+    share == 1.0, so this returns exactly today's `evidence_gp` and nothing
+    about their rating moves. The number DOES fall for a player with manual
+    games in a tag-heavy category, which is the intended correction: those box
+    scores never fed DEFENSE's tracked leaves, and today's flat evidence_gp
+    credits them as if they had.
+    """
+    share, box_share = fed_share(category, present)
+    return tracked_gp * share + MANUAL_GAME_WEIGHT * manual_gp * box_share
+
+
+def tier_cohort(present, tracked_gp, manual_gp):
+    """Which DATA TIER a player's rating actually rests on — the cohort label
+    the backtest reports rho/MAE against, so the depth commitment is a measured
+    number rather than a claim.
+
+      "box"        no tracked games at all (hand-entered box scores only)
+      "possession" tracked, but no optional-tag leaf ever fed
+      "tagged"     tracked AND at least one T3 leaf fed
+    """
+    if tracked_gp <= 0:
+        return "box" if manual_gp else None
+    t3 = [k for k, v in LEAF_TIER.items() if v == T3_TAGGED]
+    return "tagged" if any(present(k) for k in t3) else "possession"
 
 
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players

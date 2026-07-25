@@ -330,6 +330,238 @@ def team_foul_state_net(game_ids=None, events=None, floor=None, team_id=None,
 MIN_STATE_POSS = 150
 
 
+# ── foul clock — WHEN the fouls land (§1.1 remainder) ────────────────────────
+#
+# The distribution of "time of Nth foul". Deliberately the most modest thing in
+# this module and the only one that is honest at ANY sample, because it makes no
+# causal claim whatsoever: it reports when a thing that happened, happened.
+#
+# It exists because `bench_cost` above answers "what did sitting her cost" and
+# cannot answer the question a coach actually asks first, which is "is it early?"
+# A second foul at 6:10 of the first quarter and a second foul at 1:20 of the
+# second are the same row in every existing read in this app and are completely
+# different decisions on the bench. The clock is the context bench_cost lacks.
+#
+# Nothing here is gated on reliability, because nothing here is a rate. A median
+# is a description of the games that were played; it does not predict the next
+# one and does not claim to.
+
+#: Game clock, seconds, at which a foul stops being "early". End of Q1 = 480,
+#: halftime = 960. A second foul before halftime is the classic bench decision.
+HALFTIME_SECS = 960
+
+
+def _foul_secs(e):
+    """Seconds since tip for a foul row, or None when the clock is missing."""
+    q, t = e.get("quarter"), e.get("time")
+    if not q or not t:
+        return None
+    try:
+        return S.elapsed(int(q), t)
+    except Exception:
+        return None
+
+
+def foul_clock(game_ids=None, events=None, team_id=None, player_id=None,
+               levels=TROUBLE_LEVELS):
+    """{pid: {level: {n, times, median, earliest, latest, pre_half}}}.
+
+    `times` is the elapsed-seconds stamp of each Nth personal foul, one entry
+    per game the player reached that level. `pre_half` counts how many of those
+    landed before halftime.
+
+    THE FOUL CONVENTION IS THE TRAP: on a foul row `secondary_player_id` is the
+    FOULER and `primary_player_id` is the player who was FOULED. Reading primary
+    here would produce a "foul clock" describing fouls DRAWN, and on the live
+    book it yields player-games with 10 and 11 fouls, which is impossible under
+    a five-foul disqualification. Same trap bench_cost documents; it is the
+    single easiest way to get this whole module backwards.
+    """
+    if events is None:
+        events = S.fetch_events(game_ids)
+
+    # per (player, game): the ordered stamps of her own fouls
+    per = defaultdict(list)
+    for e in events:
+        if e.get("event_type") != "foul":
+            continue
+        fouler = e.get("secondary_player_id")     # NOT primary — see docstring
+        if fouler is None:
+            continue
+        if player_id is not None and fouler != player_id:
+            continue
+        secs = _foul_secs(e)
+        if secs is None:
+            continue
+        per[(fouler, e.get("game_id"))].append(secs)
+
+    out = defaultdict(dict)
+    agg = defaultdict(lambda: defaultdict(list))
+    for (pid, _gid), stamps in per.items():
+        stamps.sort()
+        for level in levels:
+            if len(stamps) >= level:
+                agg[pid][level].append(stamps[level - 1])
+
+    for pid, by_level in agg.items():
+        for level, times in by_level.items():
+            times.sort()
+            n = len(times)
+            out[pid][level] = {
+                "n": n,
+                "times": times,
+                "median": times[n // 2] if n % 2 else
+                          (times[n // 2 - 1] + times[n // 2]) / 2,
+                "earliest": times[0],
+                "latest": times[-1],
+                "pre_half": sum(1 for t in times if t < HALFTIME_SECS),
+            }
+    return dict(out)
+
+
+def clock_label(secs):
+    """Elapsed seconds → the period-and-clock a coach reads ('Q2 3:40')."""
+    if secs is None:
+        return "—"
+    secs = max(0, int(secs))
+    if secs < 1920:
+        q = secs // 480 + 1
+        left = 480 - (secs - 480 * (q - 1))
+    else:
+        ot = (secs - 1920) // 240 + 1
+        q = f"OT{ot}" if ot > 1 else "OT"
+        left = 240 - ((secs - 1920) - 240 * (ot - 1))
+        return f"{q} {left // 60}:{left % 60:02d}"
+    return f"Q{q} {left // 60}:{left % 60:02d}"
+
+
+def foul_clock_lines(clock, names=None, level=2, min_games=MIN_GAMES_AT_LEVEL):
+    """[(badge, n, html)] — the descriptive read, safe at any sample.
+
+    Sorted by how EARLY the median foul lands, because that is the ordering a
+    coach cares about: whoever tops this list is the player the bench decision
+    keeps arriving for.
+    """
+    def nm(pid):
+        return (names or {}).get(pid, f"#{pid}")
+
+    rows = [(pid, d[level]) for pid, d in (clock or {}).items()
+            if level in d and d[level]["n"] >= min_games]
+    rows.sort(key=lambda r: r[1]["median"])
+    ord_ = _ordinal(level)
+    lines = []
+    for pid, d in rows[:3]:
+        share = d["pre_half"] / d["n"]
+        lines.append((
+            f"{ord_} foul", d["n"],
+            f"<b>{nm(pid)}</b> picks up her {ord_} at <b>"
+            f"{clock_label(d['median'])}</b> on a typical night "
+            f"({d['n']} game{'s' if d['n'] != 1 else ''}; earliest "
+            f"{clock_label(d['earliest'])})"
+            + (f", and <b>{d['pre_half']} of {d['n']}</b> land before "
+               f"halftime." if share >= 0.5 else ".")))
+    return lines
+
+
+# ── crew cross — ACCUMULATE, DO NOT SURFACE ──────────────────────────────────
+#
+# MEASURED 2026-07-26, and it fails harder than the roadmap predicted.
+#
+# 200 random half-splits of the girls' 2025-2026 book (35 games, 919 fouls, 65
+# officials), foul rate per player-event of exposure:
+#
+#     unit                              r        SB     qualifying units
+#     player foul rate (the ceiling)   .518     .682     26.8   @20 exposure
+#                                      .619     .765     14.0   @40
+#                                      .720     .837      4.5   @80
+#     player x CREW foul rate         -.254    -.680      5.9   @20
+#                                              not measurable   @40+
+#
+# The crew cell does not merely fail to predict itself — it ANTI-correlates, on
+# about six qualifying cells, and above the lowest exposure threshold there are
+# not enough cells to compute an r at all. The reason is structural rather than
+# unlucky: the busiest official in this book has worked FOUR games. Splitting
+# four games in half and asking whether a player's foul rate in two of them
+# predicts the other two is not a thin measurement, it is not a measurement.
+#
+# The roadmap proposed gating at ">=3 games with a crew, labelled a lean". That
+# gate would fire on a handful of cells and every one of them would be noise
+# wearing a confidence label. So this function returns COUNTS and exposure and
+# never a rate, a lean, or a verdict, and nothing renders it. It exists so the
+# sample accrues against the day there are enough games — the read is genuinely
+# valuable and no competitor can attempt it, which is exactly why it must not
+# ship wrong first.
+#
+# The positive finding is worth more than the negative one: a player's OVERALL
+# foul rate is reliable (SB .68 at 20 events of exposure, .84 at 80). Foul rate
+# is a real player trait in this book. It is only the CREW split that this
+# sample cannot carry, and that is a games problem which time fixes on its own.
+
+#: Games with a crew before the accumulated cell is even worth returning. Not a
+#: display gate -- nothing displays this -- just a floor on what is worth
+#: carrying around.
+MIN_CREW_GAMES = 3
+
+
+def crew_foul_rate(game_ids=None, events=None, player_id=None, min_games=1):
+    """{(pid, official_id): {fouls, exposure, games}} — the ACCUMULATOR.
+
+    Deliberately returns no rate. See the measurement above: the player x crew
+    cell anti-correlates with itself at r=-.254 on ~6 qualifying cells, because
+    the busiest official in this book has worked four games. Handing back a
+    `rate` key would invite a caller to render it, and there is no threshold in
+    this book at which it means anything.
+
+    `exposure` is the player's event count in those games — a floor-time proxy,
+    the same one bench_cost's shares are built from. Call it, store it, let the
+    sample grow; do not put it on screen.
+    """
+    if events is None:
+        events = S.fetch_events(game_ids)
+
+    crew_of = defaultdict(set)
+    expo = defaultdict(int)
+    for e in events:
+        gid = e.get("game_id")
+        if e.get("event_type") == "foul" and e.get("official_id"):
+            crew_of[gid].add(e["official_id"])
+        pid = e.get("primary_player_id")
+        if pid is not None and gid is not None:
+            expo[(pid, gid)] += 1
+
+    out = defaultdict(lambda: {"fouls": 0, "exposure": 0, "games": set()})
+    for e in events:
+        if e.get("event_type") != "foul":
+            continue
+        fouler = e.get("secondary_player_id")     # NOT primary — see foul_clock
+        oid = e.get("official_id")
+        if fouler is None or not oid:
+            continue
+        if player_id is not None and fouler != player_id:
+            continue
+        cell = out[(fouler, oid)]
+        cell["fouls"] += 1
+        # Count the game HERE as well as in the exposure pass below. Committing
+        # a foul is itself proof the player was in that game with that
+        # official, and the exposure pass keys on `primary_player_id` — which a
+        # defensive specialist may barely appear as. Relying on exposure alone
+        # dropped whole cells that had fouls in them.
+        if e.get("game_id") is not None:
+            cell["games"].add(e["game_id"])
+
+    for (pid, gid), n in expo.items():
+        if player_id is not None and pid != player_id:
+            continue
+        for oid in crew_of.get(gid, ()):
+            cell = out[(pid, oid)]
+            cell["exposure"] += n
+            cell["games"].add(gid)
+
+    return {k: {"fouls": v["fouls"], "exposure": v["exposure"],
+                "games": len(v["games"])}
+            for k, v in out.items() if len(v["games"]) >= min_games}
+
+
 def foul_trouble_verdict(bench, state, names=None):
     """[(badge, n, html)] for helpers.cards.verdict_card.
 

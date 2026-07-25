@@ -187,3 +187,50 @@ ok(any("not handed out at random" in x[2] for x in v)
 ok(FT.foul_trouble_verdict({}, None) == [], "nothing to say -> says nothing")
 
 print(f"\n{PASS} checks passed.")
+
+print("\n-- foul clock (§1.1 remainder) --------------------------------------")
+
+# The convention trap again: secondary = the FOULER. A clock built on primary
+# would describe fouls DRAWN.
+_ck_ev = []
+_eid = 9000
+for _g in range(4):
+    for _n, (_q, _t) in enumerate(((1, "4:00"), (2, "6:00"), (3, "5:00"))):
+        _eid += 1
+        _ck_ev.append({"id": _eid, "game_id": 700 + _g, "event_type": "foul",
+                       "quarter": _q, "time": _t,
+                       "primary_player_id": 99,      # the player FOULED
+                       "secondary_player_id": 7,     # the FOULER
+                       "official_id": 3})
+_ck = FT.foul_clock(events=_ck_ev)
+ok(7 in _ck, "the clock keys on the FOULER, not the player fouled")
+ok(99 not in _ck, "and never on the player who was fouled")
+ok(_ck[7][2]["n"] == 4, "one entry per game reaching that foul count")
+# 2nd foul is Q2 6:00 -> 480 + (480-360) = 600s elapsed
+ok(_ck[7][2]["median"] == 600, "the Nth foul's stamp is the Nth in time order")
+ok(_ck[7][2]["pre_half"] == 4, "pre-half counts fouls before 960s")
+ok(_ck[7][3]["n"] == 4 and _ck[7][3]["median"] > _ck[7][2]["median"],
+   "a later foul lands later — the levels are ordered")
+ok(FT.clock_label(600) == "Q2 6:00", "clock_label round-trips the stamp")
+ok(FT.clock_label(0) == "Q1 8:00", "tip-off reads as a full first quarter")
+ok(FT.clock_label(None) == "—", "a missing stamp renders as a dash")
+
+_noclock = [dict(e, quarter=None, time=None) for e in _ck_ev]
+ok(FT.foul_clock(events=_noclock) == {},
+   "a foul with no clock is skipped, never stamped at zero")
+
+_lines = FT.foul_clock_lines(_ck, names={7: "#7"}, level=2, min_games=3)
+ok(len(_lines) == 1 and _lines[0][1] == 4, "the read is a verdict-card triple")
+ok("Q2 6:00" in _lines[0][2], "and states the typical time")
+
+print("\n-- crew cross ACCUMULATES and refuses to rate -----------------------")
+
+_cr = FT.crew_foul_rate(events=_ck_ev)
+ok((7, 3) in _cr, "the crew cell accumulates")
+ok(_cr[(7, 3)]["fouls"] == 12, "with raw foul counts")
+ok("rate" not in _cr[(7, 3)],
+   "and NO rate key — measured at r=-.254 against itself, it must not be "
+   "renderable")
+ok(_cr[(7, 3)]["games"] == 4, "games are counted for when the sample grows")
+ok(FT.crew_foul_rate(events=_ck_ev, min_games=99) == {},
+   "min_games filters the accumulator")

@@ -1119,6 +1119,19 @@ def _foul_state(tid, _tids, level=3):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _foul_clock(_tids, _pids):
+    """When each player picks up her Nth foul (§1.1 remainder).
+
+    Computed over the team's tracked games and filtered to this roster after —
+    the engine keys on the FOULER, who is on the opposing team for half the
+    events in any game, so filtering has to happen on player id and not on the
+    game's team.
+    """
+    ck = FTR.foul_clock(game_ids=list(_tids))
+    return {p: d for p, d in ck.items() if p in set(_pids)}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _hero_ball(g, season):
     """Scoring/creation concentration for EVERY team in the gender pool
     (spec Part 5j). Cached per (gender, season) rather than per team because
@@ -4100,8 +4113,49 @@ def _fx_foul_trouble():
     _nm = {p["_pid"]: f"#{p['number']}" for p in players}
     _full = {p["_pid"]: p["name"] for p in players}
     _fv = FTR.foul_trouble_verdict(_bench, _state, names=_nm)
-    if _fv:
-        _verdict_lines(_fv)
+    # The clock goes FIRST: "is it early?" is the question a coach asks before
+    # "what did sitting her cost", and the bench-cost read below has no way to
+    # answer it — a second foul at 6:10 of the first and one at 1:20 of the
+    # second are the same row there and completely different decisions.
+    _clk = _foul_clock(_tids, tuple(sorted(_full)))
+    _cv = FTR.foul_clock_lines(_clk, names=_nm, level=2)
+    if _cv or _fv:
+        _verdict_lines(_cv + _fv)
+
+    if _clk:
+        _crows = []
+        for _pid, _lv in _clk.items():
+            for _level in sorted(_lv):
+                _d = _lv[_level]
+                if _d["n"] < FTR.MIN_GAMES_AT_LEVEL:
+                    continue
+                _crows.append({
+                    "Player": _full.get(_pid, f"#{_pid}"),
+                    "Foul": _level,
+                    "Games": _d["n"],
+                    "Typical": FTR.clock_label(_d["median"]),
+                    "Earliest": FTR.clock_label(_d["earliest"]),
+                    "Before half": f"{_d['pre_half']}/{_d['n']}",
+                    "_sort": _d["median"],
+                })
+        if _crows:
+            _crows.sort(key=lambda r: (r["Foul"], r["_sort"]))
+            with st.expander("🕐 Foul clock — when the fouls actually land",
+                             expanded=False):
+                st.dataframe(
+                    pd.DataFrame(_crows).drop(columns=["_sort"]),
+                    hide_index=True, width="stretch")
+                st.caption(
+                    "The elapsed-clock stamp of each player's Nth personal, "
+                    "across the games she reached it. Purely descriptive, and "
+                    "the only read on this screen that is honest at any sample "
+                    "— it makes no causal claim at all, it reports when a "
+                    "thing that happened, happened. A median is a description "
+                    "of the games that were played; it does not predict the "
+                    "next one. League-wide on this book the 2nd foul lands "
+                    "around Q3 5:41, the 3rd around Q3 2:05 and the 4th around "
+                    "Q4 6:52, so a player well left of those is one the bench "
+                    "decision keeps arriving early for.")
 
     if _bench:
         _rows = []

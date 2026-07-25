@@ -552,7 +552,30 @@ Audience note that unlocks a lot: the main app is **not public**. It's coaches a
 administrators, 99% tied to one team or school. So it can and should behave like a
 front office, not a website.
 
-## 2.1 Team Dashboard becomes home
+## 2.1 Team Dashboard becomes home  ✅ SHIPPED 2026-07-25
+
+> Landing page is now Team Dashboard (`Main.py`, `default=True`). Analytics Hub
+> keeps its entry and all its content — only the default moved.
+>
+> `CORRECTED` **The season-fallback machinery already existed.**
+> `SEAS.default_read_season()` already drops a read page back to the last PLAYED
+> season when the active one is empty, and the dashboard already used it. What
+> was missing was the LABEL: it fell back silently, which is tolerable on a page
+> you navigate to and not on the page the app opens with. A coach reading last
+> season's Power as this season's is the one failure that would poison trust in
+> the whole screen. The dashboard now states which season it shows and why.
+>
+> Two traps in that notice: `SEAS.ACTIVE` is the sentinel string **`'Current'`**,
+> not a year, so print the option label or the sentence reads "the Current
+> season hasn't started"; and `default_team` is a per-coach SETTING that may be
+> a team in the OTHER gender, in which case it silently doesn't apply. Unset, it
+> now falls back to the coach's identity team.
+>
+> Also fixed: **War Room's season picker had no `index=`** and opened on the
+> empty active season — every sim, projection and lineup read rendering blank
+> over a full database. It now uses `default_read_season_index` like the
+> dashboard. Worth auditing every other read page's season picker for the same
+> omission.
 
 **Decision on the table and recommended: yes.** Replace the current Main landing with the
 Team Dashboard Overview for the coach's own team.
@@ -565,7 +588,35 @@ Team Dashboard Overview for the coach's own team.
   aggressively, and consider a slimmer "home" render of Overview that lazy-loads the
   heavier zone/glance blocks below the fold.
 
-## 2.2 The front-office header
+## 2.2 The front-office header  ✅ SHIPPED (partial) 2026-07-25
+
+> `CORRECTED` Four things below are wrong.
+>
+> 1. **The header already exists.** `team_card.render_banner` is the green
+>    identity card, and `6_Team_Dashboard.py` has drawn it above every dashboard
+>    view all along. 2.2 was never "build a header" — it is "extend the one that
+>    exists". Shipped: `_banner_html` (one renderer both paths share, so they
+>    cannot drift) + `render_for(team_id, gender, season)` which resolves the
+>    ratings and the entitlement gate itself for pages that hold neither.
+> 2. **"One persistent bar across every page" does not fit the app.** Only
+>    War Room qualified. Schedule is a league calendar (gender/class filters, no
+>    team selection); Whiteboard has NO team concept at all (`coach_plays` keys
+>    on `coach_email`, not `team_id`); Event Editor is scoped to a GAME, which
+>    has two teams. A banner on any of them claims a page that is not about that
+>    team. Giving those pages a real team scope is a FEATURE, logged as its own
+>    slice — see §BL2.
+> 3. **There is no crest and no mascot field.** `teams` has no image or mascot
+>    column and social-card logos are ad-hoc uploaded bytes per call. The mock's
+>    `[crest] KANSAS COMETS` has no source; `teams.name` is "Kansas Girls".
+>    Shipped color-only, which `ui.team_color()` already provides for all 714
+>    teams with a coach override, at zero storage cost.
+> 4. **Tracked rank is co-op DEPTH, not identity.** It renders only behind the
+>    resolved `entitlement.tracked_gate` answer. Chrome drawn on every page is
+>    the likeliest place for a co-op leak to hide.
+>
+> Header contents as shipped: name · tier · class · record · games · streak ·
+> MOV · overall rank of pool · (gated) tracked rank of pool · tracked games ·
+> Power. No next-game or crew line.
 
 One persistent bar across every page. `helpers/dashboard/team_card.py` already draws a
 banner; promote it to app-level chrome.
@@ -633,7 +684,27 @@ audience) vs 20–80 (scouting-native, more honest about uncertainty). Recommend
 the audience, with the underlying uncertainty expressed by a **confidence dot**, not by the
 scale.
 
-## 2.5 Navigation: group the 16 pages
+## 2.5 Navigation: group the 16 pages  ⚠️ PREMISE FALSE
+
+> `CORRECTED` **"Sixteen flat sidebar entries" was never true.** `Main.py` has
+> always grouped the pages with `st.navigation` into **Analyze / Build / Plan &
+> scout**, each with a material icon, and the module docstring explains that a
+> router exists precisely to get real sections. The app's "biggest structural UI
+> problem" did not exist.
+>
+> Decision (2026-07-25): keep the WORKFLOW grouping, do not switch to the
+> entity grouping below. Entity cuts split the workflow a coach performs —
+> tracking a game and editing its events would land in different sections — and
+> the Team Dashboard is used for opponents too, so "mine vs league" does not cut
+> cleanly. Shipped: Settings + FAQ moved out of "Plan & scout" (where a coach
+> preps for an opponent; neither belongs) into their own **Settings & help**
+> section. Nothing else moved.
+>
+> **Standing constraint from the coach (2026-07-25): no page is removed and no
+> depth is consolidated away.** Officials, Whiteboard, Rankings, FAQ — all
+> sixteen pages mean something and keep their own entry. Any future nav work
+> reorganizes; it does not delete. The personal feel is carried by the banner
+> and the landing page, not by shrinking the app.
 
 Sixteen flat sidebar entries is the app's biggest structural UI problem. Group them:
 
@@ -948,6 +1019,64 @@ than infer, and it is a candidate trigger for §1.7.
   solid dot. Wire the dot to the split-half number, not to a games count.
 - **§3.4 position:** `players.position` exists. Check its fill rate before
   designing the derived-role fallback.
+
+---
+
+# §BL2 — BUILD LOG, Part 2 slice 1 (2026-07-25)
+
+Shipped in `9687aaf`: landing swap + labeled season fallback, War Room banner,
+`Settings & help` nav section, and the shared banner renderer. Three more of
+this document's premises were false (2.1's fallback, 2.2's header, 2.5's flat
+sidebar) — all corrected inline above.
+
+## The access model, restated because everything here depends on it
+
+The coach was explicit that `entitlement.tracked_gate` is what the whole app is
+built on. Resolution order: **past season → fully open to everyone, across
+gender, no Paid/co-op gate** · Free → box score only · Paid → full depth on
+their **own team** · co-op → full depth within their gender **but reciprocally**
+— the viewer must be pooled AND the target team must be pooled. A team that has
+not opted in stays gated to everyone until the season ends; opting in is what
+buys access, and that reciprocity is the product mechanic.
+
+Navigation is **not** gated — any coach may browse any team and any season.
+Only depth is gated, and there is no gender restriction on where a coach looks.
+
+Everything new that surfaces tracked depth must READ this gate, never re-derive
+it. Chrome drawn on every page is the likeliest place for a leak to hide, which
+is why the banner's tracked rank / tracked-game count sit behind the resolved
+flag and are asserted on.
+
+## What "team-scoped" actually means in this app
+
+The plan assumed most pages are about a team. They are not:
+
+| page | scope | banner? |
+|---|---|---|
+| Team Dashboard | one team | ✅ already had it |
+| War Room | own team + per-view picks | ✅ added |
+| Schedule | **league calendar** (gender/class filters, no team) | ❌ |
+| Whiteboard | **no team concept** (`coach_plays.coach_email`) | ❌ |
+| Event Editor | **one game** = two teams | ❌ |
+| Game Tracker | one team, but phone-at-courtside | ❌ by choice |
+
+The banner is anchored to the coach's **own** team from their identity, not to
+the view's current selection — it answers "whose app is this", and a bar that
+re-pointed as you switched to an opponent would answer a different question
+badly.
+
+## Next slice, already scoped
+
+**Give Schedule and Whiteboard a real team scope.** Schedule defaulting to your
+program's games is arguably the single largest "personal feel" win left in Part
+2, and Whiteboard plays arguably belong to a team as well as a coach (that is a
+schema question: `coach_plays` has no `team_id`). This is a FEATURE, not a
+header rollout — keeping the two separate is what stopped this slice tripling.
+
+Still deferred, unchanged: **2.3 news feed** (needs a headline generator with
+real editorial judgment, and it wanted a home first — it has one now) and
+**2.4 player card** (largest rendering job in Part 2; its shot-kind bars must be
+SHARE bars, per §BL's reliability finding).
 
 ---
 

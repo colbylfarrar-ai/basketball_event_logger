@@ -1,4 +1,7 @@
-"""Headless render of Charts > Winning Formula (spec 5l).
+"""Headless render of the new Charts surfaces (spec 5l + 4c).
+
+Covers Charts > Winning Formula and Charts > Offense > Playmaking >
+Connection Matrix.
 
 Unit tests cover the maths; this covers the things only a real render catches --
 a name that is not in scope inside a fragment, a column_config that Streamlit
@@ -111,6 +114,16 @@ def run():
         n_tables = len(at.dataframe)
         ok(n_tables >= 2,
            f"Charts rendered {n_tables} tables including the formula pair")
+
+        # ── Charts > Offense > Playmaking: connection matrix (spec 4c) ────
+        ok("connection matrix" in low, "the connection matrix rendered")
+        ok("expected assists" in low,
+           "the grid is labelled in xA, not raw assist counts")
+        ok("teammates fed" in low,
+           "the distributor roll-up rendered (a hub is not a high assist total)")
+        ok("main line" in low, "the connection verdict box rendered")
+        ok(len(at.get("plotly_chart") or []) > 0,
+           "the heat-grid chart rendered alongside the node-link network")
     finally:
         UI.gender_radio, ENT.has_paid_plan, ENT.viewer_is_league_wide = (
             real_radio, real_paid, real_wide)

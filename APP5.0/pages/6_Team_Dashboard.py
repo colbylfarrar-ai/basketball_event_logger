@@ -73,6 +73,7 @@ import helpers.wpa as WP
 import helpers.networks as NW
 import helpers.lineups as LU
 import helpers.stops as ST
+import helpers.passing_chains as PC
 import helpers.winning_formula as WF
 import helpers.playtypes as PT
 import helpers.defenses as DEF
@@ -976,6 +977,17 @@ def _finisher(tid, _tids, core):
 def _stops(tid, _tids):
     """Kills + answer rate (spec Part 4e/4f) — one walk feeds both."""
     return ST.team_stops(tid, game_ids=list(_tids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _conn_matrix(tid, _tids):
+    """xA-weighted passer→finisher edges for one team (spec Part 4c).
+
+    Scoped to `team_id` so both ends of every edge are on this roster — an
+    unscoped call would draw edges for opponents whose games this team happens
+    to appear in.
+    """
+    return PC.connection_matrix(game_ids=list(_tids), team_id=tid)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -4014,6 +4026,92 @@ def _fx_playmaking():
                 } for e in top_edges]), hide_index=True, width="stretch")
         else:
             st.caption("Not enough assisted baskets to draw a network yet.")
+
+        # ── connection matrix — every FEED, weighted by look quality ─────
+        # Deliberately beside the network above rather than merged into it.
+        # assist_network counts MADE shots only, so it cannot see a pair that
+        # generates good looks the shooter misses. This grid counts every feed
+        # and weights it by the (zone, creation, contested) make-rate model
+        # behind xA, so the two answer different questions: what dropped, and
+        # what was created. See helpers/passing_chains.py for the boundary.
+        _cm = _conn_matrix(team_id, tuple(bundle["tracked_ids"]))
+        if _cm:
+            st.markdown("<div class='lab-hdr'>Connection Matrix — looks "
+                        "created, not just assists</div>",
+                        unsafe_allow_html=True)
+            _cv = PC.connection_verdict(_cm, names=name_by)
+            if _cv:
+                _verdict_lines(_cv)
+
+            _ids = [p["_pid"] for p in players]
+            _in_graph = {r["passer"] for r in _cm} | {r["shooter"] for r in _cm}
+            _ax = [i for i in _ids if i in _in_graph]
+            if len(_ax) >= 2:
+                _lab = [name_by.get(i, f"#{i}") for i in _ax]
+                _pos = {p: k for k, p in enumerate(_ax)}
+                _grid = [[None] * len(_ax) for _ in _ax]
+                _txt = [[""] * len(_ax) for _ in _ax]
+                for r in _cm:
+                    a, b = _pos.get(r["passer"]), _pos.get(r["shooter"])
+                    if a is None or b is None:
+                        continue
+                    _grid[a][b] = r["xa"]
+                    _txt[a][b] = (f"{full_by.get(r['passer'], '?')} → "
+                                  f"{full_by.get(r['shooter'], '?')}<br>"
+                                  f"{r['feeds']} feeds · {r['made']} made<br>"
+                                  f"{r['xa']:.1f} expected assists")
+                hm = go.Figure(go.Heatmap(
+                    z=_grid, x=_lab, y=_lab, colorscale=HEAT,
+                    hoverinfo="text", text=_txt,
+                    colorbar=dict(title="xA"), hoverongaps=False))
+                hm.update_xaxes(title="finisher", side="top")
+                hm.update_yaxes(title="passer", autorange="reversed")
+                _style(hm, 420)
+                hm.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+                st.plotly_chart(hm, width="stretch", key="adv_connmatrix")
+                st.caption(
+                    f"Rows feed columns. Colour is **expected assists** — the "
+                    f"make-probability of every look that pair created, so a "
+                    f"feed that produced a great shot still counts when it "
+                    f"rims out. Blank means fewer than "
+                    f"{PC.MIN_EDGE_FEEDS} feeds between that pair.")
+
+            st.dataframe(pd.DataFrame([{
+                "Passer": full_by.get(r["passer"], "?"),
+                "Finisher": full_by.get(r["shooter"], "?"),
+                "Feeds": r["feeds"], "Made": r["made"],
+                "xA": r["xa"], "xA pts": r["xa_pts"],
+                "Finish vs expected": r["finish_delta"],
+            } for r in _cm[:12]]), hide_index=True, width="stretch",
+                column_config={
+                    "Finish vs expected": st.column_config.NumberColumn(
+                        "Finish vs expected", format="%+.1f",
+                        help="Made assists minus expected. Positive = this "
+                             "finisher over-converted this passer's looks. "
+                             "Noisy below ~10 feeds — it is a finishing read "
+                             "about the pair, not a passing one.")})
+
+            _hubs = PC.connection_hubs(_cm)
+            _hrows = sorted(
+                ((full_by.get(p, "?"), h) for p, h in _hubs.items()
+                 if p in full_by),
+                key=lambda t: -t[1]["feeds_out"])
+            if _hrows:
+                st.markdown("**Distributors and finishers**")
+                st.dataframe(pd.DataFrame([{
+                    "Player": n,
+                    "Feeds out": h["feeds_out"],
+                    "Teammates fed": h["partners_out"],
+                    "xA created": h["xa_out"],
+                    "Feeds in": h["feeds_in"],
+                    "Fed by": h["partners_in"],
+                } for n, h in _hrows]), hide_index=True, width="stretch")
+                st.caption(
+                    "**Teammates fed** is what a raw assist total cannot tell "
+                    "you: a genuine hub spreads the ball across the roster, "
+                    "while a high assist count from one pairing is a two-man "
+                    "game. Both can be right for a team — they are not the "
+                    "same player.")
 
         # ── passer quality — look created vs finished (Insights port) ───
         _pqmap = _passer_quality(gender, tuple(bundle["tracked_ids"]))

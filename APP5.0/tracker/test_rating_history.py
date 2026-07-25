@@ -89,3 +89,29 @@ ok(RH.team_series(2, "F", system="tracked") == [],
    "systems don't blend (team 2 was never on the tracked board)")
 
 print(f"\nALL {PASS} CHECKS PASSED")
+
+print("\nsnapshot floor + backfill")
+
+_before = len(RH.snapshot_days("F", "score"))
+# GP present and under the floor -> dropped; GP missing -> kept (unknown != 0).
+_n_low = RH.snapshot_board("F", {"score": {901: {"Rating": 5.0, "Rank": 1,
+                                                "GP": 1}}},
+                           day="2099-01-01")
+ok(_n_low == 0, "a team under MIN_SNAPSHOT_GP is not stored")
+_n_unk = RH.snapshot_board("F", {"score": {902: {"Rating": 5.0, "Rank": 2}}},
+                           day="2099-01-02")
+ok(_n_unk == 1,
+   "a row with NO GP is stored — missing means unknown, not zero, or a "
+   "caller without the key would silently stop recording history")
+_n_ok = RH.snapshot_board("F", {"score": {903: {"Rating": 5.0, "Rank": 3,
+                                               "GP": 40}}},
+                          day="2099-01-03")
+ok(_n_ok == 1, "a team at the floor is stored")
+ok(RH.snapshot_board("F", {"score": {903: {"Rating": 9.9, "Rank": 3,
+                                           "GP": 40}}},
+                     day="2099-01-03") == 0,
+   "re-writing the same day is a no-op, so a backfill can be re-run safely")
+
+ok(RH.has_history("F") is True, "has_history sees the days")
+ok(RH.has_history("F", "no-such-season") is False,
+   "and is False for a season with none")

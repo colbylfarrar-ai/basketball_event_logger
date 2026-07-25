@@ -914,6 +914,14 @@ table in `shot_kinds.py`'s docstring. The load-bearing rows:
 Unit counts are small (42 players, 9 teams), so treat these as order-of-
 magnitude — which is the argument for setting gates *above* them, not at them.
 
+> `CORRECTED 2026-07-26` **This table's POOL is not the pool the app renders.**
+> 42 players / 9 teams means both genders and every season; the app renders
+> F / 2025-2026, which is 28 players / 6 teams and disagrees materially
+> (floater share .636 here, .730 there). Worse, a single odd/even split at
+> these unit counts has a sampling spread near +/-.2 — wider than several of
+> the differences this document uses it to decide. Re-measured with 200 random
+> half-splits in §BL3; gates now take the less flattering of the two pools.
+
 **The general lesson for the rest of this document:** shares are count ratios
 and survive thin samples; rates do not. Any spec line that quotes a per-player
 percentage — §2.4's player card bars, §1.7's prescription evidence strings,
@@ -939,6 +947,16 @@ Two results:
    true for DISPLAY and false for the MODEL at this sample. If the reprice
    lands, it is kind *instead of* zone in `stats.shot_quality_rates`, not both.
 
+> `CORRECTED 2026-07-26` **Claim 2 above is an artifact, and the table it rests
+> on is not reproducible.** No combination of cell floor, shrink constant,
+> scoping or half-split rule reproduces these three numbers (closest miss
+> 0.030). Re-measured: claim 1 (depth beats angle) holds robustly at every
+> floor and shrink level. Claim 2 holds ONLY at cell floors 0-10 — it is
+> singleton cells being punished by log loss, not a sample limit on two axes.
+> At floor 15+ zone+kind sits within .003 of kind. See §BL3, which also records
+> that this lookup has **no floor and no shrinkage at all**, and that fixing
+> that is worth ~4x more than this reprice was.
+
 Per-player effect at n≥40 (22 players): mean |move| 1.55pp, max 5.85pp, and
 **3 of 22 players' SMOE changes sign**. The largest movers are rim-heavy
 players whose shot difficulty zone over-stated — Hannah Bond's SMOE falls from
@@ -959,6 +977,14 @@ pre-flight predictions. Zone remains the display axis everywhere.
 `stats.py:1149` still key on zone. Separate model, own thin-cell fallback, not
 part of this measurement — it needs its own out-of-sample run first. That is
 the obvious next piece of this thread if anyone wants it.
+
+> `CORRECTED 2026-07-26` **Repriced — to BANDS, not to kind, and kind LOST.**
+> Measured at the shipped floor of 5: zone .64798, kind .65120, bands .63416.
+> Kind is *worse than the zone it would have replaced*, because this key
+> already carries `shot_type` and the kind cut spends its cells re-encoding a
+> 2/3 split the key already knows. The instruction "push kind on ratings and
+> impact" was right to demand a separate measurement and wrong about its
+> answer. See §BL3.
 
 **Test lesson worth carrying:** `tracker/test_xa2.py` asserted against a
 hard-coded `("C","pass",False)` key and so reported a *credit-rule* failure
@@ -1094,3 +1120,234 @@ Two gotchas that cost time this session, worth remembering:
 - Shell `python` is the Microsoft Store build and reads a **virtualized shadow copy** of
   AppData. Use the `Python312` path above (the same one `.claude/launch.json` pins) for any
   live-DB work, and open the DB read-only (`mode=ro`) so a recon script can never touch it.
+
+---
+
+# §BL3 — BUILD LOG, 2026-07-26 (Parts 1-8)
+
+Eight parts built. **59 commits unpushed** — deploy is still Sunday, nothing was
+pushed mid-week. Four measurements contradicted this document or the handoff;
+all four are recorded below, and one of them is bigger than anything that was
+built.
+
+## ⚠️ THE BIGGEST FINDING IS AN UNFIXED DEFECT — read this first
+
+`stats.shot_quality_rates` has **no minimum cell size and no shrinkage**, and
+every consumer resolves a missing key with `.get(key, {}).get("pct", 0.0)` —
+i.e. a shot whose cell was never seen is scored as **certain to miss**.
+
+Measured out-of-sample on the girls' 2025-2026 book, same harness as the
+reprice, varying only the cell floor:
+
+```
+  location term        raw (no floor)   floor 20   shrunk k=25
+  zone                     0.72091       0.62734     0.62611
+  KIND (shipped)           0.66753       0.61092     0.61123
+  BANDS                    0.70204       0.60918     0.61069
+  no location at all       0.63951       0.63906     0.63730
+```
+
+Two things fall out and both matter:
+
+1. **Regularizing the lookup is worth ~8.5% of log loss** on the shipped KIND
+   key (.668 to .611). The kind-vs-zone reprice that was considered worth
+   shipping in `6bc25b3` was worth 2.3%. **This is nearly four times the size
+   of the change this thread has been about, and it is a one-line fix plus a
+   fallback.**
+2. Read the last row. With no floor, the location term is *actively harmful* —
+   dropping location entirely (.639) beats zone (.721) and beats kind (.668).
+   The taxonomy work only pays once the cells are regularized.
+
+**This was left unfixed on purpose**: it is a change to the number every xFG,
+xPPS, SMOE and shot-quality read in the app resolves to, at eleven call sites,
+and it deserves its own BEFORE interview rather than being slipped into a part
+about display taxonomies. **It should be the first thing built next session.**
+
+## `CORRECTED` §BL's out-of-sample table is not reproducible, and one of its three conclusions is an artifact
+
+§BL records `zone 0.63879 / kind 0.62403 / zone+kind 0.66671`. Swept across
+cell floors (0-40), shrink constants (0-100), located-only vs all shots, and
+two half-split rules, **no configuration reproduces those numbers** — the
+closest miss is 0.030 total absolute error, at a floor of 8 where zone and kind
+are *tied* rather than 0.015 apart. The harness behind a shipped change is not
+recoverable from the repo.
+
+What survives re-measurement and what does not:
+
+- ✅ **"Depth beats angle"** — holds robustly. Kind beats zone by ~.015 at every
+  floor >=10 and every shrink level tested. `6bc25b3` was the right call.
+- ❌ **"Both axes together are worse than either alone"** — an artifact of
+  singleton cells, not a property of the data. True only at floors 0-10. At
+  floor 15+ and every shrink level, zone+kind sits within ~.003 of kind. The
+  §BL sentence "3,246 shots cannot fill 5 zones x 5 kinds" describes an
+  unregularized lookup, not a sample limit.
+
+## `CORRECTED` §BL's reliability table was measured on a different pool than the app renders
+
+The docstring table (42 players, 9 teams) pools **both genders and every
+season**; the app renders F / 2025-2026 (28 players, 6 teams). The two disagree
+materially — floater share .636 there against .730 on the rendered pool. Not
+wrong, but the gates were set from one and applied to the other. This session's
+gates take the **whole-book column wherever the two disagree**, being the less
+flattering of the two.
+
+Also: a single odd/even split at 24-28 qualifying players has a sampling spread
+near +/-.2, which is wider than the differences these decisions turn on. Every
+reliability number below is the mean of **200 random half-splits**.
+
+## Part 1 — the shot bands, and the question they were meant to answer
+
+Adopted, both cuts render. Depth owns display and player reads; the 5 kinds
+keep the model and keep their place on screen.
+
+```
+  rim04    836  27.4%  FG 54.3  PPS 1.086      rim         836  27.4%  1.086
+  two419  1147  37.5%  FG 27.4  PPS 0.548      floater     777  25.4%  0.569
+  arc3     692  22.6%  FG 27.6  PPS 0.828      mid         370  12.1%  0.503
+  deep3    381  12.5%  FG 25.7  PPS 0.772      corner3     285   9.3%  0.874
+                                               abovebreak3 788  25.8%  0.784
+```
+
+**The open question was whether coarser cells would let PLAYER RATES clear the
+gate. Measured answer: no.** They roughly double the qualifying players (5-6 to
+10-11) and lift the best band from SB .285 to .52 — real movement, still not a
+verdict. And the most-wanted read is the least reliable one: **rim FG% — "does
+she finish" — has the largest per-player sample in the book and predicts itself
+at SB .11.** That is not a sample-size problem and more games will not fix it.
+
+So the refusal is now wired to a measured reliability floor
+(`helpers/reliability.py`) rather than an attempt count, with **three** states
+instead of two: shown with a dot, shown hollow with its own r printed inline,
+or withheld with a reason. On screen a dash (too few attempts) and "held" (many
+attempts, no stability) now mean visibly different things — they are opposite
+problems and a coach who cannot tell them apart learns to distrust both.
+
+`DEEP_FT` is recal-registered. The 3-point bands carry **no lower edge**: a
+corner 3 sits 19.0-19.75 ft from the hoop, *shorter* than the arc's apex, so the
+specified "19-23" floor would have excluded the most valuable 3 on the floor.
+
+## `CORRECTED` "push kind on ratings and impact" — bands won, and kind LOST
+
+`stats._bucket_make_rate` measured separately, as instructed. At the shipped
+floor of 5:
+
+```
+  zone (was)         0.64798      kind  0.65120      BANDS  0.63416  <- adopted
+```
+
+**KIND is worse than the zone it would have replaced here.** Structural, not
+noise: this key already contains `shot_type`, so the kind cut spends cells
+re-encoding the 2/3 split the key already knows. Two shot-quality models, two
+different right answers. Shot Rating now orders sensibly — Hannah Bond (63.7%
+of her shots at the rim) rates 34.6, Kealey Sanders (34% deep 3s) 55.5.
+
+## Part 3 — the scramble finding was a definition, not a finding
+
+Each scheme now reads against **the league's mix for the same scheme**. Adair
+allows 53.0% at the rim out of scramble — alarming raw, and **-2.5 against
+everyone else's scramble**. What is actually distinctive about their scramble is
++6.8 in the 4ft-to-arc band. League baseline for the record:
+
+```
+  man        1463  rim 23.5%  4-arc 40.3%  arc3 21.9%  deep3 14.3%  PPS .704
+  zone_23     639  rim 18.6%  4-arc 34.7%  arc3 32.4%  deep3 14.2%  PPS .729
+  scramble    454  rim 55.5%  4-arc 27.3%  arc3 11.9%  deep3  5.3%  PPS 1.009
+  man_press   151  rim 27.8%  4-arc 42.4%  arc3 23.2%  deep3  6.6%  PPS .583
+```
+
+Trap worth keeping: the delta's sign **flips with the side**. Forcing an
+opponent into the 4ft-to-arc band is good news defensively and bad news
+offensively — same number, opposite colour. The live data caught this doing the
+wrong thing.
+
+## Part 5 — the season-picker audit found one more page
+
+`pages/7_Players.py` had War Room's exact defect (no `index=`, opens on the
+empty rollover season, league player list blank over a full database). Fixed.
+
+The other four the sweep flagged are **not** defects, recorded so the next audit
+does not re-open them: War Room (already fixed, `index=` sits below a comment
+block), Officials (index 0 is "All seasons (career)", not empty), Input Hub
+(lists archived seasons only), Setup/Tracker (write pages, which must keep the
+active season).
+
+## Part 6 — the feed, and the history it needed
+
+`rating_snapshots` had **0 rows** and would have stayed empty for a year.
+Reconstructed: 19 weeks per gender, 6.6s for both, and the Overview rank chart —
+dead code over a full database until now — lights up. Adair: 29-3, Power
+30.5 to 33.5, #53 to #48 across 11 snapshot days.
+
+**The feed does NOT do what §2.3's mock asked.** The mock hangs
+`Power 66.9 -> 68.2 (+1.3)` off a game result. Weekly snapshots cannot support
+that attribution — a week with two games has one delta, and splitting it across
+them is fabricated cause-and-effect on the most-read screen in the app.
+Movement is its own item beside the games of the week it covers. When history
+later accrues daily, the same code emits finer items with no change.
+
+`MIN_SNAPSHOT_GP=5` added to the write path (704 of 725 girls' teams sit under
+it for most of the season; storing them cost 1.4 MB/gender for rows nothing
+reads). A **missing** GP means unknown and is kept — treating absence as 0 would
+make any caller lacking the key silently stop recording history, which a test
+caught.
+
+**Backfill was run against the local dev DB** (13,793 rows, 0 before) so the
+feature is visible in the preview. Reversible: `DELETE FROM rating_snapshots`.
+
+## Part 7 — Whiteboard has a team, so the banner has a page
+
+`coach_plays.team_id` added, **nullable forever**: every pre-existing row was
+saved under a per-coach privacy promise and is never migrated out of it. Shared
+means visible to the staff, **not deletable by them** — read access and custody
+are different grants. Delete is disabled, not hidden, for a teammate's play.
+
+Two traps hit in the banner call: `render_for` needs the team's **real gender**
+(it resolves from a scored pool and silently draws nothing otherwise) and
+`default_read_season()` (ACTIVE is the empty sentinel — War Room's failure
+again). Schedule deliberately not scoped; it is the league calendar.
+
+## Part 8 — the foul clock, and the crew cross measured then withheld
+
+Clock renders **above** bench cost: "is it early?" precedes "what did sitting
+her cost", and bench_cost cannot answer it. League-wide the 2nd foul lands
+~Q3 5:41, the 3rd ~Q3 2:05, the 4th ~Q4 6:52 (monotonic — a decent sign the
+stamp means what it claims). Hannah Bond takes her 2nd at Q2 2:38, 8 of 13
+before halftime.
+
+**`crew_foul_rate` fails harder than predicted:**
+
+```
+  player foul rate (the ceiling)   r= .518  SB=.682   (26.8 units @20 exposure)
+                                   r= .720  SB=.837   ( 4.5 units @80)
+  player x CREW foul rate          r=-.254  SB=-.680  ( 5.9 units @20)
+                                            not measurable @40+
+```
+
+It **anti-correlates**, and the cause is structural: the busiest official in
+this book has worked **four games**. The proposed ">=3 games with a crew,
+labelled a lean" gate would fire on a handful of cells, all noise wearing a
+confidence label. So it returns counts and exposure and has **no rate key** —
+a rate key invites a caller to render it.
+
+The positive finding is worth more: a player's **overall** foul rate IS reliable
+(SB .68 at 20 events of exposure, .84 at 80). Only the crew split is beyond this
+sample, and that is a games problem time fixes on its own.
+
+## Test state
+
+**113 of 117 tracker tests pass.** The 4 failures — `test_charges`,
+`test_connection_matrix`, `test_pdf_export`, `test_ratings_depth_smoke` — were
+verified by stash to **pre-date this session** and are untouched by it.
+`test_pdf_export` is an environment gap (no PDF engine installed);
+`test_ratings_depth_smoke` asserts a hard-coded xA sum (810.50, now 805.00) and
+is the kind of restate-the-engine test §BL already warned about.
+
+## What next session should do first
+
+1. **Regularize `shot_quality_rates`** — see the top of this log. Biggest
+   measured win available, and the `0.0`-on-missing-key fallback is a latent
+   correctness bug independent of the floor.
+2. **xPPP game prediction** — still un-interviewed, still the largest new idea.
+   Note the reliability finding sharpens its premise: make/miss really is the
+   noisy part, and this session has three more measurements saying so.
+3. Then §2.4 player card (share bars only), §1.7 prescriptions, Part 3 coverage.

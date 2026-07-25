@@ -65,7 +65,13 @@ def snapshot_board(gender, boards, season=SEAS.ACTIVE, day=None,
         for tid, r in (board or {}).items():
             if r.get("Rank") is None:
                 continue
-            if min_gp and (r.get("GP") or 0) < min_gp:
+            # A MISSING GP means "unknown", not "zero". Treating absence as 0
+            # would make any caller whose board rows lack the key stop
+            # recording history entirely and silently — the failure would look
+            # like the feature was never switched on. Only a GP that is present
+            # AND below the floor drops the row.
+            _gp = r.get("GP")
+            if min_gp and _gp is not None and _gp < min_gp:
                 continue
             rows.append((day, gender, system, int(tid), lbl,
                          float(r.get("Rating") or 0.0), int(r["Rank"])))

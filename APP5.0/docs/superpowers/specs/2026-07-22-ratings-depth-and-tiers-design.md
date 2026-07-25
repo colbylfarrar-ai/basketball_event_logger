@@ -1,8 +1,9 @@
 # Ratings depth & data-tier weighting — design (2026-07-22)
 
-Status: DESIGN APPROVED IN SESSION (tracks A + coverage-gated xA2); NOT BUILT.
-Usage-limit session — this doc is the handoff. Next session: writing-plans →
-implement, gates last.
+Status: DESIGN APPROVED (tracks A + coverage-gated xA2).
+**Part 8 (2026-07-24) is the live build order and supersedes the Part 3 list.**
+Parts 1-6 are the 07-22 design; Part 7 captures roster rollover; Part 8 records
+the code facts that reordered the build and where the 07-24 run stops.
 
 Everything here obeys the recal-round-2 rule: **no leaf/constant ships without
 the walk-forward gate** (lean-T2 rho ≥ baseline; T6/T4 where relevant).
@@ -402,3 +403,171 @@ Otherwise: Charts subtab, one cached fetch feeding every panel in the view
 - Re-check: are any Parts 4-5 engines full-season event walks that could
   share ONE cached event fetch per view instead of each re-fetching?
   Bundle at build time; retrofitting is harder.
+
+---
+
+## Part 7 — Roster rollover (captured 2026-07-24; raised end of 07-22 session)
+
+Founder ask, paraphrased: "at season end, auto-roll everyone forward and let
+coaches delete who left." VERDICT AFTER CODE READ: **that is the existing
+design.** `helpers/seasons.py` already implements it. What is missing is
+deployment and one semantic gap — not the feature.
+
+### Already built (do not rebuild)
+- `rollover_plan()` (`seasons.py:251`) splits the CURRENT roster by grad_year
+  vs the outgoing season's graduating year. A player auto-graduates ONLY when
+  grad_year is set AND <= that year; **NULL grad_year returns** — the safe
+  default, and the coach can still uncheck in the UI.
+- `execute_rollover()` (`seasons.py:274`) stamps + archives the outgoing
+  season, snapshots `team_class_history`, then re-creates each carried player
+  as a fresh Current row `identity_id`-linked to the same person, so returners
+  come back pre-linked and seniors simply aren't carried.
+- `auto_advance_if_due()` (`seasons.py:324`) is calendar-driven (Oct 1 cutoff
+  via `season_for_date`), **forward-only** and idempotent: an early manual roll
+  is a no-op, running twice a day does nothing, and Jan-Sep dates can never
+  un-roll a season in progress. It runs the SAME `execute_rollover` with the
+  auto graduate/return split.
+- `default_grad_year()` (`seasons.py:232`) gives every newly-added player a
+  grad year (assume freshman: end year + 3) so nobody lingers on a roster for
+  a decade with NULL.
+
+### Gap (a) — the timer is not installed on the VPS  [BLOCKING in prod]
+`app5-season-rollover.timer` is NOT installed, so `auto_advance_if_due()`
+never fires in production. Needs founder sudo. Verify with:
+`ssh app5@107.170.27.154 "systemctl list-timers | grep rollover"`.
+Until then the New Season button is the only path, and the Oct 1 cutoff
+silently does nothing. Cross-ref [[settings-and-deploy-facts]].
+
+### Gap (b) — no TRANSFER path
+A transfer out is currently indistinguishable from a delete, and a transfer IN
+is indistinguishable from a new player. The founder has exactly one transfer so
+far, so this is real but not urgent. Scope later; the identity layer
+(`helpers/identity.py`) is the natural home since it already models
+"same person, different season row".
+
+### Gap (c) — delete ergonomics: VERIFIED GOOD (2026-07-24)
+This was flagged UNVERIFIED in the handoff. Read the UI: no work needed.
+`pages/1_Input_Hub.py:622` ships a "🗑️ Remove a player" expander →
+selectbox of `#num name` → caption explaining the archive rule → gated
+confirm button → `database/db.py:delete_or_archive_player`. The comment at
+`1_Input_Hub.py:620` says this button exists precisely because the
+`data_editor` row-delete needs a physical Delete key, "absent on tablets".
+`delete_or_archive_player` (`db.py:806`) calls `player_has_history` first,
+which checks all 8 `game_events` player columns plus `game_event_lineup`,
+`manual_player_box` and `game_lineup_players` — the two CASCADE tables being
+the silent-data-loss risks. History → `archived=1` (stats kept); clean row →
+hard delete. `roster_clause` (`seasons.py:210`) then hides the archived row
+from the Current roster, and its docstring already names this case:
+"manually-archived quit-mid-season players stay hidden".
+**Conclusion: "auto-roll everyone, coaches delete" works ergonomically today.**
+
+### Gap (d) — NEW, found 2026-07-24: archive does not stamp the season
+`db.py:813` archives with `UPDATE players SET archived=1 WHERE id=?` — it does
+NOT set `season`. The rollover path (`seasons.py:299`) sets BOTH
+(`archived=1, season=<outgoing_label>`). So a player removed MID-season keeps
+`season='Current'` while carrying `archived=1`.
+
+Consequence: the archived-roster browser at `pages/1_Input_Hub.py:1095` runs
+`SELECT DISTINCT season FROM players WHERE archived=1 ORDER BY season`, so a
+literal **"Current"** entry appears in the past-seasons dropdown. Harmless to
+ratings (both `roster_clause` branches correctly exclude the row: the Current
+branch on `archived=0`, a past branch on the label), purely a UI wart.
+
+Fix is one line — stamp `season=SEAS.active_label()` alongside `archived=1` —
+but it changes delete semantics for every coach, so it is NOT part of the
+2026-07-24 overnight run. Logged to the maintenance batch for a supervised
+deploy instead.
+
+### Stale warning, corrected
+The handoff warns about roster doubling at `pages/2_Game_Tracker.py:823`.
+**That fix has already landed** — the query reads
+`... AND {_roster_c} ORDER BY team_id, number` with `(t1id, t2id, *_roster_p)`.
+The remaining unscoped read is `2_Game_Tracker.py:547` (`proster`), which the
+batch doc correctly rates log-only: it builds an id→name/team dict, so
+duplicate ids collapse harmlessly. The general rule still stands — any NEW
+roster query must use `SEAS.roster_clause`.
+
+---
+
+## Part 8 — Revised build order (2026-07-24, supersedes the Part 3 list)
+
+Reordered after reading the code the old order assumed. Principle:
+**group by shared substrate, and let each gate sit immediately after the
+plumbing it judges** — the old order split one plumbing job across steps 1
+and 2, and paired a free leaf with an expensive one.
+
+### Measured facts that forced the reorder
+1. **Part 1 §2 is ~70% already built.** `pages/7_Players.py:1174-1235` already
+   surfaces `def_secure_team_pct` + Stabilized + on-ball DREB% + own-miss
+   recovery behind the ≥5-contest gate, and `pages/6_Team_Dashboard.py:765`
+   (`_reb_enrich_team`) already rolls box-out payoff up to the team. Remaining
+   §2 scope = the BADGE + the player-CARD verdict line only.
+2. **The badge and the `_DREB` leaf share one prerequisite.** `badges.py`
+   ranks off `player_stat_table` (module docstring: "Pass it the dict returned
+   by player_stat_table"), and leaves read the same P. So "plumb
+   `player_rebounding` → P" is ONE commit unlocking badge + verdict + gate.
+3. **Every sweep was blocked on a 5-line commit.** `tools/backtest.py`
+   REGISTRY held only `_OVERALL_PARTS` and `_PLAYMAKING`; `_SHOOTING`,
+   `_DREB`, `_DEFENSE_PARTS` and the rest were absent, so `BT.override`
+   would KeyError. Register them all once, first.
+4. **FT% is genuinely zero-plumbing.** `"FT%"` is already a P key
+   (`player_ratings.py:1411`), so the FT% gate needs nothing but fact 3.
+5. **DWPA/WPA are the expensive outliers, not "free alongside".** There is no
+   WPA key anywhere in `player_ratings`. Plumbing them would put a
+   `season_wpa` walk inside `player_stat_table` — the eager engine — taxing
+   every coach on every page open, which Part 6 forbids. ScrAST/G by contrast
+   is already in P (`player_ratings.py:1380`). **Decision: DWPA/WPA dropped
+   from this run entirely** (Part 2 already ranks WPA "likely rejected"; DWPA
+   overlaps DRtg + RAPM impact). Revisit via a harness-only injection that
+   never touches the eager path.
+6. **The tier tag must be a SIDE-TABLE, not a 4th tuple element.** `group_z`
+   unpacks `for stat, _w, lb in group` (`player_ratings.py:927`) and the
+   `_*_PARTS` lists are 2-tuples — a 4th element breaks both shapes. A
+   `stat → tier` dict costs nothing. It lands EARLY (not with Part 3) so any
+   leaf adopted in this run ships tier-tagged rather than retro-tagged.
+7. **Harness is cheap: 22s per lean-T2 variant.** All five candidate sweeps
+   together are ~5 minutes of compute. Any plan that overlaps gate runs with
+   build work to "save time" is optimizing the wrong resource — the cost is
+   build + test. Order strictly sequentially for review clarity instead.
+8. **Baseline for this run: lean-T2 rho 0.681 (n=48), 43 tracked games,**
+   focus team `(1, 'F', 24)`. Up from 0.678 / 39 games at the #8d gate.
+   `tools/backtest.py:57` hardcodes `SEASON = "2025-2026"`, so gates score the
+   real pool regardless of the empty ACTIVE season
+   (see [[season-rollover-active-is-empty]]).
+
+### The order (11 commits)
+1. **Spec** — this Part 7 + Part 8.
+2. **Prep** — REGISTRY gains the unregistered leaf groups; `LEAF_TIER`
+   side-table (T1 box / T2 possession / T3 tagged) + a test asserting every
+   leaf in every group carries a tier, so no future leaf lands untagged.
+   Zero behavior change.
+3. **FT% gate** — `tools/gate_ft_shooting.py`, 0.3 / 0.5 / 0.75 into
+   `_SHOOTING`. First because it needs nothing but commit 2, so it proves the
+   registry → gate → verdict path end-to-end before any new code exists.
+4. **Rebounding → P** — `player_rebounding` metrics into `player_stat_table`,
+   tier T3, None below `MIN_ONBALL=5`, reusing the events fetch already there.
+5. **Rebounding surfaces** — box-out payoff badge
+   (`stat=def_secure_team_stab`, `gate=("onball_misses", 5)`) + player-card
+   rebounding verdict line. Archetype FEATURES untouched.
+6. **`_DREB` gate** — `tools/gate_reb_guarded.py`, 0.4 / 0.6.
+7. **HAST chain-pairs** — stale-comment fix at `2_Game_Tracker.py:1241`,
+   `hockey_from → assister → shooter` triples, PotHAST, coverage counter.
+8. **xA2** — separate P keys, card + glossary, coverage-gated ≥3 games.
+   `xA/G`'s computation never touched.
+9. **HAST re-gate** — re-run on the deeper pool; expect INCONCLUSIVE at 0
+   tagged. Record, do not adopt on a trivial tie.
+10. **ScrAST gate** — baseline, +0.3, +0.4, +0.4 −SC/G, +0.4 −SCPass/G.
+11. **Close out** — AppTest smoke, verdicts consolidated in
+    `MAINTENANCE_BATCH_2026-07-22.md`.
+
+### Stop line and policy (founder decisions, 2026-07-24)
+- **Run stops after commit 11.** Part 3 tier architecture (chips,
+  per-category evidence, per-cohort backtest) and Parts 4-5 fun are NOT built
+  this run: per-category evidence reshapes shrink-to-50 for every coach even
+  when its T4 gate passes, so it gets a supervised session.
+- **On a REJECT: keep the gate tool, record rho + verdict, do not add the
+  leaf, continue.** Rejections are results. No weight-shopping past the
+  pre-registered band — that is what the gate exists to prevent.
+- **Commits land on `main`, nothing pushed.** Review by `git log` before any
+  deploy; today is Friday and the cadence is Wednesday
+  (see [[maintenance-batch-doc]], [[deploy-flow]]).

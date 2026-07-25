@@ -71,6 +71,7 @@ REGISTRY = {
     "player_ratings.RATING_K_GAMES":       (PR, "RATING_K_GAMES"),
     "player_ratings.MANUAL_GAME_WEIGHT":   (PR, "MANUAL_GAME_WEIGHT"),
     "player_ratings.MIN_POOL_FOR_RESTD":   (PR, "MIN_POOL_FOR_RESTD"),
+    "player_ratings.CATEGORY_EVIDENCE":    (PR, "CATEGORY_EVIDENCE"),
     "projection.K":                        (PJ, "K"),
     "projection.ARCHETYPE_MIN_OPP":        (PJ, "ARCHETYPE_MIN_OPP"),
     "team_ratings.DEFAULT_REG":            (TR, "DEFAULT_REG"),

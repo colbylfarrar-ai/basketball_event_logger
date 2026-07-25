@@ -992,6 +992,30 @@ XA2_MIN_GAMES = 3
 # 1/(1+2^1.5) ≈ 0.26 of its distance from the anchor.
 RATING_K_GAMES = 2
 
+# PER-CATEGORY EVIDENCE (spec Part 3 mechanism 2). When True, each headline
+# rating shrinks toward 50 on the evidence that fed THAT category
+# (category_evidence) instead of one flat games-equivalent shared by all five.
+# A never-tags coach's DEFENSE is then built from T1+T2 leaves, earns less
+# evidence, and shrinks harder — honest rather than falsely precise.
+#
+# A CONSTANT, so it ships only through the walk-forward gate
+# (tools/gate_cat_evidence.py) like every other constant.
+#
+# ADOPTED 2026-07-24 on a TIE: lean-T2 rho 0.688 with and without. The gate is
+# ONE-SIDED by nature — this can only ever lower a category's evidence, so
+# ratings move toward 50 and never away, and no harness target measures whether
+# a rating was JUSTIFIED, only whether OVERALL still tracks held-out Game Score.
+# The tie therefore means "costs nothing measurable", and the reason beyond the
+# gate is a priori: resolve_leaves measures that a hand-entered box score
+# reaches 0.21 of DEFENSE against 0.63 of OFFENSE, so crediting a manual game
+# with equal evidence for both is simply wrong. Extra shrink for a
+# fewer-leaves-fed category is also standard: None-skip decides WHICH leaves
+# enter the mean, this decides how much to trust the mean they produce.
+# Impact when adopted: DEFENSE moved for 217 of 242 players (mean |delta| 0.79,
+# max 4.2), PLAYMAKING 173 (0.63), OVERALL 188 (0.25).
+# Flip to False to revert the whole mechanism in one line.
+CATEGORY_EVIDENCE = True
+
 # ── team-prior anchor (partial pooling of thin player samples) ────────────────
 # A thin-sample player is normally shrunk toward flat 50 (league average). This
 # instead shrinks their OVERALL toward an anchor derived from their OWN team's
@@ -1427,6 +1451,13 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                          for c in CATEGORIES},
         }
 
+    def _eg_for(p, category, flat):
+        """Evidence a category shrinks on. Flat games-equivalent today; the
+        category's OWN fed evidence when CATEGORY_EVIDENCE is on."""
+        if not CATEGORY_EVIDENCE:
+            return flat
+        return coverage[p]["evidence"][category]
+
     out = {}
     for p in pids:
         prof = profiles[p]
@@ -1435,18 +1466,27 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         out[p] = {
             "name": prof["name"], "number": prof["number"],
             "team": prof["team"], "team_id": prof["team_id"], "GP": prof["GP"],
-            "OVERALL":    _rate(overall_z[p], eg, anchor=anchor_of.get(p, 50.0)),
-            "OFFENSE":    _rate(offense_z[p], eg),
-            "DEFENSE":    _rate(defense_z[p], eg),
-            "PLAYMAKING": _rate(playmaking_z[p], eg),
-            "REBOUNDING": _rate(rebounding_z[p], eg),
-            "Shooting":   _rate(shooting_z[p], eg),
-            "Finishing":  _rate(finishing_z[p], eg),
+            "OVERALL":    _rate(overall_z[p], _eg_for(p, "OVERALL", eg),
+                                anchor=anchor_of.get(p, 50.0)),
+            "OFFENSE":    _rate(offense_z[p], _eg_for(p, "OFFENSE", eg)),
+            "DEFENSE":    _rate(defense_z[p], _eg_for(p, "DEFENSE", eg)),
+            "PLAYMAKING": _rate(playmaking_z[p], _eg_for(p, "PLAYMAKING", eg)),
+            "REBOUNDING": _rate(rebounding_z[p], _eg_for(p, "REBOUNDING", eg)),
+            # sub-ratings ride their parent category's evidence: Shooting and
+            # Finishing are OFFENSE's components, so they are fed by the same
+            # data and must not claim more certainty than the pillar they build.
+            "Shooting":   _rate(shooting_z[p], _eg_for(p, "OFFENSE", eg)),
+            "Finishing":  _rate(finishing_z[p], _eg_for(p, "OFFENSE", eg)),
             # split sub-ratings (surfaced): rim/perimeter defense, off/def rebounding
-            "RimDef":   (_rate(rimdef_z[p], eg) if rimdef_z.get(p) is not None else None),
-            "PerimDef": (_rate(perimdef_z[p], eg) if perimdef_z.get(p) is not None else None),
-            "OREBrtg":  (_rate(oreb_z[p], eg) if oreb_z.get(p) is not None else None),
-            "DREBrtg":  (_rate(dreb_z[p], eg) if dreb_z.get(p) is not None else None),
+            # split sub-ratings likewise ride their parent pillar's evidence
+            "RimDef":   (_rate(rimdef_z[p], _eg_for(p, "DEFENSE", eg))
+                         if rimdef_z.get(p) is not None else None),
+            "PerimDef": (_rate(perimdef_z[p], _eg_for(p, "DEFENSE", eg))
+                         if perimdef_z.get(p) is not None else None),
+            "OREBrtg":  (_rate(oreb_z[p], _eg_for(p, "REBOUNDING", eg))
+                         if oreb_z.get(p) is not None else None),
+            "DREBrtg":  (_rate(dreb_z[p], _eg_for(p, "REBOUNDING", eg))
+                         if dreb_z.get(p) is not None else None),
             # possession impact: raw pure-RAPM (pts/100, opp+teammate adjusted) that
             # feeds the OVERALL impact pillar — None below RAPM's min-possession gate.
             "Impact": _round((rapm or {}).get(p), 2),
@@ -1494,15 +1534,26 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
                 _parts.append({"part": _nm, "weight": _w,
                                "z": (None if _zv is None else round(_zv, 3))})
             _raw100 = _scale100(overall_z[p])
+            # Report the evidence ACTUALLY APPLIED. With CATEGORY_EVIDENCE on,
+            # OVERALL shrinks on its own fed evidence, not the flat
+            # games-equivalent — showing `eg` here would print a number the
+            # shrink never used, which is worse than showing nothing in a panel
+            # whose entire job is to explain how the rating was produced.
+            _eg_used = _eg_for(p, "OVERALL", eg)
             out[p]["_explain"] = {
                 "parts": _parts,
-                "shrink": {"evidence_gp": round(eg, 2),
+                "shrink": {"evidence_gp": round(_eg_used, 2),
                            "k": RATING_K_GAMES,
                            "anchor": round(anchor_of.get(p, 50.0), 1),
                            "raw": (None if _raw100 is None
                                    else round(_raw100, 1)),
-                           "final": out[p]["OVERALL"]},
-                "samples": {"GP": prof["GP"], "evidence_gp": round(eg, 2)},
+                           "final": out[p]["OVERALL"],
+                           # what the flat number would have been, and how much
+                           # of OVERALL this player's data actually fed
+                           "flat_evidence_gp": round(eg, 2),
+                           "coverage": round(coverage[p]["share"]["OVERALL"], 3),
+                           "per_category": CATEGORY_EVIDENCE},
+                "samples": {"GP": prof["GP"], "evidence_gp": round(_eg_used, 2)},
             }
     _assign_ranks(out)
     return out

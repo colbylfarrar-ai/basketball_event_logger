@@ -804,3 +804,69 @@ and `test_pdf_export.py` (no PDF engine installed locally).
    the same way, and worth pairing every replace variant with a
    drop-nothing-added control — that control is what made tonight's ScrAST
    replace numbers readable.
+
+---
+
+## 10. PART 3 — data-tier architecture (2026-07-24, continued session)
+
+- **10a  Category→leaf resolver + evidence machinery** ✅ (60eba2f), pure, unwired.
+  `resolve_leaves` flattens a rating tree to raw columns with weights multiplied
+  down each branch, normalized per group so a component contributes its SHARE of
+  the parent (otherwise a 10-leaf component swamps a 2-leaf one on count alone).
+  Two traps, both now tested:
+  * **Z-aliases are not profile keys.** `_DEFENSE_PARTS` names the contest leaf
+    `DSHOT%z`, which resolves to **AdjDFG%** (the shooter-adjusted twin) — read
+    off the `zcol_signed` call, not guessed. Measuring DEFENSE against `DSHOT%`
+    would have scored a column the rating never uses. `LEAF_ALIAS` records it.
+  * **`box_share` must divide by the CATEGORY total, not the box-leaf total.**
+    The box-leaf denominator returns 1.0 whenever the box leaves are present,
+    which credits a hand-entered game with FULL DEFENSE evidence — the exact
+    inaccuracy the mechanism exists to remove. First draft had it wrong; the
+    test caught it.
+  Measured on the live leaf tree: a box score reaches **0.21 of DEFENSE** vs
+  **0.63 of OFFENSE**, so flat evidence over-credits manual games for DEFENSE
+  roughly threefold.
+
+- **10b  Per-cohort depth reporting** ✅ (d258a31). `TierCohort` / `CatShare` /
+  `CatEvidence` on every rating row; `sweep_recal._lean_t2_by_cohort` +
+  `print_cohort_report`. **The honest result is negative and that is why the
+  instrument was built before the change it judges:**
+  * The spec's **box / possession / tagged cohort is DEGENERATE** on this book —
+    **242/242 players are "tagged"** (SMOE alone feeds a T3 leaf) and the pool
+    has **ZERO manual games**, so the box cohort is empty. Kept, because it
+    separates the day a box-only coach onboards.
+  * Coverage terciles DO show rising rho — 0.013 / 0.275 / 0.753 — and that is
+    **NOT the depth commitment demonstrated.** Coverage correlates **0.752 with
+    games played** (rare-event leaves like CHG/G only fill in with appearances)
+    and games played correlates **0.555 with held-out Game Score**. The spread
+    is substantially a sample-size effect. `print_cohort_report` measures both
+    confounds inline and prints an explicit warning not to quote the spread.
+  * Consequence: **no instrument on the current book can show per-category
+    evidence HELPS.** lean-T2 can only show whether it HURTS.
+
+- **10c  Per-category evidence** ✅ **ADOPTED ON A TIE** — `CATEGORY_EVIDENCE = True`
+  (`tools/gate_cat_evidence.py`). Lean-T2 rho **0.688 with and without**.
+  Ratings move materially: DEFENSE for **217 of 242** players (mean |Δ| 0.79,
+  max 4.2), PLAYMAKING 173 (0.63), OVERALL 188 (0.25) — so the tie means "costs
+  nothing measurable", not "the flag did nothing".
+
+  **This is the one call in the run that rests on argument rather than
+  measurement, and it is deliberately marked as such.** The gate is ONE-SIDED:
+  per-category evidence can only LOWER a category's evidence, so ratings move
+  toward 50 and never away, and no harness target measures whether a rating was
+  JUSTIFIED. The reason beyond the gate is a priori and measured: a hand-entered
+  box score reaches 0.21 of DEFENSE, so crediting it as full evidence is simply
+  wrong. Extra shrink for a thinner-fed category is also standard practice —
+  None-skip decides WHICH leaves enter the mean, this decides how much to trust
+  the mean they produce, which is not double-counting.
+
+  Contrast with the ScrAST tie, which was a REJECT: that added a new leaf (new
+  complexity, no measured gain, plus an affirmative zero-vs-None harm), whereas
+  this removes a known inaccuracy. **Revert is one line:
+  `CATEGORY_EVIDENCE = False`.**
+
+  Also fixed while wiring: the `_explain` payload reported the FLAT
+  `evidence_gp` for OVERALL's shrink, which would have printed a number the
+  shrink never used — in the one panel whose whole job is explaining how the
+  rating was produced. It now reports the evidence actually applied, plus
+  `flat_evidence_gp`, `coverage` and the `per_category` flag.

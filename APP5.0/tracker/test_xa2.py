@@ -69,7 +69,13 @@ ok(xa_made["PotHAST"] == xa_miss["PotHAST"] == 6,
 print("credit share and shot value")
 
 _one = S.expected_assists_secondary(events=[shot(True)], rates=_rates)[IGN]
-_rate = _rates.get(("C", "pass", False), {}).get("pct", 0.0)
+# Ask the engine for the look's key rather than hard-coding it. This assertion
+# is about the CREDIT RULE (xA2 = XA2_CREDIT x the look's make-rate), not about
+# what the shot-quality taxonomy happens to be — it hard-coded ("C","pass",False)
+# and so broke when the location term moved from zone to shot kind on 2026-07-25,
+# reporting a rule failure where the rule was never touched.
+_rate = _rates.get(
+    (S._sq_loc(shot(True)), "pass", False), {}).get("pct", 0.0)
 ok(abs(_one["xA2"] - S.XA2_CREDIT * _rate) < 1e-9,
    f"xA2 is exactly XA2_CREDIT x the look's make-rate "
    f"({S.XA2_CREDIT} x {_rate:.3f})")

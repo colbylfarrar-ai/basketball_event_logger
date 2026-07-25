@@ -252,7 +252,7 @@ def render_box_score(game_id: int):
     # one event pass + league shot-quality baseline, reused by every advanced tab
     events = S.fetch_events([game_id])
     try:
-        rates = S.shot_quality_rates()            # league-wide (zone,creation,guarded)
+        rates = S.shot_quality_rates()            # league-wide (kind,creation,guarded)
     except Exception:
         rates = {}
         st.caption("League shot-quality baseline unavailable — team SMOE/xFG% "

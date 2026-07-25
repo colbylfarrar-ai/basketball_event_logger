@@ -860,10 +860,15 @@ def zone_splits(team_id, game_ids=None, events=None):
 def zone_xfg(team_id, game_ids=None, events=None, rates=None):
     """
     Per-zone actual FG% and expected FG% (xFG%) for the team's own shots.
-    xFG% = the sample make-rate for each shot's (zone, creation, guarded) bucket
+    xFG% = the sample make-rate for each shot's (KIND, creation, guarded) bucket
     (S.shot_quality_rates), averaged over the shots in that zone — i.e. how often
-    that *kind* of shot goes in league-wide. Compare to actual to see which zones
+    that kind of shot goes in league-wide. Compare to actual to see which zones
     the team over/under-shoots relative to the difficulty of looks they get there.
+
+    Rows are still grouped BY ZONE (the angle axis a coach reads); only the
+    difficulty lookup uses the depth axis. That combination is the point: a zone
+    whose xFG% is now much higher than before is one where the team's shots are
+    closer to the rim than the zone label suggested.
     Returns {zone: {FGA, 'FG%', 'xFG%'}}.
     """
     if events is None:
@@ -878,7 +883,9 @@ def zone_xfg(team_id, game_ids=None, events=None, rates=None):
             continue
         bucket = S._creation_bucket(s["pass_from_id"] is not None,
                                     s["shot_created_by_id"] is not None)
-        key = (z, bucket, s["guarded_by_id"] is not None)
+        # zone still groups the ROWS below; only the baseline lookup moved
+        # to the depth axis (see stats._sq_loc).
+        key = (S._sq_loc(s), bucket, s["guarded_by_id"] is not None)
         a = agg[z]
         a["FGA"] += 1
         if s["shot_result"] == "make":
@@ -1100,7 +1107,8 @@ def zone_xfg_by_type(team_id, game_ids=None, events=None, rates=None, offense=Tr
             continue
         bucket = S._creation_bucket(s["pass_from_id"] is not None,
                                     s["shot_created_by_id"] is not None)
-        p = rates.get((z, bucket, s["guarded_by_id"] is not None), {}).get("pct", 0.0)
+        p = rates.get((S._sq_loc(s), bucket,
+                       s["guarded_by_id"] is not None), {}).get("pct", 0.0)
         made = s["shot_result"] == "make"
         for bk in ("all", "3" if s["shot_type"] == 3 else "2"):
             a = agg[bk][z]
@@ -1236,7 +1244,7 @@ def _agg_with_x(shots, rates):
     for s in shots:
         bucket = S._creation_bucket(s["pass_from_id"] is not None,
                                     s["shot_created_by_id"] is not None)
-        key = (s["zone"], bucket, s["guarded_by_id"] is not None)
+        key = (S._sq_loc(s), bucket, s["guarded_by_id"] is not None)
         p = rates.get(key, {}).get("pct", 0.0)
         xsum += p
         xpts += p * (3 if s["shot_type"] == 3 else 2)

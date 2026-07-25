@@ -697,6 +697,42 @@ def _creation_bucket(has_pass, has_sc):
     return "self"
 
 
+def _sq_loc(row):
+    """The LOCATION term of the shot-quality key — the shot KIND, not the zone.
+
+    Every xFG / xA / shot-quality lookup in the app keys on
+    (location, creation, contest). That location term used to be `zone`, which
+    is a five-sector ANGLE system with no depth: zone C alone is over half of
+    all located 2s and spans 2.5–7.7 ft, so it priced a 1.09-PPS layup and a
+    0.57-PPS floater as the same look. Every "expected" number in the app was
+    therefore averaging across the sharpest efficiency cliff in the sport.
+
+    Measured out-of-sample on the live book (fit on odd games, score even, and
+    the reverse; 3,246 girls' 2025-2026 shots):
+
+        location term              log loss     Brier
+        zone                        0.63879    0.22214
+        KIND                        0.62403    0.21290   <- adopted
+        zone + kind together        0.66671    0.21861
+
+    Depth beats angle. Note the third row: using BOTH axes is worse than either
+    alone, because 5 zones × 5 kinds × 4 creation × 2 contest cannot be filled
+    by 3,246 shots. So this is kind INSTEAD of zone, not in addition to it —
+    zone remains the DISPLAY axis (callers still group their rows by it), and
+    only the baseline lookup moved.
+
+    Accepts either an event row (`shot_x`/`shot_y`/`shot_type`) or a
+    located/mapped shot dict (`x`/`y`/`value`). Shots with no coordinate
+    classify as `unknown` and pool together, which is the honest bucket for
+    them — it is not a location, so it must not borrow a real one's rate.
+    """
+    import helpers.shot_kinds as SK          # lazy: shot_kinds imports this module
+    x = row["shot_x"] if "shot_x" in row else row.get("x")
+    y = row["shot_y"] if "shot_y" in row else row.get("y")
+    st_ = row["shot_type"] if "shot_type" in row else row.get("value")
+    return SK.classify(x, y, st_)
+
+
 def creation_fg_rates(game_ids=None, events=None):
     """
     Empirical FG% for each creation bucket (self / pass / sc / both), computed
@@ -769,11 +805,18 @@ def expected_fg_pct_all(game_ids=None, events=None, rates=None):
 
 def shot_quality_rates(game_ids=None, events=None):
     """
-    Empirical make-rate for each (zone, creation-bucket, guarded?) combination,
-    across the whole sample. This is the engine behind Shot Rating / expected
-    points per shot — it scores a shot purely by where it came from, how it was
-    created, and whether it was contested.
-    Returns {(zone, bucket, guarded_bool): {"FGA","FGM","pct"}}.
+    Empirical make-rate for each (shot KIND, creation-bucket, guarded?)
+    combination, across the whole sample. This is the engine behind Shot Rating
+    / expected points per shot — it scores a shot purely by what kind of look it
+    was, how it was created, and whether it was contested.
+    Returns {(kind, bucket, guarded_bool): {"FGA","FGM","pct"}}.
+
+    The location term was `zone` until 2026-07-25. Zone is an ANGLE system with
+    no depth — zone C alone spans 2.5–7.7 ft — so it priced layups and floaters
+    identically and every "expected" number in the app averaged across a 0.5-PPS
+    cliff. `_sq_loc` documents the out-of-sample measurement behind the swap,
+    including why kind REPLACES zone rather than joining it. Callers that group
+    their output by zone still do; only this lookup changed.
     """
     if events is None:
         events = fetch_events(game_ids)
@@ -782,7 +825,7 @@ def shot_quality_rates(game_ids=None, events=None):
         if e["event_type"] != "shot":
             continue
         key = (
-            e["zone"],
+            _sq_loc(e),
             _creation_bucket(e["pass_from_id"] is not None,
                              e["shot_created_by_id"] is not None),
             e["guarded_by_id"] is not None,
@@ -815,7 +858,7 @@ def expected_points_per_shot(player_id, game_ids=None, events=None, rates=None):
         if e["event_type"] != "shot" or e["primary_player_id"] != player_id:
             continue
         key = (
-            e["zone"],
+            _sq_loc(e),
             _creation_bucket(e["pass_from_id"] is not None,
                              e["shot_created_by_id"] is not None),
             e["guarded_by_id"] is not None,
@@ -847,7 +890,7 @@ def passer_look_quality(game_ids=None, events=None, rates=None, min_feeds=8):
         passer = e.get("pass_from_id")
         if passer is None:
             continue
-        key = (e["zone"],
+        key = (_sq_loc(e),
                _creation_bucket(True, e["shot_created_by_id"] is not None),
                e["guarded_by_id"] is not None)
         val = 3 if e["shot_type"] == 3 else 2
@@ -889,7 +932,7 @@ def expected_assists(game_ids=None, events=None, rates=None, min_feeds=0):
         passer = e.get("pass_from_id")
         if passer is None:
             continue
-        key = (e["zone"],
+        key = (_sq_loc(e),
                _creation_bucket(True, e["shot_created_by_id"] is not None),
                e["guarded_by_id"] is not None)
         rate = rates.get(key, {}).get("pct", 0.0)
@@ -954,7 +997,7 @@ def expected_assists_secondary(game_ids=None, events=None, rates=None,
         hockey = e.get("hockey_from_id")
         if hockey is None:
             continue
-        key = (e["zone"],
+        key = (_sq_loc(e),
                _creation_bucket(True, e["shot_created_by_id"] is not None),
                e["guarded_by_id"] is not None)
         rate = rates.get(key, {}).get("pct", 0.0)
@@ -996,7 +1039,7 @@ def passer_completion(game_ids=None, events=None, rates=None, min_feeds=8):
         passer = e.get("pass_from_id")
         if passer is None:
             continue
-        key = (e["zone"],
+        key = (_sq_loc(e),
                _creation_bucket(True, e["shot_created_by_id"] is not None),
                e["guarded_by_id"] is not None)
         c = agg[passer]

@@ -198,7 +198,7 @@ def passer_quality(gender=None, game_ids=None, events=None, rates=None, min_feed
         passer = e.get("pass_from_id")
         if passer is None:
             continue
-        key = (e["zone"],
+        key = (S._sq_loc(e),
                S._creation_bucket(True, e["shot_created_by_id"] is not None),
                e["guarded_by_id"] is not None)
         xpct = rates.get(key, {}).get("pct", 0.0)

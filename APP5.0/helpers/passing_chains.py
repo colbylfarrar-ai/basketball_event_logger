@@ -190,7 +190,7 @@ def connection_matrix(game_ids=None, events=None, team_id=None, team_of=None,
         if team_id is not None and (t != team_id
                                     or team_of.get(shooter) != team_id):
             continue
-        key = (e["zone"],
+        key = (S._sq_loc(e),
                S._creation_bucket(True, e["shot_created_by_id"] is not None),
                e["guarded_by_id"] is not None)
         pct = (rates.get(key) or {}).get("pct", 0.0)

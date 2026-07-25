@@ -154,6 +154,21 @@ STAT_DEFS = [
      "negative = good looks went begging.",
      "The truest ball-movement read the box can give — reward the pass, not the "
      "teammate's jumper. No tagging required.", True),
+    ("xA2", "Secondary Expected Assists", "Playmaking",
+     "the hockey passer's share of the look they started",
+     "xA for the pass BEFORE the assist. The shot is valued by the same league "
+     "make-rate table xA uses, and half that value is credited to the second "
+     "passer — they created the advantage, but the assister still had to "
+     "deliver it. Make-independent like xA: the hockey tag is logged on makes "
+     "AND misses, so a swing pass that led to a wide-open miss still counts. "
+     "Kept SEPARATE from xA rather than added into it, because xA is a rating "
+     "input and quietly changing it would move ratings without review. "
+     "Appears only once your team has tagged hockey assists in at least 3 "
+     "games — and note the honest caveat: coaches may remember to tag the "
+     "second pass more often when the shot goes in, which would flatter this "
+     "number until tagging becomes routine.",
+     "Credits the pass that broke the defense down, not just the one that got "
+     "the assist. Needs the opt-in hockey-assist tag.", True),
     ("Corsi", "Corsi (attempt ±)", "Playmaking", "on-floor shot attempts for − against",
      "Borrowed from hockey: every shot attempt (make OR miss) taken while the "
      "player is on the floor — plus one when their team shoots, minus one when the "

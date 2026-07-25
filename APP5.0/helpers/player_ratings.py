@@ -327,7 +327,18 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     xfg = S.expected_fg_pct_all(game_ids, events=events)             # xFG% baseline for SMOE
     plq = S.passer_look_quality(events=events)   # xPPS created — passer look quality
     pcomp = S.passer_completion(events=events)   # FG%/xFG%/Open% on the passer's feeds
-    xam = S.expected_assists(events=events)      # xA — candidate leaf (gate #8d)
+    xam = S.expected_assists(events=events)      # xA — gate-adopted leaf (#8d)
+    # xA2 — SECONDARY expected assists (hockey passer). Coverage-gated below:
+    # rendered only once a team has hockey tags in >= XA2_MIN_GAMES games, so a
+    # single tagged possession never becomes a season "stat". Never folded into
+    # xA — that is a gate-adopted leaf and mutating it would be an unguarded
+    # rating change (spec Part 1 §4).
+    xa2m = S.expected_assists_secondary(events=events)
+    _xa2_games = defaultdict(set)
+    for _e in events:
+        if (_e["event_type"] == "shot" and _e.get("hockey_from_id") is not None
+                and _e.get("game_id") is not None):
+            _xa2_games[_e["hockey_from_id"]].add(_e["game_id"])
     asr = S.assist_rate(game_ids, events=events)  # AST% (on-court teammate FGM share)
     wtov = S.playmaking_weighted_tov(events=events)  # type-weighted TOs (playmaking)
     rpd, _rpd_lg = S.rim_perimeter_defense(events=events)  # rim/perimeter defense
@@ -519,6 +530,15 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             # capture; None until the player's pool tags any, CHG/G pattern).
             "xA/G": per_g(xam.get(pid, {}).get("xA", 0.0)),
             "HAST/G": per_g(b["HAST"]) if b["HAST"] else None,
+            # xA2 — secondary expected assists, coverage-gated to XA2_MIN_GAMES
+            # tagged games so one tagged possession never becomes a season stat.
+            # None (not 0) below the gate: absent coverage is unknown, not zero.
+            "xA2": (xa2m.get(pid, {}).get("xA2")
+                    if len(_xa2_games.get(pid, ())) >= XA2_MIN_GAMES else None),
+            "xA2_pts": (xa2m.get(pid, {}).get("xA2_pts")
+                        if len(_xa2_games.get(pid, ())) >= XA2_MIN_GAMES
+                        else None),
+            "xA2_games": len(_xa2_games.get(pid, ())),
             # ── REBOUNDING ──────────────────────────────────────────
             "OREB/G": cper_g(cb["ORB"]),                 # box (combined)
             "DREB/G": cper_g(cb["DRB"]),
@@ -803,6 +823,14 @@ LEAF_GROUPS = {
 # Pools smaller than this skip composite re-standardization (an SD from 2-3 players
 # is meaningless) and fall back to the raw weighted-mean z.
 MIN_POOL_FOR_RESTD = 8
+
+# Coverage gate for xA2 (spec Part 1 §4). A player needs hockey tags in this
+# many distinct games before the secondary-xA number is shown at all. Hockey
+# assists are opt-in, so a coach who tags one possession out of curiosity must
+# not end up with a season "stat" built on it. Below the gate the value is None
+# — unknown, not zero — and the surface shows an honest empty state. No
+# cross-team pooling either, until league-wide coverage is real.
+XA2_MIN_GAMES = 3
 
 # Games-equivalent prior weight for the per-rating shrinkage toward 50 (passed to
 # shrinkage.stabilize_index, which applies the SIGMOID retention curve — see
@@ -1572,6 +1600,14 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             # the second passes that were made but not finished.
             "HAST": b["HAST"], "HAST/G": pg(b["HAST"]),
             "PotHAST": b["PotHAST"], "PotHAST/G": pg(b["PotHAST"]),
+            # xA2 = SECONDARY expected assists: the shot's expected-make value
+            # credited to the hockey passer at XA2_CREDIT. Make-independent like
+            # xA (the tag is logged on makes and misses), and a SEPARATE stat —
+            # xA/G is a gate-adopted leaf, so secondary credit must never be
+            # folded into it. None until the team clears XA2_MIN_GAMES.
+            "xA2": _round(prof["xA2"], 1),
+            "xA2pts": _round(prof["xA2_pts"], 1),
+            "xA2Games": prof["xA2_games"],
             # xA = expected assists (feeds scored by the look quality they created,
             # make-independent). AST−xA = finishing luck on this passer's feeds.
             "xA": _round(_xa["xA"]) if _xa else None,

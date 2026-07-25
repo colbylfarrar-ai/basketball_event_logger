@@ -1107,6 +1107,14 @@ def render_card(ctx):
                     + (f" · {P['PotHAST']} tagged incl. misses"
                        if P.get("PotHAST", 0) > P.get("HAST", 0) else "")}]
                   if P.get("PotHAST") else []),
+                # xA2 — secondary expected assists, beside xA rather than inside
+                # it (xA/G is a gate-adopted leaf; folding secondary credit in
+                # would be an unguarded rating change). Coverage-gated, so this
+                # row is absent until the team has tags in XA2_MIN_GAMES games.
+                *([_row("Secondary xA (xA2)", "xA2", "f1") | {"Value":
+                    f"{P['xA2']:.1f}  ({P['xA2pts']:.1f} pts · "
+                    f"{P['xA2Games']} tagged games)"}]
+                  if P.get("xA2") is not None else []),
                 _row("Guarded% (on court)", "Guarded%", "pct"),
                 _row("Defended FG% allowed", "DSHOT%", "pct"),
                 # Corsi — on-floor shot-attempt differential, a lower-variance

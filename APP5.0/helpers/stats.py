@@ -883,6 +883,72 @@ def expected_assists(game_ids=None, events=None, rates=None, min_feeds=0):
     return {pid: dict(c) for pid, c in agg.items() if c["feeds"] >= min_feeds}
 
 
+# The share of a shot's expected-make value credited to the SECOND passer.
+# 0.5 is a design constant, not a fitted one: the hockey passer set the
+# advantage up but the assister still had to deliver it, so the second pass is
+# worth materially less than the first and is not worth nothing. It is
+# deliberately NOT swept — xA2 is a descriptive stat here, and no harness target
+# measures credit-assignment quality (the same reasoning that keeps
+# wpa.ONBALL_SHARE off the sweep surface). If xA2 is ever proposed as a rating
+# leaf, the weight goes through its own gate like everything else.
+XA2_CREDIT = 0.5
+
+
+def expected_assists_secondary(game_ids=None, events=None, rates=None,
+                               min_feeds=0):
+    """{hockey_passer_id: {"xA2","xA2_pts","HAST","PotHAST","feeds"}} —
+    SECONDARY expected assists, the hockey-assist twin of expected_assists.
+
+    Each shot carrying a `hockey_from_id` is scored by the SAME league make-rate
+    table xA uses, then credited to the second passer at XA2_CREDIT:
+
+      xA2     = Σ XA2_CREDIT · make-rate over the tagged chains
+      xA2_pts = Σ XA2_CREDIT · make-rate · shot_value
+
+    Make-INDEPENDENT, exactly like xA, and for the same reason: `hockey_from_id`
+    is captured on every shot flow (make or miss), so this sums over ALL tagged
+    chains rather than conditioning on the finish. An earlier draft treated xA2
+    as a make-conditioned floor; that was wrong about the capture.
+
+    HAST (chains that dropped) and PotHAST (all tagged chains) ride along so
+    callers can show the same finishing-luck gap xA offers against AST.
+
+    SEPARATE from xA by design. `xA/G` is a gate-adopted rating leaf (0.75,
+    #8d), so folding secondary credit into it would silently change an adopted
+    rating with no gate — forbidden. This is its own stat with its own keys.
+
+    HONESTY: the bias here is tag SELECTION, not make-conditioning. Coaches may
+    be likelier to tag the second pass when the shot drops, which would inflate
+    xA2 relative to xA. Revisit once tag volume shows the make/miss tag mix —
+    hast_coverage() reports exactly that split.
+    """
+    if events is None:
+        events = fetch_events(game_ids)
+    if rates is None:
+        rates = shot_quality_rates(events=events)
+    agg = defaultdict(lambda: {"xA2": 0.0, "xA2_pts": 0.0, "HAST": 0,
+                               "PotHAST": 0, "feeds": 0})
+    for e in events:
+        if e["event_type"] != "shot":
+            continue
+        hockey = e.get("hockey_from_id")
+        if hockey is None:
+            continue
+        key = (e["zone"],
+               _creation_bucket(True, e["shot_created_by_id"] is not None),
+               e["guarded_by_id"] is not None)
+        rate = rates.get(key, {}).get("pct", 0.0)
+        val = 3 if e["shot_type"] == 3 else 2
+        c = agg[hockey]
+        c["feeds"] += 1
+        c["PotHAST"] += 1
+        c["xA2"] += XA2_CREDIT * rate
+        c["xA2_pts"] += XA2_CREDIT * rate * val
+        if e["shot_result"] == "make":
+            c["HAST"] += 1
+    return {pid: dict(c) for pid, c in agg.items() if c["feeds"] >= min_feeds}
+
+
 def passer_completion(game_ids=None, events=None, rates=None, min_feeds=8):
     """{passer_id: {"fg_pct","xfg_pct","open_pct","feeds"}} — how the shots a
     passer sets up actually resolve, three playmaking signals in one walk:

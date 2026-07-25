@@ -103,18 +103,14 @@ def _team_of():
     return {p["id"]: p["team_id"] for p in query("SELECT id, team_id FROM players")}
 
 
-def team_has_charges(team_id, events, team_of=None):
-    """True when this team has ANY charge logged (either side) in its own games.
-
-    The gate the rating leaf needs. Charge tagging is opt-in and rare, so most
-    players hold a GENUINE zero rather than a None — and the rating system's
-    "missing stats drop out of the weighted mean" protection does not fire on a
-    real 0. Without this gate a team that simply doesn't tag charges would have
-    every player scored as though they never drew one, i.e. penalised for a
-    tagging gap rather than for their defense.
-    """
-    t = team_charges(team_id, events, team_of=team_of)
-    return (t["drawn"] + t["committed"]) > 0
+# NOTE: a `team_has_charges(team_id, events)` gate used to live here, written as
+# "the gate the rating leaf needs" — charge tagging is opt-in, so a non-tagging
+# team must not have every player scored as though they never drew one. That job
+# is now done INLINE by `charge_rate_map` below (it builds the `tagging` team set
+# and skips players whose team is not in it), so the standalone gate was a
+# superseded duplicate with no callers and was removed 2026-07-25. If a future
+# leaf needs the per-team boolean, read it off `charge_rate_map` membership
+# rather than reintroducing a second implementation of the same rule.
 
 
 def charge_rate_map(events, game_ids=None):

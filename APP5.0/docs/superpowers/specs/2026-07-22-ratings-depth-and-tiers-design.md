@@ -2,10 +2,16 @@
 
 Status: DESIGN APPROVED (tracks A + coverage-gated xA2).
 **Part 8 (2026-07-24) is the live build order and supersedes the Part 3 list.**
-**BUILT 2026-07-24 through Part 8 commit 11** — FT% and box-out payoff adopted
-(rho 0.681 -> 0.688), surfaces + xA2 shipped, ScrAST rejected, HAST still
-inconclusive. Part 3 tier architecture and Parts 4-5 remain UNBUILT and are the
-next session. Numbers and lessons: docs/MAINTENANCE_BATCH_2026-07-22.md §9.
+**BUILT 2026-07-24: Part 8 commits 1-11 AND Part 3.** FT% + box-out payoff
+adopted (rho 0.681 -> 0.688); surfaces + xA2 shipped; ScrAST rejected; HAST
+inconclusive. Part 3: tier taxonomy, category->leaf resolver, per-category
+evidence (ADOPTED on a tie), tier chips, per-cohort backtest reporting.
+Part 3 mechanism 4 (raw thin-n leaves -> EB twins) NOT built: each swap needs
+its own gate. **Parts 4-5 remain UNBUILT** and are the next session.
+Numbers and lessons: docs/MAINTENANCE_BATCH_2026-07-22.md §9 and §10.
+OPEN DEBT: the depth commitment is still not DEMONSTRATED — the cohort
+instrument is built and correct but this book cannot separate cohorts (zero
+manual games, nearly every player feeds a T3 leaf). See §10b.
 Parts 1-6 are the 07-22 design; Part 7 captures roster rollover; Part 8 records
 the code facts that reordered the build and where the 07-24 run stops.
 

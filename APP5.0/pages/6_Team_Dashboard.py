@@ -75,6 +75,7 @@ import helpers.lineups as LU
 import helpers.stops as ST
 import helpers.passing_chains as PC
 import helpers.involvement as IV
+import helpers.foul_trouble as FTR
 import helpers.winning_formula as WF
 import helpers.playtypes as PT
 import helpers.defenses as DEF
@@ -995,6 +996,19 @@ def _conn_matrix(tid, _tids):
 def _involvement(tid, _tids):
     """Fingerprint-on-a-basket rate for one team (spec Part 4d)."""
     return IV.player_involvement(game_ids=list(_tids), team_id=tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _foul_bench(tid, _tids):
+    """Floor share lost after the Nth foul (spec Part 4i)."""
+    return FTR.bench_cost(game_ids=list(_tids), team_id=tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _foul_state(tid, _tids, level=3):
+    """Pooled team net while anyone on the floor carries `level`+ fouls."""
+    return FTR.team_foul_state_net(game_ids=list(_tids), team_id=tid,
+                                   level=level)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -3934,6 +3948,93 @@ def _fx_formula():
 if _tdview == "Charts":
     with ch_wf:
         _fx_formula()
+
+
+@st.fragment
+def _fx_foul_trouble():
+    """Charts ▸ Situational ▸ foul-trouble drag (spec Part 4i).
+
+    Appended to Situational rather than given its own tab: it is a game-state
+    read, which is what that tab is. Own fragment, behind the Charts gate.
+    """
+    if not has_tracked:
+        return
+    _tids = tuple(bundle["tracked_ids"])
+    _bench = _foul_bench(team_id, _tids)
+    _state = _foul_state(team_id, _tids)
+    if not _bench and not _state:
+        return
+    st.markdown("<div class='lab-hdr'>Foul trouble — what it actually "
+                "costs</div>", unsafe_allow_html=True)
+    _nm = {p["_pid"]: f"#{p['number']}" for p in players}
+    _full = {p["_pid"]: p["name"] for p in players}
+    _fv = FTR.foul_trouble_verdict(_bench, _state, names=_nm)
+    if _fv:
+        _verdict_lines(_fv)
+
+    if _bench:
+        _rows = []
+        for _pid, _lv in _bench.items():
+            for _level in sorted(_lv):
+                _d = _lv[_level]
+                _rows.append({
+                    "Player": _full.get(_pid, f"#{_pid}"),
+                    "Foul": _level,
+                    "Games": _d["games"],
+                    "Normal floor %": _d["season_share"],
+                    "After that foul %": _d["after_share"],
+                    "Drag": _d["drag"],
+                })
+        _rows.sort(key=lambda r: (-r["Drag"], r["Player"]))
+        st.dataframe(pd.DataFrame(_rows), hide_index=True, width="stretch",
+                     column_config={
+                         "Drag": st.column_config.NumberColumn(
+                             "Drag", format="%+.1f",
+                             help="Normal floor share minus the share she "
+                                  "played after that foul. Positive = the "
+                                  "staff sat her."),
+                         "Normal floor %": st.column_config.NumberColumn(
+                             "Normal floor %", format="%.1f%%"),
+                         "After that foul %": st.column_config.NumberColumn(
+                             "After that foul %", format="%.1f%%")})
+        st.caption(
+            "Measured against each player's **own season floor share**, not "
+            "against her minutes earlier in that same game. The in-game "
+            "comparison looks obvious and is wrong: a reserve enters late, so "
+            "her second foul lands late, and the before-window spans a game "
+            "she mostly watched — on this book that made two reserves read as "
+            "though foul trouble put them ON the floor. Only rotation regulars "
+            "(at or above this team's median floor share) are listed, and each "
+            f"row needs {FTR.MIN_GAMES_AT_LEVEL}+ games reaching that foul.")
+
+    if _state:
+        _w, _c = _state["with_trouble"], _state["clean"]
+        if (_w["poss"] or 0) >= FTR.MIN_STATE_POSS and \
+                (_c["poss"] or 0) >= FTR.MIN_STATE_POSS:
+            _k = st.columns(3)
+            _k[0].metric(f"Net with {_state['level']}+ fouls on floor",
+                         f"{_w['net']:+.1f}", f"{_w['poss']} poss",
+                         help="Team net per 100 while at least one player on "
+                              "the floor is carrying that many fouls.")
+            _k[1].metric("Net otherwise", f"{_c['net']:+.1f}",
+                         f"{_c['poss']} poss")
+            _k[2].metric("Difference",
+                         f"{(_w['net'] or 0) - (_c['net'] or 0):+.1f}",
+                         help="Descriptive only — see the caption.")
+            st.caption(
+                "Pooled across the whole roster on purpose. One player's net "
+                "across her own foul-trouble minutes is a thinner slice than "
+                "the raw on/off split this app already measured as having no "
+                "repeatable signal, so it is not offered per player. And this "
+                "is **not the cost of the fouls**: foul trouble is not handed "
+                "out at random — aggressive defenders foul more, players foul "
+                "more chasing a game, and a staff sits the player it can least "
+                "afford to lose.")
+
+
+if _tdview == "Charts":
+    with ch_sit:
+        _fx_foul_trouble()
 
 
 @st.fragment

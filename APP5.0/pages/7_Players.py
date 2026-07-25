@@ -312,6 +312,13 @@ _season_opts = SEAS.season_options()
 if len(_season_opts) > 1:
     _slbl = c1.selectbox(
         "Season", [l for _v, l in _season_opts], key="pl_season",
+        # Players is a READ page, so it opens on the last season that actually
+        # has finished games. Without this it defaulted to index 0 = the active
+        # season, which right after a rollover is empty — a league player list
+        # rendering blank over a full database. Same omission War Room had.
+        # Write pages (Input Hub, Game Tracker, Setup) must NOT take this: a new
+        # game or a roster edit belongs to the season now being played.
+        index=SEAS.default_read_season_index(_season_opts),
         help="View a past season's players. Past seasons are an open archive — "
              "free, full depth, to everyone; every stat and rating is computed "
              "vs that season's pool only.")

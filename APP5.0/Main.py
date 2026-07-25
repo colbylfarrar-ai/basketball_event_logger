@@ -120,7 +120,7 @@ _NAV = {
     # Nothing else moved and no page was removed: every one of the sixteen still
     # has its own entry, because Officials, Whiteboard, Rankings and the FAQ all
     # carry real depth a coach needs.
-    "Settings & help": [
+    "Settings & Help": [
         st.Page("pages/12_Settings.py", title="Settings",
                 icon=":material/tune:"),
         st.Page("pages/15_FAQ.py", title="FAQ",

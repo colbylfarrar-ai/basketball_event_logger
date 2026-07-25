@@ -273,8 +273,12 @@ def _banner_html(*, team_id, gender, season, power, rank, pool_n, wins, losses,
         f"<div style='font-size:13px;color:var(--subtext);margin-top:4px'>"
         f"<span style='color:{hue};font-weight:700;letter-spacing:1px'>{tlabel}</span>"
         f"{_style_bit}"
+        # MOV was dropped from the banner 2026-07-26. It is a season aggregate
+        # that a coach reads on the Overview, not an identity field — the bar
+        # answers "whose app is this", and Power already carries the strength
+        # claim in the same glance. It is unchanged everywhere else.
         f"{' · ' + _cls if _cls else ''} · {wins}-{losses}{_gp_bit}"
-        f"{' · ' + _stk if _stk else ''} · MOV {mov:+.1f} · "
+        f"{' · ' + _stk if _stk else ''} · "
         f"#{rank if rank is not None else '—'} of {pool_n}</div>"
         f"{_trk_bit}</div>"
         f"<div style='text-align:center'>"

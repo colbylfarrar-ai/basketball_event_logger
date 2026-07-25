@@ -498,12 +498,28 @@ if not _is_cur_season and SEAS.default_read_season() == season_pick:
     # SEAS.ACTIVE is the sentinel string 'Current', not a year — print the
     # option LABEL ('2026-2027 (current)') or the sentence reads "the Current
     # season hasn't started".
-    _act_lbl = next((l for v, l in _season_opts if v == SEAS.ACTIVE),
-                    SEAS.ACTIVE).replace(" (current)", "")
-    st.info(
-        f"📅 Showing **{season_pick}** — the {_act_lbl} season hasn't started "
-        f"yet (no finished games). Every number on this page is {season_pick}. "
-        f"Use the Season picker above once games are played.")
+    #
+    # FIRST VISIT ONLY (per session, keyed on the season it explained). The
+    # notice exists so a coach opening the landing page is never misled about
+    # WHICH season they are reading; once told, repeating it on every rerun —
+    # and this page reruns on every widget touch — turns a trust-preserving
+    # sentence into furniture a coach learns to skip. The season is part of the
+    # key so switching seasons and coming back explains itself again.
+    _fb_seen = st.session_state.setdefault("_td_fallback_seen", set())
+    if season_pick not in _fb_seen:
+        _fb_seen.add(season_pick)
+        _act_lbl = next((l for v, l in _season_opts if v == SEAS.ACTIVE),
+                        SEAS.ACTIVE).replace(" (current)", "")
+        st.info(
+            f"📅 Showing **{season_pick}** — the {_act_lbl} season hasn't "
+            f"started yet (no finished games). Every number on this page is "
+            f"{season_pick}. Use the Season picker above once games are "
+            f"played.")
+    else:
+        # Still stated, just not as an alert — the season label stays visible
+        # so the page never becomes ambiguous about what it is showing.
+        st.caption(f"📅 Showing **{season_pick}** (the current season hasn't "
+                   f"started).")
 # Declare the (gender, season) pool this dashboard is viewing so a live-game
 # write to a DIFFERENT pool doesn't cold-bust our warm cache (batch #6a).
 _uimod.declare_scope(gender, season_pick)

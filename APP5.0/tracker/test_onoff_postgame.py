@@ -82,16 +82,33 @@ ok(A[0] in edges and edges[A[0]]["off_diff"] == 200.0,
 print("_g_onoff generator gating + text")
 # below the 40-poss gate -> silent
 ok(INS._g_onoff({}, {}, {"onoff": edges[A[0]]}) is None, "thin sample: no card")
-# synthetic season-scale split, positive -> "offense hums"
-hot = {"onoff": {"on_poss": 120, "off_poss": 60, "on_ortg": 112.0,
-                 "off_ortg": 96.0, "off_diff": 16.0}}
+# CONTRACT CHANGE 2026-07-25: the card is now anchored to the adjusted
+# estimate. Raw on/off measured split-half reliability of -0.096 on the live
+# book and averaged 6x the magnitude of ORAPM, with 6 of 37 cards pointing the
+# opposite way, so an unadjusted split no longer earns a card on its own.
+# See tracker/test_onoff_honesty.py for the full contract.
+hot_raw = {"onoff": {"on_poss": 600, "off_poss": 600, "on_ortg": 112.0,
+                     "off_ortg": 96.0, "off_diff": 40.0}}
+ok(INS._g_onoff({}, {}, hot_raw) is None,
+   "a raw split with no adjusted estimate no longer mints a card")
+
+hot = dict(hot_raw, impact={"orapm": 3.0, "drapm": 0.0, "rapm": 3.0})
 c = INS._g_onoff({}, {}, hot)
 ok(c and "hums" in c["text"] and c["metric"] == "On/off offense",
-   "positive split -> offense-hums card")
-cold = {"onoff": {"on_poss": 120, "off_poss": 60, "on_ortg": 90.0,
-                  "off_ortg": 108.0, "off_diff": -18.0}}
-c2 = INS._g_onoff({}, {}, cold)
-ok(c2 and "stalls" in c2["text"], "negative split -> offense-stalls card")
+   "positive split + agreeing ORAPM -> offense-hums card")
+ok("adjusted" in c["text"],
+   "and the card leads with the adjusted number, not the raw split")
+
+ok(INS._g_onoff({}, {}, dict(hot_raw,
+                             impact={"orapm": -3.0})) is None,
+   "a disagreeing ORAPM suppresses the card")
+
+cold_raw = {"onoff": {"on_poss": 600, "off_poss": 600, "on_ortg": 90.0,
+                      "off_ortg": 108.0, "off_diff": -40.0}}
+c2 = INS._g_onoff({}, {}, dict(cold_raw,
+                               impact={"orapm": -3.0, "drapm": 0.0}))
+ok(c2 and "stalls" in c2["text"],
+   "negative split + agreeing ORAPM -> offense-stalls card")
 
 print("postgame report")
 execute("UPDATE games SET tracked=1, home_score=24, away_score=0 WHERE id=?", (gid,))

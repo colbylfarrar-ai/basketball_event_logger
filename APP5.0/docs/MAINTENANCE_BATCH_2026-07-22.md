@@ -721,3 +721,41 @@ pool regardless of the empty ACTIVE season.
   again (−0.0030)**, re-confirming on 43 games what #8d found on 39: the two
   price different things (per-feed look quality vs per-game feed volume·value)
   and both stay.
+
+- **9g  ScrAST/G → `_PLAYMAKING`** ❌ **GATE REJECTED — not adopted**
+  (`tools/gate_scrast.py`). Lean-T2 rho n=48, baseline 0.688:
+  +ScrAST **0.3 → 0.688**, **0.4 → 0.688** — exact TIE at both pre-registered
+  weights. No evidence of added signal, and a tie is not an adopt.
+
+  **A second, independent reason to reject, found while measuring:** unlike
+  every other optional-tag leaf, `ScrAST/G` computes to a REAL 0 rather than
+  None for a player with no credited screens — `per_g(b["SCR_AST"])` on a zero
+  count is 0.0, not None. On the current book that is **205 of 242 players**.
+  Adopting it would therefore score a coach's TAGGING GAP as bad playmaking,
+  the exact trap that `CHG/G` and `def_secure_team_stab` avoid by going None.
+  Screen tagging is thin today (340 credited screens, 130 made, 37 of 242
+  players with any). If this is ever re-gated once tagging is dense, the leaf
+  must be made None-below-a-volume-gate FIRST.
+
+  **Redundancy tests, and why the control mattered:** replace-SC/G FAILS
+  (−0.0020) and replace-SCPass/G FAILS (−0.0010). The control — dropping SC/G
+  with NO ScrAST added — costs −0.0040, which is the number that makes the
+  others readable: the composite genuinely is sensitive to losing a component,
+  so the replace results are real findings and not "the weighted mean barely
+  moves". ScrAST recovers about half of what SC/G contributes but does not
+  replace it. Same conclusion as xA-vs-SCPassQ: these price different things.
+  **Every gate with a replace variant should carry this control.**
+
+  Kept: `ScrAST/G` is now a `profiles` key (it was only in `player_stat_table`).
+  Costs nothing, and a future re-gate needs no re-plumbing.
+
+  **Spec correction, second instance:** Part 2 called ScrAST "already in P", the
+  same `profiles`-vs-`player_stat_table` conflation that killed the first FT%
+  gate run. Both gates died on `KeyError` inside `zcol` until the key was added
+  to `profiles`. **Rule for future leaf candidates: the RATINGS read
+  `profiles`; being in `player_stat_table` proves nothing.**
+
+**Final run rho ladder:** 0.681 baseline → 0.685 (FT% adopted) → **0.688**
+(box-out payoff adopted). ScrAST rejected, HAST inconclusive, DWPA/WPA skipped
+by decision (plumbing them would put a `season_wpa` walk in the eager
+`player_stat_table`, which Part 6 forbids).

@@ -510,6 +510,12 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "AST%":  asr.get(pid),                       # event-only (on-court)
             "SC/G": per_g(b["SC"]),                      # event-only
             "SCPass/G": per_g(b["SC"] - FGA),            # event-only
+            # screen assists per game — the screener credited when the shot
+            # they freed DROPS (the NBA stat; SC_screen counts every credited
+            # screen, make or miss). Event-only. Lives in player_stat_table for
+            # display already; the RATINGS read `profiles`, so a leaf needs it
+            # here — the same split that hid FT% from its own gate.
+            "ScrAST/G": per_g(b["SCR_AST"]),
             "TOV/G": cper_g(cb["TOV"]),                  # box (combined)
             "TOV%":  S.tov_pct(cb) if (cFGA or cb["TOV"]) else None,  # box (combined)
             "AST/TOV": ast_tov,                          # box (combined)

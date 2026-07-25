@@ -768,63 +768,119 @@ def _g_form(row, pools, d):
             "metric": "Form", "n": n}
 
 
+# ── on/off honesty constants (MEASURED 2026-07-25, not chosen by eye) ────────
+# Split-half reliability of raw on/off on the live book (35 tracked games, the
+# same players' odd games vs their even games, Spearman-Brown stepped up to full
+# length):
+#     OFFENSE  r = -0.096  ->  SB -0.213   no repeatable signal at all
+#     DEFENSE  r =  0.224  ->  SB  0.366   implied EB prior K = 226 possessions
+# Median effective sample was ~130 possessions in both. So the raw offensive
+# split — which was the single most-fired card in the app, 37 of 242 players —
+# was measuring noise and prescribing rotation changes off it.
+#
+# Two consequences, both applied below:
+#   1. the quoted number is EB-shrunk toward zero on the harmonic-mean sample
+#      (the right effective n for a DIFFERENCE of two rates), and
+#   2. the card only fires when the app's own teammate-adjusted estimate agrees
+#      in sign. Unadjusted, mean |off_diff| was 15.7 pts/100 against a mean
+#      |ORAPM| of 2.61 — a 6x scale gap — and 6 of 37 cards pointed the OPPOSITE
+#      way to the adjusted number. Without RAPM the card no longer fires: on
+#      this evidence the raw split does not earn a coach's attention on its own.
+ONOFF_PRIOR_POSS = 226
+#: minimum |shrunk diff| worth a card, unchanged from the original raw bar.
+ONOFF_MIN_DIFF = 8.0
+
+
+def _onoff_shrunk(diff, on_poss, off_poss, k=ONOFF_PRIOR_POSS):
+    """EB-shrink an on/off difference toward 0 on its harmonic-mean sample.
+
+    A difference of two rates is only as well-determined as its SMALLER side —
+    1000 on-floor possessions against 45 off-floor ones is a 45-possession
+    estimate wearing a big number. The harmonic mean is what encodes that;
+    `_NET_PRIOR_POSS`-style credibility then pulls it toward league average."""
+    if diff is None or not on_poss or not off_poss:
+        return None, 0.0
+    n_eff = 2.0 * on_poss * off_poss / (on_poss + off_poss)
+    return diff * n_eff / (n_eff + k), n_eff
+
+
 def _g_onoff(row, pools, d):
-    """Team ON/OFF: the team's offensive rating with the player ON the floor vs
-    OFF it — the "when they play the offense hums (or stalls)" read. Reads
-    lineups.player_on_off (offensive points per 100 possessions). Hard-gated on
-    BOTH samples so it's a season-scale signal, not a single hot night."""
+    """Team ON/OFF on OFFENSE, anchored to the adjusted estimate.
+
+    The raw split (lineups.player_on_off, offensive points per 100) is
+    teammate-confounded: it credits a player for the four teammates beside them.
+    Measured on this book it is also unrepeatable (split-half r = -0.096), so it
+    fires ONLY when ORAPM — the same quantity with teammates and opponents
+    partialled out — agrees in sign, and the text leads with the adjusted number.
+    No adjusted estimate available means no card."""
     oo = d.get("onoff")
     if not oo:
         return None
     onp, offp = oo.get("on_poss") or 0, oo.get("off_poss") or 0
     if onp < 40 or offp < 40:            # need a real off-floor sample too
         return None
-    diff = oo.get("off_diff")
-    if diff is None or abs(diff) < 8:    # < 8 pts/100 isn't worth a card
+    diff, _n_eff = _onoff_shrunk(oo.get("off_diff"), onp, offp)
+    if diff is None or abs(diff) < ONOFF_MIN_DIFF:
         return None
+    adj = (d.get("impact") or {}).get("orapm")
+    if adj is None or (diff > 0) != (adj > 0):
+        return None                      # unadjusted-only, or the two disagree
     on, off = oo["on_ortg"], oo["off_ortg"]
     if diff >= 0:
-        txt = (f"**Offense hums with them on** — the team scores **{on:.0f} per 100 "
-               f"possessions** with them on the floor vs {off:.0f} without "
-               f"(**{diff:+.0f}**); a real offensive engine — protect their minutes "
-               f"and stagger their rest.")
+        txt = (f"**Offense hums with them on** — **{adj:+.1f} pts/100 adjusted** "
+               f"for teammates and opponents, and the raw split agrees: "
+               f"{on:.0f} per 100 with them on vs {off:.0f} without "
+               f"(**{diff:+.0f}** after shrinking for sample size); a real "
+               f"offensive engine — protect their minutes and stagger their rest.")
     else:
-        txt = (f"**Offense stalls with them on** — the team scores just **{on:.0f} "
-               f"per 100** with them on vs {off:.0f} without (**{diff:+.0f}**); the "
-               f"attack bogs down — rework the spacing around them or stagger their "
+        txt = (f"**Offense stalls with them on** — **{adj:+.1f} pts/100 adjusted** "
+               f"for teammates and opponents, and the raw split agrees: "
+               f"{on:.0f} per 100 with them on vs {off:.0f} without "
+               f"(**{diff:+.0f}** after shrinking for sample size); the attack "
+               f"bogs down — rework the spacing around them or stagger their "
                f"minutes with a creator.")
     return {"text": txt, "score": min(3.0, abs(diff) / 8.0), "z": diff / 8.0,
             "metric": "On/off offense", "n": onp + offp}
 
 
 def _g_onoff_def(row, pools, d):
-    """Team ON/OFF on DEFENSE: points allowed per 100 with the player ON the floor
-    vs OFF it — the twin of _g_onoff, off the same lineups.player_on_off pass
-    (which has always computed the defensive half and thrown it away).
+    """Team ON/OFF on DEFENSE — points allowed per 100 with the player on the
+    floor vs off it, off the same lineups.player_on_off pass.
+
+    Same anchoring as `_g_onoff` against DRAPM. The defensive raw split is the
+    better-behaved of the two (split-half r = 0.224 vs -0.096) but still needs
+    the shrink and the agreement check.
 
     Sign flips: `def_diff` is on-minus-off of points ALLOWED, so NEGATIVE is the
-    good direction — the opposite of `off_diff`. Gated on the DEFENSIVE
-    possession counts, not the offensive ones."""
+    good direction. DRAPM is good-oriented POSITIVE like every other rating
+    column, so the agreement test compares `diff` against `-drapm`. Gated on the
+    DEFENSIVE possession counts, not the offensive ones."""
     oo = d.get("onoff")
     if not oo:
         return None
     onp, offp = oo.get("on_dposs") or 0, oo.get("off_dposs") or 0
     if onp < 40 or offp < 40:            # need a real off-floor sample too
         return None
-    diff = oo.get("def_diff")
-    if diff is None or abs(diff) < 8:    # < 8 pts/100 isn't worth a card
+    diff, _n_eff = _onoff_shrunk(oo.get("def_diff"), onp, offp)
+    if diff is None or abs(diff) < ONOFF_MIN_DIFF:
         return None
+    adj = (d.get("impact") or {}).get("drapm")
+    if adj is None or (diff > 0) != (-adj > 0):
+        return None                      # unadjusted-only, or the two disagree
     on, off = oo["on_drtg"], oo["off_drtg"]
     if diff <= 0:
-        txt = (f"**Defense tightens with them on** — the team allows just **{on:.0f} "
-               f"per 100 possessions** with them on the floor vs {off:.0f} without "
-               f"(**{diff:+.0f}**); a real defensive anchor — their minutes are "
-               f"load-bearing.")
+        txt = (f"**Defense tightens with them on** — **{adj:+.1f} pts/100 adjusted** "
+               f"for teammates and opponents, and the raw split agrees: "
+               f"{on:.0f} allowed per 100 with them on vs {off:.0f} without "
+               f"(**{diff:+.0f}** after shrinking for sample size); a real "
+               f"defensive anchor — their minutes are load-bearing.")
     else:
-        txt = (f"**Defense leaks with them on** — the team allows **{on:.0f} per 100** "
-               f"with them on vs {off:.0f} without (**{diff:+.0f}**); stops dry up — "
-               f"hide them on the weakest matchup or stagger their minutes with a "
-               f"stopper.")
+        txt = (f"**Defense leaks with them on** — **{adj:+.1f} pts/100 adjusted** "
+               f"for teammates and opponents, and the raw split agrees: "
+               f"{on:.0f} allowed per 100 with them on vs {off:.0f} without "
+               f"(**{diff:+.0f}** after shrinking for sample size); stops dry up "
+               f"— hide them on the weakest matchup or stagger their minutes "
+               f"with a stopper.")
     # score/z are good-oriented like every other generator, so the sign inverts.
     return {"text": txt, "score": min(3.0, abs(diff) / 8.0), "z": -diff / 8.0,
             "metric": "On/off defense", "n": onp + offp}
@@ -1132,12 +1188,18 @@ def matchup_edges(events, table):
 
 
 def impact_map(rapm=None, war=None):
-    """{pid: {'rapm','war','poss'}} — merges the cached engine outputs
-    (rapm.compute_rapm, hoopwar.war_table) into the miner's impact feed. Pure
-    merge, so callers keep their own caching; either input may be None/{}."""
+    """{pid: {'rapm','orapm','drapm','war','poss'}} — merges the cached engine
+    outputs (rapm.compute_rapm, hoopwar.war_table) into the miner's impact feed.
+    Pure merge, so callers keep their own caching; either input may be None/{}.
+
+    `orapm`/`drapm` are carried alongside the two-way `rapm` because the on/off
+    generators need a SIDE-MATCHED adjusted comparator: the offensive card must
+    be checked against ORAPM, not against a two-way number a great defender can
+    carry."""
     out = {}
     for pid, r in (rapm or {}).items():
         out[pid] = {"rapm": r.get("RAPM"),
+                    "orapm": r.get("ORAPM"), "drapm": r.get("DRAPM"),
                     "poss": (r.get("off_poss") or 0) + (r.get("def_poss") or 0)}
     for pid, w in (war or {}).items():
         if pid == "_meta":

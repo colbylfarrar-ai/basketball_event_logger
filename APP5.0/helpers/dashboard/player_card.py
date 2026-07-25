@@ -362,7 +362,12 @@ def _insight_feed(gender, season="Current", game_ids=None):
     """League insight feed (helpers/insights.build_feed) for the card's "What
     the data says" lines — computed once per (gender, season), NOT per player;
     the card looks its pid up in the result. top=3 = the surface cap (the
-    Insights tab is the deep-dive home with every line)."""
+    Insights tab is the deep-dive home with every line).
+
+    `impact` is passed because the on/off generators now REQUIRE the adjusted
+    estimate to fire (raw on/off is teammate-confounded and measured
+    unrepeatable on this book). `_rapm` is already cached per gender for the
+    card's own impact block, so this costs one dict merge, not a second solve."""
     import helpers.insights as IN
     gids = (list(game_ids) if game_ids is not None
             else PT._tracked_game_ids(gender))
@@ -372,7 +377,13 @@ def _insight_feed(gender, season="Current", game_ids=None):
     if not table:
         return {}
     ev = S.fetch_events(gids) if gids else []
-    return IN.build_feed(table, ev, top=3)
+    imp = None
+    try:
+        imp = IN.impact_map(rapm=_rapm(gender, game_ids),
+                            war=_war(gender, season, game_ids))
+    except Exception:
+        pass
+    return IN.build_feed(table, ev, top=3, impact=imp)
 
 
 @st.cache_data(ttl=600, show_spinner=False)

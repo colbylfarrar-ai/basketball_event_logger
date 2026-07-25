@@ -979,3 +979,242 @@ onboards; that is the first moment the claim becomes checkable.
 sub-shock, 5h pythag (absent + cheap), 5i hot hand, 5j Gini, 5k hustle, 5l
 winning-formula miner (highest remaining wow; now also owns the 4-factor-vs-
 result sliver), 5m style-shift, 5n defensive mirror.
+
+---
+
+## 12. AUDIT + PARTS 4-5 CONTINUED (2026-07-25, overnight run)
+
+Founder brief: audit the codebase with full reign for HARMFUL / UNDERUSED /
+UNDERSURFACED, fix everything found (explicitly including speed, optimisation
+and RAM), delete obvious dead code, then build as much of the Parts 4-5 backlog
+as fits. Report thoroughly on anything iffy; deploy is days away.
+
+**Baseline verified before and after: lean-T2 rho 0.688 (n=48).** No rating leaf
+or constant was touched, so no gate was required for anything in this run.
+
+### 12a  The audit, measured not read
+
+Census scripts over all 113 helper modules, every table in the live DB, and the
+rendered pages. Findings ranked by value-per-effort, evidence in the commits.
+
+**PERF — one unscoped join was 71% of the Insights build.**
+`trends.player_game_log` ran `games JOIN teams JOIN teams` with NO where-clause
+on every call: the full 13,363-row games table, measured at 48 ms.
+`insights.form_edges` calls it once per player, so 242 players cost **11.6 s of
+1-vCPU CPU to produce four insight lines** (form fires for 1.7% of the pool).
+Almost certainly the "Insights sometimes hangs on load" report.
+Fixed by scoping (`trends.game_meta`): **form_edges 11.88s -> 0.28s, total edges
+16.73s -> 5.61s**, coverage byte-identical. player_card (x2) and reports got the
+same scoping free — each was paying a full-table join per render.
+
+**RAM — checked and NOT the constraint.** `db.py:202` sets a 64 MB page cache
+per thread-local connection, which looks alarming on a 2 GB box, but the DB is
+**12 MB**, so sqlite can never cache more than that per thread. Prod reports
+747 MB available. The real cold-start tax is CPU: sklearn import 3.5s plus
+joblib's `cpu_count` spawning a subprocess (1.9s on Windows) inside the first
+`player_stat_table`. Warm `player_stat_table` is 1.67s vs 7.61s cold.
+
+**Dead code — far less than expected, and worth recording.** A function-level
+census found exactly TWO public helpers with no reference anywhere. The 13
+`*_edges` and 9 `*_extra` functions that look dead to grep are internally
+dispatched (`team_insights.py:813`). The "95 helpers, half unread" hypothesis is
+wrong; the codebase is tight. Only `charges.team_has_charges` was deleted (its
+rule is implemented inline by `charge_rate_map`). Deliberately KEPT:
+`ui.season_picker` (its docstring names it parked work with a stated trigger —
+season rollover) and `insights.pnr_role_edges` (covers 0 of 242 today because
+only 179 pnr events exist league-wide, but costs 0.00s and self-activates).
+
+**Two ranked spec items are DEAD ON DATA, not on design.**
+* `players.height` / `wingspan` / `weight` / `position` are **0 filled of 541**,
+  so **5b (height differential, death-lineup detector) is unbuildable**. 50
+  product references to `height` currently render nothing.
+* `game_timeouts` holds **22 rows across 4 games** of 43 tracked, so **5a
+  (timeout effectiveness) is unbuildable** — it was ranked #2 in Part 5 on the
+  strength of "the table already exists". It exists and is empty.
+Both kept in schema per founder instruction; they light up when capture does.
+
+**A THIRD already-built item, same class as 5g.** Part 9 checked `predictor.py`
+and concluded "5h pythagorean luck — absent and cheap". Wrong module.
+`league_analytics.team_form_stats` computes Pyth_wpct / Pyth_W / Pyth_L / Luck /
+Luck_wins; glossary:405-408 carries both entries; `team_insights._t_luck` is the
+**single most-fired team card (10 of 18 teams)**; there is a chart at
+`0_Analytics_Hub.py:490` and tiles at `5_Rankings.py:710`. **5h is struck.**
+
+**Two empty tables inspected on founder request, both HEALTHY.**
+`change_requests` is written by `1_Input_Hub.py:24` and approved at
+`12_Settings.py:303`; empty because the only two users are the founder (admin,
+so deletes execute directly) and one coach who has not attempted a gated delete.
+`tracker_guest_tokens` is written by `AUTH.issue_guest_token` from
+`12_Settings.py:700`, listed at :688, revoked at :694, consumed by
+`tracker/api.py:69`; empty because no assistant-scorer link has been minted.
+Neither is broken. Both are wired end to end and tested.
+
+### 12b  HARMFUL, fixed
+
+- **On/off cards were the #1 and #4 most-fired player cards and prescribed
+  rotation changes off noise.** Measured: mean |off_diff| **15.7** pts/100
+  against mean |ORAPM| **2.61** — a **6.0x** scale gap on the same quantity with
+  teammates partialled out; **6 of 37** cards pointed the OPPOSITE way to ORAPM
+  (worst: card said +21.5, adjusted said -1.03, on 80/55 possessions); the
+  observed minimum off-floor sample was exactly the 40-possession gate, about
+  0.6 of a game, while the docstring claimed the gate made it "a season-scale
+  signal, not a single hot night".
+  Then the decisive measurement — split-half over the same players' odd vs even
+  games, Spearman-Brown stepped up:
+  **OFFENSE r = -0.096 -> SB -0.213. DEFENSE r = 0.224 -> SB 0.366, implied EB
+  prior K = 226 possessions.** The offensive card was not merely inflated, it
+  was **unrepeatable**.
+  Both cards now EB-shrink on the HARMONIC MEAN of the two possession counts
+  (1000-on vs 45-off is an 86-possession estimate, not a 1000-possession one) at
+  the measured K=226, and fire only when the SIDE-MATCHED adjusted estimate
+  agrees in sign. No adjusted estimate, no card.
+  **Result: offence 37 -> 11, defence 32 -> 8, sign-disagreements 6 -> 0.**
+  Players with at least one insight barely moved, 113 -> 110.
+
+- **The stint verdict was one made basket wide.** "Microwave scorer" /
+  "Rhythm player" fired for 24 of 242 with rotation advice. Split-half at the
+  gates it shipped with: **loosest r = 0.018 (SB 0.035), full gate r = -0.130
+  (SB -0.300)**, implying a prior around 45,000 seconds of band time. Three
+  corroborating reads: **53 of 105 players scored ZERO short-stint points**
+  (short_p32 p25/median/p75 = 0.0/0.0/9.1); at 30 minutes of band time, already
+  above the median, **one made three moves short_p32 by 3.2 pts/32 against a 4.0
+  threshold** (16.0 at the loosest gate); and stint length is **endogenous** —
+  coaches pull cold players, so part of what this measured was the coach's own
+  hook handed back as a player trait. Now shrunk on the smaller band's time:
+  **fires for 0 of 105**, and reactivates itself if a genuinely large,
+  well-sampled effect ever appears.
+
+- **Fourteen sites hardcoded a "th" suffix after a percentile.** The live
+  dashboard rendered **"71th pct", "73th", "82th"**. Percentiles land on every
+  digit, so roughly a third of those labels were wrong at any moment.
+  `stats.ordinal()` now owns the suffix; the two plotly hovertemplates
+  precompute it into customdata since plotly evaluates its template in the
+  browser. Found by a render scan, and no unit test could have found it — every
+  call site was independently wrong.
+
+- **Fifteen silent failures in the eager feed builder.** `build_feed` had a bare
+  pass-on-exception at every stage, so a broken engine and an engine with
+  nothing to say produced byte-identical output. Now a `_FEED_STAGES` table
+  (with a test asserting it covers every split kwarg the miner accepts), an
+  optional `diagnostics` dict, and WARNING-level logging. The per-generator
+  swallow logs the FIRST failure per generator, not once per player. Verified:
+  zero stages currently failing.
+
+### 12c  Built from the backlog
+
+| item | engine | surface | cost |
+|---|---|---|---|
+| **5l** winning-formula miner | `helpers/winning_formula.py` | Charts > **Winning Formula** (new tab) | 0.4s |
+| **4c** connection matrix | `passing_chains.connection_matrix` | Charts > Offense > Playmaking | 0.0s |
+| **4d** involvement rate | `helpers/involvement.py` | Charts > Offense > Playmaking | 0.14s |
+| **4i** foul-trouble drag | `helpers/foul_trouble.py` | Charts > Situational | 0.17s |
+| **5j** hero-ball Gini | `helpers/hero_ball.py` | Charts > Offense > Playmaking | 0.06s |
+| **4b** group synergy | `networks.group_synergy` | Lab > Advanced | 0.19s |
+
+**5l is the headline.** Dean Oliver's 40/25/20/15 weights get quoted in
+high-school gyms as if they were physics; they were fitted on the NBA. Re-fitted
+on this pool (35 tracked games, 70 team-games):
+
+| factor | share here | Oliver | pts of margin per SD |
+|---|---|---|---|
+| TOV  | **43.3%** | 25% | 16.2 |
+| eFG  | 35.9% | 40% | 13.5 |
+| ORB  | 11.1% | 20% | 4.2 |
+| FTR  | 9.7% | 15% | 3.6 |
+
+**This league is won on turnovers far more than the textbook says, and the
+offensive glass matters about half as much.** The honesty problem is that the
+four factors reconstruct margin by ARITHMETIC — cross-validated R2 is 0.981, and
+that is an accounting identity, not skill. So R2 is used as a **plumbing alarm**
+(below 0.5 the boxes and scores disagree and the ranking is suppressed), never
+quoted as predictive power, and the headline is the **exchange rate** and its
+gap against Oliver. Only Oliver's four enter the fit; 3PR / AST / STK / pace are
+correlations only, because they are downstream (disruption correlates 0.815 with
+margin yet earns a near-zero coefficient once turnovers are in — the right
+answer, and exactly why it is not a fifth factor). FTR is surfaced as a
+**suppressor**: positive coefficient, negative raw r (-0.143), because trailing
+teams get fouled deliberately late.
+
+Other live numbers worth keeping: the connection matrix draws **149 league edges
+/ 60 for team 1** at a 4-feed floor, and all 149 carry missed looks the
+made-only `assist_network` structurally cannot see. Involvement runs **18.7% to
+46.9%, median 28.7%** on team 1 — a distribution that genuinely separates
+players. Foul trouble found a real coaching pattern: **all four starters lose
+12-21 points of floor share on their SECOND foul (Sanders 70% -> 48%), and by
+the third the drag has vanished** (-9 to +5) — this staff sits you early then
+plays through it.
+
+### 12d  Six mistakes this run made and caught, worth carrying forward
+
+1. **`secondary_player_id` is the FOULER, `primary_player_id` is the FOULED**
+   (`fouls.py:5`). Counting primary produced player-games with **10 and 11
+   fouls** — impossible under a five-foul DQ — and would have shipped a "foul
+   trouble" engine measuring fouls DRAWN. Same class as the LEAF_ALIAS trap:
+   read the column's meaning, never infer it from the name.
+2. **In-game before/after is backwards for reserves.** Comparing floor share
+   before vs after the Nth foul gave #24 32.5% -> 84.8% and #14 27.1% -> 85.5%.
+   Neither was benched: a reserve enters late, so her Nth foul lands late, and
+   the before-window spans a game she mostly watched. The split measured ENTRY
+   TIMING. Fixed by comparing against each player's own SEASON floor share, with
+   the rotation gate pool-relative to the team's median.
+3. **Never subtract an ADJUSTED quantity from a RAW one.** Group synergy first
+   took solo nets from `chemistry_network.adj_net` (opponent- and
+   teammate-corrected) and subtracted them from `group_units`' raw Net; the
+   teammate correction pushes solo nets below zero on a good team, so `expected`
+   came out at -7 against group nets of +46 and **every trio read +57 synergy**.
+   Both sides now come from the same function — like-for-like by construction,
+   not by remembering.
+4. **A DIFFERENCE needs more shrinkage than a LEVEL.** Synergy split-half:
+   pairs -0.050, trios 0.094 (SB 0.172), quads 0.200 (SB 0.333) — implied priors
+   822 and 229 against the house's 40 for raw net. Now 400, and the verdict
+   carries a standing "this repeats weakly" caveat as its last line.
+5. **Denominators decide whether a stat is real.** Involvement over TEAM scores
+   is a minutes stat wearing a percentage; over ON-FLOOR scores it is a rate. A
+   test pins the case a naive rewrite breaks (bench 75% vs starter 25%). Same
+   for hero-ball Gini: raw point-total Gini is mostly rotation depth (team 1
+   reads raw 0.449 on minutes Gini 0.295), so the headline is a weighted Gini
+   over per-minute rates.
+6. **AppTest exposes tables as `arrow_data_frame`, not `dataframe`.**
+   `at.get("dataframe")` silently returns an empty list, which would make a
+   missing table pass a render test. Use `at.dataframe`. AppTest also does not
+   expose `st.tabs` labels, so a new tab must be proved by its CONTENT.
+
+Also: the league pool for any per-team percentile must gate on games. **12 of 21
+teams in this book have exactly ONE tracked game** (they appear only because a
+tracked team played them), so an ungated pool lets one-night samples set the
+scale everyone else is judged against. `hero_ball.league_context` requires 3+
+games (8 of 21 qualify) and returns `pct=None` for the rest rather than
+inventing a percentile.
+
+### 12e  Placement, and one deliberate deviation
+
+Everything went behind a lazy gate per spec Part 6. **5l deviates from the
+spec's own suggestion**: it was listed as an eager Insights candidate, but Part
+6's promotion test says an insight earns an eager slot only after surviving as a
+Charts subtab AND being used. Nothing here has shipped, so it starts as a Charts
+tab. Promoting it later is cheap — the verdict is already one sentence.
+
+### 12z  Run status
+
+**Commits (on `main`, UNPUSHED):** `26fa38e` perf/game-meta · `6524b85` on-off
+anchor · `3f234bc` stint shrink · `c7203ef` feed diagnostics · `b6830fd` charges
+cleanup · `2e0c6ab` 5l miner · `0873abc` 4c matrix · `0bb3b7b` 4d involvement ·
+`b453ed9` 4i foul trouble · `1c47fe7` ordinals · `81ff58a` 5j Gini ·
+`f7e093e` 4b synergy · `ffbffda` on-off test contract.
+
+**Tests:** 12 new files (`test_trends_scope` 18, `test_onoff_honesty` 38,
+`test_stint_credibility` 17, `test_feed_diagnostics` 20, `test_winning_formula`
+46, `test_winning_formula_render` 24, `test_connection_matrix` 33,
+`test_involvement` 40, `test_foul_trouble` 27, `test_hero_ball` 38,
+`test_group_synergy` 33, `test_ordinals` 11), plus `test_onoff_postgame`
+updated to the new contract. **Full suite: only `test_charges` and
+`test_pdf_export` fail, both documented and pre-existing.**
+
+**rho unchanged at 0.688** — nothing in this run touched a rating.
+
+**Still not built:** 4g stints (partially exists as
+`gameflow.stint_scoring_splits`, now shrunk to silence — a rotation-value
+version would be new work), 4h shot diet, 5e chained possessions, 5f sub-shock,
+5i hot hand, 5k hustle award, 5m style-shift, 5n defensive mirror.
+**Struck as already built:** 5g, 5h, trio/quad scoring, 4b-for-pairs.
+**Struck on data:** 5a (4 games of timeouts), 5b (zero height rows).

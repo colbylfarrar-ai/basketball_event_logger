@@ -415,6 +415,21 @@ _glossary_key("eFG%", "TS%", "USG%", "ORtg", "DRtg", "NetRtg", "PPP", "TOV%",
 # opens on the right side — otherwise a Boys default is filtered out of the
 # (Girls-first) list and the default silently never applies.
 default_team = get_setting("default_team", "")
+# This page is now the app's LANDING page, so "which team" is the first thing it
+# has to answer and an unset setting must not drop a coach on whoever happens to
+# be ranked first. Fall back to the team on their own identity — the coach lands
+# on their own program without ever visiting Settings. The stored setting still
+# wins when present (an admin who has chosen a default keeps it), and an admin
+# with no team falls through to the ranking order exactly as before.
+if not default_team:
+    try:
+        _me = AUTH.current_user() or {}
+        _my_tid = _me.get("team_id")
+        if _my_tid:
+            _mt = query("SELECT name FROM teams WHERE id=?", (_my_tid,))
+            default_team = _mt[0]["name"] if _mt else ""
+    except Exception:
+        default_team = ""
 _dt_rows = query("SELECT gender FROM teams WHERE name=?", (default_team,)) \
     if default_team else []
 default_gender = _dt_rows[0]["gender"] if _dt_rows else "F"
@@ -471,6 +486,24 @@ if len(_season_opts) > 1:
 else:
     season_pick = SEAS.ACTIVE
 _is_cur_season = SEAS.is_current(season_pick)
+
+# SAY WHICH SEASON THIS IS when it isn't the live one. SEAS.default_read_season()
+# already falls back to the last PLAYED season when the active one is empty (a
+# fresh rollover would otherwise render a blank page over a full database) — but
+# it did so SILENTLY, and this page is now the landing page. A coach who opens
+# the app to a full-looking dashboard and reads last season's Power as this
+# season's has been misled by chrome, which is the one failure that would poison
+# trust in the whole screen. The fallback is honest; it just has to say so.
+if not _is_cur_season and SEAS.default_read_season() == season_pick:
+    # SEAS.ACTIVE is the sentinel string 'Current', not a year — print the
+    # option LABEL ('2026-2027 (current)') or the sentence reads "the Current
+    # season hasn't started".
+    _act_lbl = next((l for v, l in _season_opts if v == SEAS.ACTIVE),
+                    SEAS.ACTIVE).replace(" (current)", "")
+    st.info(
+        f"📅 Showing **{season_pick}** — the {_act_lbl} season hasn't started "
+        f"yet (no finished games). Every number on this page is {season_pick}. "
+        f"Use the Season picker above once games are played.")
 # Declare the (gender, season) pool this dashboard is viewing so a live-game
 # write to a DIFFERENT pool doesn't cold-bust our warm cache (batch #6a).
 _uimod.declare_scope(gender, season_pick)
@@ -1586,7 +1619,11 @@ if _tdview != "Overview":
     import helpers.dashboard.team_card as _TCARD
     _TCARD.render_banner(SimpleNamespace(
         sc_score=sc_score, rec=rec, team_id=team_id, gender=gender,
-        scored=scored, has_tracked=has_tracked, season=season_pick))
+        scored=scored, has_tracked=has_tracked, season=season_pick,
+        # tracked rank / tracked-game count ride the SAME resolved gate as the
+        # style tag — has_tracked is tracked_gate's answer for this viewer and
+        # this team, so a non-pooled team's depth never leaks into chrome.
+        tracked=tracked))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

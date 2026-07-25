@@ -110,6 +110,13 @@ _season_opts = SEAS.season_options()
 if len(_season_opts) > 1:
     _slbl = cc[0].selectbox(
         "Season", [l for _v, l in _season_opts], key="wr_season",
+        # War Room is a READ page, so it opens on the last season that actually
+        # has finished games. Without this it defaulted to index 0 = the active
+        # season, which right after a rollover is empty — every sim, projection
+        # and lineup read rendered blank over a full database, which is exactly
+        # the failure SEAS.default_read_season exists to prevent and which the
+        # Team Dashboard already avoided.
+        index=SEAS.default_read_season_index(_season_opts),
         help="Simulate with a past season's ratings and rosters — 'what were our "
              "title odds last year'. Past seasons are open to everyone.")
     season_pick = next(v for v, l in _season_opts if l == _slbl)
@@ -488,6 +495,17 @@ _WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_CO
 _WR_VIEWS = ["Lineups", "Matchup", "Season sim", "Bracket",
              "Defensive assignments", "Analyze", "Glossary"]
 _wrview = _seg("View", _WR_VIEWS, default="Lineups", key="wr_view") or "Lineups"
+
+# Team-identity chrome. Anchored to the coach's OWN team from their identity,
+# not to whichever team the current view happens to have selected: the banner
+# answers "whose app is this", and a bar that changed meaning as you switched
+# from your lineups to an opponent's would answer a different question badly.
+# render_for resolves ratings + the tracked_gate itself, and draws nothing when
+# the viewer has no team (admins browsing, unassigned coaches).
+if _wr_ident.get("team_id"):
+    import helpers.dashboard.team_card as _WR_TCARD
+    _WR_TCARD.render_for(_wr_ident["team_id"], gender, season_pick,
+                         ident=_wr_ident)
 # one stat key for the dense tables across the views (lineups / sims / boards)
 from helpers.ui import glossary_key as _glossary_key
 _glossary_key("ORtg", "DRtg", "NetRtg", "Pace", "PPP", "HoopWAR", "RAPM",

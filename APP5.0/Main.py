@@ -76,12 +76,19 @@ except Exception:
 # Build → Analyze → Plan: the program's workflow, made legible in the sidebar.
 _NAV = {
     "Analyze": [
+        # The app opens on the coach's OWN team, not on the league. A front
+        # office shows you your program first; the league is a place you go.
+        # Team Dashboard resolves the team from the default_team setting and
+        # falls back to the coach's identity team, so this lands somewhere
+        # personal without any setup. Analytics Hub keeps its own entry and
+        # every bit of its depth — nothing was consolidated away, the landing
+        # page just changed.
+        st.Page("pages/6_Team_Dashboard.py", title="Team Dashboard",
+                icon=":material/groups:", default=True),
         st.Page("pages/0_Analytics_Hub.py", title="Analytics Hub",
-                icon=":material/dashboard:", default=True),
+                icon=":material/dashboard:"),
         st.Page("pages/5_Rankings.py", title="Rankings",
                 icon=":material/leaderboard:"),
-        st.Page("pages/6_Team_Dashboard.py", title="Team Dashboard",
-                icon=":material/groups:"),
         st.Page("pages/7_Players.py", title="Players",
                 icon=":material/person:"),
         st.Page("pages/14_Hall_of_Fame.py", title="Hall of Fame",
@@ -106,6 +113,14 @@ _NAV = {
                 icon=":material/draw:"),
         st.Page("pages/8_Officials.py", title="Officials",
                 icon=":material/sports:"),
+    ],
+    # Settings and FAQ sat under "Plan & scout", which is where a coach goes to
+    # prepare for an opponent — neither page has anything to do with that. They
+    # are the app's own controls, so they get their own section at the bottom.
+    # Nothing else moved and no page was removed: every one of the sixteen still
+    # has its own entry, because Officials, Whiteboard, Rankings and the FAQ all
+    # carry real depth a coach needs.
+    "Settings & help": [
         st.Page("pages/12_Settings.py", title="Settings",
                 icon=":material/tune:"),
         st.Page("pages/15_FAQ.py", title="FAQ",

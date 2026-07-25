@@ -701,11 +701,43 @@ def _g_garbage(row, pools, d):
             "n": pts}
 
 
+# ── stint-length reliability (MEASURED 2026-07-25, live book) ────────────────
+# Split-half over the same players' odd vs even games, at the gates this
+# generator actually shipped with:
+#     loosest tier gate (2 stints / 6 min per band)  r =  0.018  -> SB  0.035
+#     full gate         (3 stints / 12 min per band) r = -0.130  -> SB -0.300
+# Median smaller-band sample was ~1,700 seconds, so the reliability implies an
+# EB prior of ~45,000 seconds (12.5 hours) of band time before the difference
+# is worth half its face value. Nobody on a high-school book has that.
+#
+# Three independent reads say the same thing:
+#   * 53 of 105 players scored ZERO points in their short stints, and
+#     short_p32's p25/median/p75 is 0.0 / 0.0 / 9.1 -- this is not a rate, it
+#     is a coin flip with a big denominator attached;
+#   * at 30 minutes of band time (already above the median) ONE made three
+#     moves short_p32 by 3.2 pts/32, against a 4.0 pts/32 verdict threshold.
+#     At the loosest shipped gate it moves it by 16.0;
+#   * stint length is ENDOGENOUS -- coaches pull cold players, so the short
+#     band is selected on bad outcomes. Part of what this measured was the
+#     coach's own hook handed back to them as a player trait.
+# It fired for 24 of 242 players with rotation prescriptions on that basis.
+#
+# Rather than delete the generator, it now shrinks on the same credibility
+# pattern as the on/off cards. On today's data nothing clears the bar, which is
+# the honest outcome; a genuinely large, well-sampled effect would still fire,
+# so the read reactivates itself if it ever becomes real.
+STINT_PRIOR_SECS = 45000
+
+
 def _g_stints(row, pools, d):
     """Stint-length read: does the player score in SHORT BURSTS or need LONG
     RUNS of minutes? Rates from gameflow.stint_scoring_splits (points per 32
-    stint-minutes, short ≤4-min stints vs long ≥6-min runs). Hard sample gates
-    (≥3 stints AND ≥12 minutes in EACH band) so one hot cameo never fires."""
+    stint-minutes, short ≤4-min stints vs long ≥6-min runs).
+
+    The difference is EB-shrunk on the smaller band's time (see
+    STINT_PRIOR_SECS) because that band is what the estimate rests on, and
+    because split-half reliability of the raw difference is indistinguishable
+    from zero at every gate this has shipped with."""
     st_ = d.get("stints")
     if not st_:
         return None
@@ -717,17 +749,22 @@ def _g_stints(row, pools, d):
     s32, l32 = st_["short_p32"], st_["long_p32"]
     if max(s32, l32) < 6:               # low-usage player — no scoring read
         return None
-    diff = s32 - l32
+    band = min(st_["short_secs"], st_["long_secs"])
+    cred = band / (band + STINT_PRIOR_SECS)
+    diff = (s32 - l32) * cred
     ratio = (s32 / l32) if l32 > 0 else float("inf")
     n = st_["n_short"] + st_["n_long"]
+    mins = band / 60.0
     if diff >= 4 and ratio >= 1.4:
         txt = (f"**Microwave scorer** — **{s32:.0f} pts/32 in short bursts** "
-               f"(≤4-min stints) vs {l32:.0f} in long runs; they heat up fast, "
+               f"(≤4-min stints) vs {l32:.0f} in long runs, over "
+               f"{mins:.0f} min in the thinner band; they heat up fast, "
                "so ride them in spurts and rest them before they cool.")
         score = min(3.0, diff / 4.0)
     elif diff <= -4 and (l32 / s32 if s32 > 0 else float("inf")) >= 1.4:
         txt = (f"**Rhythm player** — **{l32:.0f} pts/32 in long runs** "
-               f"(6+-min stints) vs {s32:.0f} in short bursts; they need "
+               f"(6+-min stints) vs {s32:.0f} in short bursts, over "
+               f"{mins:.0f} min in the thinner band; they need "
                "extended minutes to get going — avoid quick-hook substitutions.")
         score = min(3.0, -diff / 4.0)
     else:

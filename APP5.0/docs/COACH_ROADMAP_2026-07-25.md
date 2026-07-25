@@ -1,5 +1,11 @@
 # Coach roadmap — 2026-07-25
 
+> **BUILD LOG — Part 1 slice 1 shipped 2026-07-25.** Shot kinds (§1.6) is built,
+> tested and rendering; the defense cross-tab is in; the xFG reprice is measured
+> and held for review. **Seven claims in this document were wrong** and are
+> corrected inline below, each marked `CORRECTED`. Read §BL at the bottom before
+> building anything else here — several corrections change the specs still ahead.
+
 Brainstorm output from the "think like a high school coach" pass over the whole app.
 This is a **map for the next session**, not a deploy batch. Build order is fixed:
 
@@ -42,6 +48,8 @@ re-discovering it.
 | Charges | `helpers/charges.py` (gate dropped in `b6830fd`) | Live |
 | Team Dashboard nav | `pages/6_Team_Dashboard.py:1473` `_TD_VIEWS` | 10 views, lazy `segmented_control` |
 | Dashboard section modules | `helpers/dashboard/` (18 modules incl. `player_card.py`, `team_card.py`, `overview.py`) | The OOTP-card scaffolding already exists |
+| **Foul trouble** `CORRECTED` | `helpers/foul_trouble.py` (381 lines, `b453ed9`), rendered at `6_Team_Dashboard.py:3978` | **Already built** — bench cost, team foul-state net, gated verdict, `tracker/test_foul_trouble.py`. §1.1 below is wrong to call it new. |
+| **Player position** `CORRECTED` | `players.position` column, live | **Exists.** §3.4's "there is no position field" is false — verify how populated before designing around it. |
 
 **Net read:** the math layer is far ahead of the presentation layer. Most of Part 1 is
 joins across engines that already exist; Part 2 is almost entirely rendering.
@@ -123,6 +131,16 @@ Data quality is good: only 6 threes logged inside 19.75 ft, zero twos logged bey
 
 ### Floater share by team — it's a team problem, not just a league one
 
+> `CORRECTED` **The percentages below are shares of 2-POINT ATTEMPTS, not of all
+> shots.** Measured over all located shots the same teams read: Jay **43.4%**
+> (111 floaters of 256), Adair **18.5%** of 1,213. So *"Jay takes more than half
+> its shots from the worst band"* is false as written — it takes 43% of its
+> shots and just under half its twos there. Still the league's worst diet by a
+> wide margin; still worth the sentence; but the denominator has to be stated.
+> Note also these pool BOTH genders and every season. Scoped to the pool the app
+> actually renders (F / 2025-2026, 35 games) the league floater share is 25.4%
+> and the rim/floater PPS gap is **+0.52**, not +0.56.
+
 ```
   Jay Girls                   54.3% of shots   FG% 25.9   (n=139)
   Locust Grove Girls          41.9%            FG% 37.1
@@ -154,6 +172,16 @@ the call: **build the coverage tool (3.3) before the cliff (3.1) or the projecti
 Ordered by coach-value per unit of build.
 
 ## 1.1 Foul-trouble economics (+ ref crew cross)  ⭐ highest value
+
+> `CORRECTED` **`helpers/foul_trouble.py` already exists** (commit `b453ed9`,
+> same day as this doc, which is why §0 missed it). Items 2 and 3 of the build
+> spec below — `trouble_windows` and `cost_of_sitting` — are **shipped**, as
+> `bench_cost` and `team_foul_state_net`, with a gated verdict and a test file.
+> What is actually left of §1.1: **`foul_clock` (1)** and **`crew_foul_rate`
+> (4)**. Item 5 `bonus_risk` should batch with §1.8's bonus-discipline item
+> rather than being built here. Read that module's docstring first — it records
+> two traps (the inverted foul convention; the reserve entry-timing artifact)
+> that any new foul work will hit too.
 
 **Why a coach cares.** Foul trouble is the single most common in-game decision a HS coach
 makes ("do I sit her with 2 in the second?") and it is the one decision with zero data
@@ -347,7 +375,41 @@ figure to a decimal you can't defend.
 
 ---
 
-## 1.6 Shot classification — floater / rim / mid  ⭐⭐ BUILD THIS FIRST
+## 1.6 Shot classification — floater / rim / mid  ✅ SHIPPED 2026-07-25
+
+> **Built:** `helpers/shot_kinds.py` + `helpers/dashboard/shot_diet.py` +
+> `tracker/test_shot_kinds.py` (51 checks). Commits `041cebf`, `631864d`,
+> `6b336c7`. Four corrections to the spec below, all from measurement:
+>
+> 1. `CORRECTED` **The corner-3 box is wrong.** `court_geom.is_corner_three`
+>    already exists, derived from the real NFHS arc. The proposed `CORNER_X=20 /
+>    CORNER_Y=14` box disagrees with it on **101 of the 1,355 located 3s**, so
+>    adopting it would have created two corner-3 definitions in one app. Shipped
+>    delegating to `court_geom`; only `RIM_FT`/`FLOATER_FT` are constants here.
+>    Under the real definition the corner table is **384 / 10.1% / 31.5% /
+>    0.945**, not the 463 / 12.2% / 0.93 below.
+> 2. `CORRECTED` **The scout line cannot be built as written.** Split-half on
+>    the live book (odd/even games, Spearman-Brown): player floater **share**
+>    r=.636 (SB .778); player floater **FG%** r=.078 (SB .145). A player's
+>    floater percentage does not predict her own floater percentage. So *"their
+>    #12 lives on the floater — 34% on 61 attempts"* is half signal, half noise:
+>    ship the share half, never the rate half. The module refuses per-kind rates
+>    below `MIN_KIND_RATE_ATT` for this reason.
+> 3. `CORRECTED` **A sample gate is not enough.** With only the sample gate five
+>    teams fired the headline verdict, four of them reading "1 more floater than
+>    league average — 1 point left on the floor, 0.1 a game". Materiality is a
+>    second, separate bar. After it, exactly one team on the live book has
+>    something to say (Jay Girls, 37 excess floaters, 19 points, 3.8 a game).
+>    Excess is measured against the **league share**, not zero — no team can take
+>    zero floaters, and the zero-baseline sentence overstates by ~4x.
+> 4. `CORRECTED` **The xFG target named below is the wrong module.**
+>    `helpers/shotquality.py` is already a continuous logistic on distance,
+>    distance², is_three, contested and angle — it is *not* zone-based and does
+>    not hide the cliff. The module that does is `stats.shot_quality_rates`,
+>    keyed on **(zone, creation, guarded)**, which feeds `team_analytics.zone_xfg`
+>    / `zone_xfg_by_type` and every xFG% on screen. That is the reprice target.
+>    See §BL for the measured result — including that kind and zone together are
+>    *worse* than either alone at this sample.
 
 **Promoted to #1 after recon.** See §0.5 for the evidence. Summary: 94.5% of shots have
 coordinates, the efficiency cliff at 4 ft is enormous (1.12 → 0.64 PPS), the 4–10 ft band
@@ -734,6 +796,140 @@ Revised after the §0.5 recon. Data viability, not just coach value, drives this
 **Deliberately deferred:** 1.2 timeout ROI — blocked at 22 markers across 4 games. The
 unblocking move is a tracker-side logging fix, not an analytics build. Do that fix early
 (it's small) so the data accumulates while everything else ships.
+
+---
+
+# §BL — BUILD LOG, Part 1 slice 1 (2026-07-25)
+
+Shipped: `helpers/shot_kinds.py`, `helpers/dashboard/shot_diet.py`,
+`tracker/test_shot_kinds.py` (51 checks), renders on Charts → Offense → Shooting
+→ Shot Profile, on Insights above the auto-scout, and on the Defense tab.
+Commits `041cebf`, `631864d`, `6b336c7`.
+
+## The measured league table (F / 2025-2026 — the pool the app renders)
+
+Scope matters and the §0.5 table did not state its own. Pooled across BOTH
+genders and ALL seasons the numbers differ from the pool any single team is
+actually compared against. The girls' 2025-2026 book, 35 tracked games, 3,056
+located shots:
+
+```
+  rim          836   27.4%   PPS 1.086
+  floater      777   25.4%   PPS 0.569
+  mid          370   12.1%   PPS 0.503
+  corner3      285    9.3%   PPS 0.874
+  abovebreak3  788   25.8%   PPS 0.784
+  rim − floater gap: +0.517 pts/shot
+```
+
+The headline finding survives scoping: the 4–10 ft band is a quarter of every
+shot at 0.57 PPS, and it is no better than the midrange. Data quality is better
+than §0.5 claimed — **zero** 3s logged inside the arc, **zero** 2s beyond 22.5 ft.
+
+## Reliability, and what it forbids
+
+The gate numbers in the shipped module are not chosen, they are measured. Full
+table in `shot_kinds.py`'s docstring. The load-bearing rows:
+
+| unit · metric | r | SB | consequence |
+|---|---|---|---|
+| player floater share | .636 | .778 | gate 20 located attempts — trustworthy |
+| player rim share | .626 | .770 | wants ~40 |
+| player PPS | .317 | .481 | weak; goes **negative** at high thresholds |
+| player floater PPS | **.078** | **.145** | **noise — never displayed as a judgment** |
+| team floater share | .582 | .736 | gate 80 located attempts |
+| team PPS | .569 | .725 | directional |
+
+Unit counts are small (42 players, 9 teams), so treat these as order-of-
+magnitude — which is the argument for setting gates *above* them, not at them.
+
+**The general lesson for the rest of this document:** shares are count ratios
+and survive thin samples; rates do not. Any spec line that quotes a per-player
+percentage — §2.4's player card bars, §1.7's prescription evidence strings,
+§1.1's crew cross — needs this same split-half check before it ships a number.
+
+## The xFG reprice — measured, NOT landed
+
+Out-of-sample (fit on odd games, score even, and the reverse):
+
+```
+  baseline key                   log loss     Brier
+  zone × creation × guard         0.63879    0.22214
+  KIND × creation × guard         0.62403    0.21290   <- better
+  zone + kind × creation × guard  0.66671    0.21861   <- worse than either
+```
+
+Two results:
+
+1. **Depth beats angle** as the shot-quality key — 2.3% better log loss, 4.2%
+   better Brier. The spec's instinct was right.
+2. **Both axes together are worse than either alone.** 3,246 shots cannot fill
+   5 zones × 5 kinds × 4 creation × 2 contest cells. "Complementary axes" is
+   true for DISPLAY and false for the MODEL at this sample. If the reprice
+   lands, it is kind *instead of* zone in `stats.shot_quality_rates`, not both.
+
+Per-player effect at n≥40 (22 players): mean |move| 1.55pp, max 5.85pp, and
+**3 of 22 players' SMOE changes sign**. The largest movers are rim-heavy
+players whose shot difficulty zone over-stated — Hannah Bond's SMOE falls from
++14.4 to +8.5, Reagan Langley's from +9.6 to +4.9. That is the cliff correction
+doing exactly what it should.
+
+**Held for review** rather than shipped: it moves live per-player ratings.
+
+## Traps found, worth not re-finding
+
+- **`S.fetch_events([])` returns the ENTIRE database** — 7,670 events, both
+  genders, every season. An empty game-id list means "everything", not
+  "nothing". `PT._tracked_game_ids(gender)` legitimately returns `[]` because
+  the active season is a fresh rollover, so the first working version silently
+  built a girls' league baseline out of boys' games. **Every new pooled engine
+  needs an explicit empty guard.**
+- **`PT._tracked_game_ids` takes gender only** — no season argument. Season
+  scoping comes from the page's own `_gender_tracked_ids(g, season)` or from
+  `ctx.season_gp`.
+- **"Shot diet" was already three different blocks** (`6_Team_Dashboard.py:1997`,
+  `player_card.py`, `5_Rankings.py`). The new one is "Shot depth". Grep before
+  naming a block.
+- **An AppTest smoke that does not patch `helpers.ui.gender_radio` renders the
+  same team regardless of `ta_team`** — two teams produced byte-identical
+  288,712-char pages. Add it to the patch list in the smoke pattern beside
+  `auth_enabled` / `has_paid_plan`.
+- **`mapped_shots` fills unlocated shots with the ZONE CENTROID.** A centroid
+  has a distance, so it classifies happily and a zone-C centroid becomes a "rim"
+  shot nobody took. `classify_shot` sends `approx=True` to `unknown`.
+
+## Defense × kind — built, and one unpredicted finding
+
+```
+  scheme          n     rim   floater   ab-3    PPS allowed
+  Man-to-man   1463   23.5%    27.5%   28.0%      0.704
+  2-3 zone      639   18.6%    20.3%   33.0%      0.729
+  Scramble      454   55.5%    18.7%   11.7%      1.009
+  Man press     151   27.8%    31.8%   20.5%      0.583
+```
+
+The 2-3 behaves exactly as the cliché says — fewest rim shots conceded, most
+threes — which is a good sign the axis measures what it claims. **Scramble
+concedes 55.5% of its shots at the rim, at 1.009 PPS.** A broken-play state
+naturally gives up rim looks, but that is a number a coach should see rather
+than infer, and it is a candidate trigger for §1.7.
+
+## What this changes for the parts still ahead
+
+- **§2.4 player card:** the rim/floater/mid/3 bars must be **share** bars, not
+  percentage bars. A per-player floater FG% on a card is a number that will not
+  survive contact with next month's games.
+- **§1.7 prescriptions:** floater share is confirmed as the best drill trigger
+  in the document — it is the reliable metric AND the largest effect. Key the
+  rule on share and materiality, never on floater FG%.
+- **§1.1 crew cross:** apply the same split-half test before shipping any
+  per-player-per-crew rate. Foul rate by crew is a rate at a thinner sample than
+  floater FG%, which failed at r=.078. Expect it to fail too, and design the
+  read as a *share/count* statement if it does.
+- **§4.2 confidence dots:** there is now a measured basis for which reads get a
+  solid dot. Wire the dot to the split-half number, not to a games count.
+- **§3.4 position:** `players.position` exists. Check its fill rate before
+  designing the derived-role fallback.
 
 ---
 

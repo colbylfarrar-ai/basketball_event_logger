@@ -973,6 +973,19 @@ def _group_units(tid, _tids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _group_synergy(tid, _tids):
+    """Group net minus what the members' solo nets predict (spec Part 4b).
+
+    Deliberately NOT routed through chemistry_network: that runs an
+    opponent-slope ridge fit costing 16.5s on the live book, and its node nets
+    are teammate-ADJUSTED, which would be subtracted from group_units' RAW net.
+    group_synergy takes both sides from group_units instead -- 0.2s, and
+    like-for-like by construction.
+    """
+    return NW.group_synergy(tid, sizes=(2, 3, 4), game_ids=list(_tids))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _finisher(tid, _tids, core):
     return NW.finisher_finder(tid, tuple(core), game_ids=list(_tids))
 
@@ -5463,6 +5476,65 @@ if _tdview == "Lab":
                             "NetAdj": st.column_config.NumberColumn(format="%+.1f"),
                             "Net": st.column_config.NumberColumn(format="%+.1f"),
                         })
+
+            # ── synergy: is this group better than the sum of its parts? ──
+            # Sits directly under the units table because it answers the
+            # question that table provokes. Reuses ONE walk: _group_synergy
+            # asks group_units for sizes (1,2,3,4) and slices what it needs.
+            _syn = _group_synergy(team_id, tuple(tids))
+            if any(_syn.get(k) for k in (2, 3, 4)):
+                st.markdown("**Synergy** — better, or worse, than the sum of "
+                            "its parts")
+                _sv = NW.synergy_verdict(_syn, names=_num)
+                if _sv:
+                    _verdict_lines(_sv)
+                _stab = st.tabs(["Pairs", "Trios", "Quads"])
+                for _t, _k in zip(_stab, (2, 3, 4)):
+                    with _t:
+                        _sr = _syn.get(_k) or []
+                        if not _sr:
+                            st.caption("Nothing cleared the sample gate yet.")
+                            continue
+                        st.dataframe(pd.DataFrame([{
+                            "Group": _glabel(r["players"]),
+                            "Synergy (adj)": r["syn_adj"],
+                            "Synergy (raw)": r["synergy"],
+                            "Net": r["Net"],
+                            "Expected": r["expected"],
+                            "Poss": r["poss"],
+                            "Weight": r["syn_cred"],
+                        } for r in _sr]), hide_index=True, width="stretch",
+                            height=min(360, 60 + 32 * len(_sr)),
+                            column_config={
+                                "Synergy (adj)": st.column_config.NumberColumn(
+                                    format="%+.1f",
+                                    help="Raw synergy shrunk for sample size. "
+                                         "Rank on this."),
+                                "Synergy (raw)": st.column_config.NumberColumn(
+                                    format="%+.1f"),
+                                "Net": st.column_config.NumberColumn(format="%+.1f"),
+                                "Expected": st.column_config.NumberColumn(
+                                    format="%+.1f",
+                                    help="Mean of the members' own solo "
+                                         "on-floor nets."),
+                                "Weight": st.column_config.NumberColumn(
+                                    format="%.2f",
+                                    help="Share of the raw synergy kept after "
+                                         "shrinking."),
+                            })
+                st.caption(
+                    "**Expected** is the mean of the members' own solo on-floor "
+                    "nets, so synergy asks whether a combination beats its "
+                    "parts — raw net alone just re-ranks good players standing "
+                    "near each other. The shrink is much harsher than the units "
+                    "table above uses: measured split-half reliability of "
+                    "synergy on this book is 0.17 for trios and 0.33 for fours, "
+                    "and pairs did not repeat at all, so the prior is 400 "
+                    "possessions against 40 for raw net. **Synergy is not "
+                    "additive and does not decompose a lineup** — three "
+                    "players' solo nets already contain each other's minutes, "
+                    "so this says 'better than usual together', never 'play "
+                    "them more and you will get this'.")
 
             # finisher finder — the rotation lever off any core the coach picks
             st.markdown("**Finisher finder** — pick a core, see who best "

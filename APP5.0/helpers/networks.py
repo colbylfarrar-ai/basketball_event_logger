@@ -333,3 +333,159 @@ def finisher_finder(team_id, core, game_ids=None, events=None, min_poss=None):
             "core_names": [name_of.get(p, str(p)) for p in sorted(core)],
             "core_poss": c_off + c_def, "core_net": round(core_net, 1),
             "candidates": rows, "min_poss": mp}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  GROUP SYNERGY (spec Part 4b, extended past pairs)
+# ══════════════════════════════════════════════════════════════════════════════
+# Pair synergy already exists: chemistry_network's edges carry an
+# opponent- AND teammate-adjusted `adj_net`, and team_insights.chemistry_extra
+# already reports "pair net minus the mean of the two solo nets". What was
+# missing is the same read for the TRIOS and QUADS that group_units enumerates.
+#
+# WHY RAW GROUP NET IS NOT ENOUGH, and the reason 4b exists as a separate item:
+# a trio of the three best players will top any raw-net ranking on a high-school
+# roster whether or not they fit together. Raw net re-ranks good players standing
+# near each other. Synergy asks the different question — does this combination
+# beat the sum of its parts? — and that is the one a coach cannot eyeball.
+
+# ── how much of a synergy number is real (MEASURED 2026-07-25, live book) ────
+# Split-half over the same groups' odd vs even games, Spearman-Brown stepped up:
+#     pairs  r = -0.050  ->  SB -0.106   no repeatable signal
+#     trios  r =  0.094  ->  SB  0.172   implied prior  822 possessions
+#     quads  r =  0.200  ->  SB  0.333   implied prior  229 possessions
+# That is much weaker than raw group NET, and it should be: synergy is a
+# DIFFERENCE of two noisy quantities, so it carries both their errors. The house
+# prior of 40 possessions is right for a level and far too generous for this.
+#
+# One conservative constant is used rather than three fitted ones, because the
+# three estimates rest on n = 51 / 100 / 65 groups and their standard errors
+# (~0.10-0.14 on r) comfortably overlap. 400 sits between the two positive
+# implied priors; the pair estimate implies no finite prior at all.
+#
+# Consequence, and it is intended: on a 24-game book almost nothing clears a
+# meaningful synergy bar, and the verdict says so out loud instead of ranking
+# noise confidently. The table stays because it is a Lab exploration surface a
+# coach reads WITH the caveat, not a prescriptive card.
+_SYNERGY_PRIOR_POSS = 400
+
+#: Measured Spearman-Brown reliability per group size, for the caveat line.
+SYNERGY_RELIABILITY = {2: -0.11, 3: 0.17, 4: 0.33}
+
+
+def group_synergy(team_id, sizes=(2, 3, 4), game_ids=None, events=None,
+                  min_poss=None, groups=None):
+    """{k: [row]} — group net MINUS what the members' solo nets predict.
+
+    Each row is a `group_units` row plus:
+      expected  mean of the members' solo on-floor nets
+      synergy   Net - expected, in points per 100
+      syn_adj   synergy shrunk by poss/(poss + _SYNERGY_PRIOR_POSS), which is
+                what the list is ranked on. The prior is 400, not the 40 that
+                group_units uses for raw net, because measured split-half
+                reliability of synergy is far lower than of net — see the note
+                above. A 26-possession trio at +30 synergy is noise and must not
+                outrank a 150-possession trio at +9.
+
+    SOLO NETS COME FROM group_units(sizes=(1,)), NOT chemistry_network. Two
+    reasons, and both matter:
+
+      * LIKE-FOR-LIKE BY CONSTRUCTION. chemistry_network's node carries
+        `adj_net`, which is opponent- and TEAMMATE-corrected. Subtracting that
+        from group_units' raw `Net` is apples-from-oranges — the teammate
+        correction pulls every solo net toward or below zero on a good team, so
+        the first draft of this reported an `expected` of about -7 against group
+        nets of +46 and called essentially every trio +57 in "synergy". Taking
+        both sides from the same function makes that class of mistake
+        impossible rather than merely fixed.
+      * COST. chemistry_network runs an opponent-slope ridge fit and takes
+        16.5s on the live book; group_units is 0.2s and already walks every
+        group size at once. Adding k=1 to the sizes it enumerates is free.
+
+    HONESTY: synergy is not additive and does not decompose a lineup. Three
+    players' solo nets already contain each other's minutes — they play
+    together — so `expected` is a reference point, not a counterfactual. It
+    answers "is this group better than its members usually are", which is
+    useful, and NOT "what would happen if you played them more", which this
+    cannot support.
+
+    `groups` accepts a prebuilt `group_units` result (which must include size 1)
+    so a surface showing units and synergy together pays for one walk, not two.
+    """
+    want = tuple(sorted(set(sizes) | {1}))
+    if groups is None or 1 not in groups:
+        groups = group_units(team_id, sizes=want, game_ids=game_ids,
+                             events=events, min_poss=min_poss)
+    solo = {}
+    for row in groups.get(1) or []:
+        solo[row["players"][0]] = row["Net"]
+
+    out = {}
+    for k in sizes:
+        if k == 1:
+            continue
+        rows = []
+        for g in groups.get(k) or []:
+            solos = [solo.get(p) for p in g["players"]]
+            if any(s is None for s in solos):
+                continue
+            expected = sum(solos) / len(solos)
+            syn = g["Net"] - expected
+            # NOT g["cred"] -- that is group_units' net credibility on a
+            # 40-possession prior. Synergy is a difference and needs its own.
+            syn_cred = g["poss"] / (g["poss"] + _SYNERGY_PRIOR_POSS)
+            rows.append({**g,
+                         "expected": round(expected, 1),
+                         "synergy": round(syn, 1),
+                         "syn_adj": round(syn * syn_cred, 1),
+                         "syn_cred": round(syn_cred, 2)})
+        rows.sort(key=lambda d: -d["syn_adj"])
+        out[k] = rows
+    return out
+
+
+def synergy_verdict(syn, names=None):
+    """[(badge, n, html)] for helpers.cards.verdict_card.
+
+    Reports the best and worst COMBINATION rather than the best group, because
+    the best group is almost always just the best players and a coach already
+    knows who those are.
+    """
+    def nm(pid):
+        return (names or {}).get(pid, f"#{pid}")
+
+    lines = []
+    spoke = False
+    for k in sorted(syn):
+        rows = syn[k]
+        if len(rows) < 3:          # too few groups to call anything the best
+            continue
+        best, worst = rows[0], rows[-1]
+        word = {2: "pair", 3: "trio", 4: "four"}.get(k, f"{k}-man group")
+        if best["syn_adj"] >= 3 or worst["syn_adj"] <= -3:
+            spoke = True
+        if best["syn_adj"] >= 3:
+            lines.append((
+                f"Best {word}", best["poss"],
+                "<b>" + " · ".join(nm(p) for p in best["players"]) + "</b>"
+                f" is <b>{best['synergy']:+.1f}</b> per 100 better together "
+                f"than its members usually are ({best['Net']:+.1f} net against "
+                f"an expected {best['expected']:+.1f}), over {best['poss']} "
+                f"possessions."))
+        if worst["syn_adj"] <= -3:
+            lines.append((
+                f"Worst {word}", worst["poss"],
+                "<b>" + " · ".join(nm(p) for p in worst["players"]) + "</b>"
+                f" is <b>{worst['synergy']:+.1f}</b> per 100 — good players who "
+                f"have not fit together so far, on {worst['poss']} possessions."))
+    if spoke:
+        # Standing caveat, never omitted. Synergy is the weakest-measured read
+        # on this page and a coach reading a confident ranking deserves to know
+        # it repeats poorly game-to-game.
+        lines.append((
+            "How firm is this", 0,
+            "Synergy repeats <b>weakly</b> on a book this size — split-half "
+            "reliability measured 0.17 for trios and 0.33 for fours, and pairs "
+            "did not repeat at all. Read these as places to LOOK, not as "
+            "settled facts about who fits with whom."))
+    return lines

@@ -247,4 +247,51 @@ if BODY is not None:
        "the deep-dive half did not fall into its error caption")
 
 
+# ── the ported verdict sections ───────────────────────────────────────────────
+print("\nthe ported engines produce lines on the real book")
+
+from database.db import query                    # noqa: E402
+from helpers.dashboard import insights_deep as DEEP   # noqa: E402
+
+_tid = query("SELECT team1_id t FROM games WHERE id=?", (GIDS[0],))[0]["t"]
+_ph = ",".join("?" * len(GIDS))
+# team-SCOPED ids, which is what ctx.tracked_ids carries. Passing the whole
+# league pool here silently produced a 4,136-possession "defensive ledger"
+# against a 372-possession offensive one, which is how this harness caught its
+# own mistake — the asymmetry is the tell.
+_tgids = tuple(r["id"] for r in query(
+    f"SELECT id FROM games WHERE id IN ({_ph}) AND (team1_id=? OR team2_id=?)",
+    tuple(GIDS) + (_tid, _tid)))
+ok(len(_tgids) >= 2, f"team has {len(_tgids)} tracked games to read")
+
+_lines, _diag = DEEP._ported.__wrapped__(_tid, GENDER, _tgids)
+ok(not _diag, f"no ported engine raised: {_diag}")
+ok(len(_lines) >= 6,
+   f"{len(_lines)} of {len(DEEP._PORT_SECTIONS)} ported sections produced lines")
+
+_keys = {k for k, _h, _c, _home in DEEP._PORT_SECTIONS}
+ok(set(_lines) <= _keys, "every produced section has a render entry")
+for _k, _v in _lines.items():
+    for _badge, _n, _txt in _v:
+        ok(isinstance(_badge, str) and isinstance(_txt, str),
+           f"{_k} lines are the (badge, n, html) shape verdict_card unpacks")
+        break
+    break
+
+# the two unit bugs this harness caught, pinned so they cannot come back
+_ss = _lines.get("selfscout") or []
+for _badge, _n, _txt in _ss:
+    if _badge == "Scoutability":
+        import re as _re
+        _shares = [float(x) for x in _re.findall(r"(\d+)% of tagged calls", _txt)]
+        ok(all(s <= 100 for s in _shares),
+           f"scoutability top_share is already 0-100 and is not scaled twice "
+           f"({_shares})")
+_lg = _lines.get("ledger") or []
+if len(_lg) == 2:
+    _ns = [n for _b, n, _t in _lg]
+    ok(max(_ns) / max(1, min(_ns)) < 4,
+       f"offensive and defensive possession counts are the same order of "
+       f"magnitude ({_ns}) — a wild ratio means the scope leaked")
+
 print(f"\nALL {PASSED} CHECKS PASSED")

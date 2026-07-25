@@ -286,11 +286,185 @@ def _ported(team_id, gender, tids, fp=None):
         return FT.foul_clock_lines(
             FT.foul_clock(events=ev, team_id=team_id), names=names, level=2)
 
+    # ── engines with no verdict of their own; the lines are built here ───────
+    def _ledger():
+        """Where the points come from, and what is given up, on one axis."""
+        import helpers.possession_value as PV
+        led = PV.team_ledger(team_id, game_ids=gids, events=ev)
+        lines = []
+        for side, label in (("offense", "scored"), ("defense", "allowed")):
+            l = led.get(side)
+            if not l or not l.get("outcomes"):
+                continue
+            outs = {o["key"]: o for o in l["outcomes"]}
+            srcs = sorted(l.get("sources") or [], key=lambda s: -s["pts"])
+            n = sum(o["n"] for o in l["outcomes"])
+            if n < 60:
+                continue
+            sc = outs.get("scored") or {}
+            tov = outs.get("turnover") or {}
+            oreb = outs.get("oreb") or {}
+            top = srcs[0] if srcs else None
+            top_bit = (f" The biggest single source is <b>{top['label']}</b> at "
+                       f"{top['share'] * 100:.0f}% of the points."
+                       if top else "")
+            lines.append((
+                f"Possessions {label}", n,
+                f"<b>{sc.get('pct', 0) * 100:.0f}%</b> of these possessions "
+                f"{label} at all; <b>{tov.get('pct', 0) * 100:.0f}%</b> ended "
+                f"in a turnover and <b>{oreb.get('pct', 0) * 100:.0f}%</b> were "
+                f"extended on the offensive glass.{top_bit}"))
+        return lines
+
+    def _runs():
+        # Profile keys are PER-GAME rates, not counts: gp, made_pg/allowed_pg
+        # (big runs), made6_pg/allowed6_pg, biggest, avg_secs, avg_momentum,
+        # by_count {0,1,2,'3+' -> [W,L]}, garbage. Garbage-time runs are
+        # excluded from every one of them except `garbage` itself.
+        import helpers.runs as RN
+        r = RN.team_runs(team_id, ev)
+        p = (r or {}).get("profile")
+        if not p:
+            return []
+        gp = p.get("gp") or 0
+        made, allowed = p.get("made_pg"), p.get("allowed_pg")
+        if gp < 3 or made is None or allowed is None:
+            return []
+        net = made - allowed
+        if net > 0.3:
+            read = "they win the run battle, and the swings go their way"
+        elif net < -0.3:
+            read = ("they lose the run battle, and the game gets away from "
+                    "them in bursts")
+        else:
+            read = "runs come and go about evenly on both ends"
+        mom = p.get("avg_momentum")
+        mom_bit = (f" After one of their own, the next two minutes are "
+                   f"<b>{mom:+.1f}</b> net." if mom is not None else "")
+        lines = [("Runs", gp,
+                  f"<b>{made:.1f}</b> big runs a game against "
+                  f"<b>{allowed:.1f}</b> conceded ({net:+.1f}) — {read}. "
+                  f"Biggest of the season: <b>{p.get('biggest') or 0}</b> "
+                  f"unanswered.{mom_bit}")]
+        rec = p.get("by_count") or {}
+        bits = [f"{k} run{'s' if str(k) != '1' else ''}: {v[0]}–{v[1]}"
+                for k, v in sorted(rec.items(), key=lambda kv: str(kv[0]))
+                if (v[0] + v[1])]
+        if bits:
+            lines.append(("Record by runs", gp,
+                          "Record split by how many big runs they put together "
+                          "in the game — " + " · ".join(bits) + "."))
+        garbage = p.get("garbage")
+        if garbage:
+            lines.append(("Garbage excluded", gp,
+                          f"{garbage} further run{'s' if garbage != 1 else ''} "
+                          f"came with the game already decided and are left out "
+                          f"of the numbers above."))
+        return lines
+
+    def _selfscout():
+        import helpers.selfscout as SS
+        rep = SS.self_scout_report(team_id, gender=gender, events=ev)
+        lines = []
+        o = rep.get("offense") or {}
+        if o.get("rated") and o.get("predictability") is not None:
+            lines.append((
+                "Scoutability", o.get("tagged"),
+                # top_share is ALREADY 0-100 out of _scoutability_from_rows —
+                # multiplying it again printed "Isolation at 2740% of calls"
+                f"Play-call predictability <b>{o['predictability']:.0f}/100</b> "
+                f"— the most-run set is <b>{o.get('top_set') or '—'}</b> at "
+                f"{(o.get('top_share') or 0):.0f}% of tagged calls across "
+                f"{o.get('n_sets') or 0} different sets. Higher means a scout "
+                f"keys on this offense faster."))
+        drift = rep.get("drift") or {}
+        for key, label, why in (
+                ("overused", "Overused",
+                 "run often AND below league efficiency — the scout's gift"),
+                ("underused", "Underused",
+                 "above league efficiency and under-run — a weapon left on the "
+                 "shelf")):
+            rows = drift.get(key) or []
+            if not rows:
+                continue
+            lines.append((
+                label, len(rows),
+                ", ".join(f"<b>{r['label']}</b> ({r['share'] * 100:.0f}% of "
+                          f"calls, {r['PPP']:.2f} PPP)" for r in rows[:3])
+                + f" — {why}."))
+        return lines
+
+    def _tovs():
+        import helpers.turnovers as TOV
+        t = TOV.team_turnover_types(team_id, gender=gender, events=ev,
+                                    game_ids=gids)
+        rows = (t or {}).get("rows") or []
+        tagged = (t or {}).get("total_tagged") or 0
+        if not rows or tagged < 12:
+            return []
+        top = rows[0]
+        # The engine's labels are terse nouns ("Pass", "Drive", "Violation")
+        # meant for a table header; spelled into a sentence they read as a
+        # truncation, so each gets a phrase.
+        phrase = {"pass": "bad passes", "drive": "lost handles on the drive",
+                  "travel": "travels and violations",
+                  "shot_clock": "shot-clock violations",
+                  "held": "held balls", "other": "other giveaways"}
+        what = phrase.get(top["key"], top["label"].lower())
+        return [("Giveaway mix", tagged,
+                 f"<b>{top['share'] * 100:.0f}%</b> of this team's tagged "
+                 f"turnovers are <b>{what}</b> ({tagged} tagged). That is the "
+                 f"pattern an opponent sits on — and the one to drill out.")]
+
+    def _reb():
+        """The rebounding read for the roster's biggest mover."""
+        import helpers.rebounding as RB
+        import helpers.player_ratings as PR
+        tbl = PR.player_stat_table(gender=gender, min_games=1,
+                                   game_ids=set(gids))
+        pool = [r for r in tbl.values()]
+        mine = [r for r in pool if r.get("team_id") == team_id]
+        lines = []
+        for row in sorted(mine, key=lambda r: -(r.get("REB") or 0))[:2]:
+            v = RB.rebounding_verdict(row, pool=pool)
+            for badge, n, txt in v:
+                lines.append((f"{row['name']} · {badge}", n, txt))
+        return lines
+
+    def _scheme():
+        """What this offense does against each defensive scheme it has faced."""
+        import helpers.defenses as DEF
+        fam = DEF.team_defense_families(team_id, gender=gender, events=ev,
+                                        game_ids=gids, offense=True)
+        rows = [r for r in (fam or {}).get("rows", []) if r.get("poss", 0) >= 10]
+        if len(rows) < 2:
+            return []
+        rows.sort(key=lambda r: -(r.get("PPP") or 0))
+        best, worst = rows[0], rows[-1]
+        gap = (best.get("PPP") or 0) - (worst.get("PPP") or 0)
+        if gap < 0.10:
+            return [("Vs schemes", sum(r["poss"] for r in rows),
+                     "This offense scores at about the same rate against every "
+                     "coverage it has faced — no scheme has slowed it "
+                     "specifically, which is a real strength to state.")]
+        return [("Vs schemes", sum(r["poss"] for r in rows),
+                 f"Best against <b>{best['label']}</b> "
+                 f"({best['PPP']:.2f} PPP, {best['poss']} poss), worst against "
+                 f"<b>{worst['label']}</b> ({worst['PPP']:.2f}, "
+                 f"{worst['poss']}) — a <b>{gap:.2f} PPP</b> spread. Expect to "
+                 f"see the second one until it is fixed.")]
+
     stage("stops", _stops)
     stage("hero", _hero)
     stage("involve", _involve)
     stage("fouls", _fouls)
     stage("clock", _clock)
+    stage("ledger", _ledger)
+    stage("runs", _runs)
+    stage("selfscout", _selfscout)
+    stage("tovs", _tovs)
+    stage("reb", _reb)
+    stage("scheme", _scheme)
     return out, diag
 
 
@@ -311,6 +485,24 @@ _PORT_SECTIONS = (
     ("clock", "⏱️ The foul clock — when the bench decision arrives",
      "The median game-clock stamp of each player's second foul, ordered by how "
      "early it lands.", "Roster"),
+    ("ledger", "📒 Possession ledger — where points come from, what is given up",
+     "Every possession classified by how it ended, on both ends, with the "
+     "scoring sources behind it.", "Lab"),
+    ("runs", "📈 Runs — the swing count behind close results",
+     "Scoring runs put together against runs conceded, and the record split by "
+     "how many the team managed.", "Charts"),
+    ("selfscout", "🔍 Self-scout — how fast an opponent keys on you",
+     "Play-call predictability, plus the sets that are over-run and "
+     "inefficient (the scout's gift) and the ones left on the shelf.", "Scout"),
+    ("tovs", "🔄 Giveaway mix — the pattern to drill out",
+     "The dominant tagged turnover kind, which is what an opposing defence "
+     "sits on.", "Charts"),
+    ("reb", "🏀 Rebounding — box-out payoff and glass identity",
+     "The engine's plain-word read for the roster's biggest rebounders, ranked "
+     "within their own team.", "Roster"),
+    ("scheme", "🛡️ Vs defensive schemes — what slows this offense",
+     "Own offense grouped by the coverage it faced, normalized against the "
+     "league's own use of that scheme.", "Charts"),
 )
 
 

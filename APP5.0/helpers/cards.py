@@ -183,7 +183,13 @@ def conf_dot(n, k=3.0, sig=None, *, title=None):
 #: reliability level -> the same three dot classes conf_dot already ships, so
 #: the two evidence models share one visual vocabulary instead of teaching a
 #: coach a second one. "withhold" has no dot because it has no number.
-_REL_CLS = {"stable": "conf-stable", "fair": "conf-fair", "weak": "conf-weak"}
+#: "unmeasured" reuses the weakest dot: the number is real (it happened), we
+#: simply have not been able to test whether it repeats. It must not borrow a
+#: confident dot, and it must not be invisible either — a missing dot would read
+#: as "nobody checked the reliability of this app", which is the opposite of
+#: what is true here.
+_REL_CLS = {"stable": "conf-stable", "fair": "conf-fair", "weak": "conf-weak",
+            "unmeasured": "conf-weak"}
 
 
 def conf_dot_r(sb, *, metric=None):

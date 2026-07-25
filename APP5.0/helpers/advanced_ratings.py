@@ -59,7 +59,13 @@ def leaderboard(rows, paid, key="adv", ratings=None):
     if isinstance(rows, dict):
         items = list(rows.items())
     else:
-        items = [(r.get("id"), r) for r in rows]
+        # `_pid` as well as `id`: the Team Dashboard passes its `players` rows,
+        # which carry the player id as `_pid`. Looking only for `id` resolved
+        # every pid to None, so `ratings.get(pid)` missed on every row and the
+        # RTG column rendered present-but-empty on that page — the column
+        # appeared (it keys off `ratings` being non-empty) with nothing in it.
+        items = [(r.get("id") or r.get("_pid") or r.get("player_id"), r)
+                 for r in rows]
     rows = [r for _pid, r in items]
     ratings = ratings or {}
     if not paid:

@@ -278,8 +278,34 @@ ok(REL.WEAK_SB > REL.MEASURED_BAND[("player", "fg", "floater")],
    "the floor sits ABOVE the measured floater FG% -- the shipped refusal holds")
 ok(REL.WEAK_SB > REL.MEASURED_BAND[("player", "fg", "rim")],
    "and above rim FG%, the most-wanted and least reliable read in the book")
-ok(REL.level(None) == "withhold",
-   "an UNMEASURED metric is withheld, not waved through")
+ok(REL.level(None) == "unmeasured",
+   "an UNMEASURED metric is distinct from one measured as noise")
+ok(REL.shows_verdict(None) is False,
+   "and can never carry a VERDICT -- the property the house rule protects")
+ok(REL.shows(None, descriptive=True) is True,
+   "but a DESCRIPTIVE number still renders: a season FG% over 800 attempts is "
+   "the record of games played, not a claim that it repeats")
+ok(REL.shows(-0.25, descriptive=True) is False,
+   "while a rate MEASURED as anti-correlated is withheld even descriptively")
+ok(REL.measured("team", "fg", "two419") is None,
+   "team per-band FG% is deliberately unmeasured -- 6 teams is not a sample "
+   "to compute a split-half r over, in either direction")
+
+print("\n-- description is not prediction -------------------------------------")
+
+_desc = SK.rate_reads(SK.player_table(8, shots=_many_2, taxonomy="band"),
+                      unit="team", descriptive=True)
+ok(_desc["two419"]["show"] is True,
+   "a team's own shooting percentage is shown, whatever its reliability")
+ok(_desc["two419"]["level"] == "unmeasured",
+   "and is labelled unmeasured rather than claimed to be noise")
+ok(_desc["two419"]["verdict_ok"] is False,
+   "but it may not be built into a prose verdict")
+_pred = SK.rate_reads(SK.player_table(7, shots=_many_rim, taxonomy="band"),
+                      unit="player", descriptive=True)
+ok(_pred["rim04"]["show"] is False,
+   "rim FG% stays withheld even descriptively -- it was MEASURED at SB .11, "
+   "which is a different thing from never having been measured")
 ok(REL.level(0.95) == "stable" and REL.level(0.65) == "fair",
    "the bands themselves are ordered")
 ok(abs(REL.spearman_brown(0.5) - 2 / 3) < 1e-9,

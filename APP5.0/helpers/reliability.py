@@ -69,18 +69,44 @@ FAIR_SB = 0.60
 #: module cannot be used to undo a refusal the measurement already earned.
 WEAK_SB = 0.30
 
-LEVELS = ("stable", "fair", "weak", "withhold")
+LEVELS = ("stable", "fair", "weak", "withhold", "unmeasured")
 
 LEVEL_LABELS = {
     "stable": "Reliable — predicts itself across a split season",
     "fair": "Directional — real signal, will still move",
     "weak": "Early — shown for completeness, not a finding",
-    "withhold": "Not shown — does not predict itself in this book",
+    "withhold": "Not a trait — does not predict itself in this book",
+    "unmeasured": "Not measured — too few units to test repeatability",
 }
 
 #: Glyphs, for text surfaces and for captions that cannot carry HTML.
 LEVEL_GLYPHS = {"stable": "●", "fair": "◐", "weak": "○",
-                "withhold": ""}
+                "withhold": "", "unmeasured": "·"}
+
+# ── DESCRIPTION IS NOT PREDICTION ─────────────────────────────────────────────
+# The distinction this module got wrong on its first pass, and it matters more
+# than any threshold in it.
+#
+# A team's FG% from 4 ft to the arc, over 800 attempts this season, is a RECORD
+# OF WHAT HAPPENED. It is the box score. It cannot be "unreliable" any more than
+# a final score can — it is not making a claim about the future, so asking
+# whether it predicts itself is asking the wrong question of it.
+#
+# "Does she finish at the rim" is a different kind of sentence. It reads a
+# percentage as a TRAIT, something stable that will show up again next month.
+# That claim is exactly what split-half reliability tests, and rim FG% fails it
+# at SB .11.
+#
+# Same number, two jobs. So the gate is on the JOB, not on the number:
+#
+#   descriptive  the season's record. Always shown. The dot annotates whether
+#                it is likely to repeat; it never decides whether to render.
+#   predictive   a trait claim, a projection, a verdict, a scouting line.
+#                Must clear WEAK_SB, and must have been MEASURED at all.
+#
+# The first version of this module hid a team's actual shooting percentages
+# behind a player-level reliability book, which is how a coach ends up unable
+# to read their own box score.
 
 
 def spearman_brown(r):
@@ -98,11 +124,14 @@ def spearman_brown(r):
 def level(sb):
     """Reliability band for a Spearman-Brown corrected r → one of LEVELS.
 
-    `sb` is None when a metric was never measured — that is `withhold`, not a
-    pass. An unmeasured verdict is exactly what the house rule exists to stop.
+    `sb is None` means NEVER MEASURED, which is not the same as measured-and-
+    failed and must not be collapsed into it. Team-level per-band FG% is the
+    live example: it cannot be measured on this book at all, because there are
+    six teams and a split-half r over six units is not a number. Reporting that
+    as "does not predict itself" would be a claim the data never made.
     """
     if sb is None:
-        return "withhold"
+        return "unmeasured"
     if sb >= STABLE_SB:
         return "stable"
     if sb >= FAIR_SB:
@@ -112,9 +141,28 @@ def level(sb):
     return "withhold"
 
 
-def shows(sb):
-    """May a caller render this number at all?"""
-    return level(sb) != "withhold"
+def shows(sb, descriptive=False):
+    """May a caller render this number?
+
+    `descriptive=True` for a record of what happened (a season FG%, a shot
+    count, a foul clock) — those always render; the dot only annotates whether
+    they are likely to repeat. Leave it False for anything presented as a trait,
+    a projection or a verdict, which must have been measured AND have cleared
+    the floor.
+    """
+    lvl = level(sb)
+    if descriptive:
+        return lvl != "withhold"
+    return lvl in ("stable", "fair", "weak")
+
+
+def shows_verdict(sb):
+    """May a caller build a PROSE claim on this number?
+
+    Strictest gate in the module: an unmeasured metric cannot carry a verdict,
+    which is the rule the house convention exists to enforce.
+    """
+    return level(sb) in ("stable", "fair", "weak")
 
 
 def caption(sb, *, metric=None):
@@ -125,10 +173,13 @@ def caption(sb, *, metric=None):
     """
     lvl = level(sb)
     name = metric or "this number"
+    if lvl == "unmeasured":
+        return (f"{name}: a record of these games. Whether it repeats has not "
+                f"been measured — too few units in this book to test it.")
     if lvl == "withhold":
         return (f"{name} does not predict itself in this book"
                 + (f" (r={sb:.2f})" if sb is not None else "")
-                + " — withheld.")
+                + " — real for these games, but not a trait.")
     if lvl == "weak":
         return f"Early (r={sb:.2f}) — shown for completeness, not a finding."
     if lvl == "fair":
@@ -151,6 +202,13 @@ MEASURED = {
     ("team", "band_share"): 0.88,
     ("team", "kind_fg"): 0.67,
     ("team", "pps"): 0.73,
+    # Team per-band FG% is deliberately ABSENT rather than set to a number.
+    # Measured 2026-07-26 it comes back SB -.12 to .10 on FIVE OR SIX teams,
+    # and a split-half r over six units is not a measurement — the sampling
+    # spread swamps the statistic. Absent means `unmeasured`, which renders the
+    # number (it is the season's record) and declines to claim it repeats.
+    # Setting it to the measured value would assert "team shooting is noise",
+    # which this book cannot support in either direction.
 }
 
 #: Per-band overrides where a band's own reliability differs materially from

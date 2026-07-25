@@ -97,16 +97,41 @@ def _diet_row(kind, cell, lg_cell, delta):
     dtxt = ("" if delta is None else
             f"<span style='color:{'#f85149' if bad else '#8b949e'}'>"
             f"{delta * 100:+.1f}pp</span>")
+
+    # HOW WELL, not just HOW OFTEN. The bar is a SHARE, and a share bar alone
+    # reads as though it were a quality bar — a long red bar looks like bad
+    # shooting when it means frequent shooting. Putting the FG% and the
+    # league's FG% for the same band on the row is what stops the bar from
+    # being read as something it is not.
+    fg, lgfg = cell.get("fg"), lg_cell.get("fg")
+    if fg is not None:
+        d = None if lgfg is None else (fg - lgfg)
+        dcol = ("#8b949e" if d is None or abs(d) < 0.02 else
+                ("#2ecc71" if d > 0 else "#f85149"))
+        fgtxt = (f"<span style='color:var(--text)'>{_pct(fg, 1)}</span>"
+                 + (f" <span style='color:var(--subtext);font-size:10px'>"
+                    f"(lg {_pct(lgfg, 1)})</span>" if lgfg is not None else "")
+                 + ("" if d is None else
+                    f" <span style='color:{dcol};font-size:10px'>"
+                    f"{d * 100:+.1f}</span>"))
+    else:
+        fgtxt = "<span style='color:var(--subtext)'>—</span>"
+
     return (
         "<div class='pl-pct'><div class='pl-pct-top'>"
-        f"<span class='pl-pct-lbl'>{html.escape(cell['label'])}</span>"
+        f"<span class='pl-pct-lbl'>{html.escape(cell['label'])}"
+        f"<span style='color:var(--subtext);font-size:10px'> "
+        f"· {cell['n']} shots</span></span>"
         f"<span class='pl-pct-val'>{_pct(cell['share'], 1)} "
         f"<span style='color:var(--subtext);font-size:10px'>"
         f"(lg {_pct(lg_cell['share'], 0)})</span> {dtxt}</span></div>"
         f"<div class='pl-pct-track' style='position:relative'>"
         f"<div class='pl-pct-fill' style='width:{w}%;background:{col}'></div>"
         f"<div style='position:absolute;left:{tick}%;top:-2px;bottom:-2px;"
-        f"width:2px;background:var(--text);opacity:.55'></div></div></div>")
+        f"width:2px;background:var(--text);opacity:.55'></div></div>"
+        f"<div style='display:flex;justify-content:space-between;"
+        f"font-size:11px;margin-top:2px'>"
+        f"<span style='color:var(--subtext)'>shoots</span>{fgtxt}</div></div>")
 
 
 def render(shots, team_id, *, games=None, key_prefix="sd", offense=True,
@@ -174,7 +199,11 @@ def _cut(d, unit, heading):
     """
     tbl, lg, meta = d["table"], d["league"], d["table"]["_meta"]
     cells = SK.TAXONOMIES[d["taxonomy"]][0]
-    rr = SK.rate_reads(tbl, unit=unit)
+    # descriptive=True: these are a TEAM's season shooting percentages over
+    # hundreds of attempts — the record of games that were played, not a claim
+    # that they will repeat. The dot annotates repeatability; it does not get
+    # to withhold a team's own box score. See helpers/reliability.py.
+    rr = SK.rate_reads(tbl, unit=unit, descriptive=True)
 
     if heading:
         st.markdown(f"<div class='hdr-sub'>{html.escape(heading)}</div>",
@@ -191,45 +220,68 @@ def _cut(d, unit, heading):
             "they carry the verdict and the percentages beside them do not.")
 
     with right:
+        # The league column is the BASE. Without it "you shoot 27%" is a number
+        # with nothing to lean on, and the delta beside it is the whole read —
+        # 27% from 4ft-to-arc is dead average in this league and 27% at the rim
+        # would be a catastrophe.
         head = ("<table class='mini'><tr><th>Band</th><th>FGA</th>"
-                "<th>FG%</th><th>PPS</th></tr>")
+                "<th>FG%</th><th>Lg FG%</th><th>Diff</th>"
+                "<th>PPS</th><th>Lg PPS</th></tr>")
         body = ""
-        withheld = []
+        held = []
         for k in cells:
-            c, r = tbl[k], rr[k]
-            if c["fg"] is not None and not r["show"]:
-                # Enough attempts, but the metric does not predict itself.
-                # Withheld with a reason rather than printed with a caveat.
-                withheld.append(c["label"])
+            c, r, l = tbl[k], rr[k], lg[k]
+            if c["fg"] is None:
+                fg_txt = "<span style='color:var(--subtext)'>—</span>"
+                diff_txt = pps_txt = fg_txt
+            elif not r["show"]:
+                # Reserved for a rate MEASURED as not predicting itself. A
+                # team's season shooting is descriptive and never lands here;
+                # this branch exists for trait-style reads that share the code.
+                held.append(c["label"])
                 fg_txt = ("<span style='color:var(--subtext)' "
                           f"title='{html.escape(r['caption'])}'>held</span>")
-                pps_txt = fg_txt
+                diff_txt = pps_txt = fg_txt
             else:
-                dot = CARDS.conf_dot_r(r["sb"], metric=f"{c['label']} FG%") \
-                    if r["show"] else ""
+                dot = CARDS.conf_dot_r(r["sb"], metric=f"{c['label']} FG%")
                 fg_txt = f"{_pct(c['fg'], 1)}{dot}"
                 pps_txt = _num(c["pps"])
+                if l["fg"] is not None:
+                    dv = c["fg"] - l["fg"]
+                    dc = ("#8b949e" if abs(dv) < 0.02 else
+                          ("#2ecc71" if dv > 0 else "#f85149"))
+                    diff_txt = (f"<span style='color:{dc}'>"
+                                f"{dv * 100:+.1f}</span>")
+                else:
+                    diff_txt = "—"
             body += (f"<tr><td>{html.escape(c['label'])}</td>"
                      f"<td>{c['n']}</td><td>{fg_txt}</td>"
-                     f"<td>{pps_txt}</td></tr>")
+                     f"<td style='color:var(--subtext)'>{_pct(l['fg'], 1)}</td>"
+                     f"<td>{diff_txt}</td>"
+                     f"<td>{pps_txt}</td>"
+                     f"<td style='color:var(--subtext)'>{_num(l['pps'])}</td>"
+                     f"</tr>")
         u = tbl[SK.UNKNOWN]
         if u["n"]:
             body += (f"<tr><td style='color:var(--subtext)'>Unlocated</td>"
                      f"<td style='color:var(--subtext)'>{u['n']}</td>"
-                     f"<td colspan='2' style='color:var(--subtext)'>"
+                     f"<td colspan='5' style='color:var(--subtext)'>"
                      f"no coordinate</td></tr>")
         st.markdown(head + body + "</table>", unsafe_allow_html=True)
 
         cap = (f"{meta['located']} of {meta['total']} shots located "
-               f"({_pct(meta['located_share'], 0)}). A dash means under "
-               f"{SK.MIN_KIND_RATE_ATT} attempts in that band.")
-        if withheld:
-            cap += (f" “Held” means the opposite problem: {', '.join(withheld)} "
-                    f"has plenty of attempts, but that percentage does not "
-                    f"predict itself across a split season, so a number there "
-                    f"would move on noise. Hover it for the measurement.")
-        cap += (" A dot on a percentage says how firmly it repeats: "
-                "● reliable, ◐ directional, ○ early.")
+               f"({_pct(meta['located_share'], 0)}). **Lg** columns are this "
+               f"league's rate in the same band — the base the Diff is against. "
+               f"A dash means under {SK.MIN_KIND_RATE_ATT} attempts there.")
+        if held:
+            cap += (f" “Held” means the opposite problem: {', '.join(held)} has "
+                    f"plenty of attempts, but that percentage was measured as "
+                    f"not predicting itself, so a number there would move on "
+                    f"noise. Hover it for the measurement.")
+        cap += (" These percentages are a **record of these games**, not a "
+                "forecast — they are shown whatever their reliability. The dot "
+                "says only how likely they are to repeat: ● reliable, "
+                "◐ directional, ○ early, · not measurable at this many teams.")
         st.caption(cap)
 
 

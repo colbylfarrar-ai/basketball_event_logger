@@ -4014,11 +4014,16 @@ def _fx_formula():
 
     st.markdown(f"**The exchange rate — {scope_lbl}** "
                 f"({show['n_games']} tracked games)")
+    # These three are FRACTIONS from the engine (0.433), and the column format
+    # "%.0f%%" prints a fraction as "0%" — every row read 0% / 0% / 0% while
+    # the progress bar underneath was correct, because ProgressColumn scales on
+    # min/max and the label formats the raw value. Scale to 0-100 here so the
+    # number and the bar agree.
     _fdf = pd.DataFrame([{
         "Factor": f["label"],
-        "Share of pull": f["share"],
-        "Oliver (NBA)": f["oliver"],
-        "Gap": f["gap"],
+        "Share of pull": (f["share"] or 0.0) * 100,
+        "Oliver (NBA)": (f["oliver"] or 0.0) * 100,
+        "Gap": (f["gap"] or 0.0) * 100,
         "Pts per SD": f["beta"],
         "Raw r": f["r"],
     } for f in show["factors"]])
@@ -4026,7 +4031,7 @@ def _fx_formula():
                  column_config={
                      "Share of pull": st.column_config.ProgressColumn(
                          "Share of pull", format="%.0f%%", min_value=0.0,
-                         max_value=1.0,
+                         max_value=100.0,
                          help="This factor's share of the four factors' "
                               "combined effect on margin, fitted here."),
                      "Oliver (NBA)": st.column_config.NumberColumn(
@@ -5613,8 +5618,15 @@ if _tdview == "Lab":
             # (#23 and #24), and a surname-only label reads as duplicate rows.
             _num = {p["_pid"]: f"#{p['number']}" for p in players}
 
+            # Names, not jersey numbers. Insights names players and this tab
+            # did not, so the same group read as "#12 · #23 · #4" here and as
+            # "Jordan Reese" three inches away. A coach reading a lineup table
+            # should not have to translate.
+            _gname = {p["_pid"]: p["name"] for p in players}
+
             def _glabel(pids):
-                return " · ".join(_num.get(p, str(p)) for p in pids)
+                return " · ".join(_gname.get(p) or _num.get(p, str(p))
+                                  for p in pids)
 
             _gtab3, _gtab4 = st.tabs(["Trios", "Quads"])
             for _tab, _k in ((_gtab3, 3), (_gtab4, 4)):

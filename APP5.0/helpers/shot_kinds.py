@@ -468,7 +468,7 @@ def player_table(player_id, gender=None, game_ids=None, events=None, shots=None,
                       taxonomy)
 
 
-def rate_reads(table, unit="player"):
+def rate_reads(table, unit="player", descriptive=False):
     """Per-cell display permission for the RATES in a table.
 
     Returns {cell: {"level", "sb", "show", "glyph", "caption"}}. Two independent
@@ -502,7 +502,9 @@ def rate_reads(table, unit="player"):
         out[k] = {
             "level": lvl,
             "sb": sb,
-            "show": lvl != "withhold" and cell.get("fg") is not None,
+            "show": (REL.shows(sb, descriptive=descriptive)
+                     and cell.get("fg") is not None),
+            "verdict_ok": REL.shows_verdict(sb),
             "glyph": REL.LEVEL_GLYPHS[lvl],
             "caption": REL.caption(sb, metric=f"{cell.get('label', k)} FG%"),
         }
@@ -686,7 +688,7 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
     good, bad = VERDICT_PAIR[taxonomy]
     gap = conversion_value(lg, taxonomy)
     ex = excess_floaters(d)
-    if gap is None or ex is None or ex["excess"] <= 0:
+    if gap is None or ex is None or not ex["excess"]:
         return []
 
     n = d["n_located"]
@@ -694,29 +696,47 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
     per_game = (pts / games) if games else None
     conf = "solid" if n >= d["min_att"] * 2 else "directional"
 
-    # Materiality, not just sample — see MIN_VERDICT_* above.
-    if (ex["share_shrunk"] - ex["league_share"]) < MIN_VERDICT_SHARE_DELTA:
+    # SYMMETRIC. This used to require excess > 0, so a team that selects shots
+    # WELL was told nothing at all — and on the live book that is the most
+    # tracked team in the database: Adair takes 94 FEWER shots from 4ft-to-arc
+    # than a league-average diet, worth about +50 points, and the block sat
+    # silent. Silence on a good team is indistinguishable from a broken
+    # feature, and it quietly taught the coach that this section only appears
+    # when something is wrong.
+    #
+    # Both directions clear the SAME bars, so a compliment is exactly as hard
+    # to earn as a criticism. Nothing here is graded on a curve.
+    delta = ex["share_shrunk"] - ex["league_share"]
+    if abs(delta) < MIN_VERDICT_SHARE_DELTA:
         return []
     if per_game is not None:
-        if per_game < MIN_VERDICT_PTS_PER_GAME:
+        if abs(per_game) < MIN_VERDICT_PTS_PER_GAME:
             return []
-    elif pts < MIN_VERDICT_PTS_TOTAL:
+    elif abs(pts) < MIN_VERDICT_PTS_TOTAL:
         return []
 
     # Each taxonomy gets its own noun: the kind cut has a word a coach already
     # uses ("floater"), the depth cut does not and must name the distance.
     subject, where = ((f"shot {BAND_PROSE[bad]}", BAND_PROSE[bad])
                       if taxonomy == "band" else ("floater", "from 4-10 feet"))
+    costly = ex["excess"] > 0
+    if costly:
+        body = (f"You take {tbl[bad]['n']} of them — {ex['excess']:.0f} more "
+                f"than a league-average diet — which is "
+                f"{abs(pts):.0f} {'point' if round(abs(pts)) == 1 else 'points'} "
+                f"left on the floor")
+    else:
+        body = (f"You take {tbl[bad]['n']} of them — {abs(ex['excess']):.0f} "
+                f"FEWER than a league-average diet — which is worth about "
+                f"{abs(pts):.0f} "
+                f"{'point' if round(abs(pts)) == 1 else 'points'} to you")
     lines = [{
         "text": (
             f"Every {subject} you turn into a layup is worth "
-            f"{gap:+.2f} points. You take {tbl[bad]['n']} of them — "
-            f"{ex['excess']:.0f} more than a league-average diet — which is "
-            f"{pts:.0f} {'point' if round(pts) == 1 else 'points'} left on "
-            f"the floor"
-            + (f", about {per_game:.1f} a game." if per_game else ".")
+            f"{gap:+.2f} points. {body}"
+            + (f", about {abs(per_game):.1f} a game." if per_game else ".")
         ),
-        "tone": "bad", "n": n, "confidence": conf,
+        "tone": "bad" if costly else "good", "n": n, "confidence": conf,
     }]
 
     fshare, lshare = ex["share"], ex["league_share"]

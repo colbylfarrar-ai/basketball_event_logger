@@ -12,6 +12,7 @@ render(ctx) @st.fragment — the page builds a SimpleNamespace ctx. Display-only
 """
 from __future__ import annotations
 
+import html
 import re
 
 import streamlit as st
@@ -342,6 +343,40 @@ def _split_rows(pa, pb, la, lb):
 
 
 @st.fragment
+@st.cache_data(ttl=600, show_spinner=False)
+def _kind_shots(gender, season="Current", season_gp=None):
+    """Mapped shots for the tracked pool — the shot-diet feed.
+
+    Pool-wide on purpose: shot_kinds computes the team's diet and the league
+    baseline from the same list, so one pass serves both and the two can't be
+    scoped differently.
+
+    The `if gids` guard is load-bearing: S.fetch_events([]) returns EVERY event
+    in the database, across both genders and every season, so an empty pool
+    would build this team's league baseline out of the entire book rather than
+    rendering nothing. `_tracked_game_ids` returns [] on a freshly rolled-over
+    season, which is precisely when that would bite.
+    """
+    gids = (list(season_gp) if season_gp is not None
+            else PT._tracked_game_ids(gender))
+    return S.mapped_shots(events=S.fetch_events(gids)) if gids else []
+
+
+def _shot_diet_lines(ctx):
+    """The shot-kind verdict for this team, in verdict_card shape, or []."""
+    tid = getattr(ctx, "team_id", None)
+    if not tid:
+        return []
+    import helpers.shot_kinds as SK
+    shots = _kind_shots(ctx.gender, getattr(ctx, "season", "Current"),
+                        getattr(ctx, "season_gp", None))
+    if not shots:
+        return []
+    games = len(getattr(ctx, "tracked_ids", None) or ()) or None
+    return [("shot diet", ln["n"], html.escape(ln["text"]))
+            for ln in SK.verdict(team_id=tid, shots=shots, games=games)]
+
+
 def render(ctx):
     # (Team at a glance moved to the Overview tab — UI_DENSITY_PLAN phase A.)
     _fp = _data_fp()          # cache key: recompute only when data changes
@@ -390,6 +425,18 @@ def render(ctx):
     # per-coach NEW chips: unseen lines get flagged; the blob is persisted once
     # after both feeds render (so a fragment rerun mid-scroll never eats chips).
     _is_new, _seen_persist = _seen_tracker(getattr(ctx, "team_id", None))
+
+    # ── shot diet — the depth read, above the auto-scout ──────────────────────
+    # Leads the tab when it fires because it is the largest single actionable
+    # number the book can produce: the 4–10 ft band is a quarter of every shot
+    # taken in this league at 0.58 PPS against 1.13 at the rim, and no zone-based
+    # read could ever surface it. Fires for one team on the live book, which is
+    # the point — the gate is materiality, not just sample.
+    _sd = _shot_diet_lines(ctx)
+    if _sd:
+        st.markdown("<div class='lab-hdr'>Shot depth — the verdict</div>",
+                    unsafe_allow_html=True)
+        st.markdown(verdict_card(_sd), unsafe_allow_html=True)
 
     # ── team auto-scout — the TEAM's own most surprising reads ────────────────
     _tlines = _team_feed(

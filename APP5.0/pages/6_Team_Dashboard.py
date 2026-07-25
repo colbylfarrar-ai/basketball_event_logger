@@ -102,6 +102,7 @@ import helpers.dashboard.playstyle_tab as DPLAYSTYLE
 import helpers.dashboard.defense_tab as DDEFENSE
 import helpers.dashboard.situational_tab as DSITUATIONAL
 import helpers.dashboard.projection_tab as DPROJ
+import helpers.dashboard.shot_diet as DSDIET
 import helpers.dashboard.share_tab as DSHARE
 import helpers.breakdown as BR
 import helpers.situational as SIT
@@ -711,6 +712,30 @@ def _avg_player_ratings(tracked_ids):
 def _located_team(tid, gids):
     """Tap-captured x/y shots for one team over its tracked games (shots FOR)."""
     return S.located_shots(game_ids=list(gids), team_id=tid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _kind_pool(g, season="Current"):
+    """Every mapped shot in the gender's tracked pool — the feed for shot-diet.
+
+    Deliberately NOT filtered to one team: the shot-diet block computes the
+    team's diet AND the league baseline it is compared against from the same
+    list, so the comparison can't drift between two differently-scoped pools
+    and the whole block costs one event pass. mapped_shots (not located_shots)
+    so unlocated legacy attempts stay in the coverage denominator — shot_kinds
+    classifies the zone-centroid approximations as `unknown` rather than
+    inventing a depth for them.
+
+    The empty guard is load-bearing, not defensive: S.fetch_events([]) returns
+    EVERY event in the database (7,670 across both genders and every season),
+    so an unscoped season would silently build a girls' league baseline out of
+    boys' games instead of rendering nothing. `_gender_tracked_ids` legitimately
+    returns [] on a freshly rolled-over season, which is exactly when that would
+    have happened."""
+    gids = _gender_tracked_ids(g, season)
+    if not gids:
+        return []
+    return S.mapped_shots(events=S.fetch_events(gids))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1936,6 +1961,16 @@ if _tdview == "Charts":
                             f"({_sv_cold[1]:+.0f}pp on {_sv_cold[2]} FGA)."))
                 if _sv_lines:
                     _verdict_lines(_sv_lines)
+
+                # ── shot diet: the DEPTH axis the zones never had ─────────────
+                # Zone C is over half of all located 2s and spans 2.5–7.7 ft,
+                # so every read above this line averages 1.13-PPS rim shots
+                # together with 0.58-PPS floaters. This block splits them.
+                DSDIET.render(_kind_pool(gender, season_pick), team_id,
+                              games=sum(1 for _g in bundle["game_log"]
+                                        if _g["tracked"]) or None,
+                              key_prefix="sd_off")
+                st.caption(DSDIET.league_reference())
 
                 # ── floor-spacing index (located-shot x,y blend vs league) ────
                 _sp = _spacing(gender, team_id, _vis_key)

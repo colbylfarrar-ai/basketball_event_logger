@@ -38,7 +38,7 @@ from helpers.ui import empty_state, rgb as _rgb, style_fig as _style
 from helpers import ui as _uit  # theme-reactive tokens — read at call time
 from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile_bar,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
-                           gauge_dial, scoring_donut as _donut)
+                           gauge_dial, scoring_donut as _donut, verdict_card)
 from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            hot_zones as _hot_zones)
 
@@ -1124,7 +1124,37 @@ def render_card(ctx):
                                  f"{P['PerimDShots']} threes"
                                  + (f" ({P['PerimD']:+.1f} vs lg)"
                                     if P.get("PerimD") is not None else "")})
+            # box-out payoff + board mix — from guarded_by × rebound_by, so the
+            # rows appear only for a team that tags both (None otherwise, which
+            # is why these are conditional rather than showing a misleading 0)
+            if P.get("onball_misses"):
+                _rpd_rows.append(
+                    _row("Box-out payoff (team secures)", "BoxOut%stab", "pct") | {
+                        "Value": f"{_fmt(P['BoxOut%stab'], 'pct')} stabilized "
+                                 f"({_fmt(P['BoxOut%'], 'pct')} raw on "
+                                 f"{P['onball_misses']} contests)"})
+            if P.get("OnBallDREB%") is not None:
+                _rpd_rows.append(
+                    _row("On-ball share of DREB", "OnBallDREB%", "pct") | {
+                        "Value": f"{_fmt(P['OnBallDREB%'], 'pct')} of "
+                                 f"{P['TaggedDREB']} tagged boards"})
         st.dataframe(pd.DataFrame(_rpd_rows), hide_index=True, width="stretch")
+
+        # ── rebounding verdict (spec Part 1 §2 "do it all") ──────────────
+        # Ranks against the SAME pool the card was built from, so "best on the
+        # team" means what it says. Silent when nothing clears its gate.
+        if paid:
+            import helpers.rebounding as _RB
+            _rv = _RB.rebounding_verdict(P, pool=rows)
+            if _rv:
+                st.markdown(verdict_card(_rv), unsafe_allow_html=True)
+                st.caption(
+                    "Box-out payoff credits sealing the shooter off even when a "
+                    "TEAMMATE gets the board — that is the point of a box-out, so "
+                    "a player's own DREB count can undersell it. Board mix is a "
+                    "style read, not a grade: weak-side crashing and cleaning up "
+                    "your own assignment are different jobs. Thin samples are "
+                    "shrunk toward the pool mean (the stabilized value).")
 
     # ── Shot diet · shot creation · quarter scoring (event-derived → Paid) ────
     if paid:

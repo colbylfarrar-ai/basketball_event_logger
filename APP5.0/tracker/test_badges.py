@@ -84,6 +84,40 @@ def test_award_badges_smoke():
     assert BG.badge_points(aw[1]) >= BG.badge_points(aw[2])
 
 
+def test_boxout_badge_is_gated_on_tag_volume():
+    """Box-Out Boss (2026-07-24) — the only rebounding badge that is not about
+    collecting boards yourself, and the only one gated on a TAG volume rather
+    than GP. An untagged team must be INELIGIBLE, never scored as zero."""
+    bo = next(b for b in BG.BADGES if b["key"] == "boxout")
+    assert bo["gate"] == ("onball_misses", 5)
+    # the EB-stabilized rate, not the raw one — thin-n honesty
+    assert bo["stat"] == "def_secure_team_stab"
+
+    table = {
+        1: {"def_secure_team_stab": 80.0, "onball_misses": 20},   # best eligible
+        2: {"def_secure_team_stab": 60.0, "onball_misses": 20},
+        3: {"def_secure_team_stab": 40.0, "onball_misses": 20},
+        4: {"def_secure_team_stab": 20.0, "onball_misses": 20},   # worst eligible
+        5: {"def_secure_team_stab": 99.0, "onball_misses": 2},    # thin -> out
+        6: {"def_secure_team_stab": None, "onball_misses": 0},    # untagged -> out
+    }
+    aw = BG.award_badges(table)
+    keys = {p: [b["key"] for b in bl] for p, bl in aw.items()}
+    assert "boxout" in keys[1], "top eligible rate earns the badge"
+    assert "boxout" not in keys[5], "99% on 2 contests is below the volume gate"
+    assert "boxout" not in keys[6], "untagged player (None) earns nothing"
+    assert "boxout" not in keys[4], "bottom of the eligible pool earns nothing"
+    # The excluded thin 99% must not distort the pool it was excluded from: the
+    # top eligible player is ranked against the 4 eligible players only, so its
+    # percentile is the mid-rank ceiling for a pool that size (87.5 -> Silver,
+    # since Gold needs 90 — see the _percentile docstring on small pools), and
+    # it must still outrank the next player.
+    top = next(b for b in aw[1] if b["key"] == "boxout")
+    second = next(b for b in aw[2] if b["key"] == "boxout")
+    assert top["tier"] is not None and top["pct"] > second["pct"]
+    assert top["pct"] == 88, f"mid-rank ceiling for 4 eligible, got {top['pct']}"
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

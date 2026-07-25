@@ -1640,12 +1640,21 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             # live book before this was caught.
             "BoxOut%": _round(prof["def_secure_team_pct"], 1),
             "BoxOut%stab": _round(prof["def_secure_team_stab"], 1),
-            "def_secure_team_stab": prof["def_secure_team_stab"],
-            "onball_misses": prof["onball_misses"],
             "OnBallDREB%": _round(prof["onball_share"], 1),
             "OwnMissRec%": _round(prof["own_miss_rec_pct"], 1),
-            "own_misses": prof["own_misses"],
             "TaggedDREB": prof["tagged_dreb"],
+            # ...and the engine's OWN key names alongside the display ones, so
+            # rebounding.rebounding_verdict / badges read the same names whether
+            # they are handed a `profiles` row or this table. Without this the
+            # verdict's board-mix and own-miss reads silently never fire here —
+            # they looked up `onball_share`/`tagged_dreb` and found nothing.
+            "def_secure_team_stab": prof["def_secure_team_stab"],
+            "def_secure_team_pct": prof["def_secure_team_pct"],
+            "onball_share": prof["onball_share"],
+            "own_miss_rec_pct": prof["own_miss_rec_pct"],
+            "onball_misses": prof["onball_misses"],
+            "own_misses": prof["own_misses"],
+            "tagged_dreb": prof["tagged_dreb"],
             # clutch line trips + and-1s
             "ClutchFTA": prof["cFTA"],
             "ClutchFT%": (_pct(_safe(prof["cFTM"], prof["cFTA"]))

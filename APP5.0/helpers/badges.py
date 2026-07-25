@@ -140,6 +140,17 @@ BADGES = [
     {"key": "putback", "name": "Putback Hunter", "emoji": "", "cat": "Rebounding",
      "stat": "OREB/G", "gate": ("GP", 1),
      "desc": "Crashes the offensive boards for second chances."},
+    # Box-out payoff — the one rebounding badge that is NOT about collecting
+    # boards yourself. It ranks the EB-stabilized rate at which the player's
+    # TEAM ends the possession when that player is the on-ball defender on a
+    # miss, so the credit goes to walling the shooter off even when a teammate
+    # gets the ball. Gate is the tagged-contest volume, not GP: this reads
+    # guarded_by × rebound_by, so an untagged team is None and ineligible
+    # rather than scoring zero.
+    {"key": "boxout", "name": "Box-Out Boss", "emoji": "", "cat": "Rebounding",
+     "stat": "def_secure_team_stab", "gate": ("onball_misses", 5),
+     "desc": "Seals their shooter off the glass — the team gets the board "
+             "when they contest."},
 
     # ── Creation / role (tracker-rich) ──────────────────────────────────────────
     {"key": "screen_assist", "name": "Screen Assist", "emoji": "", "cat": "Playmaking",

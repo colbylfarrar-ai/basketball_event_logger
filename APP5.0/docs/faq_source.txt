@@ -1,0 +1,564 @@
+HoopTracks FAQ:
+
+How to track it, how to tag it, and how to read every number the engine gives back. Search the page above, or open a section below. This grows as questions come in.
+
+HoopTracks Is For Everyone:
+
+Every level of this app feeds the same engine. A coach who never logs a single possession still makes the whole database smarter, and the coach who logs everything gets paid back by the people around him. That is the whole design.
+
+Free coaches help everyone by adding their data into the database. Every final score sharpens the team ratings, the strength-of-schedule math and the player ratings pool. Even without possession-by-possession data, those scores are what let the engine figure out why games are won and lost.
+
+Paid coaches add their ratings into the pool that everybody else is averaged against, and their possession data teaches the model. Every tracked game makes the league baselines truer for the next coach who opens the app.
+
+Co-Op coaches offer up their own data and their own scout so everybody else can scout. They get it back with interest. The long-run payoff is less time in the film room, because the book on the team you play in three weeks is already built.
+
+Officials get a true objective rating. Not a reputation, not a rumor. What the whistle actually did, measured the same way for every ref in the pool.
+
+Fans get to watch their teams live. Live win probability, shot charts and play-by-play, no login required.
+
+Assigners get to check how each individual ref is calling in real time, without giving out that ref's name.
+
+Players get player card printouts and ratings against their peers. Bragging rights included.
+
+HoopTracks is for Everyone.
+
+How To Read Any Number Here:
+
+Four rules cover almost every number on the site. Learn these and the rest of this FAQ is mostly detail.
+
+Fifty is average - Every 0-100 rating is scaled so 50 is the pool average and every 10 points is one standard deviation. 60 is good, 70 is elite, 80 is an outlier. There is no curve applied by hand.
+
+Ratings are relative - A rating only means something against the pool it was scaled in. The same player can read 62 in one pool and 55 in another. When the pool changes, every rating moves.
+
+Small samples get pulled toward average - Nothing here trusts three attempts. The engine shrinks thin samples toward the league mean on purpose. Details are in the Shrinkage section.
+
+Sample size is printed - Insight lines carry their own n. Confidence dots mark how firmly a number is backed. If the app is not sure, it says so instead of guessing.
+
+Tracking:
+
+Quick Shot v Full Detail - Quick shot is only (MUST HAVE) items, full detail is all of the fields. You can get to all fields on quick shot as well, just not shown automatically.
+
+The more filled the data, the better the data.
+
+Games that are tracked by multiple coaches give priority to the game with the higher % of filled data.
+
+Everything can be changed in the event editor outside of lineups on the court. Get this right and you can just use placeholders where needed.
+
+When in doubt, just pick something that you think is close enough and live with it. Most plays have more than one action, could have more than one defense thrown at it. Here is what I try to do: What actually created the score/foul/turnover and what defense got them there. Sometimes there are 15 DHOs and then 1 PnR that is rejected. I would put down Isolation. That is because the engine reads a PnR action with no "Set by" person as the player who scored was the roller, not the player rejected the screen. Also, one junk play recorded wrong will not do harm to hundreds and thousands of possessions.
+
+Possessions end on one of the 4 outcomes. Shot, Foul, Turnover, Timeout. This includes a tip out of bounds or a held ball to keep possession.
+* Shot
+   * Shooter (MUST HAVE)
+   * Pass From
+      * If you would give an assist, then put that person there (the engine distinguishes on its own)
+      * I am VERY liberal by nature here (2,3, sometimes 4 dribbles can still get a player in this field anyways)
+   * Set Up By
+      * The person who set the screen or created the open look
+      * Not only screens
+         * Duck ins
+         * Cuts
+         * Butt Screens
+         * Gravity
+   * Rebound By
+      * I will reward tips and tip-outs here by giving that player the rebound
+   * Blocked By
+   * Guarded By
+      * Be liberal with this field as well
+      * Hand down, late closeout, behind the player, slide over to contest all could count here
+      * Not a "should have been you guarding that player" but instead a "who actually could have/did affect the shot"
+* Free Throw
+   * Make sure sub events occur before the last free throw in case of substitute rebounds
+* Foul
+   * Fouled (MUST HAVE)
+      * The player who was fouled
+   * Fouler (MUST HAVE)
+      * The player who committed the foul
+   * Official
+      * The official who reported the foul
+      * Double whistle, always go with the person who took it to the table.
+* Turnover
+   * Player (MUST HAVE)
+   * Stolen By
+      * I am liberal here with who I give the steal to.
+      * Ball poked out by player A, player B gains full possession, player A gets the steal
+   * TO Kind
+      * Violation
+         * Any violation except held ball, shot clock, out of bounds
+         * No stolen by
+         * This is where I am now putting off ball illegal screens. It is the harshest penalty for TO Type and that is how I believe it should be added into the rating system.
+      * Drive
+         * On ball turnover
+         * This could be looking for a pass or just holding onto the ball
+      * Pass
+      * Shot Clock
+         * Shot clock turnovers are viewed as team turnovers in the rating system. Yes it shows up in the box score and the game score, but it is not important who you give the turnover to at the end of the day.
+         * No stolen by
+      * Held Ball
+         * Same as shot clock.
+         * I normally give the turnover to the player who had full possession of the ball first
+         * No stolen by
+* Play Types should be the last thing that happened before the end of the possession
+   * Pick & Roll
+      * Must use the screen
+      * Could be a roll or a pop (the engine will distinguish on its own)
+   * Isolation
+      * Off Dribble shooting
+      * On Ball decisions
+      * Refusing a screen would be classified here
+      * Trying to find a pass and having the ball ripped out of your hands would also be classified here.
+      * Driving and kicking to a shooter turnover would be here
+   * Post Up
+      * Passing into the post turnover
+      * Passing out of the post turnover
+   * Spot Up
+      * No dribble shot
+      * Stationary and ready or working through the ball
+      * These shots are in rhythm all the way
+      * Only TO Kind here is Violation most likely
+   * Cut
+      * Catch all turnover play type
+         * Normally pass turnovers come from passing to a CUTTER or someone CUTTING towards the ball
+      * High PPP so the turnovers lower it slightly and reduce noise.
+      * Must be a full cut at high speed to an empty space for a score
+      * Interior to Exterior OR Exterior to Interior
+   * Off Screen
+      * Similar to Spot Up just add a screen.
+      * Could be a Post to Post screen which changes the Spot Up rule
+   * DHO
+      * Any dribble handoff or weave
+      * This includes a weave into a spot up shot
+   * Duck In
+      * Swiss Army Knife Playstyle
+      * Could be a Duck In post Screen
+      * Could be a fill to the correct spot
+      * Could be finding the soft spot in a zone or man
+      * Could be a dump off
+      * Any interior movement with minimal effort or a short distance to cover
+      * Interior to Interior is generally Duck In.
+   * SLOB
+      * Includes backcourt SLOBs
+   * BLOB
+      * Does not include backcourt BLOBS (Transition)
+      * Allow full play to play out within reason
+   * Transition
+      * Catch all for any early offense
+         * Transition 3s are where the player's body is moving towards the basket
+         * If they are set up, it's a spot up
+         * This includes a straight-line drive before the offense is set and the defense is slowly organizing
+      * If the defense is not ready
+      * Moving towards the basket on shots
+      * Could have a Defensive Type but Transition Play Type
+      * Generally used for "Press" scenarios
+         * Transition vs Press is scoring directly out of the press
+         * Play Type vs Press is breaking the press and then running half court offense
+   * Putback
+      * Offensive rebound fouls when the offense rebounds the ball and retains possession, go here
+   * Other
+      * Offensive Fouls where the offense loses possession
+* Defenses should be the first defense shown or the last half-court defense shown
+   * Man
+      * Includes 3/4 token press with no true pressure
+      * Includes one man token press
+   * Man Press
+      * Must be full court man press
+   * 2-3
+      * Includes a press where 2 players are rotating alone
+      * Does not include a press back to a 2-3 (understood to go back to the same thing every time, so not a different defense altogether)
+      * Includes 2-1-2
+   * 3-2
+   * 1-3-1
+   * 1-2-2
+   * Match-Up
+   * 2-3 Trap
+      * Classified different than normal 2-3 in grouping
+   * 1-3-1 Trap
+      * Classified different than normal 1-3-1 in grouping
+   * 2-2-1 Press
+   * 1-3-1 Press
+   * 1-2-1-1 Press
+   * Box-1
+      * Classified as junk
+   * Triangle-2
+      * Classified as junk
+   * Diamond-1
+      * Classified as junk
+   * Scramble
+      * Standalone by itself.
+      * Any time the defense is not set up
+      * Normally used with transition
+   * Other
+      * Offensive Fouls
+      * Rebounding Fouls
+* Special Cases
+   * Charges
+      * Play type: other AND defense: other on the foul
+      * Log the turnover as play type and defense as whatever with the TO Kind being "Drive"
+   * Offensive Rebound Fouls
+      * Play type: Other AND defense: other
+   * Rebounding Fouls
+      * If the player gets the ball or is going to get the ball, give them the rebound on the shot.
+         * Offensive (retaining possession) - Play Style Putback
+         * Defensive (gaining possession) - Play Style Transition Defense Scramble
+
+The Possession Rule:
+
+One rule sits under everything on this site, so it is worth stating alone.
+
+A possession is one shot or one turnover. Possessions = FGA + TOV.
+
+Free throws are not possessions. That is why free throw points are left out of RAPM and out of the possession version of WPA. Those two metrics measure field goal scoring and prevention per 100 possessions, and adding free throws would double count trips that a foul already ended.
+
+The nice part of this rule is that it works on a plain box score. Field goal attempts and turnovers are in every box score ever kept, so a hand-entered game still produces points per possession, offensive and defensive rating and the four factors. That is the bridge that lets a Free coach contribute real math without tracking a single event.
+
+Three Levels Of Data:
+
+Everything the app can tell you depends on which of these three you gave it.
+
+Final score only - Records, power ratings, net rating, strength of schedule, Pythagorean expectation and luck, close-game record, momentum and the win network. This is the layer every coach feeds just by having a schedule with scores in it.
+
+Hand-entered box score - Adds points per possession, offensive and defensive rating, the four factors and every player box stat. What it cannot give you is anything that needs the event stream: lineups, shot location, play type, defense faced, possession length, on-court impact.
+
+Play-by-play tracked - Everything else. Shot charts, lineup data, RAPM and Impact, WPA, play-type and defense profiles, guarded versus open splits, contested shot quality, self-scout, the exploit matrix and the live in-game tools.
+
+Tracked always wins - If a game gets tracked after a box was already entered by hand, the hand-entered rows are ignored by every aggregate. The event stream is the truth, and the box is the fallback, never the other way around.
+
+Data Quality And Coverage:
+
+Three of the tracking fields are optional, and half of the best reads in the app only mean something when they are filled in. Rather than quietly pretending coverage is complete, the app measures it and shows you.
+
+Play type is measured on your own shots, and it powers the play-type profile, the exploit matrix and self-scout drift.
+
+Guarded by is measured on your own shots, and it powers contested versus open shot quality and the FG% a defender allows.
+
+Defense is measured on the shots you allowed, and it powers the play-type by defense cross-tab and every scheme read.
+
+The Coverage panel reports how many of your shots carry each tag and what percent complete that is, per team. Check it before you decide whether to trust a scheme surface. A 30% tagged sample is a hint. An 85% tagged sample is a plan.
+
+Minutes are estimated - Minutes come from the possession seconds a player was on the floor for. Roughly 16% of events carry zero seconds, so minutes run slightly low. Use them as context for per-minute rates, not as a replacement for a stat book.
+
+Duplicate games are collapsed - When two coaches track the same physical game, both logs are kept but only one is shown. The winner is chosen by how completely the optional fields are filled in, not by raw event count, so a thorough 170-event log beats a bare-bones 171-event one. An admin can override the pick if the wrong one surfaces.
+
+Fixing mistakes - Anything except the on-court lineups can be fixed in the Event Editor after the fact. Ratings recompute on their own. There is no rebuild button to hunt for.
+
+Maintenance:
+
+Maintenance or any other bug fixes will be done on Sundays and Mondays from midnight to 2 a.m.
+
+Past Seasons:
+
+Past Seasons are open archives. If you choose to use the site, you are allowing your data to live here forever. The second the season is rolled over to the next year, all of the past season's data gets released to every coach.
+
+Past seasons are read-only. Roll a season over once, after your last game, from the Input Hub.
+
+The reason for the open archive is simple. Last year's roster has turned over, so there is no competitive edge left to protect, and every released season makes the cross-season development curves, the class curves and the historical pool better for everybody. It is a funnel, not a leak.
+
+Current Seasons:
+
+There are 3 coaching tiers. Free, Paid, Co-Op
+* Free
+   * Only gets access to box score data.
+   * Can see free team ratings
+   * Can see free player ratings
+   * Can see the schedule page
+   * Can see Hall of Fame
+   * Can see Whiteboard
+   * One free tracked game
+   * Zero Possession Data
+* Paid
+   * Gets access to tracked data for their team
+   * Can see Event Editor
+   * Can see Officials Page
+   * Can see War Room
+* Co-Op
+   * Gets full access to all of the data in the Coaches Co-Op Pool
+   * Can see other team's data in the Co-Op
+
+The Co-Op is reciprocal and it is set at the program level. Share to scout. If any coach on a staff opts in, the whole program is in, and every coach on that staff scouts the entire pool rather than negotiating team by team. A program that has not opted in simply reads as neutral to everyone else. Nobody gets a wall that names them.
+
+Box scores and final results are visible to every coach at every tier, always. The tier decides how deep you see, never whose data you are allowed to look at.
+
+Ratings vs Impact:
+
+Ratings show ability, but impact shows how much the game changed. Two different objectives and two different equations.
+
+Ratings are always relative and based on 50 as average and +10 per standard deviation (2 is considered elite and 3 is considered an outlier). Ratings also have shrinkage, which dampens ratings based on sample size. Impact is based around 0 and shows positive and negative.
+
+RAPM is added into a player's overall rating, but HoopWar is not. Similarly, WPA and HoopWAR are not added together. WPA is actual and vs average, but HoopWAR is rate-derived and vs replacement.
+* Ratings
+   * Player
+      * Overall
+      * Offense
+         * Shooting
+         * Finishing
+         * Volume
+      * Defense
+         * Stocks
+         * Guarded%
+         * FG% Allowed
+         * Fouls
+         * Rim Protection
+         * Perimeter Defense
+      * Playmaking
+      * Rebounding
+   * Team
+      * Power
+         * Base 50 average with 1 Standard Deviation being 10
+         * Always relative
+         * From scoring data alone
+      * Rating
+         * Net Rating where 0 is average
+         * From scoring data alone
+      * Form Power
+         * Same as Power, but weights recent games more.
+         * From scoring data alone
+      * Tracked Power
+         * Same as Power but only for tracked games
+         * Possession-based weighting
+      * Tracked Rating
+         * Same as Rating, but only for tracked games
+         * Possession-based weighting
+* Impact
+   * RAPM
+      * Points added per 100 possession holding everything else constant
+      * Sum of ORAPM + DRAPM
+      * Weighs ability of the opposing players and teammates and strips out noise.
+      * No Impact
+         * Good vs Bad
+         * Bad vs Bad
+      * High Impact
+         * Good vs Good
+         * High Leverage
+      * ORAPM
+         * Points added per 100 possessions
+      * DRAPM
+         * Points prevented over 100 possessions
+   * HoopWAR
+      * Baseball style wins above replacement
+      * RAPM rate times possessions played minus replacement-level debit converted to wins using Pythagorean math.
+      * 14 points of margin is 1 win
+   * WPA
+      * Scoring
+         * Gives the WP jump for every basket made
+         * 100% on unassisted
+         * 70/30 scorer/passer on assisted
+      * Possession
+         * Gives the WP jump for every possession vs expected value
+      * Leverage Index
+         * How much a bucket would swing WP at that moment, and normalized towards 1.
+         * ClutchWPA is the WPA gained in high-leverage possessions
+
+How A Rating Gets Built:
+
+Nothing here is a hand-tuned score out of 100. Every rating is built the same way, three passes deep.
+
+First, every underlying stat is turned into a z-score across the pool of eligible players. Second, the leaf z-scores inside a category are combined with weights, so high-signal stats count more than redundant or noisy ones. Third, the combined category score is re-standardized across the pool before it is mapped onto the 0-100 scale.
+
+That third pass is the one that matters. Averaging a bunch of weakly-correlated numbers shrinks the spread, which would quietly turn "10 points per standard deviation" into "5 points per standard deviation" and crush everybody toward 50. Re-standardizing keeps the contract honest, and it flips the sign of adding more inputs: with the re-standardizing pass, adding a real signal widens the spread instead of flattening it.
+
+Counting stats are put on a per-game basis so players with different games played can be compared. Rate stats come straight from the engine.
+
+Why Impact Is Not Plus Minus:
+
+Raw plus-minus cannot tell the difference between a player and the four guys next to him. Sit your best five together and every one of them posts a great number.
+
+RAPM solves the whole season at once instead. Every tracked event stores all ten players on the floor, so the engine can run one big regression over every possession and ask what each player adds on offense and prevents on defense while holding both his teammates and his opponents constant. That adjustment is the entire point, and it is the reason this is the real metric rather than a box-score estimate of it.
+
+The regression is penalized, which is a fancy way of saying thin-sample players get pulled toward league average automatically. On a fifteen-game book that is not optional, it is the only thing that keeps a 40-possession reserve from topping the list.
+
+Shrinkage And Sample Size:
+
+The single most common question about this app is why a number did not move after a big night. The answer is almost always shrinkage.
+
+Every rate is pulled toward the league mean by how much evidence is behind it. Going 2-for-3 from three is not a 67% shooter, and the engine will not print it as one. The default prior is worth about 12 attempts at the league rate, so a player with 60 attempts keeps nearly all of his edge and a player with 4 attempts gets dragged most of the way back to average.
+
+Ratings shrink by games played toward 50, on a curve that punishes the tiny samples hardest. A one-game cameo cannot post a 90 overall no matter what happened in that game. By about three games a rating is roughly half-strength, and by a full season it keeps nearly all of its edge.
+
+None of this is invented or capped by hand. It is regression to the mean, with the strength of the prior estimated from your own pool.
+
+How many games until you can trust it - Team efficiency settles fastest and is already roughly half-trusted at two games. Player rate stats depend on volume rather than games, so look for 40-plus attempts before you believe a shooting split. Player ratings read honestly around six to eight games and reach full strength at twenty.
+
+Confidence marks - Some surfaces carry a confidence dot showing how firmly the sample backs the number, including how much of it came from tracked games versus hand-entered boxes. A box-heavy rating displays as the softer number it actually is.
+
+Insights:
+
+Insights are the app reading its own data and telling you the one to three most surprising true things about a player, in plain English. It is not a summary of the box score and it is not a language model narrating. Every line is a rule that fired.
+
+A line has to clear two bars to be printed. It has to be surprising, meaning the player is at least a full standard deviation off the pool, and it has to be backed, meaning it clears a hard minimum sample. Every line prints its own n so you can judge it yourself.
+
+The sample bar scales with the size of your book, because a five-game book and a thirty-game book are used for different things. One to five games is the scout book on an unknown tournament opponent. Six to ten is a district opponent. Twenty and up is the full-strength pre-playoff book where the strictest gates apply. On a short book the volume bar relaxes so the best available reads still fire, and that is deliberate, because the coach prepping an unknown opponent needs them most. The surprise bar never relaxes. A smaller sample lowers the count bar, never the truth bar.
+
+Why an insight disappeared - Insights are recomputed every time the page loads. Two more games regressed the player toward the pool and the line no longer clears the bar. Nothing was deleted. They are a live read, not a saved note.
+
+Why a player has no insights - Either nothing about him is surprising yet, or his sample is too thin to say so honestly. That is the system working.
+
+Why another team has more insights - Whole families of reads only light up when the optional tags are filled in. More coverage, more insights, automatically, with no code change.
+
+Team Insights are a different animal. Instead of profiling a player against the pool, they show how your own offense changes by context, starting with opponent strength: do you keep scoring against the top of the league, or do you feast on the bottom of it? A split needs at least 15 shots on each side before it will show. The team-at-a-glance strip tags what your team is defined by across tempo, shot profile and shooting, one stat per category, so it never hands you five versions of the same fact.
+
+Live Game Tools:
+
+While a game is being tracked, the app surfaces the three reads a coach actually makes on the bench.
+
+Leverage right now tells you how much a single basket would swing win probability at this moment. It is the honest version of "is this the possession that decides the season."
+
+The run meter tells you whether the opponent is on a run and, more usefully, what that run has already cost you in win probability. It is the timeout trigger with a number attached to it.
+
+Late-game options show the win probability of the classic closing choices: fouling up three, fouling versus guarding, milking clock versus attacking. These ship league-rate-first and only use opponent-specific rates when that opponent is tracked densely enough to mean something.
+
+The comeback gauge tells the trailing team what it actually needs: points required, possessions left at the current pace, and the points per possession that implies against your own season baseline.
+
+Win Probability And Excitement:
+
+Win probability treats the final margin as a distribution around the current margin, with the spread shrinking as the clock runs out. The full-game spread of final margins in an even high school game is about 12 points, and the live number scales that by the square root of the fraction of game remaining.
+
+That is why a six-point run in the first quarter barely moves the line and the same run in the fourth quarter moves it a lot. Feed it a pre-game spread and the curve tilts correctly for a known mismatch instead of starting every game at a coin flip.
+
+The Game Excitement Index distills the entire win probability curve into one number for how dramatic the game was, alongside comeback, tension and lead-change readouts. It is the answer to "was that as wild as it felt."
+
+War Room And Simulations:
+
+The War Room gives a projected score and a win probability for any two teams, plus a line-by-line breakdown of where that number came from: the opponent-adjusted net edge, the class bridge and home court. It inherits the opponent adjustment and the shrinkage for free, so it is not a separate opinion from the ratings, it is the ratings applied to a matchup.
+
+The honest uncertainty band on a single game is about 11 points. A projected four-point win is close to a coin flip, and the app would rather tell you that than sell you a lock.
+
+Simulations roll a game, a bracket or a whole schedule 20,000 times. That turns one expected margin into the things coaches actually ask for: title odds, an expected-wins distribution, and how often you beat a specific team. Running a full season also gives you a luck lens, comparing the record your true talent implies with the record you actually got.
+
+What it cannot know - Injuries, foul trouble, the wrinkle you install on Tuesday, the transfer who showed up in November. A projection is a prior, not a prophecy.
+
+Why it disagrees with the state rankings - This engine has no polls, no reputation and no eye test in it. It only knows results and tracked possessions.
+
+Opponent Adjustment:
+
+Two teams with the same raw numbers did not necessarily have the same season, and the engine corrects for that in two separate places.
+
+Team efficiency is adjusted the way KenPom does it: an iterative pass over per-game offensive and defensive ratings, so every tracked ORtg, DRtg, net rating and points-per-possession you see is schedule-corrected.
+
+Shooting is adjusted separately, with a ridge that splits every game's shooting into how well the offense shoots and how much the defense suppresses shooting. That produces two numbers worth knowing. Adjusted eFG is what your team would shoot against an average defense. Adjusted opponent eFG is what an average offense would shoot against you, where lower is better and it is the truest single measure of defensive shooting pressure.
+
+Both of these shrink a thin sample toward the league mean, so an early-season team is not crowned for beating up two bad defenses.
+
+Officials:
+
+The officials engine exists to replace reputation with measurement, and it is built so that measurement never turns into a name-and-shame list.
+
+Two grains of data exist per official. Foul-level data is exact and per-official, taken from the foul events where you recorded who made the call. Game-level data covers the pace and scoring environment of games that ref worked, and is shared by the whole crew.
+
+From that the app builds a whistle profile: fouls per 100 possessions as a tightness measure, home versus away lean, a quarter-by-quarter timing fingerprint, the scoring environment of their games, and every one of those expressed as a delta against the league average rather than as a raw number.
+
+The crew outlook takes the officials assigned to an upcoming game and synthesizes their histories into what to expect tonight: tightness, lean, scoring environment, late-game tendency and a one-line play-accordingly read. It is flagged low-confidence when the crew's combined sample is too thin, rather than pretending.
+
+For assigners, this is the point. You can see how an individual official is calling right now, across everyone who logged him, without that official's name being exposed to the public side of the app.
+
+Recording the official is optional on every foul, but it is the single highest-leverage optional field in the tracker, because no other data source in high school basketball produces this at all.
+
+Fans And The Public Link:
+
+A tracked game can be shared with a public link that needs no login, and exactly one piece of code decides what an anonymous viewer can see. The rule used to build it: would you put this on the gym scoreboard?
+
+Public on purpose - Score, game status, quarter and clock, quarter-by-quarter scores, team fouls, per-player box lines keyed by jersey number, play-by-play text using numbers only, shot chart dots, the officiating crew as anonymous slots with foul counts, and the team directory with records and ordinal rank.
+
+Never public - Player names, official names, play type, defense, turnover type, foul type, ratings of any kind, minutes and possession counts.
+
+So a parent in the stands gets a live win probability chart, a live shot chart and live play-by-play for their kid's game, and nobody gets a roster of names or a scouting report out of it.
+
+Players And Parents:
+
+The player-facing side is the part that turns a database into something a sixteen-year-old cares about.
+
+Player cards print to PDF with the same branded look as the scout sheets, so a card can go home, go on a wall or go to a college coach.
+
+Badges are the legible version of the advanced stats. Instead of telling a kid he is in the 84th percentile in a rate stat, he earns a Gold badge. Every badge is a rule against the pool, awarded Bronze, Silver or Gold by percentile, and every badge is gated on a minimum volume so a 2-for-2 night cannot mint a Gold shooter. Each one shows why it was earned.
+
+Hall of Fame keeps the single-game records across every season pooled together, plus a records watch for the marks that are about to fall.
+
+Development tracks a player across seasons once their rows are linked by the rollover, showing the season-by-season line, the year-over-year jump and a rough projection. With only one tracked season it says so plainly and unlocks the rest after a second linked season. The projection blends a player's own trend with the typical jump for his class, and it is always labeled a lean, never a promise.
+
+Share cards render your game result, season record or a selected set of games as a square graphic ready to post, using the real numbers and nothing invented.
+
+Rankings And The League Pool:
+
+Rankings are built from two planes that are kept deliberately separate.
+
+The results-only plane needs nothing but final scores, so it covers every team in the system. It carries Pythagorean win expectation and luck, scoring volatility and consistency, close-game record, momentum measured as recent form against season form, a dominance index and the full who-beat-who win network.
+
+The tracked plane needs possession data and covers the teams that have it. It assembles each team's advanced bundle once, so every chart and tab on the page is reading the same numbers instead of each deriving its own.
+
+This is why a Free coach still moves the needle. Entering final scores populates the entire first plane, for their team and for everyone they played.
+
+Privacy And Who Sees What:
+
+Two independent things decide what shows up on your screen, and they get confused constantly, so here they are apart from each other.
+
+Depth is your tier. Free, Paid or Co-Op decides how deep you see. Box scores and final results are visible to everyone at every tier, always.
+
+Sharing is the Co-Op toggle. It decides whose tracked data enters the pool. It is set at the program level, it defaults to off, and it is reciprocal. Solo means you keep full depth on your own games and your depth stays private, and you do not scout the pool. Co-Op means your tracked games join the pool and every coach on your staff scouts the whole pool.
+
+A program that has not shared reads as neutral, not as blocked. Nobody gets told "team X refused you."
+
+Everything in a past season is released to every coach at rollover, regardless of either axis. That is stated up front in the Past Seasons section, and it is worth reading before you decide how much to track.
+
+Accounts And Roles:
+
+Sign-in goes through Google, so the app never stores a password. Access is an email allowlist managed from the Settings page, and the first person to sign in on a fresh install becomes the admin.
+
+There are two roles. Admin can do everything including managing users. Coach can do everything except manage users.
+
+Settings are stored per coach, not per team, so two coaches sharing a program can keep different defaults. If a laptop gets shared, the settings follow whoever signed in.
+
+Why Numbers Change:
+
+Sometimes a rating moves and nobody on your team played a game. There are three reasons, and all three are the system working.
+
+Ratings are relative, so when other teams play, your pool moves and your number moves with it. Nothing about your team changed except its context.
+
+Opponent adjustment reaches backward. When a team you beat in December turns out to be good, the value of that December win goes up in March.
+
+The model itself gets re-tuned. The rating constants are periodically re-checked by an automated backtest, and a new value is only adopted after it beats the current one on a walk-forward test. No hand tuning and no guessing. Adopted values land as configuration and take effect on the next restart, never in the middle of a game, and only constants with an honest test behind them are eligible at all.
+
+Glossary:
+
+Every stat in the app has a full entry in the Glossary with the exact formula the engine uses, what it means and whether higher is better. The definitions match this app's engine rather than a generic basketball site, which matters because several stats here are specific to how this tracker records the game.
+
+A few worth looking up first are PRF, which is points responsible for and equals a player's own points plus the points his assists created, SC-Pass, which is the shots a player creates that are not his own attempts, DSHOT%, which is the field goal percentage allowed while he was the contesting defender, and Adjusted eFG, which is shooting corrected for the defenses faced.
+
+Troubleshooting:
+
+The tracker feels slow or lost connection - The tracker is built to keep logging locally and sync when the connection returns. Keep tracking. Do not refresh in a panic mid-possession.
+
+The app looks stale after an update - Hard refresh the page to clear the cached version.
+
+A number looks wrong - Check the n on the line, check the Coverage percentage for that tag, check whether the game was tracked or hand-entered, then open the Event Editor if something really is mislogged.
+
+The FAQ looks out of date - This page syncs from the source document every six hours. An admin can force it immediately with the refresh button at the top of the page.
+
+Something is stuck - Admins have restart controls on the Settings page.
+
+Reporting a bug or asking for a feature - Send it through the change request flow in the app so it lands in the queue with your name on it instead of getting lost in a text message.
+
+Why should I track if I only have time for the box score?
+
+Because the box score already carries the possession math. Field goal attempts plus turnovers gives the engine points per possession, offensive and defensive rating and the four factors, which is most of the "why did we win or lose" layer. Tracked possessions add the "how" on top of that. Entering a box is never wasted, and it is never overwritten by anything except a full track of the same game.
+
+What is the fastest way to make my ratings more accurate?
+
+Enter every final score, including non-district and tournament games. Opponent adjustment gets stronger with every connection in the schedule graph, and a missing game is a missing edge in that network for you and for the team you played.
+
+Do I lose anything by joining the Co-Op?
+
+Your current-season tracked depth becomes visible to the other Co-Op programs, and theirs becomes visible to you. Since every season becomes an open archive at rollover anyway, the Co-Op decision is really about timing rather than permanence. It is the difference between the pool having your data this year or next year.
+
+Can another coach see my scouting notes or my whiteboard?
+
+No. The pool carries tracked game data. Your own notes, plans and whiteboard work stay yours.
+
+The rating says elite but my eye test says otherwise?
+
+Check the sample first, then check what the rating is actually measuring. A high DEFENSE rating built mostly on steals and blocks describes an event creator, not necessarily a positional defender, and the rim protection and perimeter defense splits will usually show you which one you have.
+
+My best player has a lower Impact than a role player. Is that broken?
+
+Probably not. Impact is a rate per 100 possessions and it holds teammates constant, so a player who only shares the floor with the other four starters gets no credit for their production. It also means a specialist who never leaves the floor in the lineups that work can grade out extremely well. Read Impact next to HoopWAR, which pays the rate out over actual floor time.
+
+How much data does the league pool need before the ratings mean something?
+
+The results plane is meaningful almost immediately because it only needs scores. The tracked plane sharpens with every logged game from every program, which is the whole reason the pool exists. The more coaches in it, the better every single coach's numbers get, including the ones who only enter scores.

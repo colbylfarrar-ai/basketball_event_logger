@@ -759,3 +759,48 @@ pool regardless of the empty ACTIVE season.
 (box-out payoff adopted). ScrAST rejected, HAST inconclusive, DWPA/WPA skipped
 by decision (plumbing them would put a `season_wpa` walk in the eager
 `player_stat_table`, which Part 6 forbids).
+
+### 9z  Run summary (2026-07-24, overnight — Part 8 order, stopped at commit 11)
+
+**Shipped, gate-adopted (2):** FT% → `_SHOOTING` 0.5 · box-out payoff
+(`def_secure_team_stab`) → `_DREB` 0.6.
+**Shipped, descriptive (3):** Box-Out Boss badge + player-card rebounding
+verdict · hockey-assist chains + PotHAST + re-gate counter · xA2.
+**Not adopted (2):** ScrAST/G REJECTED (tie, plus it would score tagging gaps
+as zero) · HAST/G INCONCLUSIVE (0 tagged, leaf inert).
+**Skipped by decision (1):** DWPA/WPA — plumbing them puts a `season_wpa` walk
+in the eager `player_stat_table`, which Part 6 forbids. Revisit via a
+harness-only injection that never touches the eager path.
+
+**rho: 0.681 → 0.688** on the lean-T2 gate (n=48, 43 tracked games).
+
+Commits (on `main`, unpushed): `8e2719e` spec · `84f535d` registry+tiers ·
+`a6fb63a` FT% · `48643f3` reb plumbing · `0502442` badge+verdict ·
+`0648653` `_DREB` gate · `37a7d14` HAST chains · `5e8ac5f` xA2 ·
+`91e207e` HAST re-gate + gate-tool fix · `303fb98` ScrAST reject ·
+`+1` smoke.
+
+**Tests:** 5 new files (`test_leaf_tiers` 11, `test_reb_plumbing` 41,
+`test_passing_chains` 27, `test_xa2` 18, `test_ratings_depth_smoke` 45 real-DB),
+plus `test_badges` and `test_hockey_assist` extended. Pre-existing failures
+unchanged and unrelated: `test_charges.py` (the documented data-drift side-find)
+and `test_pdf_export.py` (no PDF engine installed locally).
+
+#### Three lessons worth carrying into the Part 3 session
+
+1. **The ratings read `profiles`, NOT `player_stat_table`.** Two spec items
+   ("FT% is zero plumbing", "ScrAST is already in P") conflated the dicts, and
+   both gates died on `KeyError` inside `zcol` before scoring anything. Any
+   future leaf candidate: check `profiles` first, and treat presence in
+   `player_stat_table` as proving nothing.
+2. **Absolute thresholds on compressed distributions are useless.** The
+   do-it-all verdict fired for 25 of 57 players until it was made
+   pool-relative; EB shrinkage had squeezed box-out payoff into 55-69. Any new
+   verdict/badge cutoff should be measured against the live distribution before
+   it ships, not chosen by eye.
+3. **A gate written before an adoption breaks silently after it.**
+   `gate_xa_hast` APPENDED, so once `xA/G` was live the re-run double-weighted
+   it and reported a bogus PASS. `add` now SETS. Worth auditing any future gate
+   the same way, and worth pairing every replace variant with a
+   drop-nothing-added control — that control is what made tonight's ScrAST
+   replace numbers readable.

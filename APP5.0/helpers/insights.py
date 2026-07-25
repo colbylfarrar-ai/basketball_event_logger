@@ -1195,9 +1195,13 @@ def form_edges(events, table):
         ratings = GR.season_game_ratings(events=events, roles=roles)
     except Exception:
         ratings = {}
+    # ONE metadata query for the whole roster. player_game_log used to run an
+    # unscoped games×teams join per call; at 242 players that was 11.6 s — 71%
+    # of the entire insight-feed build, for the lowest-yield generator in it.
+    meta = TR.game_meta(gids)
     out = {}
     for pid in boxes:
-        log = TR.player_game_log(pid, boxes=boxes)
+        log = TR.player_game_log(pid, boxes=boxes, meta=meta)
         if len(log) < 5:
             continue
         pts = [g["box"].get("PTS", 0) or 0 for g in log]

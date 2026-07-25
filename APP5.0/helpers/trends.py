@@ -15,13 +15,46 @@ HIGH_KEYS = [("PTS", "Points"), ("TRB", "Rebounds"), ("AST", "Assists"),
              ("STL", "Steals"), ("BLK", "Blocks"), ("3PM", "Threes")]
 
 
-def player_game_log(player_id, boxes=None):
+#: sqlite's default host-parameter ceiling is 999; chunk below it so a caller
+#: asking for every game in the book can't blow the statement limit.
+_SQL_VARS = 900
+
+
+def game_meta(game_ids):
+    """{gid: {id, date, team1_id, team2_id, n1, n2}} for the given games only.
+
+    Split out of `player_game_log` because that function ran this join with NO
+    where-clause — the whole `games` table (13k rows on the live book) joined
+    twice against `teams`, at ~48 ms a call. `insights.form_edges` calls the log
+    once per player, so a 242-player league paid 11.6 s of CPU to produce four
+    insight lines. Scoping to the caller's own game ids is the fix; passing the
+    result back in via `meta=` collapses N calls to one query.
+    """
+    ids = [int(g) for g in dict.fromkeys(game_ids) if g is not None]
+    out = {}
+    for i in range(0, len(ids), _SQL_VARS):
+        chunk = ids[i:i + _SQL_VARS]
+        ph = ",".join("?" * len(chunk))
+        for r in query(
+            f"""SELECT g.id, g.date, g.team1_id, g.team2_id,
+                       t1.name n1, t2.name n2
+                FROM games g JOIN teams t1 ON t1.id = g.team1_id
+                             JOIN teams t2 ON t2.id = g.team2_id
+                WHERE g.id IN ({ph})""", tuple(chunk)):
+            out[r["id"]] = r
+    return out
+
+
+def player_game_log(player_id, boxes=None, meta=None):
     """
     Ordered game log for one player: [{game_id, date, opp, home, box}], oldest
     first, over every tracked game the player has a box for.
 
     `boxes` = a cached stats.player_game_boxes() result ({pid:{gid:box}}); fetched
     if omitted.
+    `meta`  = a cached `game_meta()` result covering at least this player's games;
+    built for just those games if omitted. Pass it when looping over a roster —
+    that is the difference between one query and one query per player.
     """
     if boxes is None:
         boxes = S.player_game_boxes()
@@ -32,11 +65,8 @@ def player_game_log(player_id, boxes=None):
     if not prow:
         return []
     pteam = prow[0]["team_id"]
-    meta = {r["id"]: r for r in query(
-        """SELECT g.id, g.date, g.team1_id, g.team2_id,
-                  t1.name n1, t2.name n2
-           FROM games g JOIN teams t1 ON t1.id = g.team1_id
-                        JOIN teams t2 ON t2.id = g.team2_id""")}
+    if meta is None:
+        meta = game_meta(games.keys())
     out = []
     for gid, box in games.items():
         m = meta.get(gid)

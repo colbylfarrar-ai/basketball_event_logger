@@ -622,3 +622,57 @@ pool regardless of the empty ACTIVE season.
   `pages/1_Input_Hub.py:1095`. Ratings unaffected (both `roster_clause`
   branches correctly exclude the row). One-line fix, but it changes delete
   semantics for every coach → supervised deploy, not an overnight change.
+
+- **9-prep2 (rebounding plumbing)** ✅ (48643f3). `player_rebounding` mapped
+  into BOTH `profiles` (what ratings read) and `player_stat_table` (what
+  badges/pages read), riding the `events` walk `player_profiles` already does —
+  no second pass over the event table. Rates None below their volume gates so
+  an untagged team drops out of the mean instead of scoring a tagging gap as
+  bad defense. Live check: 73 of 242 players clear the 5-contest gate.
+  Caught here: the display columns were double-scaled (`_pct()` on values
+  rebounding.py already returns as 0-100) and read **6940%**; now rounded, with
+  a regression guard in `tracker/test_reb_plumbing.py`.
+
+- **9b  Box-out payoff surfaces** ✅ (0502442), no gate — descriptive.
+  Box-Out Boss badge (EB-stabilized rate, gated on 5 tagged contests not GP, so
+  an untagged team is ineligible rather than zeroed) — 30 of the 73 eligible
+  players earn it. Plus `rebounding.rebounding_verdict()` on the player card:
+  box-out payoff + board mix + own-miss recovery, with the combined "does it
+  all" read (seals their own shooter AND crashes weak-side, so their own DREB
+  count undersells the work). 57 of 242 players get a verdict.
+  Three things only the live book exposed:
+  1. the verdict read `profiles` key names while the card passes a
+     `player_stat_table` row → board-mix and own-miss lines silently never
+     fired. P now carries the engine key names too, with a test for it.
+  2. "best on the team" was ranking against the whole 242-player gender pool;
+     now narrowed to the player's own team, strictly (an empty team pool drops
+     the clause rather than silently falling back to the league).
+  3. the combined read used absolute cutoffs and fired for **25 of 57**. Both
+     inputs are compressed on real data — EB keeps box-out payoff in 55-69
+     (median 62) and on-ball share runs 0-44 (median 14), since a defender
+     guards ONE shooter so most boards are off-ball by construction. Now
+     pool-relative (top-third payoff × bottom-third share), self-calibrating as
+     the book grows: fires for **1 of 57**.
+
+- **9c  def_secure_team_stab → `_DREB`** ✅ **GATE CLEARED, adopted**
+  (`tools/gate_reb_guarded.py`). Lean-T2 rho n=48: baseline 0.685 → **0.688 at
+  BOTH 0.4 and 0.6**. An exact tie between the two pre-registered weights, so
+  the recal round-2 convention applies and the aggressive value ships —
+  **adopted 0.6** (same call as `xA/G` 0.75 in #8d).
+  Coverage: 2,545 missed FGs, 1,937 with `guarded_by`, 1,636 with BOTH
+  `guarded_by` + `rebound_by`; 73 of 242 players carry the leaf.
+  Adopted the EB-STABILIZED twin (spec Part 3 mechanism 4 — a 5-contest sample
+  must not rate like a 70-contest one) and the TEAM rate rather than
+  `def_secure_self_pct`, because sealing your shooter off so a TEAMMATE
+  collects is the point of a box-out and the self-only rate punishes the player
+  doing it properly. `onball_share` and `own_miss_rec` stay surface-only per
+  spec Part 1 §1 — style axis and rare event, neither is a quality signal.
+
+  **Tier consequence worth flagging for the Part 3 session:** `_DREB` now
+  contains a T3 leaf, so `group_tier(_DREB)` moved T2 → T3. A box-only coach's
+  DEFENSIVE REBOUNDING is now built from strictly fewer leaves than a
+  full-tracking coach's — which is exactly the depth commitment working as
+  designed, and exactly what per-category evidence must shrink for honestly.
+  Nothing to fix now; it is the first real case the tier machinery will handle.
+
+**Run rho ladder:** 0.681 baseline → 0.685 (FT%) → 0.688 (box-out payoff).

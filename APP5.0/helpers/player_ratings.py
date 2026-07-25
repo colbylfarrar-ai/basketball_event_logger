@@ -634,8 +634,23 @@ _PLAYMAKING = [("AST%", 1.25, False),   # on-court assist rate (share of teammat
                ("xA/G", 0.75, False)]
 # OFFENSIVE REBOUNDING — second chances. OREB% (on-court, event) + total/per-game.
 _OREB = [("OREB%", 1.25, False), ("OREB/G", 1.0, False)]
-# DEFENSIVE REBOUNDING — closing possessions. DREB% + total/per-game.
-_DREB = [("DREB%", 1.25, False), ("DREB/G", 1.0, False)]
+# DEFENSIVE REBOUNDING — closing possessions. DREB% + total/per-game, plus the
+# box-out payoff: rebounding value that never shows up in your own DREB count.
+_DREB = [("DREB%", 1.25, False), ("DREB/G", 1.0, False),
+         # def_secure_team_stab — gate-adopted 2026-07-24
+         # (tools/gate_reb_guarded.py): lean-T2 rho 0.688 at BOTH 0.4 and 0.6
+         # vs 0.685 baseline. An exact tie between the two pre-registered
+         # weights, so the recal round-2 convention applies and the aggressive
+         # value ships (same call as xA/G 0.75 in #8d).
+         # This is the EB-STABILIZED twin by design (spec Part 3 mechanism 4):
+         # a 5-contest sample must not rate like a 70-contest one. It is also
+         # the TEAM rate, not def_secure_self_pct — sealing your shooter off so
+         # a TEAMMATE collects the board is the whole point of a box-out, and
+         # the self-only rate would punish the player doing it properly.
+         # None below rebounding.MIN_ONBALL and for any team that never tags
+         # guarded_by, so it None-skips rather than scoring a tagging gap as
+         # bad rebounding. 73 of 242 players carry it on the current book.
+         ("def_secure_team_stab", 0.6, False)]
 # REBOUNDING (headline) = offensive + defensive rebounding components + overall
 # REB% as the tie-break. The O/D split is surfaced as its own sub-ratings.
 _REBOUNDING_PARTS = [("oreb", 1.0), ("dreb", 1.0), ("REB%z", 0.6)]

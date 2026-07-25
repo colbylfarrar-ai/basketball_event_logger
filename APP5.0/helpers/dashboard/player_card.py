@@ -646,6 +646,20 @@ def render_card(ctx):
                      "form, not a projection)</span>") if _traj else "Ratings"
             st.markdown(f"<div class='pl-hdr' style='margin-top:0'>{_thdr}</div>"
                         + bars, unsafe_allow_html=True)
+            # ── per-category tier chip (spec Part 3 mechanism 3) ──────────
+            # Two separate things: a factual "rated from" line (what data each
+            # pillar rests on), and — only for a genuine outlier against the
+            # pool's own per-pillar baseline — the actionable nudge. Every
+            # pillar has a different natural ceiling (DEFENSE normally sits near
+            # 73%, PLAYMAKING at 75%), so an absolute "thin" rule would label
+            # the normal state of half the model as a problem.
+            _csum = PR.coverage_summary(P.get("CatShare"))
+            if _csum:
+                st.caption(_csum)
+                _gap = PR.coverage_gap(P.get("CatShare"),
+                                       PR.pool_coverage_baseline(rows))
+                if _gap:
+                    st.caption(_gap)
             # spec 2.3 — "why this number": the OVERALL blend, weights, and the
             # shrink applied, from the engine's own z-maps (explain payload).
             _ex = P.get("_explain")

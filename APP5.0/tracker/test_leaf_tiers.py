@@ -178,4 +178,67 @@ ok(PR.tier_cohort(_no_tags, 10, 0) == "possession",
    "tracked but no tag ever fed -> possession cohort")
 ok(PR.tier_cohort(_all, 10, 0) == "tagged", "a fed T3 leaf -> tagged cohort")
 
+print("coverage chip / summary / gap (spec Part 3 mechanism 3)")
+
+ok(PR.coverage_chip(0.95) == ("full tracked", 95), "high share -> full tracked")
+ok(PR.coverage_chip(0.60) == ("partial", 60), "mid share -> partial")
+ok(PR.coverage_chip(0.20) == ("thin", 20), "low share -> thin")
+ok(PR.coverage_chip(None) == (None, None), "no share -> no chip")
+# Same thresholds as helpers/coverage.py's team tag labels, so a coach does not
+# learn two scales for the same idea.
+import helpers.coverage as _COV
+ok(_COV._label(85) == "strong" and PR.coverage_chip(0.85)[0] == "full tracked",
+   "80% is the 'good' cut in both places")
+ok(_COV._label(50) == "partial" and PR.coverage_chip(0.50)[0] == "partial",
+   "40-80% is 'partial' in both places")
+
+# The "rated from" line is FACTUAL and always present when there is data.
+_sum = PR.coverage_summary({"OVERALL": 0.8, "OFFENSE": 0.97, "DEFENSE": 0.73,
+                            "PLAYMAKING": 0.75, "REBOUNDING": 0.92})
+ok(_sum.startswith("Rated from:"), f"summary is a rated-from line ({_sum[:28]!r})")
+ok("Offense full tracked (97%)" in _sum, "names each pillar with its label + pct")
+ok("Overall" not in _sum, "OVERALL is omitted — it is the blend, not an input set")
+ok(PR.coverage_summary({}) is None and PR.coverage_summary(None) is None,
+   "no data -> no summary (never raises)")
+
+# The NUDGE is pool-relative, because each pillar has its own natural ceiling.
+# Measured on the live book: median share is 97% OFFENSE but 73% DEFENSE and a
+# hard 75% PLAYMAKING, so an absolute "below 80% is thin" rule flagged 192 of
+# 242 players with near-identical text — informing nobody.
+_base = {"OFFENSE": (0.97, 0.95), "DEFENSE": (0.73, 0.67),
+         "PLAYMAKING": (0.75, 0.75), "REBOUNDING": (0.92, 0.92)}
+
+_typical = {"OFFENSE": 0.97, "DEFENSE": 0.73, "PLAYMAKING": 0.75,
+            "REBOUNDING": 0.92}
+ok(PR.coverage_gap(_typical, _base) is None,
+   "a player AT the per-pillar norm gets no nudge — 73% DEFENSE is normal")
+
+_thin = dict(_typical, DEFENSE=0.25)
+_g = PR.coverage_gap(_thin, _base)
+ok(_g is not None and "Defense 25% vs 73% typical" in _g,
+   f"a genuine outlier is named with its own pillar's norm (got {_g!r})")
+ok("add" not in (_g or "").lower(),
+   "the nudge does NOT say 'add tags' — coverage also grows with minutes, and "
+   "on real data this fires mostly for 1-2 game reserves")
+ok("minutes" in _g, "it names both causes honestly")
+
+# Just under p25 but not materially under the median -> still silent, so the
+# nudge cannot fire on ordinary jitter.
+ok(PR.coverage_gap(dict(_typical, DEFENSE=0.66), _base) is None,
+   "marginally below p25 is not an outlier (needs < 0.9x median too)")
+ok(PR.coverage_gap(_thin, None) is None, "no baseline -> no nudge")
+ok(PR.coverage_gap(None, _base) is None, "no shares -> no nudge")
+
+# Worst pillar first.
+_multi = PR.coverage_gap(dict(_typical, DEFENSE=0.30, OFFENSE=0.50), _base)
+ok(_multi.index("Defense") < _multi.index("Offense"),
+   "thinnest pillar is named first")
+
+# pool_coverage_baseline derives the yardstick from the pool itself.
+_rows = [{"CatShare": {c: v for c, v in _typical.items()}} for _ in range(4)]
+_rows.append({"CatShare": dict(_typical, DEFENSE=0.10)})
+_b = PR.pool_coverage_baseline(_rows)
+ok(abs(_b["DEFENSE"][0] - 0.73) < 1e-9, "baseline median comes from the pool")
+ok(_b["DEFENSE"][1] <= _b["DEFENSE"][0], "p25 sits at or below the median")
+
 print(f"\nALL {PASS} CHECKS PASSED")

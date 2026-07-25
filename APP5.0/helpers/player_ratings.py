@@ -955,6 +955,98 @@ def category_evidence(category, present, tracked_gp, manual_gp):
     return tracked_gp * share + MANUAL_GAME_WEIGHT * manual_gp * box_share
 
 
+# Chip vocabulary for per-category coverage. Deliberately the SAME thresholds
+# and words helpers/coverage.py already uses for team tag coverage (strong >= 80,
+# partial >= 40, sparse below) — a coach should not have to learn two scales for
+# the same idea.
+COVERAGE_LABELS = ((80.0, "full tracked"), (40.0, "partial"), (0.0, "thin"))
+
+
+def coverage_chip(share):
+    """('full tracked'|'partial'|'thin', pct) for a category's fed share, or
+    (None, None) when there is no share to report."""
+    if share is None:
+        return (None, None)
+    pct = 100.0 * share
+    for cut, label in COVERAGE_LABELS:
+        if pct >= cut:
+            return (label, round(pct))
+    return ("thin", round(pct))
+
+
+def coverage_summary(shares):
+    """The "rated from" LABEL line (spec Part 3 mechanism 3): one compact,
+    factual string naming each pillar's coverage, or None with no data.
+
+    Informational, not an alarm. Every pillar has its own natural coverage
+    ceiling on real data — measured 2026-07-24, median share is 97% for OFFENSE
+    but 73% for DEFENSE and a hard 75% for PLAYMAKING — so a universal "below
+    80% is thin" rule labels the NORMAL state of half the model as a problem.
+    It fired for 192 of 242 players with near-identical text. This states what
+    each rating rests on and leaves judgement to `coverage_gap`.
+    """
+    if not shares:
+        return None
+    bits = []
+    for c in CATEGORIES:
+        if c == "OVERALL":
+            continue
+        label, pct = coverage_chip(shares.get(c))
+        if label:
+            bits.append(f"{c.title()} {label} ({pct}%)")
+    return ("Rated from: " + " · ".join(bits)) if bits else None
+
+
+def pool_coverage_baseline(rows):
+    """{category: (median, p25)} of fed share across a pool of rating rows —
+    the per-category yardstick `coverage_gap` compares against, because "thin"
+    only means anything relative to what this category normally reaches."""
+    out = {}
+    for c in CATEGORIES:
+        vals = sorted(r["CatShare"][c] for r in rows
+                      if (r.get("CatShare") or {}).get(c) is not None)
+        if vals:
+            out[c] = (vals[len(vals) // 2], vals[max(0, len(vals) // 4)])
+    return out
+
+
+def coverage_gap(shares, baseline):
+    """The actionable nudge: names only pillars where THIS player's coverage is
+    a genuine outlier for that pillar — below the pool's 25th percentile AND
+    materially under its median. None when there is nothing worth saying, which
+    is the common case by design.
+
+    Pool-relative for the same reason the rebounding do-it-all read is: absolute
+    cutoffs on a compressed distribution flag everybody and therefore inform
+    nobody.
+    """
+    if not shares or not baseline:
+        return None
+    hits = []
+    for c in CATEGORIES:
+        if c == "OVERALL":
+            continue
+        s, base = shares.get(c), baseline.get(c)
+        if s is None or not base:
+            continue
+        med, p25 = base
+        if s < p25 and s < 0.9 * med:
+            hits.append((c, 100.0 * s, 100.0 * med))
+    if not hits:
+        return None
+    hits.sort(key=lambda h: h[1])
+    named = ", ".join(f"{c.title()} {p:.0f}% vs {m:.0f}% typical"
+                      for c, p, m in hits)
+    # Deliberately does NOT say "add tags". Coverage grows with BOTH tagging and
+    # appearances — a rare-event leaf like charges drawn only fills in once a
+    # player has played — and on the live book the players this fires for are
+    # mostly 1-2 game reserves. Telling that coach to tag more would be wrong
+    # advice for the actual cause.
+    return (f"Thinner than usual here: {named}. Those ratings rest on fewer "
+            f"inputs than most, so they sit closer to average — more minutes "
+            f"or more optional tags would sharpen them.")
+
+
 def tier_cohort(present, tracked_gp, manual_gp):
     """Which DATA TIER a player's rating actually rests on — the cohort label
     the backtest reports rho/MAE against, so the depth commitment is a measured

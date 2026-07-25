@@ -870,3 +870,45 @@ and `test_pdf_export.py` (no PDF engine installed locally).
   shrink never used — in the one panel whose whole job is explaining how the
   rating was produced. It now reports the evidence actually applied, plus
   `flat_evidence_gp`, `coverage` and the `per_category` flag.
+
+- **10d  Per-category tier chips** ✅ (surface, no gate). Player-card "Rated
+  from: Offense full tracked (97%) · Defense partial (73%) · …" line, plus a
+  separate nudge shown ONLY for a genuine outlier.
+
+  **Split into two things after measuring, because one absolute rule was
+  useless.** The first version flagged any pillar under 80% and fired for
+  **192 of 242 players with near-identical text**. Cause: each pillar has its
+  own natural ceiling on real data — median fed share is **97% OFFENSE, 73%
+  DEFENSE, and a hard 75% PLAYMAKING** (p25 = median = p75) — so a universal
+  "below 80% is thin" rule labels the NORMAL state of half the model as a
+  problem. Now:
+  * `coverage_summary` — factual, always shown, differs per player.
+  * `coverage_gap` — pool-relative (below that pillar's own p25 AND under
+    0.9× its median), fires for **76 of 242**. Same lesson as the rebounding
+    do-it-all read: **absolute cutoffs on a compressed distribution flag
+    everybody and therefore inform nobody.** That is now twice in this run.
+  * The nudge deliberately does **not** say "add tags". Coverage grows with
+    BOTH tagging and appearances (a rare-event leaf like CHG/G only fills in
+    once a player plays), and on the live book this fires mostly for 1-2 game
+    reserves — telling that coach to tag more would be wrong advice for the
+    actual cause. It names both.
+  Chip vocabulary reuses `helpers/coverage.py`'s existing 80/40 strong-partial
+  cuts so a coach does not learn two scales for the same idea.
+
+### 10z  Part 3 status
+
+**Built:** tier taxonomy (§9-prep) · category→leaf resolver · per-category
+evidence (ADOPTED, tie) · tier chips · per-cohort backtest reporting.
+**rho unchanged at 0.688** — Part 3 is an honesty/observability change, not a
+accuracy play, and the gate confirms it costs nothing.
+
+**Not built, deliberately:** Part 3 mechanism 4 (audit leaves for raw thin-n
+inputs and swap to EB twins where one exists). Each swap is a separate leaf
+change needing its own gate, and `def_secure_team_stab` already set the
+pattern. Left for a session with a specific candidate list.
+
+**The open honesty debt:** the depth commitment is still NOT demonstrated on
+this book — see 10b. The instrument exists and is correct; the data cannot
+separate cohorts yet (no manual games, every player feeds a T3 leaf). Re-run
+`tools/sweep_recal.print_cohort_report` once a box-only or never-tagging coach
+onboards; that is the first moment the claim becomes checkable.

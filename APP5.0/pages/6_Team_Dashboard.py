@@ -76,6 +76,7 @@ import helpers.stops as ST
 import helpers.passing_chains as PC
 import helpers.involvement as IV
 import helpers.foul_trouble as FTR
+import helpers.hero_ball as HB
 import helpers.winning_formula as WF
 import helpers.playtypes as PT
 import helpers.defenses as DEF
@@ -1010,6 +1011,15 @@ def _foul_state(tid, _tids, level=3):
     """Pooled team net while anyone on the floor carries `level`+ fouls."""
     return FTR.team_foul_state_net(game_ids=list(_tids), team_id=tid,
                                    level=level)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _hero_ball(g, season):
+    """Scoring/creation concentration for EVERY team in the gender pool
+    (spec Part 5j). Cached per (gender, season) rather than per team because
+    the percentile is only meaningful against the pool, and one pass builds
+    every team's coefficient."""
+    return HB.league_context(gender=g, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -4221,6 +4231,46 @@ def _fx_playmaking():
                     "while a high assist count from one pairing is a two-man "
                     "game. Both can be right for a team — they are not the "
                     "same player.")
+
+        # ── hero ball vs system offence (spec 5j) ────────────────────────
+        # The one-number summary of everything in this view: connections,
+        # hubs, involvement. Reads off the same cached league pass.
+        _hbl = _hero_ball(gender, season_pick)
+        _hb = (_hbl or {}).get(team_id)
+        if _hb and _hb.get("scoring_gini") is not None:
+            st.markdown("<div class='lab-hdr'>System offence or hero "
+                        "ball?</div>", unsafe_allow_html=True)
+            _hv = HB.hero_ball_verdict(_hb, pool_pct=_hb.get("pct"))
+            if _hv:
+                _verdict_lines(_hv)
+            _hc = st.columns(3)
+            _hc[0].metric("Scoring concentration", f"{_hb['scoring_gini']:.2f}",
+                          help="Weighted Gini over per-minute scoring rates. "
+                               "0 = every player scores at the same rate, "
+                               "1 = one player scores everything.")
+            _hc[1].metric("Creation concentration",
+                          (f"{_hb['assist_gini']:.2f}"
+                           if _hb.get("assist_gini") is not None else "—"),
+                          help="The same coefficient over assist rates.")
+            _hc[2].metric("League percentile",
+                          (f"{_ORD(_hb['pct'])}" if _hb.get("pct") is not None
+                           else "—"),
+                          f"of {_hb.get('pool_n', 0)} deep teams",
+                          help="Against tracked teams with at least "
+                               f"{HB.MIN_POOL_GAMES} games. Most opponents "
+                               "appear here for a single game and are excluded "
+                               "from the scale.")
+            st.caption(
+                "Measured over **per-minute scoring rates**, not point totals. "
+                "The raw version is mostly a rotation-depth stat — a starter "
+                "plays 30 minutes and a reserve plays 4, so totals concentrate "
+                "whatever the ball-sharing looks like (this team's minutes "
+                f"alone are {_hb['minutes_gini']:.2f} concentrated against a "
+                f"raw point Gini of {_hb['raw_gini']:.2f}). Dividing that out "
+                "is what makes a short rotation of equal scorers read as a "
+                "system and a deep rotation with one shooter read as hero "
+                "ball. **Not a judgement**: a team with one genuinely elite "
+                "scorer should funnel.")
 
         # ── involvement — a fingerprint on the team's baskets (spec 4d) ──
         # Sits here because a coach reading who-feeds-whom immediately wants

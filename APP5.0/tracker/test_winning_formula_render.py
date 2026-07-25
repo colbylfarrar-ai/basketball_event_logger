@@ -133,6 +133,15 @@ def run():
            "whole design")
         ok("participation is not causation" in low,
            "and refuses the causal reading explicitly")
+
+        # -- Charts > Offense > Playmaking: hero-ball Gini (spec 5j) -------
+        ok("system offence or hero ball" in low, "the concentration panel rendered")
+        ok("per-minute scoring rates" in low,
+           "the headline is the rate Gini, not the raw point-total one")
+        ok("rotation-depth stat" in low,
+           "and the caption names the confound it divides out")
+        ok("not a judgement" in low,
+           "and refuses to tell a coach their concentration is wrong")
     finally:
         UI.gender_radio, ENT.has_paid_plan, ENT.viewer_is_league_wide = (
             real_radio, real_paid, real_wide)

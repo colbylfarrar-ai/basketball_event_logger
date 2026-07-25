@@ -15,6 +15,14 @@ light up automatically.
 """
 from __future__ import annotations
 
+import logging
+
+#: Failures inside the feed builders used to be `except Exception: pass` at
+#: fourteen sites, which made a raising engine indistinguishable from an engine
+#: with nothing to say. They are isolated but no longer silent — see build_feed's
+#: `diagnostics` argument.
+_log = logging.getLogger(__name__)
+
 # Minimum |z| to count as "notable" — below this it isn't surprising enough to say.
 MIN_Z = 1.0
 
@@ -1029,13 +1037,22 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
     }
 
     out = {}
+    # A generator that raises for EVERY player looks exactly like a generator
+    # with nothing to say, so log the first failure per generator once instead
+    # of 242 times (and never per-player, which would be the whole log).
+    seen_bad = set()
     for pid, row in rows:
         cands = []
         for g in _GENERATORS:
             try:
                 c = g(row, pools, derived[pid])
-            except Exception:
+            except Exception as exc:
                 c = None
+                if g.__name__ not in seen_bad:
+                    seen_bad.add(g.__name__)
+                    _log.warning("insights generator %s failed - %s: %s",
+                                 g.__name__, type(exc).__name__, exc,
+                                 exc_info=True)
             if c:
                 cands.append(c)
         cands.sort(key=lambda c: -c["score"])
@@ -1347,78 +1364,56 @@ def onoff_edges(events):
     for tid in teams:
         try:
             out.update(LU.player_on_off(tid, game_ids=gids, events=events))
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("onoff_edges: team %s failed - %s: %s",
+                         tid, type(exc).__name__, exc, exc_info=True)
     return out
 
 
-def build_feed(table, events, *, top=3, impact=None):
+#: the event-derived split builders, in the order build_feed runs them:
+#: (league_insights kwarg, function, needs_table).
+_FEED_STAGES = (
+    ("guarded",     guarded_cliffs,          False),
+    ("matchup",     matchup_edges,           True),
+    ("totypes",     turnover_type_edges,     False),
+    ("foulft",      foul_ft_edges,           False),
+    ("pnr",         pnr_role_edges,          False),
+    ("spacing",     spacing_edges,           False),
+    ("q4",          q4_swings,               False),
+    ("playtypes",   named_playtype_edges,    False),
+    ("playstyles",  playtype_profile_edges,  False),
+    ("situational", situational_edges,       False),
+    ("garbage",     garbage_edges,           False),
+    ("stints",      stint_edges,             False),
+    ("form",        form_edges,              True),
+    ("onoff",       onoff_edges,             False),
+)
+
+
+def build_feed(table, events, *, top=3, impact=None, diagnostics=None):
     """One-call insight feed: precomputes the event-derived splits (guarded-cliff,
     Q4, signature play_type, situational) and runs the miner. ``{pid: [insight,...]}``.
     ``impact`` = a precomputed ``impact_map`` (RAPM/WAR need gender+season the
     events alone don't carry, so the caller fetches those through its own cache).
-    Wrap heavy calls in a cache at the page level."""
-    guarded = q4 = pt = ps = sit = mu = tt = ff = pr = sp = None
-    try:
-        guarded = guarded_cliffs(events)
-    except Exception:
-        pass
-    try:
-        mu = matchup_edges(events, table)
-    except Exception:
-        pass
-    try:
-        tt = turnover_type_edges(events)
-    except Exception:
-        pass
-    try:
-        ff = foul_ft_edges(events)
-    except Exception:
-        pass
-    try:
-        pr = pnr_role_edges(events)
-    except Exception:
-        pass
-    try:
-        sp = spacing_edges(events)
-    except Exception:
-        pass
-    try:
-        q4 = q4_swings(events)
-    except Exception:
-        pass
-    try:
-        pt = named_playtype_edges(events)
-    except Exception:
-        pass
-    try:
-        ps = playtype_profile_edges(events)
-    except Exception:
-        pass
-    try:
-        sit = situational_edges(events)
-    except Exception:
-        pass
-    gt = sl = None
-    try:
-        gt = garbage_edges(events)
-    except Exception:
-        pass
-    try:
-        sl = stint_edges(events)
-    except Exception:
-        pass
-    fm = oo = None
-    try:
-        fm = form_edges(events, table)
-    except Exception:
-        pass
-    try:
-        oo = onoff_edges(events)
-    except Exception:
-        pass
-    return league_insights(table, guarded=guarded, q4=q4, playtypes=pt,
-                           playstyles=ps, situational=sit, impact=impact,
-                           matchup=mu, totypes=tt, foulft=ff, pnr=pr,
-                           spacing=sp, garbage=gt, stints=sl, form=fm,
-                           onoff=oo, top=top)
+    Wrap heavy calls in a cache at the page level.
+
+    ``diagnostics`` — pass a dict to receive ``{stage: "ExcType: message"}`` for
+    any split builder that raised. Each stage is still isolated so one broken
+    engine cannot empty the whole feed, but the failure is no longer INVISIBLE:
+    previously all fourteen were ``except Exception: pass``, so a raising engine
+    and an engine with genuinely nothing to say produced the identical result —
+    a quietly thinner feed with no way for anyone to tell which had happened.
+    Failures are also logged at WARNING on the module logger.
+    """
+    parts = {}
+    for key, fn, needs_table in _FEED_STAGES:
+        try:
+            parts[key] = fn(events, table) if needs_table else fn(events)
+        except Exception as exc:
+            parts[key] = None
+            msg = f"{type(exc).__name__}: {exc}"
+            if diagnostics is not None:
+                diagnostics[key] = msg
+            _log.warning("insights.build_feed stage %r failed - %s", key, msg,
+                         exc_info=True)
+    return league_insights(table, impact=impact, top=top, **parts)

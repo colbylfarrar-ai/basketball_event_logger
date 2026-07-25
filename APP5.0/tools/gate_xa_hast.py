@@ -35,13 +35,29 @@ from database.db import query
 
 
 def _playmaking_with(add=None, drop=(), base=None):
-    """Copy of _PLAYMAKING with leaves added/dropped."""
-    parts = [t for t in (base or PR._PLAYMAKING) if t[0] not in drop]
+    """Copy of _PLAYMAKING with leaves SET (added or re-weighted) and dropped.
+
+    Any leaf named in `add` is dropped from the base first, so this is a "set
+    this leaf to this weight" operation rather than an append. That matters
+    once a candidate has been ADOPTED: xA/G now lives in _PLAYMAKING at 0.75,
+    so a naive append made the '+xA 0.4' variant carry xA/G TWICE — silently
+    double-weighting the leaf and scoring a config nobody would ever ship.
+    Re-running this gate after an adoption must still mean what it says.
+    """
+    names = {t[0] for t in (add or ())} | set(drop)
+    parts = [t for t in (base or PR._PLAYMAKING) if t[0] not in names]
     return parts + list(add or [])
 
 
 def main():
     print("=== #8d gate: xA + HAST candidate _PLAYMAKING leaves (lean T2) ===")
+    # xA/G was ADOPTED at 0.75 on the first run, so it is part of the baseline
+    # now. The xA rows below are therefore a weight RE-CHECK (each variant
+    # replaces the adopted leaf), not a fresh add — see _playmaking_with.
+    _live = dict((t[0], t[1]) for t in PR._PLAYMAKING)
+    if "xA/G" in _live:
+        print(f"note: xA/G is already adopted at {_live['xA/G']} — its rows "
+              "below RE-WEIGHT the live leaf rather than adding a second copy")
 
     # Is HAST live yet? An untagged pool makes every HAST variant a trivial tie.
     n_hast = query(

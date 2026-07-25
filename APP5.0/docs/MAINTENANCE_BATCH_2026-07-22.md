@@ -676,3 +676,48 @@ pool regardless of the empty ACTIVE season.
   Nothing to fix now; it is the first real case the tier machinery will handle.
 
 **Run rho ladder:** 0.681 baseline → 0.685 (FT%) → 0.688 (box-out payoff).
+
+- **9d  HAST chains + PotHAST + re-gate counter** ✅ (37a7d14), no gate.
+  New `helpers/passing_chains.py` (the PASSING graph — `networks.py` is the
+  POSSESSION graph and never touches pass tags; the stats.py passer engines are
+  per-passer aggregates that discard the edge, so neither could answer "who
+  ignites whom"). Pairs, 3-node triples, coverage counter, honest empty state.
+  `PotHAST` added to the box as the make-independent twin of HAST — the
+  PotAST-vs-AST relationship — because the tag is captured on makes AND misses,
+  so coverage counted off HAST alone understates real tagging by the league
+  miss rate. Snapshot report now prints hockey_from fill rate + the re-gate
+  line. Stale comment fixed at `2_Game_Tracker.py` (it described the STAT, not
+  the capture; the picker must not be gated on `result`).
+  Live: **0 / 3,988 shots tagged** — every surface correctly invisible today.
+
+- **9e  xA2 (secondary expected assists)** ✅ (5e8ac5f), coverage-gated, no gate
+  needed (descriptive). `XA2_CREDIT = 0.5` of the shot's expected-make value to
+  the hockey passer; `xA2` / `xA2_pts` are their own keys, surfaced beside xA
+  with a glossary entry. **Make-independent like xA** (six made and six missed
+  chains earn identical xA2 — pinned by test). Gated on `XA2_MIN_GAMES = 3`
+  tagged GAMES, not chains, so five chains in one game cannot unlock it.
+  `xA/G` untouched — it is a gate-adopted leaf, and a test asserts no secondary
+  credit leaks into it. Honesty caveat is tag SELECTION (coaches may tag the
+  second pass more when the shot drops), stated in the glossary; the make/miss
+  tag mix from `hast_coverage()` is what revisits it.
+
+- **9f  HAST re-gate re-run** ⚠ **INCONCLUSIVE — not adopted** (as predicted).
+  0 hockey assists tagged, so the leaf is inert: every player None, rho ties the
+  baseline EXACTLY at 0.688. A trivial tie is not evidence of no signal. Re-run
+  once `passing_chains.REGATE_AT` (50) is reached.
+
+  **Gate-tool bug found and fixed in the same run.** `gate_xa_hast.py` was
+  written before xA was adopted, so `_playmaking_with(add=...)` APPENDED — and
+  now that `xA/G` lives in `_PLAYMAKING` at 0.75, the "+xA 0.4" variant carried
+  `xA/G` **twice**, silently double-weighting the leaf and scoring a config
+  nobody would ship. The first re-run reported a bogus "+xA 0.4 PASS
+  (+0.0010)". `add` now SETS a leaf (drops any same-named leaf first), so
+  re-running a gate after an adoption still means what it says. Any future gate
+  cloned from this one inherits the fix.
+
+  Corrected numbers, baseline 0.688 (n=48): +xA at 0.4 / 0.6 / 0.75 all TIE —
+  the xA weight is flat across that band on the deeper 43-game pool, so the
+  adopted 0.75 stands with no reason to move it. **xA-replaces-SCPassQ FAILS
+  again (−0.0030)**, re-confirming on 43 games what #8d found on 39: the two
+  price different things (per-feed look quality vs per-game feed volume·value)
+  and both stay.

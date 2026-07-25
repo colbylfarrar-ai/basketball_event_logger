@@ -1400,6 +1400,33 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             v = SHR.stabilize_index(v, g, k_games=RATING_K_GAMES, anchor=anchor)
         return _round(v)
 
+    # ── per-category data coverage (spec Part 3 mechanisms 2/3/5) ────────────
+    # Which leaves actually carried a value for this player. `impact` and
+    # `oppadj` are computed above rather than read from `profiles`, so their
+    # presence is asked of the live z-maps — the same reason DERIVED_LEAVES
+    # exists. Read-only for now: this feeds the tier chips and the per-cohort
+    # backtest, and does NOT touch shrink until the change clears its gate.
+    _derived_maps = {"impact": impact_z, "oppadj": oppadj_z}
+
+    def _present_for(p):
+        def present(key):
+            if key in _derived_maps:
+                return _derived_maps[key].get(p) is not None
+            return profiles[p].get(key) is not None
+        return present
+
+    coverage = {}
+    for p in pids:
+        _pres = _present_for(p)
+        _prof = profiles[p]
+        _tg, _mg = _prof["GP"], _prof["manual_gp"]
+        coverage[p] = {
+            "cohort": tier_cohort(_pres, _tg, _mg),
+            "share": {c: fed_share(c, _pres)[0] for c in CATEGORIES},
+            "evidence": {c: category_evidence(c, _pres, _tg, _mg)
+                         for c in CATEGORIES},
+        }
+
     out = {}
     for p in pids:
         prof = profiles[p]
@@ -1423,6 +1450,13 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             # possession impact: raw pure-RAPM (pts/100, opp+teammate adjusted) that
             # feeds the OVERALL impact pillar — None below RAPM's min-possession gate.
             "Impact": _round((rapm or {}).get(p), 2),
+            # WHICH DATA TIER this player's rating rests on, and how much of
+            # each category their data actually fed (spec Part 3). Descriptive
+            # today — the tier chips read it and the backtest reports rho/MAE
+            # per cohort from it. It does not affect any number above.
+            "TierCohort": coverage[p]["cohort"],
+            "CatShare": coverage[p]["share"],
+            "CatEvidence": coverage[p]["evidence"],
             # measurables rating — None when no height/wingspan recorded
             "PHYSICAL":   (_rate(physical_z[p], eg)
                            if physical_z.get(p) is not None else None),

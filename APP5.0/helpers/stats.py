@@ -1129,12 +1129,54 @@ def assist_rate(game_ids=None, events=None):
 _MIN_BUCKET_FGA = 5  # below this, fall back to a coarser bucket for a stable rate
 
 
+def _sd_loc(row):
+    """The LOCATION term of the shot-DIFFICULTY key — the depth BAND.
+
+    Kept separate from `_sq_loc` on purpose: these are two different models and
+    they measured differently. `_sq_loc` (shot QUALITY) has no floor and no
+    fallback, so its cells are raw; this one falls back to a coarse key below
+    `_MIN_BUCKET_FGA` and already carries `shot_type` in its fine key. Measuring
+    one and assuming the other is exactly the mistake the roadmap warned about.
+
+    Measured out-of-sample on the live book (fit odd games / score even and the
+    reverse; 3,246 girls' 2025-2026 shots), at the shipped floor of 5:
+
+        location term        log loss      Brier
+        zone (was)            0.64798    0.21869
+        kind (the 5)          0.65120    0.21340
+        BANDS (adopted)       0.63416    0.21226
+
+    Note the middle row. KIND — the taxonomy the shot-QUALITY model adopted and
+    won with — is WORSE than the zone it would have replaced here. That is not a
+    contradiction; it follows from this key already containing `shot_type`. The
+    kind cut spends its cells re-encoding the 2/3 split (corner3 / abovebreak3)
+    that the key already knows, so it buys fewer usable cells than it costs. The
+    depth bands split where this key is still blind — 0-4 ft against everything
+    out to the arc — and win on both metrics at every floor tested.
+
+    Sweeping the floor itself (bands): 5 -> .63416, 10 -> .63341, 15 -> .63297,
+    40 -> .63549. Flat, so the floor stays at 5 and this change moves one thing.
+
+    Downstream effect: 22 players at 40+ attempts move a mean 2.93 points of
+    Shot Rating, max 7.11.
+    """
+    import helpers.shot_kinds as SK          # lazy: shot_kinds imports this module
+    x = row["shot_x"] if "shot_x" in row else row.get("x")
+    y = row["shot_y"] if "shot_y" in row else row.get("y")
+    st_ = row["shot_type"] if "shot_type" in row else row.get("value")
+    return SK.classify_band(x, y, st_)
+
+
 def shot_difficulty_rates(game_ids=None, events=None):
     """
     Sample make-rates at two granularities, used to score shot difficulty:
-      fine   = (zone, shot_type, creation, guarded)
+      fine   = (depth band, shot_type, creation, guarded)
       coarse = (shot_type, creation, guarded)   — fallback when fine is too thin
     Also returns the overall make-rate and the contested-self-3 make-rate anchor.
+
+    The fine key's location term was `zone` until 2026-07-26. See `_sd_loc` for
+    the out-of-sample measurement behind the swap, and for why this model landed
+    on a different taxonomy than the shot-quality model did.
     """
     if events is None:
         events = fetch_events(game_ids)
@@ -1153,7 +1195,7 @@ def shot_difficulty_rates(game_ids=None, events=None):
         stype    = 3 if e["shot_type"] == 3 else 2
         made     = e["shot_result"] == "make"
 
-        fkey = (e["zone"], stype, creation, guarded)
+        fkey = (_sd_loc(e), stype, creation, guarded)
         ckey = (stype, creation, guarded)
         fine[fkey]["FGA"]   += 1
         coarse[ckey]["FGA"] += 1
@@ -1178,12 +1220,19 @@ def shot_difficulty_rates(game_ids=None, events=None):
 
 
 def _bucket_make_rate(e, rates):
-    """Make-rate for one shot event, fine bucket with coarse fallback."""
+    """Make-rate for one shot event, fine bucket with coarse fallback.
+
+    The fine key is built by `_sd_loc` here and in `shot_difficulty_rates`, and
+    the two MUST agree — the xFG reprice found eleven call sites that rebuilt a
+    key inline, so changing only the producer left every consumer silently
+    missing its lookup and falling through to a default. One function, two
+    callers, no third definition.
+    """
     creation = _creation_bucket(e["pass_from_id"] is not None,
                                 e["shot_created_by_id"] is not None)
     guarded  = e["guarded_by_id"] is not None
     stype    = 3 if e["shot_type"] == 3 else 2
-    fkey = (e["zone"], stype, creation, guarded)
+    fkey = (_sd_loc(e), stype, creation, guarded)
     f = rates["fine"].get(fkey)
     if f and f["FGA"] >= _MIN_BUCKET_FGA:
         return _safe(f["FGM"], f["FGA"])

@@ -848,7 +848,7 @@ and survive thin samples; rates do not. Any spec line that quotes a per-player
 percentage — §2.4's player card bars, §1.7's prescription evidence strings,
 §1.1's crew cross — needs this same split-half check before it ships a number.
 
-## The xFG reprice — measured, NOT landed
+## The xFG reprice — ✅ LANDED (`6bc25b3`)
 
 Out-of-sample (fit on odd games, score even, and the reverse):
 
@@ -874,7 +874,25 @@ players whose shot difficulty zone over-stated — Hannah Bond's SMOE falls from
 +14.4 to +8.5, Reagan Langley's from +9.6 to +4.9. That is the cliff correction
 doing exactly what it should.
 
-**Held for review** rather than shipped: it moves live per-player ratings.
+Shipped as one shared key term, `stats._sq_loc`, **not** by editing
+`shot_quality_rates` alone: the key was rebuilt inline at eleven call sites
+across `stats`, `team_analytics`, `passing_chains` and `insights_team`, so
+changing only the producer would have left every consumer silently missing its
+lookup and falling back to 0.0. `_sq_loc` is now the single place the location
+taxonomy is decided — change it there or nowhere.
+
+Verified on the live book after landing: Bond +8.5, Langley +4.9, exactly the
+pre-flight predictions. Zone remains the display axis everywhere.
+
+**Not repriced:** `stats._bucket_make_rate` and its fine/coarse model at
+`stats.py:1149` still key on zone. Separate model, own thin-cell fallback, not
+part of this measurement — it needs its own out-of-sample run first. That is
+the obvious next piece of this thread if anyone wants it.
+
+**Test lesson worth carrying:** `tracker/test_xa2.py` asserted against a
+hard-coded `("C","pass",False)` key and so reported a *credit-rule* failure
+when the rule was untouched. Tests should ask the engine for its key, not
+restate the taxonomy.
 
 ## Traps found, worth not re-finding
 

@@ -233,9 +233,9 @@ def _cut(d, unit, heading):
         st.caption(cap)
 
 
-def render_concedes(shots, *, labels=None, own_side=True,
+def render_concedes(shots, *, labels=None, own_side=True, league_shots=None,
                     heading="What each scheme gives up — by depth"):
-    """Shot kind × defensive scheme: what the tag actually concedes.
+    """Shot band × defensive scheme: what the tag actually concedes.
 
     The cross-tab the zones could never give, because "gives up the paint" and
     "gives up layups" are the same sentence in a five-wedge system and two very
@@ -244,8 +244,22 @@ def render_concedes(shots, *, labels=None, own_side=True,
     `shots` is the tab's already-scoped located feed — shots ALLOWED when
     own_side is True (the `defense` tag is then the scheme this team ran), or
     the team's own attempts when False (the tag is the scheme it faced).
+
+    NORMALIZED AGAINST THE LEAGUE'S MIX FOR THE SAME SCHEME, which is the whole
+    point of `league_shots`. The raw version of this table produced a finding
+    that was not one: "scramble concedes 55.5% of its shots at the rim, at
+    1.009 PPS". True, and empty — a scramble IS a broken possession, so it
+    gives up rim looks by definition, everywhere, for everyone. Reading a
+    scheme against the LEAGUE-WIDE mix makes every scramble row in the app look
+    alarming and tells a coach nothing about their own.
+
+    The question a coach can act on is whether THEIR scramble concedes more rim
+    than everyone else's scramble. So each cell shows the delta against the
+    league's mix for that same scheme, and the raw share sits beside it. When
+    no league feed is supplied the table falls back to raw shares and says so,
+    rather than silently comparing against nothing.
     """
-    xt = SK.kind_by_shot_tag(shots, "defense")
+    xt = SK.kind_by_shot_tag(shots, "defense", taxonomy=SK.DISPLAY_TAXONOMY)
     if not xt:
         st.caption(
             "No scheme has enough tagged located shots yet for a depth "
@@ -255,35 +269,93 @@ def render_concedes(shots, *, labels=None, own_side=True,
     st.markdown(f"<div class='lab-hdr'>{html.escape(heading)}</div>",
                 unsafe_allow_html=True)
 
+    cells_ = SK.TAXONOMIES[SK.DISPLAY_TAXONOMY][0]
+    # The league's OWN cross-tab, same tag, same taxonomy, no per-scheme
+    # minimum — a scheme thin for one team can still be well sampled league-wide,
+    # and that is exactly the row worth comparing against.
+    lg_xt = (SK.kind_by_shot_tag(league_shots, "defense", min_n=1,
+                                 taxonomy=SK.DISPLAY_TAXONOMY)
+             if league_shots else {})
+
     rows = sorted(xt.items(), key=lambda kv: -kv[1]["_meta"]["located"])
     head = ("<table class='mini'><tr><th>Scheme</th><th>Shots</th>"
-            + "".join(f"<th>{html.escape(SK.KIND_LABELS[k].split(' /')[0])}</th>"
-                      for k in SK.KINDS)
+            + "".join(f"<th>{html.escape(SK.BAND_LABELS[k])}</th>"
+                      for k in cells_)
             + "<th>PPS</th></tr>")
     body = ""
     for key, t in rows:
         n = t["_meta"]["located"]
         if not n:
             continue
-        pts = sum(t[k]["pts"] for k in SK.KINDS)
-        cells = ""
-        for k in SK.KINDS:
+        pts = sum(t[k]["pts"] for k in cells_)
+        lg_t = lg_xt.get(key)
+        lg_n = lg_t["_meta"]["located"] if lg_t else 0
+        tds = ""
+        for k in cells_:
             sh = t[k]["share"]
             col = _KIND_COLOR.get(k, "#8b949e")
-            cells += (f"<td style='color:{col}'>{_pct(sh, 1)}</td>")
+            lg_sh = lg_t[k]["share"] if lg_t else None
+            if sh is None or lg_sh is None:
+                tds += f"<td style='color:{col}'>{_pct(sh, 1)}</td>"
+                continue
+            dl = sh - lg_sh
+            # Colour the DELTA, not the share: the share is context, the delta
+            # is the finding. Neutral under 3pp — below that it is one shot.
+            #
+            # The sign flips with the side, and getting this wrong inverts every
+            # judgment on the table. `_WORSE_IF_MORE` is written from the
+            # SHOOTER's point of view: taking more shots from 4 ft to the arc is
+            # bad for you. When these are shots you ALLOWED, forcing the
+            # opponent into that band is exactly what a defense is trying to do,
+            # so the same delta is good news.
+            bad = (dl > 0) == (k in _WORSE_IF_MORE)
+            if own_side:
+                bad = not bad
+            dcol = ("#8b949e" if abs(dl) < 0.03 else
+                    ("#f85149" if bad else "#2ecc71"))
+            tds += (f"<td><span style='color:{col}'>{_pct(sh, 1)}</span> "
+                    f"<span style='color:{dcol};font-size:10px'>"
+                    f"{dl * 100:+.0f}</span></td>")
         lbl = (labels or {}).get(key, key)
-        body += (f"<tr><td>{html.escape(str(lbl))}</td><td>{n}</td>{cells}"
-                 f"<td><b>{pts / n:.3f}</b></td></tr>")
+        pps_txt = f"{pts / n:.3f}"
+        if lg_t and lg_n:
+            lg_pps = sum(lg_t[k]["pts"] for k in cells_) / lg_n
+            dp = pts / n - lg_pps
+            pcol = ("#8b949e" if abs(dp) < 0.05 else
+                    ("#f85149" if (dp > 0) == own_side else "#2ecc71"))
+            pps_txt += (f" <span style='color:{pcol};font-size:10px'>"
+                        f"{dp:+.2f}</span>")
+        body += (f"<tr><td>{html.escape(str(lbl))}</td><td>{n}</td>{tds}"
+                 f"<td><b>{pps_txt}</b></td></tr>")
     st.markdown(head + body + "</table>", unsafe_allow_html=True)
+
     _verb = "concedes" if own_side else "gets"
-    st.caption(
-        f"Share of shots from each depth band each scheme {_verb}, and the "
-        "points per shot that comes with it. Rim shots are worth about 1.09 "
-        "points a trip in this league and the 4–10 ft band about 0.57, so two "
-        "schemes can allow the same shot COUNT and be half a point apart. "
-        f"Schemes under {SK.MIN_KIND_RATE_ATT} tagged located shots are left "
-        "off rather than shown at a sample that moves on one game. Located "
-        "shots only — untagged and unlocated attempts are not in these rows.")
+    if lg_xt:
+        st.caption(
+            f"Big number = share of shots from each band this scheme {_verb}. "
+            f"Small number = **the same scheme's league average, subtracted**, "
+            f"in share points. That subtraction is the point of the table. A "
+            f"scramble is a broken possession, so it gives up rim looks by "
+            f"definition — every team's does. Against the league as a whole "
+            f"that reads as a damning finding about your defense; against "
+            f"other people's scrambles it reads as whatever it actually is. "
+            f"Only the small number is about you. Neutral under 3 points, "
+            f"which at these samples is a shot or two. The PPS column is "
+            f"normalized the same way. Schemes under "
+            f"{SK.MIN_KIND_RATE_ATT} tagged located shots for THIS team are "
+            f"left off; the league baseline behind them has no such floor, "
+            f"because a scheme that is thin here can be well sampled "
+            f"league-wide and that is exactly the row worth comparing to. "
+            f"Located shots only.")
+    else:
+        st.caption(
+            f"Share of shots from each depth band each scheme {_verb}, and the "
+            "points per shot that comes with it. **Not normalized** — no "
+            "league feed was supplied, so these are raw shares and a scheme "
+            "that concedes rim looks by its nature (a scramble) will look "
+            "alarming here whoever is running it. "
+            f"Schemes under {SK.MIN_KIND_RATE_ATT} tagged located shots are "
+            "left off. Located shots only.")
 
 
 def league_reference():

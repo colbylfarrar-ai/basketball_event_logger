@@ -772,6 +772,24 @@ def _kind_pool(g, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _located_pool(g, season="Current"):
+    """Every LOCATED shot in the gender's tracked pool, tags attached.
+
+    The league baseline for the scheme cross-tabs. `located_shots` rather than
+    `mapped_shots` because those cross-tabs key on the `defense` / `play_type`
+    tags, which only the located feed carries, and because an approximated
+    zone-centroid coordinate must not contribute a depth to a league baseline.
+
+    Same empty guard as `_kind_pool`, for the same reason: S.fetch_events([])
+    returns EVERY event in the database, so an unscoped season would build a
+    girls' baseline out of boys' games rather than rendering nothing."""
+    gids = _gender_tracked_ids(g, season)
+    if not gids:
+        return []
+    return S.located_shots(game_ids=gids)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _located_allowed(tid, gids):
     """Tap-captured x/y shots the team ALLOWED (opponents' shots in its games) —
     the shots-against companion to _located_team. A game has two teams, so any
@@ -1727,6 +1745,7 @@ if _tdview == "Charts":
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD,
             BAD=BAD, PURPLE=PURPLE, PINK=PINK,
             located_team=_located_team, located_allowed=_located_allowed,
+            located_pool=_located_pool(gender, season_pick),
             league_pps=_LGBIND(_league_pps_located), shot_model=_LGBIND(_shot_model),
             def_view=_LGBIND(_def_view), def_families=_LGBIND(_def_families),
             def_profiles=_LGBIND(_def_profiles), cross_pd=_LGBIND(_def_cross),

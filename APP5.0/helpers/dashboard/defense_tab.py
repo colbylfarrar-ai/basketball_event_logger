@@ -374,8 +374,13 @@ def render(ctx):
     # taking another event pass. `shots` follows the side toggle, so own_side
     # is the inverse of _off exactly as the rebound map below reads it.
     if shots:
+        # league_shots normalizes each scheme against the league's mix for the
+        # SAME scheme — without it "scramble concedes rim" is a definition, not
+        # a finding. On the shots-we-GOT side the league row is the same pool
+        # read from the other end, so the same feed serves both.
         _shot_diet.render_concedes(
             shots, labels=_DEF_LABEL, own_side=not _off,
+            league_shots=getattr(ctx, "located_pool", None),
             heading=("What each scheme gives up — by depth" if not _off else
                      "What you get against each defense — by depth"))
 

@@ -198,7 +198,7 @@ for lbl, pts, txt in _story:
 _make = [t for lbl, _p, t in _story if lbl == "Shot-making"]
 if _make:
     _plain = re.sub(r"<[^>]+>", "", _make[0])
-    _nums = [int(x) for x in re.findall(r"\(([+-]\d+)\)", _plain)]
+    _nums = [float(x) for x in re.findall(r"\(([+-]\d+(?:\.\d+)?)\)", _plain)]
     ok(len(_nums) == 2,
        "the shot-making sentence shows this team's over/under AND the "
        "opponent's, so the reader can reconcile it with the margin")
@@ -206,12 +206,16 @@ if _make:
     # making = us_make MINUS them_make. Both sides push the margin the same
     # way, so a reader who ADDS them gets a wrong (often opposite) number —
     # the sentence must state the netting rather than leave it implied.
-    ok(abs((_nums[0] - _nums[1]) - _mp) < 1.6,
+    ok(abs((_nums[0] - _nums[1]) - _mp) < 0.2,
        f"the term is this team's over-performance MINUS the opponent's "
-       f"({_nums} -> {_nums[0] - _nums[1]:+d} vs {_mp:+.1f})")
-    ok("rather than cancelling" in _plain,
-       "the sentence spells out why the two figures combine instead of "
-       "netting off — the subtraction is not left for the reader to guess")
+       f"({_nums} -> {_nums[0] - _nums[1]:+.1f} vs {_mp:+.1f})")
+    # the clause must MATCH the two signs, not be asserted unconditionally
+    _reinforce = (_nums[0] > 0) != (_nums[1] > 0)
+    ok(("rather than cancelling" in _plain) == _reinforce,
+       "the 'both push the same way' clause is claimed only when the two "
+       "sides actually reinforce (one above its looks, one below)")
+    ok(("partly offset" in _plain) == (not _reinforce),
+       "and the offsetting case says so instead")
 _vol = [t for lbl, _p, t in _story if lbl == "Extra shots"]
 if _vol:
     ok("ORB" in _vol[0] and "TOV" in _vol[0],

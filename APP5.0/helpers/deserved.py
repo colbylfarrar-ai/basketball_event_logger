@@ -383,7 +383,7 @@ def deserved_verdict(d, team_name="This team"):
     return lines
 
 
-def game_story(row, team_name="This team"):
+def game_story(row, team_name="This team", min_pts=0.5):
     """One game, term by term, coach register.
 
     Returns [(label, points, sentence)] ordered largest-influence-first, so the
@@ -409,13 +409,19 @@ def game_story(row, team_name="This team"):
          f"{row['fga']} and {row['opp_fga']} FGA"),
         ("Shot-making", row["making"],
          f"<b>{row['pts_fg']:.0f}</b> from the field on "
-         f"<b>{row['xpts']:.0f}</b> expected (<b>{us_make:+.0f}</b>) vs "
+         f"<b>{row['xpts']:.0f}</b> expected (<b>{us_make:+.1f}</b>) vs "
          f"opponent <b>{row['opp_pts_fg']:.0f}</b> on "
-         f"<b>{row['opp_xpts']:.0f}</b> (<b>{them_make:+.0f}</b>) — both "
-         f"push the same way, so they add to {row['making']:+.0f} rather "
-         f"than cancelling"),
+         f"<b>{row['opp_xpts']:.0f}</b> (<b>{them_make:+.1f}</b>)"
+         # the term is OURS minus THEIRS. Whether that reads as reinforcing or
+         # as offsetting depends on the two signs, and asserting one of them
+         # unconditionally printed a false clause about half the time.
+         + (" — both push the same way, so they add rather than cancelling"
+            if (us_make > 0) != (them_make > 0)
+            else " — same direction on both ends, so they partly offset")),
         ("Free throws", float(row["ft_margin"]),
          f"<b>{row['ft_margin']:+d}</b> at the line"),
     ]
     terms.sort(key=lambda t: -abs(t[1]))
-    return [(lbl, pts, txt) for lbl, pts, txt in terms if abs(pts) >= 0.5]
+    # `min_pts=0` keeps all four, which is what a caller showing a TOTAL needs:
+    # drop a 0.3-point term and the visible rows stop adding to the margin.
+    return [(lbl, pts, txt) for lbl, pts, txt in terms if abs(pts) >= min_pts]

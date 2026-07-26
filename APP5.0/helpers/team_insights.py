@@ -607,27 +607,18 @@ def _t_deserved(tid, ts, fm, pools, d):
     z = (mean_abs - second) / 2.5
     good = signed > 0
     if key == "volume":
-        how = (f"they take **{abs(m['fga_gap']):.1f} "
-               f"{'more' if m['fga_gap'] > 0 else 'fewer'} shots a game** than "
-               f"their opponents — offensive rebounds "
-               f"**{m['orb_gap']:+.1f}** and turnovers "
-               f"**{m['tov_gap']:+.1f}** a game against them")
+        how = (f"FGA **{m['fga_gap']:+.1f}**/g · ORB **{m['orb_gap']:+.1f}** · "
+               f"TOV **{m['tov_gap']:+.1f}**")
     elif key == "making":
-        how = (f"the ball goes in **{abs(signed):.1f} points a game "
-               f"{'more' if good else 'less'}** than the quality of the looks "
-               f"predicts — the least repeatable of the four")
+        how = (f"**{signed:+.1f}**/g against what the looks were worth — the "
+               f"least repeatable of the four")
     elif key == "quality":
-        how = (f"the looks they create are worth **{abs(signed):.1f} points a "
-               f"game {'more' if good else 'less'}** than their opponents', "
-               f"before anything goes in")
+        how = (f"look value **{signed:+.1f}**/g vs opponents, before anything "
+               f"drops")
     else:
-        how = (f"the free-throw line is worth **{abs(signed):.1f} points a "
-               f"game** to them")
-    txt = (f"**Their games are decided by {label}** — {how}. Of the four "
-           f"things that move a scoreboard (extra shots · shot selection · "
-           f"shot-making · free throws), this one swings "
-           f"**±{mean_abs:.1f} points a game** for them, the largest of the "
-           f"four.")
+        how = f"**{signed:+.1f}**/g at the line"
+    txt = (f"**Decided by {label.lower()}** — ±**{mean_abs:.1f}** pts/g of "
+           f"swing, the largest of the four ({how}).")
     return {"text": txt, "score": abs(z) + 0.5, "z": z, "metric": "Margin mix",
             "n": dv["games"]}
 

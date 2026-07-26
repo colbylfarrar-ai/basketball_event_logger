@@ -739,12 +739,19 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
         "tone": "bad" if costly else "good", "n": n, "confidence": conf,
     }]
 
+    # The evidence line. It used to read "29% of your shots come from 4 ft to
+    # the arc, where you shoot 31%. The league takes 38% there. At the rim the
+    # league is at 1.09 points a shot; in that band it is 0.55." — which mixed
+    # FG% and PPS with no owner on either, never stated the DIRECTION of the
+    # gap, and so argued the opposite of the verdict above it whenever a team
+    # was BELOW the league share. Now: diet first with its signed delta, then
+    # the value gap, each labelled with whose number it is.
     fshare, lshare = ex["share"], ex["league_share"]
     fg = tbl[bad]["fg"]
-    ev = (f"{fshare * 100:.0f}% of your shots come {where}"
-          + (f", where you shoot {fg * 100:.0f}%" if fg is not None else "")
-          + f". The league takes {lshare * 100:.0f}% there. "
-            f"At the rim the league is at {lg[good]['pps']:.2f} points a shot; "
-            f"in that band it is {lg[bad]['pps']:.2f}.")
+    ev = (f"<b>Diet</b> — you {fshare * 100:.0f}% {where} vs league "
+          f"{lshare * 100:.0f}% ({(fshare - lshare) * 100:+.0f} pts of share)"
+          + (f"; you convert {fg * 100:.0f}% there" if fg is not None else "")
+          + f". <b>Value</b> — that band returns {lg[bad]['pps']:.2f} PPS "
+            f"league-wide against {lg[good]['pps']:.2f} at the rim.")
     lines.append({"text": ev, "tone": "info", "n": n, "confidence": conf})
     return lines

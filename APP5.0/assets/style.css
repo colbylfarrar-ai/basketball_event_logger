@@ -606,6 +606,47 @@ hr, [data-testid="stDivider"] {
             font-variant-numeric: tabular-nums; }
 .mini-sub { font-size: 10.5px; color: var(--subtext); margin-top: 2px; }
 
+/* ── Insights dense block ──────────────────────────────────────────────────
+   The packed information tile the Insights tab is built from: a short
+   uppercase heading with its sample size on the right, then tight label/value
+   rows or one-line findings. Deliberately smaller than .mini-tile — these are
+   laid out 3-5 across, and the whole point is how many fit on one screen.  */
+.ins-block {
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    border-left: 2px solid var(--accent); border-radius: 8px;
+    padding: 7px 10px 8px; margin-bottom: 7px;
+    font-size: 11px; line-height: 1.38;
+    transition: border-color .15s ease, transform .15s ease;
+}
+.ins-block:hover { border-color: rgba(var(--accent-rgb),0.45); transform: translateY(-1px); }
+.ins-block.good { border-left-color: var(--good); }
+.ins-block.bad  { border-left-color: var(--bad); }
+.ins-hd {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 6px;
+    font-size: 9.5px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .9px; color: var(--accent);
+    border-bottom: 1px solid var(--card-border);
+    padding-bottom: 3px; margin-bottom: 4px;
+}
+.ins-hd .n {
+    color: var(--subtext); font-weight: 600; letter-spacing: 0;
+    text-transform: none; font-size: 9px; white-space: nowrap;
+}
+.ins-row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+.ins-row .k { color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ins-row .v { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ins-row .v.good { color: var(--good); }
+.ins-row .v.bad  { color: var(--bad); }
+.ins-line { padding: 2.5px 0; color: var(--text); }
+.ins-line + .ins-line { border-top: 1px dashed rgba(128,128,128,0.16); }
+.ins-line b { color: var(--text); }
+.ins-tag {
+    display: inline-block; font-size: 8.5px; font-weight: 800; letter-spacing: .5px;
+    text-transform: uppercase; padding: 0 4px; border-radius: 4px; margin-right: 4px;
+    background: rgba(var(--accent-rgb),0.12); color: var(--accent);
+    border: 1px solid rgba(var(--accent-rgb),0.30); vertical-align: 1px;
+}
+
 /* Glossary cards (interactive searchable glossary embedded in pages) */
 .gloss-card {
     background: var(--card-bg); border: 1px solid var(--card-border);

@@ -41,8 +41,11 @@ def _names():
     return {r["id"]: r["name"] for r in query("SELECT id, name FROM players")}
 
 
-def _hdr(text):
+def _hdr(text, sub=None):
     st.markdown(f"<div class='lab-hdr'>{text}</div>", unsafe_allow_html=True)
+    if sub:
+        st.markdown(f"<div class='hdr-sub'>{sub}</div>",
+                    unsafe_allow_html=True)
 
 
 def _pct(v):
@@ -555,6 +558,18 @@ def _ported(team_id, gender, tids, fp=None):
     return out, diag
 
 
+#: Short uppercase heading per ported section, for the dense block grid on the
+#: Auto-scout tab. The long headers below stay on the "Every engine" tab, where
+#: there is room for them; a block heading has to fit one line at 9.5px.
+_PORT_SHORT = {
+    "stops": "Stops", "hero": "Ball share", "involve": "Involvement",
+    "fouls": "Foul trouble", "clock": "Foul clock", "ledger": "Possessions",
+    "runs": "Runs", "anatomy": "Run anatomy", "deserved": "Margin split",
+    "selfscout": "Self-scout", "tovs": "Giveaways", "reb": "Rebounding",
+    "scheme": "Vs schemes",
+}
+
+
 #: (key, header, caption, which tab owns the evidence)
 _PORT_SECTIONS = (
     ("stops", "🛑 Stops & kills",
@@ -599,6 +614,37 @@ _PORT_SECTIONS = (
      "Own offense grouped by the coverage it faced, normalized against the "
      "league's own use of that scheme.", "Charts"),
 )
+
+
+def ported_blocks(ctx, fp=None, cols=4):
+    """Render every ported engine's verdict as a dense block grid.
+
+    Same lines as `render_ported`, without the expanders: on the Auto-scout tab
+    these sit open and packed so a coach sees all thirteen engines at once
+    instead of opening thirteen accordions. The long-form version with its
+    captions and its "evidence lives on X" pointers stays on Every engine.
+    """
+    tid = getattr(ctx, "team_id", None)
+    tids = tuple(getattr(ctx, "tracked_ids", None) or ())
+    if not tid or not tids:
+        return
+    lines, diag = _ported(tid, ctx.gender, tids, fp=fp)
+    if not lines:
+        return
+    from helpers.dashboard import insights_brief as _BR
+    blocks = []
+    for key, _header, _cap, home in _PORT_SECTIONS:
+        v = lines.get(key)
+        if not v:
+            continue
+        blocks.append(_BR.block(
+            _PORT_SHORT.get(key, key), n=home,
+            lines=[(badge, txt) for badge, _n, txt in v]))
+    if blocks:
+        _hdr(f"Every engine — {len(blocks)} reads",
+             "Each block is one engine's verdict; the tag on the right is the "
+             "tab that owns its chart.")
+        _BR.grid(blocks, cols=cols)
 
 
 def render_ported(ctx, fp=None):

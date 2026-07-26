@@ -496,6 +496,14 @@ def render(ctx):
                         unsafe_allow_html=True)
             st.markdown(verdict_card(_sd), unsafe_allow_html=True)
 
+        # ── every engine's verdict, packed — the whole board on one screen ──
+        try:
+            from helpers.dashboard import insights_deep as _DEEP
+            _DEEP.ported_blocks(ctx, fp=_fp, cols=4)
+        except Exception as _exc:
+            st.caption(f"Engine blocks unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+
         # ── self-scout: shot tendencies — how a scout attacks this team ──────
         _render_tendencies(ctx, _tids, _fp)
 
@@ -503,34 +511,48 @@ def render(ctx):
     #  TAB 2 — PLAYERS
     # ══════════════════════════════════════════════════════════════════════════
     with _t_players:
+        from helpers.dashboard import insights_brief as _BR
+        _n_lines = sum(len(feed.get(p, [])) for p in pids)
         st.markdown("<div class='lab-hdr'>Auto-scout — every player</div>",
                     unsafe_allow_html=True)
-        st.caption(
-            "Each card is one player's most surprising true facts, measured "
-            "against the whole league rather than against this roster — so "
-            "'elite' means elite everywhere, not just here. Every line the "
-            "engines produced is shown.")
-        _cards = []
+        st.markdown(
+            f"<div class='hdr-sub'>{_n_lines} findings across "
+            f"{sum(1 for p in pids if feed.get(p))} players · scored vs the "
+            f"whole league, not this roster · every line shown</div>",
+            unsafe_allow_html=True)
+        # One dense block per player, packed 4 across. Was a 2-column
+        # gloss-card grid at 12px, which put a full roster over several
+        # screens — the comparison a coach wants is between players, so they
+        # have to be visible together.
+        _blocks = []
         for pid in pids:
             lines = feed.get(pid, [])
             if not lines:
                 continue
-            nm = table[pid]["name"]
-            body = "".join(_line_html(ln, new=_is_new(ln)) for ln in lines)
-            _cards.append(
-                (pid, lines,
-                 f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>"
-                 f"{body}</div>"))
-        if _cards:
-            _pcols = st.columns(2)
-            for i, (pid, lines, c) in enumerate(_cards):
-                with _pcols[i % 2]:
-                    st.markdown(c, unsafe_allow_html=True)
-                    _evidence_jumps(lines, key=f"insj_{pid}")
+            r = table[pid]
+            _sub = []
+            if r.get("OVERALL") is not None:
+                _sub.append(("OVR", f"{r['OVERALL']:.0f}"))
+            if r.get("MIN"):
+                _sub.append(("MIN", f"{r['MIN']:.0f}"))
+            _blocks.append(_BR.block(
+                r["name"], n=f"{len(lines)} read"
+                             f"{'s' if len(lines) != 1 else ''}",
+                rows=_sub,
+                lines=[(ln.get("metric"),
+                        f"<span style='color:var(--subtext)'>"
+                        f"n={ln.get('n')}</span> {_b(ln['text'])}")
+                       for ln in lines]))
+        if _blocks:
+            _BR.grid(_blocks, cols=4)
         else:
             st.caption("No standout signals yet — this roster reads close to "
                        "league average on the tracked splits, or needs more "
                        "games.")
+        # the NEW-chip bookkeeping still runs over every line that rendered
+        for pid in pids:
+            for ln in feed.get(pid, []):
+                _is_new(ln)
         _seen_persist()   # stamp today's first-sight dates (one write, if any)
 
         _render_boards(pids, table, cliffs)
@@ -1027,6 +1049,16 @@ def _render_deserved_games(bundle, ctx):
             f"{html.escape(g['opp_name'])} · final {g['margin']:+.0f} · "
             f"play {g['xmargin']:+.1f} · descriptive, not a rematch "
             f"projection</div>", unsafe_allow_html=True)
-        st.markdown(verdict_card([
-            (lbl, None, f"<b>{pts:+.0f}</b> — {txt}.")
-            for lbl, pts, txt in DES.game_story(g)]), unsafe_allow_html=True)
+        # ONE DECIMAL, and an explicit total. At 0 dp the four terms visibly
+        # failed to add to the margin the caption promised they added to
+        # (+18 +4 −4 −3 = 15 against a +16 final), which reads as a broken
+        # identity rather than as rounding.
+        _story = DES.game_story(g, min_pts=0)
+        st.markdown(verdict_card(
+            [(lbl, None, f"<b>{pts:+.1f}</b> — {txt}.")
+             for lbl, pts, txt in _story]
+            + [("= Final", None,
+                f"<b>{sum(p for _l, p, _t in _story):+.1f}</b> — the four "
+                f"terms above, added up. Final margin "
+                f"<b>{g['margin']:+.0f}</b>.")]),
+            unsafe_allow_html=True)

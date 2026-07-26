@@ -45,6 +45,16 @@ def _b(t):
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
 
 
+def _signed(v, dp=1):
+    """Signed number with NEGATIVE ZERO removed. `"%+.1f" % -0.04` is "-0.0",
+    which reads as a deficit that is not there — and on a four-term split whose
+    whole promise is that the terms add up, a phantom minus is exactly the kind
+    of thing that makes a coach stop trusting the page."""
+    if abs(v) < 0.5 / (10 ** dp):
+        v = 0.0
+    return f"{v:+.{dp}f}"
+
+
 def _hdr(text, sub=None):
     st.markdown(f"<div class='lab-hdr'>{text}</div>", unsafe_allow_html=True)
     if sub:
@@ -75,6 +85,55 @@ def _bullets(items, dense=True):
         rows.append(f"<div style='margin:{'3px' if dense else '6px'} 0;"
                     f"font-size:12.5px;line-height:1.45'>{chip}{line}</div>")
     return f"<div class='gloss-card'>{''.join(rows)}</div>"
+
+
+# ── the dense block, and the grid it packs into ──────────────────────────────
+# The unit the whole tab is built from. A block is a short uppercase heading
+# with its sample size on the right, then either label/value ROWS or one-line
+# findings. Blocks are laid 3-5 across, because the thing being optimised is
+# how much true information is on one screen — a coach comparing nine players
+# should not be scrolling between them.
+
+def block(title, *, rows=None, lines=None, n=None, tone=None):
+    """One compact info block (HTML string).
+
+    `rows`  = [(label, value)] or [(label, value, tone)] — the stat-line form.
+    `lines` = [html] or [(tag, html)] — the finding form, one per row.
+    Both may be given; rows render above lines.
+    """
+    body = []
+    for r in (rows or []):
+        k, v = r[0], r[1]
+        cls = f" {r[2]}" if len(r) > 2 and r[2] else ""
+        body.append(f"<div class='ins-row'><span class='k'>{html.escape(str(k))}"
+                    f"</span><span class='v{cls}'>{v}</span></div>")
+    for ln in (lines or []):
+        if isinstance(ln, (tuple, list)):
+            tag = (f"<span class='ins-tag'>{html.escape(str(ln[0]))}</span>"
+                   if ln[0] else "")
+            body.append(f"<div class='ins-line'>{tag}{ln[1]}</div>")
+        else:
+            body.append(f"<div class='ins-line'>{ln}</div>")
+    nbit = (f"<span class='n'>{html.escape(str(n))}</span>"
+            if n not in (None, "") else "")
+    cls = f" {tone}" if tone else ""
+    return (f"<div class='ins-block{cls}'>"
+            f"<div class='ins-hd'><span>{html.escape(str(title))}</span>"
+            f"{nbit}</div>{''.join(body)}</div>")
+
+
+def grid(blocks, cols=4):
+    """Lay blocks into `cols` columns, filling COLUMN-WISE so the tallest
+    block does not leave a ragged hole beside it. Streamlit columns are
+    independent stacks, so distributing round-robin keeps them even."""
+    if not blocks:
+        return
+    cols = max(1, min(cols, len(blocks)))
+    buckets = [[] for _ in range(cols)]
+    for i, b in enumerate(blocks):
+        buckets[i % cols].append(b)
+    for col, items in zip(st.columns(cols), buckets):
+        col.markdown("".join(items), unsafe_allow_html=True)
 
 
 def _tile(label, value, sub="", tone=None):
@@ -117,32 +176,51 @@ def _margin_bar(means):
             f"<div style='position:absolute;left:50%;top:-2px;width:1px;"
             f"height:15px;background:var(--subtext);opacity:.45'></div></div>"
             f"<div style='width:52px;font-size:11.5px;font-weight:800;"
-            f"color:{colour}'>{v:+.1f}</div></div>")
+            f"color:{colour}'>{_signed(v)}</div></div>")
     return ("<div class='gloss-card' style='padding:11px 14px'>"
             + "".join(rows) + "</div>")
 
 
 def _identity(des):
-    """The one-line read on what actually decides this team's games."""
+    """The one-line read on what actually decides this team's games.
+
+    Two quantities, and conflating them writes a false sentence. `mean_abs` is
+    how hard a term SWINGS game to game — it is what makes a term decisive.
+    `signed` is whether the team is ahead or behind on it over the season. A
+    term can swing ±8.8 pts/g and net +0.7: that team is not "winning on
+    volume", it is being decided by volume and roughly breaking even on it.
+    The first version said "Wins on volume" off the ranking alone, and printed
+    it over a 3-5 team taking fewer shots than its opponents.
+    """
     key, label, mean_abs, signed = des["ranked_terms"][0]
     m = des["means"]
-    if key == "volume":
-        return (f"**Wins on volume.** {m['fga_gap']:+.1f} FGA/g — "
-                f"ORB {m['orb_gap']:+.1f}, TOV {m['tov_gap']:+.1f}. "
-                f"Swings ±{mean_abs:.1f} pts/g, the largest of the four.")
-    if key == "making":
-        return (f"**Lives and dies on shot-making.** {signed:+.1f} pts/g "
-                f"against what the looks were worth — ±{mean_abs:.1f} pts/g, "
-                f"the largest of the four and the least repeatable. "
-                + ("The record is running ahead of the process."
-                   if signed > 0 else
-                   "The process is running ahead of the record."))
-    if key == "quality":
-        return (f"**Wins on shot selection.** Looks worth {signed:+.1f} pts/g "
-                f"more than the opponent's before anything drops — "
-                f"±{mean_abs:.1f} pts/g, the largest of the four.")
-    return (f"**Decided at the line.** {signed:+.1f} pts/g on FTs — "
-            f"±{mean_abs:.1f} pts/g, the largest of the four.")
+    # is the season-long lean material against how much the term moves?
+    lean = ("edge" if signed >= 0 else "problem")
+    flat = abs(signed) < max(1.0, 0.30 * mean_abs)
+    head = {
+        "volume": "Extra shots decide their games",
+        "making": "Shot-making decides their games",
+        "quality": "Shot selection decides their games",
+        "ft_margin": "The free-throw line decides their games",
+    }.get(key, f"{label} decides their games")
+    if flat:
+        tail = (f"±{mean_abs:.1f} pts/g of swing, but it nets only "
+                f"{_signed(signed)} — decisive game to game, close to even "
+                f"across the season.")
+    else:
+        tail = (f"±{mean_abs:.1f} pts/g of swing and a {_signed(signed)} season "
+                f"lean — their biggest {lean}.")
+    detail = {
+        "volume": f" FGA {_signed(m['fga_gap'])}/g · "
+                  f"ORB {_signed(m['orb_gap'])} · "
+                  f"TOV {_signed(m['tov_gap'])}.",
+        "making": (" Least repeatable of the four — "
+                   + ("record ahead of process."
+                      if signed > 0 else "process ahead of record.")),
+        "quality": " Look value against the opponent's, before anything drops.",
+        "ft_margin": "",
+    }.get(key, "")
+    return f"**{head}.** {tail}{detail}"
 
 
 def render(ctx, table, pids, tlines, deep_bundle, fp=None):
@@ -164,14 +242,15 @@ def render(ctx, table, pids, tlines, deep_bundle, fp=None):
 
     # ── the header strip: record + the four terms as tiles ───────────────────
     _hdr("Auto-scout", f"{n} tracked games · {w}–{l} · "
-                       f"{m['margin']:+.1f} margin/g · every point of it split "
+                       f"{_signed(m['margin'])} margin/g · every point of it split "
                        f"four ways, and the four add up exactly")
 
     _cols = st.columns(4)
     _ranked = {k: (lbl, a, s) for k, lbl, a, s in des["ranked_terms"]}
     _lead_key = des["ranked_terms"][0][0]
     _subs = {
-        "volume": f"ORB {m['orb_gap']:+.1f} · TOV {m['tov_gap']:+.1f}",
+        "volume": f"ORB {_signed(m['orb_gap'])} · "
+                  f"TOV {_signed(m['tov_gap'])}",
         "quality": "look value vs opp",
         "making": "vs what looks were worth",
         "ft_margin": "FT margin",
@@ -180,7 +259,7 @@ def render(ctx, table, pids, tlines, deep_bundle, fp=None):
         v = m.get(key, 0.0)
         lead = " ★" if key == _lead_key else ""
         _cols[i].markdown(
-            _tile(label + lead, f"{v:+.1f}", _subs.get(key, ""),
+            _tile(label + lead, _signed(v), _subs.get(key, ""),
                   tone="good" if v >= 0 else "bad"),
             unsafe_allow_html=True)
 
@@ -201,97 +280,88 @@ def render(ctx, table, pids, tlines, deep_bundle, fp=None):
         _lines.append(("Deserved", bit))
     st.markdown(_bullets(_lines), unsafe_allow_html=True)
 
-    # ── defense + runs, side by side ─────────────────────────────────────────
-    dcol, rcol = st.columns(2)
-
-    with dcol:
-        mine = allowed.get("mine") if allowed else None
-        dl = []
-        if mine and mine.get("n", 0) >= 80:
-            contest = mine.get("contest_share")
-            lg = allowed.get("league_contest")
-            if contest is not None and lg is not None:
-                sb = REL.measured("team", "contest_share_allowed")
-                dl.append((
-                    "Contest",
-                    f"<b>{contest * 100:.0f}%</b> of allowed FGA contested vs "
-                    f"<b>{lg * 100:.0f}%</b> lg "
-                    f"<span class='badge' style='margin-left:4px'>r={sb:.2f}"
-                    f"</span> — most repeatable team defensive number on the "
-                    f"book."))
-            band = allowed.get("league_band") or {}
-            labels = allowed.get("band_labels") or {}
-            pps = allowed.get("band_pps") or {}
-            gaps = sorted(
-                ((b, mine["band"].get(b, 0.0), lgs)
-                 for b, lgs in band.items()),
-                key=lambda t: -abs(t[1] - t[2]))
-            for b, share, lgs in gaps:
-                if abs(share - lgs) < 0.04:
-                    continue
-                v = pps.get(b)
-                dl.append((
-                    None,
-                    f"Allows <b>{share * 100:.0f}%</b> from "
-                    f"<b>{labels.get(b, b)}</b> vs {lgs * 100:.0f}% lg "
-                    f"({(share - lgs) * 100:+.0f})"
-                    + (f" · {v:.2f} PPS" if v is not None else "")))
-        if dl:
-            _hdr("Defense — what they make you take")
-            st.markdown(_bullets(dl), unsafe_allow_html=True)
-            st.markdown(_chips([
-                ("Opp FGA", mine["n"]),
+    # ── defense + runs as blocks, packed ─────────────────────────────────────
+    blocks = []
+    mine = allowed.get("mine") if allowed else None
+    if mine and mine.get("n", 0) >= 80:
+        contest = mine.get("contest_share")
+        lg = allowed.get("league_contest")
+        rows = [("Opp FGA", mine["n"]),
                 ("Opp PPS", f"{mine['opp_pps']:.2f}"),
-                ("Opp 3PA share", f"{mine['three_share'] * 100:.0f}%")]),
-                unsafe_allow_html=True)
+                ("Opp 3PA%", f"{mine['three_share'] * 100:.0f}%")]
+        dl = []
+        if contest is not None and lg is not None:
+            sb = REL.measured("team", "contest_share_allowed")
+            rows.insert(0, ("Contested", f"{contest * 100:.0f}%",
+                            "good" if contest >= lg else "bad"))
+            dl.append((
+                "Contest",
+                f"<b>{contest * 100:.0f}%</b> vs {lg * 100:.0f}% lg · "
+                f"r={sb:.2f} — most repeatable team defensive read on the "
+                f"book."))
+        blocks.append(block("Defense — pressure", rows=rows, lines=dl,
+                            n=f"{mine['n']} opp FGA"))
 
-    with rcol:
-        if anat:
-            import helpers.runs as RN
-            rl = []
-            for side, lbl in (("own", "Made"), ("allowed", "Allowed")):
-                s = anat.get(side) or {}
-                if not s.get("n"):
-                    continue
-                trig = RN._mode_share(s["trigger"])
-                dfn = RN._mode_share(s["defense"])
-                pts = s.get("points") or {}
-                tot = sum(pts.values())
-                bits = [f"<b>{s['n']}</b> runs · {s['avg_pts']:.0f} pts in "
-                        f"{s['avg_secs'] / 60:.1f} min"]
-                if trig and trig[1] >= 0.30:
-                    bits.append(f"{trig[1] * 100:.0f}% "
-                                f"{RN.TRIGGER_LABELS.get(trig[0], trig[0])}")
-                if dfn and dfn[1] >= 0.35:
-                    bits.append(f"{str(dfn[0]).replace('_', ' ')} "
-                                f"{dfn[1] * 100:.0f}%")
-                if tot:
-                    top = max(pts.items(), key=lambda kv: kv[1])
-                    where = ("FT" if top[0] == "ft"
-                             else RN._band_phrase(top[0]))
-                    bits.append(f"{top[1] / tot * 100:.0f}% from {where}")
-                rl.append((lbl, " · ".join(bits)))
-            if rl:
-                _hdr("Runs — 10-0 swings")
-                st.markdown(_bullets(rl), unsafe_allow_html=True)
+        band = allowed.get("league_band") or {}
+        labels = allowed.get("band_labels") or {}
+        pps = allowed.get("band_pps") or {}
+        drows = []
+        for b, lgs in sorted(band.items(),
+                             key=lambda kv: -abs(mine["band"].get(kv[0], 0.0)
+                                                 - kv[1])):
+            share = mine["band"].get(b, 0.0)
+            v = pps.get(b)
+            drows.append((
+                labels.get(b, b),
+                f"{share * 100:.0f}% <span style='color:var(--subtext);"
+                f"font-weight:600'>vs {lgs * 100:.0f}% "
+                f"({(share - lgs) * 100:+.0f})"
+                + (f" · {v:.2f}" if v is not None else "") + "</span>"))
+        if drows:
+            blocks.append(block("Defense — shots allowed", rows=drows,
+                                n="share vs league · PPS"))
+
+    if anat:
+        import helpers.runs as RN
+        for side, lbl in (("own", "Runs made"), ("allowed", "Runs allowed")):
+            s = anat.get(side) or {}
+            if not s.get("n"):
+                continue
+            trig = RN._mode_share(s["trigger"])
+            dfn = RN._mode_share(s["defense"])
+            pts = s.get("points") or {}
+            tot = sum(pts.values())
+            rows = [("Count", s["n"]),
+                    ("Avg", f"{s['avg_pts']:.0f} pts"),
+                    ("Length", f"{s['avg_secs'] / 60:.1f} min")]
+            if trig:
+                rows.append((RN.TRIGGER_LABELS.get(trig[0], trig[0]).lstrip(),
+                             f"{trig[1] * 100:.0f}%"))
+            if dfn:
+                rows.append((str(dfn[0]).replace("_", " "),
+                             f"{dfn[1] * 100:.0f}%"))
+            if tot:
+                top = max(pts.items(), key=lambda kv: kv[1])
+                rows.append(("FT" if top[0] == "ft"
+                             else RN._band_phrase(top[0]),
+                             f"{top[1] / tot * 100:.0f}%"))
+            blocks.append(block(lbl, rows=rows, n="10-0",
+                                tone="good" if side == "own" else "bad"))
+
+    if blocks:
+        _hdr("Defense & runs")
+        grid(blocks, cols=4)
 
     _team_flags(tlines)
 
 
-def _team_flags(tlines):
-    """Every team-level generator line that fired, one per row, uncapped."""
+def _team_flags(tlines, cols=3):
+    """Every team-level generator line that fired, one block each, uncapped."""
     if not tlines:
         return
     _hdr(f"Team flags — {len(tlines)} fired",
          "Biggest gaps from the league field, strongest first. Sample-gated.")
-    rows = []
-    for ln in tlines:
-        rows.append(
-            f"<div style='margin:3px 0;font-size:12.5px;line-height:1.45'>"
-            f"<span class='badge accent' style='margin-right:6px'>"
-            f"{html.escape(str(ln['metric']))}</span>"
-            f"<span style='color:var(--subtext);font-size:10px;"
-            f"margin-right:5px'>n={ln.get('n')}</span>"
-            f"{_b(str(ln['text']))}</div>")
-    st.markdown(f"<div class='gloss-card'>{''.join(rows)}</div>",
-                unsafe_allow_html=True)
+    grid([block(str(ln.get("metric") or "Read"),
+                n=f"n={ln.get('n')}",
+                lines=[_b(str(ln["text"]))])
+          for ln in tlines], cols=cols)

@@ -219,6 +219,28 @@ ok(_bsrc.count("_team_flags(") <= 3,
    "the team feed has a single render path")
 
 
+# ── the dense block grid ─────────────────────────────────────────────────────
+# The tab is scored on how much true information is on one screen. Blocks are
+# the unit; a regression to the old 2-column gloss-card layout would put a full
+# roster over several screens and is what these assertions exist to catch.
+print("\nthe dense block grid is doing the layout")
+ok(BODY.count("ins-block") >= 12,
+   f"blocks are the layout unit ({BODY.count('ins-block')} rendered)")
+ok("ins-hd" in BODY, "blocks carry their short uppercase heading")
+ok("ins-row" in BODY or "ins-line" in BODY,
+   "blocks carry tight rows / one-line findings")
+ok("Every engine —" in BODY,
+   "the ported engine verdicts are packed onto Auto-scout as blocks, not "
+   "only hidden behind the Every-engine accordions")
+import helpers.dashboard.insights_brief as _IBmod            # noqa: E402
+ok(hasattr(_IBmod, "block") and hasattr(_IBmod, "grid"),
+   "the block/grid helpers are exported for other sections to reuse")
+_g = _IBmod.grid.__doc__ or ""
+ok("COLUMN-WISE" in _g or "round-robin" in _g,
+   "the grid distributes round-robin so one tall block does not leave a "
+   "ragged hole beside it")
+
+
 # ── caps are gone ────────────────────────────────────────────────────────────
 print("\nno section is silently truncated")
 import helpers.dashboard.insights_tab as IT          # noqa: E402

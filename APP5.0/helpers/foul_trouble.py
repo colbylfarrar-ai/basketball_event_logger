@@ -62,6 +62,15 @@ TROUBLE_LEVELS = (2, 3, 4)
 #: a timestamp. Every level renders that clears the game gate.
 CLOCK_LEVELS = (2, 3, 4, 5)
 
+#: Five personals is a disqualification, so a player-game cannot hold six. The
+#: prod book has two that do (game 187/player 26, game 15342/player 550, six
+#: DISTINCT rows each — not duplicates and not the primary/secondary inversion,
+#: which yields 10-11). Founder's call: that is a stat-keeper slip, so every
+#: engine here CLAMPS the count and a sixth foul is simply the fifth. Clamping
+#: rather than dropping the row keeps the disqualification timestamp, which is
+#: the thing the clock is for.
+MAX_PERSONALS = 5
+
 #: A player needs this many games reaching a level before her bench cost is
 #: reported at it. One game is an anecdote about one night's game state.
 MIN_GAMES_AT_LEVEL = 3
@@ -165,7 +174,7 @@ def bench_cost(game_ids=None, events=None, floor=None, team_id=None,
             f = e.get("secondary_player_id")     # THE FOULER. See module docs.
             if f is None:
                 continue
-            counts[f] += 1
+            counts[f] = min(counts[f] + 1, MAX_PERSONALS)   # see MAX_PERSONALS
             if counts[f] in levels:
                 nth[f][counts[f]] = i
 
@@ -429,6 +438,7 @@ def foul_clock(game_ids=None, events=None, team_id=None, player_id=None,
     agg = defaultdict(lambda: defaultdict(list))
     for (pid, _gid), stamps in per.items():
         stamps.sort()
+        stamps = stamps[:MAX_PERSONALS]      # a 6th personal is a stat-keeper slip
         for level in levels:
             if len(stamps) >= level:
                 agg[pid][level].append(stamps[level - 1])
@@ -512,6 +522,7 @@ def early_fouls(game_ids=None, events=None, team_id=None, levels=EARLY_LEVELS):
         lambda: {"games": 0, "early": 0, "quarters": defaultdict(int)}))
     for (pid, _gid), stamps in per.items():
         stamps.sort()
+        stamps = stamps[:MAX_PERSONALS]      # see MAX_PERSONALS
         for level in levels:
             if len(stamps) < level:
                 continue
@@ -621,7 +632,9 @@ def carried_load(game_ids=None, events=None, floor=None, team_id=None,
             if e.get("event_type") == "foul":
                 f = e.get("secondary_player_id")      # THE FOULER
                 if f is not None:
-                    fouls[f] += 1
+                    # Clamped: a 6th personal is a stat-keeper slip, and without
+                    # this `by_state` would grow a nonsense "6 fouls" row.
+                    fouls[f] = min(fouls[f] + 1, MAX_PERSONALS)
 
     out = {}
     for pid, by_q in cell.items():

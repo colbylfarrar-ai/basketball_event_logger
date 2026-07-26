@@ -138,23 +138,34 @@ for x in ev:
     if x["event_type"] == "foul" and x["secondary_player_id"] is not None:
         per_game[x["game_id"]][x["secondary_player_id"]] += 1
 worst = max((n for c in per_game.values() for n in c.values()), default=0)
-_over = [(g, p, n) for g, c in per_game.items() for p, n in c.items() if n > 5]
-# The bar is the INVERSION, not the tracker's data entry. Reading
-# primary_player_id gives 10-11 fouls in a game; six is a mistyped row. This
-# assertion used to demand <= 5 and went red on the PROD book (max 6) over two
-# bad player-games out of thousands, which is a data-quality report, not a
-# reason to fail the engine's regression suite.
+# The bar here is the INVERSION, which yields 10-11 fouls in a game. A raw six
+# is a stat-keeper slip: the prod book has two player-games with six DISTINCT
+# foul rows, and by founder's call those are clamped, not flagged. So this
+# assertion checks the shape of the read, and the clamp below checks that no
+# engine can ever surface the sixth.
 ok(worst <= 7,
-   f"fouls are read off the FOULER, not the player fouled (max {worst} in a "
-   f"game; reading primary_player_id instead gives 10-11)")
-if _over:
-    # Surfaced rather than swallowed: a player cannot commit six, so each of
-    # these is a bad row worth fixing in the Event Editor.
-    print(f"       note: {len(_over)} player-game(s) carry MORE than 5 fouls, "
-          f"which is impossible — {_over}")
-ok(len(_over) <= 5,
-   f"and only a handful of hand-entry errors exist ({len(_over)}); a systemic "
-   f"miscount would put this in the hundreds")
+   f"fouls are read off the FOULER, not the player fouled (max {worst} raw "
+   f"rows in a game; reading primary_player_id instead gives 10-11)")
+
+print("\n-- a 6th personal is clamped to the 5th ----------------------------")
+
+import helpers.lineups as _LU                        # noqa: E402
+_live_floor = _LU._event_floor(gids)   # NOT the synthetic `floor` fixture above
+
+ok(FT.MAX_PERSONALS == 5,
+   "five personals is a disqualification, so a player-game cannot hold six")
+_ck_all = FT.foul_clock(events=ev)
+ok(all(lv <= FT.MAX_PERSONALS for d in _ck_all.values() for lv in d),
+   "the clock never reports a level above the 5th")
+_carr_all = FT.carried_load(events=ev, floor=_live_floor, team_id=1)
+ok(all(f <= FT.MAX_PERSONALS
+       for d in _carr_all.values() for (_q, f) in d["by_state"]),
+   "and no carried-state row reads '6 fouls', which is what the raw counter "
+   "would have produced")
+_bench_all = FT.bench_cost(game_ids=gids, events=ev, team_id=1)
+ok(all(lv <= FT.MAX_PERSONALS
+       for d in _bench_all.values() for lv in d),
+   "nor does any bench-cost level")
 
 bench = FT.bench_cost(game_ids=gids, events=ev, team_id=1)
 ok(len(bench) > 0, f"bench cost built for {len(bench)} rotation players")
@@ -231,8 +242,6 @@ ok(all(lv in FT.EARLY_LEVELS for by in _early.values() for lv in by),
    f"EARLY is undefined for the 5th (no 5th quarter to beat) — levels "
    f"{FT.EARLY_LEVELS}")
 
-import helpers.lineups as _LU                        # noqa: E402
-_live_floor = _LU._event_floor(gids)   # NOT the synthetic `floor` above
 _carr = FT.carried_load(events=ev, floor=_live_floor, team_id=1)
 ok(_carr, f"carried_load built for {len(_carr)} players")
 ok(FT.CARRY_MIN_QUARTER == 2,

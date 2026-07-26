@@ -546,8 +546,23 @@ def _ported(team_id, gender, tids, fp=None):
 
     def _clock():
         import helpers.foul_trouble as FT
-        return FT.foul_clock_lines(
-            FT.foul_clock(events=ev, team_id=team_id), names=names, level=2)
+        # Every level, not just the second: three in the third and four in the
+        # fourth were computed and then discarded by a `level=2` at both render
+        # sites. The quarter-relative pair rides with the clock because all three
+        # answer "is it early?" — the clock in absolute time, the other two
+        # against the quarter the foul landed in.
+        lines = FT.foul_clock_lines(
+            FT.foul_clock(events=ev, team_id=team_id), names=names)
+        try:
+            import helpers.lineups as LU
+            floor = LU._event_floor(gids)
+        except Exception:
+            floor = None
+        lines += FT.quarter_rule_lines(
+            FT.early_fouls(events=ev, team_id=team_id),
+            FT.carried_load(events=ev, floor=floor, team_id=team_id),
+            names=names)
+        return lines
 
     # ── engines with no verdict of their own; the lines are built here ───────
     def _ledger():

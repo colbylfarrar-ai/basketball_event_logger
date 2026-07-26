@@ -1132,6 +1132,19 @@ def _foul_clock(_tids, _pids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _foul_quarters(tid, _tids):
+    """(early, carried) — the two quarter-relative reads.
+
+    A foul count that has reached the quarter number projects to fouling out,
+    which is the rule of thumb a coach actually uses and one the half-time split
+    cannot express: three in the third and four in the fourth are each their own
+    decision.
+    """
+    return (FTR.early_fouls(game_ids=list(_tids), team_id=tid),
+            FTR.carried_load(game_ids=list(_tids), team_id=tid))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _hero_ball(g, season):
     """Scoring/creation concentration for EVERY team in the gender pool
     (spec Part 5j). Cached per (gender, season) rather than per team because
@@ -4131,9 +4144,11 @@ def _fx_foul_trouble():
     # answer it — a second foul at 6:10 of the first and one at 1:20 of the
     # second are the same row there and completely different decisions.
     _clk = _foul_clock(_tids, tuple(sorted(_full)))
-    _cv = FTR.foul_clock_lines(_clk, names=_nm, level=2)
-    if _cv or _fv:
-        _verdict_lines(_cv + _fv)
+    _cv = FTR.foul_clock_lines(_clk, names=_nm)      # every level, not just 2
+    _early, _carried = _foul_quarters(team_id, _tids)
+    _qv = FTR.quarter_rule_lines(_early, _carried, names=_nm)
+    if _cv or _fv or _qv:
+        _verdict_lines(_cv + _qv + _fv)
 
     if _clk:
         _crows = []
@@ -4142,6 +4157,10 @@ def _fx_foul_trouble():
                 _d = _lv[_level]
                 if _d["n"] < FTR.MIN_GAMES_AT_LEVEL:
                     continue
+                # "On pace" = this foul arrived BEFORE its own quarter number,
+                # which is the rule of thumb that projects to fouling out. It
+                # is the column the half-time split could not express.
+                _eq = ((_early.get(_pid) or {}).get(_level) or {})
                 _crows.append({
                     "Player": _full.get(_pid, f"#{_pid}"),
                     "Foul": _level,
@@ -4149,6 +4168,8 @@ def _fx_foul_trouble():
                     "Typical": FTR.clock_label(_d["median"]),
                     "Earliest": FTR.clock_label(_d["earliest"]),
                     "Before half": f"{_d['pre_half']}/{_d['n']}",
+                    "Before Q{n}": (f"{_eq['early']}/{_eq['games']}"
+                                    if _eq.get("games") else "—"),
                     "_sort": _d["median"],
                 })
         if _crows:

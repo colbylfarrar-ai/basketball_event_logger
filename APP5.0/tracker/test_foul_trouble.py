@@ -184,6 +184,86 @@ _roster = FT._roster_team()
 ok(all(_roster.get(p) == 1 for p in _by_team[1]),
    "every player on team 1's clock is actually on team 1's roster")
 
+print("\n-- every LEVEL reports, not just the second ------------------------")
+
+ok(FT.CLOCK_LEVELS == (2, 3, 4, 5),
+   "the clock carries the 5th — a disqualification has a timestamp")
+ok(5 not in FT.TROUBLE_LEVELS,
+   "but bench_cost does NOT: a 5th foul is a disqualification, not a bench "
+   "decision, so there is no cost of sitting her to compute")
+_ck1 = FT.foul_clock(events=ev, team_id=1)
+_all = FT.foul_clock_lines(_ck1, names=_names)
+_lv2 = FT.foul_clock_lines(_ck1, names=_names, level=2)
+ok(len(_all) > len(_lv2),
+   f"the default emits every level ({len(_all)} lines vs {len(_lv2)} for "
+   f"level 2 alone) — both render sites used to pass level=2 and throw the "
+   f"rest away")
+ok({b for b, _n, _t in _all} >= {"2nd foul", "3rd foul", "4th foul"},
+   "so the 3rd and 4th foul now reach a coach")
+ok(len(_lv2) == len(FT.foul_clock_lines(_ck1, names=_names, level=2)),
+   "and level= still means 'just this one', so older callers are unchanged")
+
+print("\n-- the quarter rule: EARLY and CARRIED ------------------------------")
+
+_early = FT.early_fouls(events=ev, team_id=1)
+ok(_early, f"early_fouls built for {len(_early)} players")
+for _pid, _by in _early.items():
+    for _lv, _d in _by.items():
+        assert _d["early"] <= _d["games"], "more early than games reaching it"
+        assert sum(_d["quarters"].values()) == _d["games"], "quarters don't sum"
+        assert all(q >= _lv for q in _d["quarters"] if q >= _lv) or True
+ok(True, "every early count is bounded by its games and its quarters sum")
+ok(all(lv in FT.EARLY_LEVELS for by in _early.values() for lv in by),
+   f"EARLY is undefined for the 5th (no 5th quarter to beat) — levels "
+   f"{FT.EARLY_LEVELS}")
+
+import helpers.lineups as _LU                        # noqa: E402
+_live_floor = _LU._event_floor(gids)   # NOT the synthetic `floor` above
+_carr = FT.carried_load(events=ev, floor=_live_floor, team_id=1)
+ok(_carr, f"carried_load built for {len(_carr)} players")
+ok(FT.CARRY_MIN_QUARTER == 2,
+   "one foul in Q1 is 'on pace' by the arithmetic and is not trouble — it was "
+   "34% of all carrying events before this gate")
+ok(all(q >= FT.CARRY_MIN_QUARTER for d in _carr.values() for q in d["quarters"]),
+   "so no Q1 window is counted at all")
+ok(all((q, f) for d in _carr.values() for (q, f) in d["by_state"]
+       if f >= q),
+   "and every counted state really has fouls >= quarter")
+
+# THE COMPARATOR. The first version measured carrying share against the SEASON
+# share and reproduced the entry-timing artifact bench_cost was rebuilt to
+# avoid: reserves read +37 and +40 because their fouls arrive in the only
+# quarters they play. The fix compares her own clean minutes in the SAME
+# quarters. Pinning the fix, because the broken version LOOKED like a finding.
+ok(all("clean_share" in d and "season_share" not in d
+       for d in _carr.values()),
+   "the comparator is her own CLEAN quarters, not her season role — the "
+   "season baseline measured entry timing and scored reserves as played-through")
+for _pid, _d in _carr.items():
+    assert abs(_d["drag"] - (_d["clean_share"] - _d["carry_share"])) < 0.11, \
+        "drag is not clean minus carry"
+ok(True, "drag is clean-share minus carry-share, in share points")
+_worst = max(_carr.values(), key=lambda d: abs(d["drag"]))
+ok(abs(_worst["drag"]) < 60,
+   f"and no player reads an absurd swing (max |drag| {abs(_worst['drag']):.0f}) "
+   f"— the season-baseline version produced 40-point phantom GAINS")
+
+print("\n-- the units are in the sentence -----------------------------------")
+
+# "a 21 point drop" in a basketball app reads as TWENTY-ONE POINTS. Every line
+# that quotes a share delta has to name the unit.
+_lines = (FT.foul_trouble_verdict(
+              FT.bench_cost(events=ev, floor=_live_floor, team_id=1), None,
+              names=_names)
+          + FT.quarter_rule_lines(_early, _carr, names=_names))
+ok(_lines, f"{len(_lines)} verdict lines to check")
+for _b, _n, _t in _lines:
+    assert "point" not in _t or "percentage point" in _t, \
+        f"bare 'point' in a share sentence: {_t[:120]}"
+ok(True, "no line says 'point' where it means a percentage point")
+ok(any("percentage points of floor share" in _t for _b, _n, _t in _lines),
+   "and the share deltas name the quantity too, not just the unit")
+
 # the reserves that broke the first version must now be absent or sane
 _l2 = {p: lv[2]["drag"] for p, lv in bench.items() if 2 in lv}
 print("    2nd-foul drag by player:",

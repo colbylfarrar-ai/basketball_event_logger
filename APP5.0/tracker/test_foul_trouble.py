@@ -156,6 +156,34 @@ ok(True, "every live row obeys its gates and its own arithmetic")
 ok(all("in_game_drag" in d for lv in bench.values() for d in lv.values()),
    "the timing-sensitive in-game figure is kept, clearly named, as context")
 
+print("\n-- the clock is SCOPED to the team (trap 5) -------------------------")
+
+# `team_id` was accepted by foul_clock and silently dropped. Both call sites
+# passed it, so nothing looked wrong at the call, and every one of the 21
+# girls' teams rendered the SAME three league-wide names -- a coach opening her
+# own page read another program's players. The tell is exactly this: identical
+# output across two different teams.
+_names = {r["id"]: r["name"]
+          for r in __import__("database.db", fromlist=["query"]).query(
+              "SELECT id, name FROM players")}
+_by_team = {}
+for _tid in (1, 2, 3):
+    _ck = FT.foul_clock(events=ev, team_id=_tid)
+    _by_team[_tid] = tuple(sorted(_ck))
+ok(any(_by_team[a] != _by_team[b]
+       for a in _by_team for b in _by_team if a < b),
+   "two different teams do NOT get the same set of players")
+ok(all(_by_team.values()), "and each team still gets a non-empty clock")
+
+_unscoped = FT.foul_clock(events=ev)
+ok(len(_unscoped) > len(_by_team[1]),
+   f"the unscoped call is still league-wide ({len(_unscoped)} players vs "
+   f"{len(_by_team[1])} for team 1) -- scoping is opt-in, callers unchanged")
+
+_roster = FT._roster_team()
+ok(all(_roster.get(p) == 1 for p in _by_team[1]),
+   "every player on team 1's clock is actually on team 1's roster")
+
 # the reserves that broke the first version must now be absent or sane
 _l2 = {p: lv[2]["drag"] for p, lv in bench.items() if 2 in lv}
 print("    2nd-foul drag by player:",

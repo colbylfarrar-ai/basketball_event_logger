@@ -362,6 +362,19 @@ def _foul_secs(e):
         return None
 
 
+def _roster_team():
+    """{player_id: team_id} straight off the roster.
+
+    `bench_cost` resolves a player's team from the on-floor sets because it
+    needs that map anyway; the clock does not, and building an `_event_floor`
+    just to answer "whose player is this" would cost a join for nothing.
+    """
+    from database.db import query
+    return {r["id"]: r["team_id"]
+            for r in query("SELECT id, team_id FROM players")
+            if r["team_id"] is not None}
+
+
 def foul_clock(game_ids=None, events=None, team_id=None, player_id=None,
                levels=TROUBLE_LEVELS):
     """{pid: {level: {n, times, median, earliest, latest, pre_half}}}.
@@ -376,9 +389,17 @@ def foul_clock(game_ids=None, events=None, team_id=None, player_id=None,
     book it yields player-games with 10 and 11 fouls, which is impossible under
     a five-foul disqualification. Same trap bench_cost documents; it is the
     single easiest way to get this whole module backwards.
+
+    `team_id` FILTERS, and used not to. It was accepted and silently dropped, so
+    every caller got the same league-wide leaderboard: all 21 girls' teams
+    rendered the identical three names, and a coach opening her own page read
+    another program's players. Both call sites passed it in good faith. An
+    accepted-and-ignored argument is worse than a missing one — the caller looks
+    correct.
     """
     if events is None:
         events = S.fetch_events(game_ids)
+    roster = _roster_team() if team_id is not None else None
 
     # per (player, game): the ordered stamps of her own fouls
     per = defaultdict(list)
@@ -389,6 +410,8 @@ def foul_clock(game_ids=None, events=None, team_id=None, player_id=None,
         if fouler is None:
             continue
         if player_id is not None and fouler != player_id:
+            continue
+        if roster is not None and roster.get(fouler) != team_id:
             continue
         secs = _foul_secs(e)
         if secs is None:

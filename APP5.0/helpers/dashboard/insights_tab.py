@@ -187,15 +187,36 @@ def _jump_btn(view, label, key):
         _request_view(view)
 
 
-def _data_fp():
+def _data_fp(gids=None):
     """Cheap change signature for everything this tab computes from: the event
     book (count + max id) and the finished scores (results_fingerprint). Passed
     into every cached wrapper so the heavy league engine recomputes only when
     data actually changes — with the old bare ttl=300 the whole tab silently
     re-ran the engine every 5 minutes, which is the 'Insights sometimes hangs
-    on load' report. One aggregate query, a few ms."""
+    on load' report. One aggregate query, a few ms.
+
+    `gids` SCOPES the event half to the games this tab actually reads, and
+    without it the count was over the WHOLE `game_events` table. That made the
+    key global: any tracker write anywhere — another team, the other gender, an
+    archived season — moved the fingerprint for every team's Insights page and
+    forced the full cold rebuild (measured 84.7s on prod against 0.97s warm).
+    On a 21-team league that is the common case, not the edge one, and none of
+    those writes touch what this pool computes.
+
+    The score half stays GLOBAL on purpose. Scores move a couple of times a
+    night rather than ten times a game, so it is not what was busting the cache,
+    and a conservative key there is the cheap way to stay correct about the
+    league-wide rating inputs. Being too eager here costs 85 seconds; being too
+    lazy shows a coach numbers that are quietly wrong.
+    """
     import helpers.team_ratings as TR
-    ev = query("SELECT COUNT(*) c, COALESCE(MAX(id),0) m FROM game_events")[0]
+    if gids:
+        marks = ",".join("?" * len(gids))
+        ev = query(f"SELECT COUNT(*) c, COALESCE(MAX(id),0) m FROM game_events "
+                   f"WHERE game_id IN ({marks})", tuple(gids))[0]
+    else:
+        ev = query("SELECT COUNT(*) c, COALESCE(MAX(id),0) m "
+                   "FROM game_events")[0]
     return (ev["c"], ev["m"], TR.results_fingerprint())
 
 
@@ -425,7 +446,10 @@ def _shot_diet_lines(ctx):
 
 def render(ctx):
     # (Team at a glance moved to the Overview tab — UI_DENSITY_PLAN phase A.)
-    _fp = _data_fp()          # cache key: recompute only when data changes
+    # Cache key: recompute only when data THIS POOL reads changes. Scoped to the
+    # gender+season tracked pool, which is exactly what _league and every other
+    # cached wrapper below compute over.
+    _fp = _data_fp(getattr(ctx, "season_gp", None))
     table, feed, roles, impact, cliffs = _league(
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "season_gp", None), fp=_fp)

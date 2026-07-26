@@ -440,6 +440,198 @@ def _t_runs(tid, ts, fm, pools, d):
             "n": r.get("gp")}
 
 
+def _t_allowed_diet(tid, ts, fm, pools, d):
+    """WHERE this defense makes opponents shoot from — the defensive mirror of
+    the shot-diet read, off `defense_profile.team_allowed_diet`.
+
+    The engine has existed since the defensive port and no generator read it;
+    this is that generator.
+
+    Reliability footing, and it is the reason this read is about SHARES and
+    nothing else: team band SHARE measures SB .88, the strongest team number in
+    the book, while team per-band FG% is deliberately ABSENT from
+    `reliability.MEASURED` because it cannot be measured on a six-team book.
+    So this says where the shots came from and never how well they were shot.
+
+    `contest_share` rides along as context and is a REAL defensive number, not
+    a tracking artefact — `guarded_by_id` records who actually affected the
+    shot, so an untagged attempt is an uncontested one. Measured 2026-07-25 it
+    is the most repeatable team defensive read in the book (SB .74 pooled,
+    .69 within-gender once each game is demeaned). See
+    `reliability.CONTEST RATE ALLOWED IS A REAL DEFENSIVE TRAIT`.
+    """
+    ad = d.get("allowed_diet")
+    if not ad:
+        return None
+    mine, lg, val = ad.get("mine"), ad.get("league_band"), ad.get("band_pps")
+    if not mine or not lg or (mine.get("n") or 0) < 80:
+        return None
+    # the band this defense concedes at the most unusual rate
+    best = None
+    for band, lg_share in lg.items():
+        sd = ad.get("band_sd", {}).get(band)
+        if not sd or sd <= 0:
+            continue
+        share = mine["band"].get(band, 0.0)
+        z = (share - lg_share) / sd
+        if best is None or abs(z) > abs(best[1]):
+            best = (band, z, share, lg_share)
+    if best is None or abs(best[1]) < 1.1:
+        return None
+    band, z, share, lg_share = best
+    label = ad.get("band_labels", {}).get(band, band)
+    pps = (val or {}).get(band)
+    pts = (share - lg_share) * 100
+    more = pts > 0
+    # Is conceding MORE of this band good or bad? Compare its value to the
+    # league's average shot — the 4ft-to-arc band is the cheap one to give up.
+    # The margin is load-bearing: an arc-3 is worth .81 against a .77 average
+    # attempt in the girls' book, and calling that "the good stuff" over a
+    # four-hundredths gap is an overclaim. Inside the margin the band is priced
+    # as ordinary and the sentence says so.
+    avg = ad.get("league_pps")
+    if pps is None or avg is None:
+        return None
+    VALUE_MARGIN = 0.10
+    if abs(pps - avg) < VALUE_MARGIN:
+        txt = (f"**Their defense steers you {'toward' if more else 'away from'} "
+               f"{label}** — **{share * 100:.0f}% of the shots they allow** "
+               f"come from there, against {lg_share * 100:.0f}% league-wide "
+               f"({pts:+.0f} pts of share, {mine['n']} opponent attempts). "
+               f"Those shots are worth **{pps:.2f} points each**, about what "
+               f"an average attempt is worth ({avg:.2f}) — so this is a real "
+               f"shape to their defense rather than a good or bad one. It "
+               f"tells you what your offense will be asked to do against "
+               f"them, not that they are conceding something cheap.")
+        return {"text": txt, "score": abs(z), "z": z,
+                "metric": "Shots allowed", "n": mine["n"]}
+    cheap = pps < avg
+    if more and cheap:
+        head = "**Their defense funnels you into the worst shot on the floor**"
+        tail = (f"That is the least valuable place to shoot from in this "
+                f"league (**{pps:.2f} points per shot**, against "
+                f"{avg:.2f} for an average attempt) — a defense doing its job "
+                f"is happy to concede it.")
+    elif more and not cheap:
+        head = "**Their defense gives up the good stuff**"
+        tail = (f"Shots from there are worth **{pps:.2f} points each** against "
+                f"{avg:.2f} for an average attempt — the shots you most want "
+                f"to give up are the cheap ones, and these are not.")
+    elif not more and cheap:
+        head = "**Their defense does not force the cheap shot**"
+        tail = (f"A **{pps:.2f} points-per-shot** look is the one a defense "
+                f"wants to concede (an average attempt is worth {avg:.2f}), "
+                f"and opponents take fewer of them here than anywhere.")
+    else:
+        head = "**Their defense takes away the good stuff**"
+        tail = (f"Those shots are worth **{pps:.2f} points each** against "
+                f"{avg:.2f} for an average attempt — this defense concedes "
+                f"fewer of the expensive ones than anyone.")
+    txt = (f"{head} — **{share * 100:.0f}% of the shots they allow** come from "
+           f"**{label}**, against {lg_share * 100:.0f}% league-wide "
+           f"({pts:+.0f} pts of share, {mine['n']} opponent attempts). {tail}")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Shots allowed",
+            "n": mine["n"]}
+
+
+def _t_contest(tid, ts, fm, pools, d):
+    """How often this defense actually gets a hand into the shot.
+
+    `guarded_by_id` records who AFFECTED the shot, so this is a contest rate,
+    not a tagging rate — measured SB .69-.74 (within-game demeaned), which
+    makes it the most repeatable team defensive number in the book and better
+    than any per-defender read. It had no surface anywhere in the app.
+
+    Deliberately NOT phrased as a quality ranking. Reliability says the number
+    is stable; it does not say more contests are better defense, and team
+    per-band FG% allowed — the quantity that would settle it — is unmeasurable
+    on a six-team book. See `reliability.CONTEST RATE ALLOWED IS A REAL
+    DEFENSIVE TRAIT`.
+    """
+    ad = d.get("allowed_diet")
+    if not ad:
+        return None
+    mine, lg, sd = (ad.get("mine"), ad.get("league_contest"),
+                    ad.get("contest_sd"))
+    if not mine or lg is None or not sd or (mine.get("n") or 0) < 80:
+        return None
+    share = mine.get("contest_share")
+    if share is None:
+        return None
+    z = (share - lg) / sd
+    if abs(z) < 1.1:
+        return None
+    if z > 0:
+        head = "**Somebody is always there**"
+        tail = ("They get a body into the shot more than anyone else in this "
+                "league. It is the most repeatable defensive number the app "
+                "measures — but more contests is not automatically better "
+                "defense, and this book cannot say whether the closeouts cost "
+                "them anything on the drive.")
+    else:
+        head = "**Opponents get clean looks against them**"
+        tail = ("On the rest of those attempts nobody got a hand in at all. "
+                "This is the most repeatable defensive number the app "
+                "measures, so it is a standing habit rather than one bad "
+                "night — the shot-diet read says WHERE those clean looks are "
+                "coming from.")
+    txt = (f"{head} — a defender affects **{share * 100:.0f}% of the shots "
+           f"they allow**, against **{lg * 100:.0f}%** for the rest of the "
+           f"league ({mine['n']} opponent attempts). {tail}")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Contest rate",
+            "n": mine["n"]}
+
+
+def _t_deserved(tid, ts, fm, pools, d):
+    """Which of the four margin terms actually decides this team's games.
+
+    Off `helpers/deserved.py`. The measurement behind the wording is in
+    `reliability.THE EXPECTED MARGIN IS A POSSESSION STATISTIC`: across the
+    book the volume term is ~4x the quality term, so this line names the term
+    that leads for THIS team rather than asserting a shot-quality story.
+    Descriptive — it never forecasts a rematch.
+    """
+    dv = d.get("deserved")
+    if not dv or not dv.get("available") or dv.get("games", 0) < MIN_GAMES:
+        return None
+    ranked = dv.get("ranked_terms") or []
+    if not ranked:
+        return None
+    key, label, mean_abs, signed = ranked[0]
+    if mean_abs < 2.0:
+        return None
+    m = dv["means"]
+    # z against nothing external: this is an absolute read, so scale by how
+    # lopsided the leading term is against the next one.
+    second = ranked[1][2] if len(ranked) > 1 else 0.0
+    z = (mean_abs - second) / 2.5
+    good = signed > 0
+    if key == "volume":
+        how = (f"they take **{abs(m['fga_gap']):.1f} "
+               f"{'more' if m['fga_gap'] > 0 else 'fewer'} shots a game** than "
+               f"their opponents — offensive rebounds "
+               f"**{m['orb_gap']:+.1f}** and turnovers "
+               f"**{m['tov_gap']:+.1f}** a game against them")
+    elif key == "making":
+        how = (f"the ball goes in **{abs(signed):.1f} points a game "
+               f"{'more' if good else 'less'}** than the quality of the looks "
+               f"predicts — the least repeatable of the four")
+    elif key == "quality":
+        how = (f"the looks they create are worth **{abs(signed):.1f} points a "
+               f"game {'more' if good else 'less'}** than their opponents', "
+               f"before anything goes in")
+    else:
+        how = (f"the free-throw line is worth **{abs(signed):.1f} points a "
+               f"game** to them")
+    txt = (f"**Their games are decided by {label}** — {how}. Of the four "
+           f"things that move a scoreboard (extra shots · shot selection · "
+           f"shot-making · free throws), this one swings "
+           f"**±{mean_abs:.1f} points a game** for them, the largest of the "
+           f"four.")
+    return {"text": txt, "score": abs(z) + 0.5, "z": z, "metric": "Margin mix",
+            "n": dv["games"]}
+
+
 def _t_rest(tid, ts, fm, pools, d):
     """Schedule fragility from rest days — a score-based read (fires on the FULL
     schedule, untracked games included). Absolute read off the `rest` extra
@@ -620,7 +812,8 @@ _TEAM_GENERATORS = [_t_luck, _t_close, _t_volatility, _t_momentum,
                     _t_off_leak, _t_def_leak, _t_three_dep, _t_quarter,
                     _t_lineup, _t_forced_tov, _t_frontrunner, _t_chemistry,
                     _t_keys, _t_vs_scheme, _t_runs, _t_rest, _t_predictable,
-                    _t_pv_leak, _t_after_push, _t_after_cold, _t_after_scramble]
+                    _t_pv_leak, _t_after_push, _t_after_cold, _t_after_scramble,
+                    _t_allowed_diet, _t_contest, _t_deserved]
 
 
 # ── extras builders (per-team feeds the league pools don't need) ──────────────
@@ -727,6 +920,77 @@ def vs_scheme_extra(team_id, events=None, game_ids=None):
     return {"vs_scheme": rows} if len(rows) >= 2 else {}
 
 
+def allowed_diet_extra(team_id, events=None, league_events=None):
+    """{'allowed_diet': {...}} — WHERE this defense makes opponents shoot from,
+    plus the league it is scored against.
+
+    `league_events` is what makes the comparison a LEAGUE one; without it the
+    baseline is only the teams on this schedule, which is a defensible read but
+    a narrower one. The league mean/sd are computed LEAVE-ONE-OUT (this team
+    excluded), so a dominant team is not compared against a pool it is a large
+    part of.
+    """
+    pool_ev = league_events or events
+    if not pool_ev:
+        return {}
+    try:
+        import statistics
+        import helpers.defense_profile as DP
+        import helpers.shot_kinds as SK
+        import helpers.stats as S
+        allowed = DP.team_allowed_diet(pool_ev)
+    except Exception:
+        return {}
+    mine = allowed.get(team_id)
+    if not mine or mine.get("n", 0) < 80:
+        return {}
+    others = [v for t, v in allowed.items() if t != team_id and v["n"] >= 60]
+    if len(others) < 3:
+        return {}
+    league_band, band_sd = {}, {}
+    for b in SK.BANDS:
+        vals = [v["band"].get(b, 0.0) for v in others]
+        league_band[b] = sum(vals) / len(vals)
+        band_sd[b] = statistics.pstdev(vals) if len(vals) > 1 else 0.0
+    # what each band is WORTH in this league — the value term the sentence needs
+    band_pps, league_pps = {}, None
+    try:
+        tbl = SK.band_table(S.mapped_shots(events=pool_ev))
+        for b in SK.BANDS:
+            r = tbl.get(b) or {}
+            if r.get("pps") is not None:
+                band_pps[b] = r["pps"]
+        pts = sum((tbl.get(b) or {}).get("pts", 0) or 0 for b in SK.BANDS)
+        n = sum((tbl.get(b) or {}).get("n", 0) or 0 for b in SK.BANDS)
+        league_pps = (pts / n) if n else None
+    except Exception:
+        pass
+    # the contest rate the rest of the league allows, for the contest read
+    contest_pool = [v["contest_share"] for v in others]
+    return {"allowed_diet": {
+        "mine": mine, "league_band": league_band, "band_sd": band_sd,
+        "band_pps": band_pps, "league_pps": league_pps,
+        "band_labels": dict(SK.BAND_LABELS),
+        "league_contest": sum(contest_pool) / len(contest_pool),
+        "contest_sd": (statistics.pstdev(contest_pool)
+                       if len(contest_pool) > 1 else 0.0),
+        "pool_teams": len(others),
+    }}
+
+
+def deserved_extra(team_id, events=None, game_ids=None):
+    """{'deserved': roll-up} — the four-term margin decomposition for one team
+    (helpers/deserved.py). Descriptive only; see that module's header."""
+    if not events:
+        return {}
+    try:
+        import helpers.deserved as DES
+        d = DES.team_deserved(team_id, events=events, game_ids=game_ids)
+    except Exception:
+        return {}
+    return {"deserved": d} if d.get("available") else {}
+
+
 def runs_extra(team_id, events=None):
     """{'runs': profile} for _t_runs (runs.league_run_table for this team)."""
     if not events:
@@ -796,12 +1060,18 @@ def after_extra(team_id, events=None, game_ids=None):
     return {"after": res} if res else {}
 
 
-def team_extras(team_id, gender=None, game_ids=None, season="Current"):
+def team_extras(team_id, gender=None, game_ids=None, season="Current",
+                league_game_ids=None, league_events=None):
     """One team's full extras bundle for the miner — merges every per-team feed
     (lineup / chemistry / keys / scheme / runs / rest / predictability /
-    possession-value). Events are fetched ONCE and shared across the event-driven
-    builders. Each sub-builder fails soft, so a missing engine never blanks the
-    rest."""
+    possession-value / allowed diet / deserved). Events are fetched ONCE and
+    shared across the event-driven builders. Each sub-builder fails soft, so a
+    missing engine never blanks the rest.
+
+    `league_events` (or `league_game_ids` to fetch them) feeds the builders that
+    need a LEAGUE baseline rather than this team's own schedule. A caller that
+    already holds the league pass should hand it in — prod is 1 vCPU and this
+    is otherwise a second full fetch."""
     events = None
     if game_ids:
         try:
@@ -809,7 +1079,16 @@ def team_extras(team_id, gender=None, game_ids=None, season="Current"):
             events = S.fetch_events(list(game_ids))
         except Exception:
             events = None
+    if league_events is None and league_game_ids:
+        try:
+            import helpers.stats as S
+            league_events = S.fetch_events(list(league_game_ids))
+        except Exception:
+            league_events = None
     out = {}
+    out.update(allowed_diet_extra(team_id, events=events,
+                                  league_events=league_events))
+    out.update(deserved_extra(team_id, events=events, game_ids=game_ids))
     out.update(lineup_extra(team_id, game_ids=game_ids))
     out.update(chemistry_extra(team_id, game_ids=game_ids))
     out.update(keys_extra(team_id, gender=gender, game_ids=game_ids))

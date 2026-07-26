@@ -50,15 +50,23 @@ A team gets more shots than its opponent because it rebounds its own misses and
 does not give the ball away. That is the sentence this module exists to let the
 app say.
 
-THE SECOND CAVEAT IS RETIRED, NOT INHERITED
--------------------------------------------
-The other stated caveat was that xPPS inherits the `guarded_by_id` tagging rate
-(an opt-in tap on 72-75% of shots, and per-game coverage ranges .23 to .96).
-Measured: refitting the whole book with NO contest term at all picks the same
-expected winner in 52 of 52 games, r = .995 with the contested version. Coverage
-moves the LEVEL of xPPS but not the MARGIN, because both teams in a game share
-one tracker operator and therefore one coverage rate. The margin is safe;
-`coverage` still rides along on every row so a thin game can be captioned.
+THE SECOND CAVEAT IS RETIRED, AND ITS PREMISE WAS WRONG TWICE OVER
+------------------------------------------------------------------
+The stated caveat was that xPPS inherits the `guarded_by_id` "tagging rate" —
+described in the earlier notes as an opt-in tap present on 72-75% of shots.
+That description is itself the error: `guarded_by_id` records WHO AFFECTED THE
+SHOT, so an attempt without one is an UNCONTESTED shot, not an unrecorded one.
+Contested attempts shoot .330 and uncontested .461; the rate runs 70.6% in
+girls' games against 90.4% in boys' games, and it repeats at SB .69-.74. It is
+a defensive trait, and `reliability.CONTEST RATE ALLOWED IS A REAL DEFENSIVE
+TRAIT` now carries the measurement.
+
+Either way the margin is unaffected, which is what this module needed to know.
+Refitting the whole book with NO contest term at all picks the same expected
+winner in 52 of 52 games, r = .995 with the contested version — the contest
+term moves the LEVEL of xPPS on both sides of a game together, and cancels in
+the difference. `contest_rate` still rides along on every row, now as a
+descriptive figure worth reading rather than a caveat to apologise for.
 
 HOW WELL THE EXPECTED MARGIN TRACKS THE SCOREBOARD (52 games, out of sample)
     picks the scoreboard winner   38/52  (73.1%)
@@ -80,10 +88,11 @@ from database.db import query
 #: Below it the neutral-shot pricing is carrying more weight than the sample.
 MIN_FGA = 10
 
-#: Per-game guarded-tagging coverage under which a row is flagged thin. The
-#: MARGIN survives low coverage (r = .995 against a contest-free book) — this
-#: only drives a caption, never a gate.
-THIN_COVERAGE = 0.50
+#: Contest rate (share of a game's attempts that a defender affected) below
+#: which a row is captioned as an unusually uncontested game. This is a
+#: DESCRIPTIVE flag about how the game was played, not a data-quality warning —
+#: the margin is unaffected either way (r = .995 against a contest-free book).
+LOW_CONTEST = 0.50
 
 
 def _shot_key(e):
@@ -125,7 +134,7 @@ def game_ledgers(events=None, game_ids=None, rates=None):
     tname = {r["id"]: r["name"] for r in query("SELECT id, name FROM teams")}
 
     per = defaultdict(lambda: defaultdict(
-        lambda: dict(fga=0, val=0.0, pts=0.0, xpts=0.0, tagged=0,
+        lambda: dict(fga=0, val=0.0, pts=0.0, xpts=0.0, contested=0,
                      ft=0, fta=0, orb=0, tov=0)))
     for e in events:
         gid = e["game_id"]
@@ -141,8 +150,10 @@ def game_ledgers(events=None, game_ids=None, rates=None):
             if e["shot_result"] == "make":
                 a["pts"] += v
             a["xpts"] += rates.backoff_pct(_shot_key(e)) * v
+            # guarded_by_id = who AFFECTED the shot, so this counts
+            # genuinely contested attempts, not tagged ones.
             if e["guarded_by_id"] is not None:
-                a["tagged"] += 1
+                a["contested"] += 1
             if e["shot_result"] != "make":
                 rt = e["rebounder_team_id"]
                 if rt is not None and rt == st:
@@ -199,7 +210,8 @@ def game_ledgers(events=None, game_ids=None, rates=None):
             "fga_gap": h["fga"] - a["fga"],
             "orb_gap": h["orb"] - a["orb"],
             "tov_gap": h["tov"] - a["tov"],
-            "coverage": ((h["tagged"] + a["tagged"]) / cov_n) if cov_n else 0.0,
+            "contest_rate": ((h["contested"] + a["contested"]) / cov_n)
+            if cov_n else 0.0,
             # did the expected margin point at the team that actually won?
             "agree": (margin != 0 and (xmargin > 0) == (margin > 0)),
             "decided": margin != 0,
@@ -232,7 +244,7 @@ def for_team(row, team_id):
         "tov_gap": us["tov"] - them["tov"],
         "pts_fg": us["pts"], "xpts": us["xpts"],
         "opp_pts_fg": them["pts"], "opp_xpts": them["xpts"],
-        "coverage": row["coverage"], "agree": row["agree"],
+        "contest_rate": row["contest_rate"], "agree": row["agree"],
         "decided": row["decided"],
         "won": (s * row["margin"]) > 0,
     }
@@ -284,7 +296,8 @@ def team_deserved(team_id, events=None, game_ids=None, rates=None,
         "agree_pct": (100.0 * sum(1 for r in dec if r["agree"]) / len(dec)
                       if dec else None),
         "biggest_gap": gap, "biggest_upset": upset, "ranked_terms": ranked,
-        "thin": [r for r in rows if r["coverage"] < THIN_COVERAGE],
+        "low_contest": [r for r in rows
+                        if r["contest_rate"] < LOW_CONTEST],
     }
 
 

@@ -248,6 +248,12 @@ MEASURED = {
     ("game", "xmargin_picks_winner"): 0.731,   # 38 of 52, out of sample
     ("game", "xmargin_vs_margin"): 0.874,      # ceiling (actual FG margin) .981
     ("game", "attempt_gap_from_orb_tov"): 0.979,
+    # ── contest rate ALLOWED (measured 2026-07-25) ───────────────────────────
+    # The book value is the WITHIN-GENDER, within-game-demeaned figure, which
+    # is the least flattering of the four measured and the only one with every
+    # shared confound removed. See CONTEST RATE ALLOWED IS A REAL DEFENSIVE
+    # TRAIT below — this is the strongest team defensive read in the book.
+    ("team", "contest_share_allowed"): 0.686,
 }
 
 
@@ -525,6 +531,67 @@ MEASURED_DEFENDER_NOTE = (
 # a ceiling of .981, and disagrees on 14. It is a statement about games that
 # were played. `SHOT QUALITY DOES NOT FORECAST SCORING ON THIS BOOK` still
 # forbids turning any of it into a forecast.
+# ── CONTEST RATE ALLOWED IS A REAL DEFENSIVE TRAIT ──────────────────────────
+# Measured 2026-07-25. This block exists because the opposite was asserted
+# during the build and the assertion was wrong, in an instructive way.
+#
+# WHAT `guarded_by_id` ACTUALLY RECORDS. Not who was assigned to a shooter, and
+# not who happened to be nearest: WHO AFFECTED THE SHOT. An attempt with no
+# `guarded_by_id` is an UNCONTESTED shot, not an untagged one. Earlier notes in
+# this file call it "an opt-in tap present on 72% of shots", which reads as a
+# coverage rate and invites exactly the mistake made here — treating the 28%
+# without it as missing data.
+#
+# THE DATA SAYS IT IS A CONTEST, NOT A GAP IN THE RECORD:
+#
+#     shots WITH a guarded_by_id      n=2891   FG% .330
+#     shots WITHOUT one               n=1128   FG% .461
+#
+# Missing data would shoot near the pooled average. A 13-point FG% gap in the
+# direction of "nobody bothered it" is what a real contested/uncontested split
+# looks like.
+#
+# IT ALSO MOVES WITH THE BASKETBALL, WHICH MISSING DATA WOULD NOT:
+#
+#     girls' games   70.6% of attempts contested
+#     boys' games    90.4%
+#     Rivalry 89.6% · Regular 77.5% · Playoff 77.2% · Tournament 68.4%
+#
+# AND IT REPEATS. 200 random half-splits, Spearman-Brown corrected, defending
+# teams needing >=25 opponent attempts in each half:
+#
+#     pooled (both genders)                 SB .775
+#     boys only                             SB .855   (only ~6 teams — thin)
+#     girls only                            SB .461
+#     pooled, demeaned WITHIN GAME          SB .744
+#     girls only, demeaned within game      SB .686   <- the book value
+#
+# The within-game demeaned rows are the ones that settle it. Demeaning inside a
+# game subtracts everything the two defenses on that floor shared — pace,
+# officials, gender, and whoever operated the tracker that night. A tagging
+# artefact CANNOT survive that operation; this barely moves (.775 -> .744), and
+# for the girls' pool alone it rises (.461 -> .686), because the demeaning also
+# strips per-game noise that was burying the team's own tendency.
+#
+# So SB .686 is adopted: the least flattering measured value, with every shared
+# confound removed. That makes contest rate allowed MORE repeatable than any
+# other defensive read in this file — DLOAD% .574, paint share .578 — and it
+# has never been surfaced as a verdict anywhere in the app.
+#
+# ONE LIMIT, STATED. Reliability says the number is stable; it does not say the
+# number is a virtue. Contesting more shots is not automatically better defence
+# (a team that closes out hard on everything concedes drives), and this book
+# cannot settle that — team per-band FG% allowed is unmeasurable at six teams,
+# which is precisely the quantity that would answer it. Report the rate and the
+# shot diet it comes with; do not rank defences by it.
+MEASURED_CONTEST_NOTE = (
+    "Contest rate allowed measures SB .69-.74 (within-game demeaned), the most "
+    "repeatable team defensive read in this book. `guarded_by_id` records who "
+    "AFFECTED the shot, so an untagged attempt is an uncontested one, not a "
+    "missing tag. It is stable, but it is not a ranking of defensive quality."
+)
+
+
 MEASURED_DESERVED_NOTE = (
     "The expected-points margin is roughly four parts possession count to one "
     "part shot quality (|volume| 12.9 pts vs |quality| 3.1 pts a game), so it "

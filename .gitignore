@@ -1,0 +1,7 @@
+# Claude Code local config (machine-specific interpreter/paths)
+.claude/
+
+# SQLite data — never commit. See APP5.0/.gitignore for the full rationale.
+*.db
+*.db-wal
+*.db-shm

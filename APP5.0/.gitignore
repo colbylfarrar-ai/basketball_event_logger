@@ -27,6 +27,7 @@ desktop.ini
 database/*.db
 database/*.db-wal
 database/*.db-shm
+*.db
 *.db-wal
 *.db-shm
 

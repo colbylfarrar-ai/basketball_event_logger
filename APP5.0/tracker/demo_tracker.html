@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tracker layout demo</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  /* demo chrome only — a phone-width frame so the layout reads on desktop too */
+  body { background: #05060a; }
+  .demo-note { max-width: 640px; margin: 10px auto 0; padding: 0 12px; color: #9aa0aa; font: 13px -apple-system, "Segoe UI", sans-serif; }
+  .demo-frame { max-width: 420px; margin: 10px auto 40px; border: 1px solid #343a52; border-radius: 20px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+  /* scroll INSIDE the frame so position:sticky pins against the frame, like a phone */
+  .demo-frame .screen { height: 720px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<p class="demo-note">Backend-free preview — real tracker markup + style.css lifted from <code>/static/index.html</code>. Scroll inside the frame: the header (score · quarter · clock) stays pinned; tap <b>Play-by-play</b> to expand.</p>
+<div class="demo-frame"><div id="mount"></div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+fetch('/static/index.html').then(r => r.text()).then(html => {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const tr = doc.getElementById('screen-tracker');
+  tr.hidden = false;
+  $('mount').appendChild(document.importNode(tr, true));
+  seed();
+  wire();
+});
+
+function seed() {
+  $('score-home-name').textContent = 'Adair';
+  $('score-away-name').textContent = 'Westville';
+  $('score-home').textContent = '24';
+  $('score-away').textContent = '19';
+  $('q-label').textContent = 'Q2';
+  $('sync-badge').textContent = '0';
+
+  $('court-wrap').innerHTML =
+    '<svg class="court-svg" viewBox="0 0 50 39">' +
+    '<rect x="0.5" y="0.5" width="49" height="38" class="court-line"/>' +
+    '<line x1="0" y1="7" x2="50" y2="7" class="court-line"/>' +
+    '<circle cx="25" cy="7" r="6" class="court-gold" fill="none"/>' +
+    '<path d="M6 0.5 L6 6 A 19 19 0 0 0 44 6 L44 0.5" class="court-gold" fill="none"/>' +
+    '<circle cx="31" cy="14" r="0.8" class="court-marker"/>' +
+    '<circle cx="19" cy="10" r="0.8" class="court-marker"/></svg>';
+  $('shot-caption').textContent = 'Tap the court to log a shot';
+
+  $('defense-bar').innerHTML =
+    '<span class="chip-label">Defense</span>' +
+    '<select class="flow-select"><option>Man</option><option>2-3 zone</option></select>';
+  $('playtype-bar').innerHTML =
+    '<span class="chip-label">Set call</span>' +
+    '<select class="flow-select"><option>PnR</option><option>Iso</option></select>';
+  $('quick-toggle').textContent = 'Detailed mode';
+
+  $('flow').innerHTML =
+    '<div class="chip-label">Shooter</div>' +
+    '<div class="shooter-grid">' +
+    ['12','23','5','31','44','10','3','21','15']
+      .map(n => '<button class="btn shooter">#' + n + '</button>').join('') +
+    '</div>' +
+    '<div class="mm-row">' +
+    '<button class="btn make">MAKE</button><button class="btn miss">MISS</button></div>';
+
+  $('pbp').innerHTML =
+    ['Q2 4:12 · #23 made 3', 'Q2 4:40 · #12 missed 2', 'Q2 5:01 · #5 steal',
+     'Q2 5:33 · #31 made 2', 'Q2 6:02 · TO Westville']
+    .map(t => '<li>' + t + '</li>').join('');
+
+  // small demo-only grid style for the mock shooter buttons
+  const s = document.createElement('style');
+  s.textContent = '.shooter-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.btn.shooter{font-weight:600}';
+  document.head.appendChild(s);
+}
+
+function wire() {
+  // play-by-play collapse (app.js isn't loaded here — same behavior)
+  $('pbp-toggle').addEventListener('click', function () {
+    const ul = $('pbp');
+    const open = ul.hidden;
+    ul.hidden = !open;
+    this.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  // mode row active swap
+  document.querySelectorAll('#mode-row .btn.mode').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('#mode-row .btn.mode').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
+
+  // running clock so the ▶ toggle feels live
+  let min = 8, sec = 0, timer = null;
+  const cm = $('clock-min'), cs = $('clock-sec'), tog = $('clk-toggle');
+  const paint = () => { cm.value = min; cs.value = String(sec).padStart(2, '0'); };
+  paint();
+  tog.addEventListener('click', function () {
+    if (timer) { clearInterval(timer); timer = null; tog.classList.remove('running'); tog.innerHTML = '&#9654;'; return; }
+    tog.classList.add('running'); tog.innerHTML = '&#9208;';
+    timer = setInterval(() => {
+      let t = min * 60 + sec - 1; if (t < 0) t = 0;
+      min = Math.floor(t / 60); sec = t % 60; paint();
+      if (t === 0) { clearInterval(timer); timer = null; tog.classList.remove('running'); tog.innerHTML = '&#9654;'; }
+    }, 1000);
+  });
+}
+</script>
+</body>
+</html>

@@ -241,6 +241,13 @@ MEASURED = {
     ("team", "xpps"): 0.726,
     ("team", "pps_fg"): 0.812,
     ("team", "xpps_forecasts_pps"): 0.176,
+    # ── the deserved-result decomposition (measured 2026-07-25, PROD book) ───
+    # Not split-half reliabilities — these are agreement-with-the-scoreboard
+    # figures for a DESCRIPTIVE read, kept here so one file holds every number
+    # a verdict quotes. See THE EXPECTED MARGIN IS A POSSESSION STATISTIC below.
+    ("game", "xmargin_picks_winner"): 0.731,   # 38 of 52, out of sample
+    ("game", "xmargin_vs_margin"): 0.874,      # ceiling (actual FG margin) .981
+    ("game", "attempt_gap_from_orb_tov"): 0.979,
 }
 
 
@@ -294,6 +301,14 @@ MEASURED = {
 # is a SUM over attempts, so it partly restates possession count rather than
 # quality per shot. Both are reasons the measurement could improve; neither is
 # a reason to ship the forecast before it does.
+#
+# BOTH CAVEATS WERE SUBSEQUENTLY MEASURED (2026-07-25) — see THE EXPECTED
+# MARGIN IS A POSSESSION STATISTIC, NOT A QUALITY ONE, further down this file.
+# The tagging one is retired (the margin is unaffected: same winner 52/52
+# against a contest-free book, r = .995). The possession one is worse than
+# "partly" and became the design: the expected margin is ~4:1 possession count
+# to shot quality, so `helpers/deserved.py` reports the two as separate named
+# terms. None of that revives the FORECAST — the refusal above stands.
 
 
 # ── DEFENSIVE SHARES ARE NOT OFFENSIVE SHARES ────────────────────────────────
@@ -434,6 +449,88 @@ MEASURED_DEFENDER_NOTE = (
     "(SB .17-.64 vs .70-.92) because the assignment is chosen by the opponent, "
     "not by the player. Only the coarse interior/perimeter split and DLOAD% "
     "clear the floor."
+)
+
+
+# ── THE EXPECTED MARGIN IS A POSSESSION STATISTIC, NOT A QUALITY ONE ─────────
+# Measured 2026-07-25 on the PROD book (52 tracked games, 9,417 events, 75.1%
+# guarded coverage) while building `helpers/deserved.py`. This block supersedes
+# the two "caveats" the previous handoff attached to the deserved-result idea:
+# one of them turned out to be the headline, and the other is retired.
+#
+# CAVEAT 1 WAS UNDERSTATED, AND IT IS THE WHOLE FINDING.
+# The note read "xMargin is a SUM over attempts, so it partly restates
+# possession count rather than quality per shot". Decomposing the expected
+# margin exactly into
+#
+#     xMargin = VOLUME  (attempt gap priced at the league's neutral shot)
+#             + QUALITY (those attempts being better or worse than neutral)
+#
+# and measuring the two halves over 52 games:
+#
+#     |VOLUME|   mean 12.91 pts   median 11.59
+#     |QUALITY|  mean  3.09 pts   median  2.43
+#     VOLUME is the larger term in 47 of 52 games
+#
+# It does not PARTLY restate possession count. It is roughly four parts
+# possession count to one part shot quality. Any surface that had shipped this
+# as "your shot quality deserved better" would have been mislabelled 4:1. The
+# decomposition is exact — max |VOLUME + QUALITY - xMargin| = 1e-12.
+#
+# WHAT RESCUES IT: THE DOMINANT TERM IS THE MOST COACHABLE ONE.
+# A team out-shoots its opponent for reasons that are neither mysterious nor
+# luck. Over the same 52 games:
+#
+#     r(attempt gap, offensive-rebound edge)         = +0.816
+#     r(attempt gap, turnover edge)                  = +0.899
+#     r(attempt gap, ORB edge - turnover edge)       = +0.979
+#     same direction in 49 of 52 games; residual sd 3.5 shots
+#
+# So the volume term is named rather than apologised for: extra shots come from
+# winning the offensive glass and not giving the ball away. That is why
+# `deserved.py` leads its second line with the CAUSE of the volume edge.
+#
+# CAVEAT 2 IS RETIRED. The worry was that xPPS inherits the `guarded_by_id`
+# tagging rate (an opt-in tap; per-game coverage runs .23 to .96, median .79).
+# Refitting the entire rate book with NO contest term at all:
+#
+#     same expected winner as the contested book   52 / 52
+#     r(xMargin contested, xMargin contest-blind)  0.995
+#
+# Coverage moves the LEVEL of xPPS but not the MARGIN, because both teams in a
+# game share one tracker operator and therefore one coverage rate. Coverage is
+# still carried on every row so a thin game can be captioned, but it gates
+# nothing.
+#
+# TWO FURTHER FACTS THE ENGINE RELIES ON, both verified on all 52 games:
+#   * the tracked event book reproduces the OFFICIAL scoreboard exactly
+#     (max error 0 points), so the four terms add up to the real final margin
+#     rather than to a tracked approximation of it;
+#   * `games.team1_id` is the HOME team (total abs error 0, against 2,216 for
+#     the opposite assignment).
+#
+# AND THE COST QUESTION THAT DECIDED THE IMPLEMENTATION. The 73.1% figure was
+# scored leave-one-out (the book refit without the game being scored). Prod is
+# 1 vCPU, so the engine uses ONE in-sample book instead. Measured difference:
+#
+#     |xMargin| shift        mean 0.136 pts, median 0.092, max 1.08
+#     same expected winner   52 / 52
+#     scoreboard agreement   38/52 in-sample, 38/52 leave-one-out
+#
+# Identical to the decision, so the cheap book ships.
+#
+# WHAT THIS PERMITS. The descriptive read only, and it is unchanged from the
+# refusal above: over 52 games the expected margin picks the scoreboard winner
+# 38/52 (73.1%, was 72.1% on 43 games), r = .874 with the final margin against
+# a ceiling of .981, and disagrees on 14. It is a statement about games that
+# were played. `SHOT QUALITY DOES NOT FORECAST SCORING ON THIS BOOK` still
+# forbids turning any of it into a forecast.
+MEASURED_DESERVED_NOTE = (
+    "The expected-points margin is roughly four parts possession count to one "
+    "part shot quality (|volume| 12.9 pts vs |quality| 3.1 pts a game), so it "
+    "is reported as a four-term decomposition rather than as a shot-quality "
+    "verdict. The attempt gap it rests on is explained by offensive rebounds "
+    "minus turnovers at r = 0.98."
 )
 
 #: Per-band overrides where a band's own reliability differs materially from

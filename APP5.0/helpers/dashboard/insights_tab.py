@@ -1,15 +1,38 @@
 """
-insights_tab.py — Team Dashboard > Insights tab (the scout that reads itself,
+insights_tab.py — Team Dashboard > Insights (the scout that reads itself,
 scoped to the SELECTED team).
 
-Renders each of the team's players' most-surprising true facts (helpers/insights.py),
-plus force-to-off-hand + space-dependence boards, per-player OFFENSIVE and
-DEFENSIVE profile boards, win-impact on both sides and the pick-&-roll role
-split — all filtered to this team but scored vs the whole league (so "elite"
-means elite leaguewide, not just on this roster). Team-scoped tracked data, so
-it sits behind the team tracked gate (ctx.has_tracked).
+THE SPINE: THE PAGE RECONCILES TO THE SCOREBOARD
+------------------------------------------------
+`deserved.py` splits every game's margin into four terms — extra shots,
+selection, shot-making, free throws — that sum EXACTLY to the final margin.
+That reconciliation is the organising law of the whole view, not one panel
+inside it, and the currency everywhere is points per game: every finding with
+an honest conversion carries `≈ +2.3 pts/g` (`helpers/insights_severity.py`).
+That translation is what turns 39 z-scored generators into coach speak and what
+makes a single severity ranking possible across three engine families that
+never shared a scale.
 
-render(ctx) @st.fragment — the page builds a SimpleNamespace ctx. Display-only.
+WHAT CHANGED, AND WHY
+---------------------
+This view used to be six sub-tabs named after data categories — Players,
+Offense, Defense — and a coach asks questions, not categories. It now opens on
+THE DECK (`insights_deck.py`, always visible) over seven sections cut by the
+question each answers. Three structural rules hold the recut together:
+
+  1. RANK, NEVER HIDE. Severity ordering is a sort, never a filter. Every
+     finding an engine fires renders in full inside its section. THE FIVE at
+     the top is a spotlight; the same finding appearing twice is intended.
+  2. `_seg`, NOT `st.tabs`. st.tabs executes every tab body on every rerun, so
+     six eager tabs ran on every interaction. One lazy section is what pays for
+     sections 3, 4 and 5 existing at all on a 1 vCPU box.
+  3. A REAL `@st.fragment` on `render`. The module docstring claimed one for
+     months and the function carried no decorator, so every jump button reran
+     the entire 6,000-line page. With real controls in the deck that is no
+     longer survivable.
+
+Team-scoped tracked data, so it sits behind the team tracked gate
+(ctx.has_tracked). The page builds a SimpleNamespace ctx.
 """
 from __future__ import annotations
 
@@ -19,6 +42,7 @@ import re
 import streamlit as st
 
 from database.db import query
+import helpers.insights_severity as SEV
 import helpers.player_ratings as PR
 import helpers.stats as S
 import helpers.insights as IN
@@ -33,35 +57,14 @@ def _b(t):
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
 
 
-# ── insight line → the Team Dashboard VIEW holding its evidence ───────────────
-# Every insight names its `metric`; this maps each metric to the top-level view
-# where the underlying chart/table lives, so a line can offer a real jump
-# instead of dead-ending. View-level only (st.tabs can't be selected
-# programmatically — same constraint as the page's _jump helper).
-_EVIDENCE_VIEW = {
-    # player metrics → view
-    "POE": "Charts", "Selection": "Charts", "3P%": "Charts",
-    "Rim finish": "Charts", "HandGap": "Charts", "Spacing": "Charts",
-    "Shot creation": "Charts", "Q4": "Charts", "Situational": "Charts",
-    "Garbage time": "Charts", "Form": "Charts", "Consistency": "Charts",
-    "PlayType": "Charts", "PlayStyle": "Charts", "PnR role": "Charts",
-    "TO type": "Charts", "GuardCliff": "Charts",
-    "Impact": "Lab", "On/off offense": "Lab", "On/off defense": "Lab",
-    "Matchup": "Lab", "Defense": "Lab", "Rim D": "Lab", "Perim D": "Lab",
-    "Disruption": "Lab", "Stint length": "Lab",
-    "Usage": "Roster", "Playmaking": "Roster", "Rebounding": "Roster",
-    "Fouls drawn": "Roster", "Clutch FT": "Roster",
-    # team metrics → view
-    "Quarters": "Charts", "Transition": "Charts", "Transition D": "Charts",
-    "Runs": "Charts", "Momentum": "Charts", "Game script": "Charts",
-    "Scheme": "Charts", "3PT diet": "Charts",
-    "Lineups": "Lab", "Chemistry": "Lab", "Off engine": "Lab",
-    "Def engine": "Lab",
-    "Luck": "Schedule", "Close games": "Schedule", "Volatility": "Schedule",
-    "Rest": "Schedule",
-    "Keys": "Scout", "Scoutability": "Scout", "Ball security": "Scout",
-    "Takeaways": "Scout",
-}
+# ── insight line → where its evidence actually lives ─────────────────────────
+# Every insight names its `metric`; `insights_severity.METRIC_EVIDENCE` maps
+# each one to (view, subview) so a jump lands on the chart rather than near it.
+# The table lives beside the severity ranking because both are statements about
+# what a metric MEANS, and splitting them across two modules is how they drift.
+#
+# The view-only projection is kept as a name because callers and tests read it.
+_EVIDENCE_VIEW = {m: ev[0] for m, ev in SEV.METRIC_EVIDENCE.items()}
 
 # How firmly a line's n= backs it, on the insight scale (n is shots/poss/games
 # depending on the generator — k=8 reads games-scale lines as directional and
@@ -148,43 +151,59 @@ def _seen_tracker(team_id):
 # way to drive a keyed widget programmatically.
 TD_VIEW_GOTO = "_td_view_goto"
 
+#: Second half of the handshake: the INNER switcher's destination, consumed by
+#: whichever `_sub_seg` owns it (Charts', Lab's) before that widget is built.
+#: A view-only jump landed on Charts' first sub-tab when the evidence was on
+#: Trends, and a jump that lands near the answer is a jump a coach stops using.
+TD_SUB_GOTO = "_td_subview_goto"
 
-def _request_view(view):
-    """Park a view jump for the page to consume on the next run, then rerun.
+
+def _request_view(view, sub=None):
+    """Park a (view, subview) jump for the page to consume, then rerun.
 
     App-scoped on purpose: this tab is a fragment, and a fragment-scoped rerun
     would never repaint the switcher.
     """
-    st.session_state[TD_VIEW_GOTO] = view
+    st.session_state[TD_VIEW_GOTO] = (view, sub)
     st.rerun(scope="app")
 
 
 def _evidence_jumps(lines, key):
-    """Row of view-jump buttons for the evidence behind a card's lines.
+    """Row of jump buttons for the evidence behind a card's lines.
 
-    EVERY distinct view the card's lines point at gets a button, not the first
-    three: a card whose reads live on four different tabs was silently dropping
-    the fourth, which is the one a coach would not have thought to look for.
+    EVERY distinct destination the card's lines point at gets a button, not the
+    first three: a card whose reads live on four different tabs was silently
+    dropping the fourth, which is the one a coach would not have thought to
+    look for. Destinations are (view, subview) now, so two reads on the same
+    view but different sub-tabs are two buttons, not one.
     """
-    views = []
+    dests = []
     for ln in lines:
-        v = _EVIDENCE_VIEW.get(ln.get("metric"))
-        if v and v not in views:
-            views.append(v)
-    if not views:
+        ev = SEV.METRIC_EVIDENCE.get(ln.get("metric"))
+        if ev and ev not in dests:
+            dests.append(ev)
+    if not dests:
         return
-    cols = st.columns(max(3, len(views)))
-    for i, v in enumerate(views):
-        if cols[i].button(f"{v} →", key=f"{key}_{v}",
-                          help=f"Open {v} — the charts behind these reads"):
-            _request_view(v)
+    cols = st.columns(max(3, len(dests)))
+    for i, (view, sub) in enumerate(dests):
+        label = _dest_label(view, sub)
+        if cols[i].button(f"{label} →",
+                          key=f"{key}_{label.replace(' ', '')}",
+                          help=f"Open {label} — the charts behind these reads"):
+            _request_view(view, sub)
 
 
-def _jump_btn(view, label, key):
+#: shared with the deck so a button and its help text cannot describe two
+#: different destinations
+_dest_label = SEV.dest_label
+
+
+def _jump_btn(view, label, key, sub=None):
     """A single 'the full table lives on X' jump."""
     if st.button(label, key=key,
-                 help=f"Open {view} — the full chart and table"):
-        _request_view(view)
+                 help=f"Open {_dest_label(view, sub)} — the full chart and "
+                      f"table"):
+        _request_view(view, sub)
 
 
 def _data_fp(gids=None):
@@ -299,7 +318,12 @@ def _league(gender, season="Current", season_gp=None, fp=None):
         impact = WPA.season_wpa(gender, mode="possession", season=season)
     except Exception:
         impact = {}
-    return table, feed, roles, impact, cliffs
+    # `imp` (RAPM + HoopWAR, merged) is RETURNED rather than discarded: the
+    # ridge has already been solved for the stats-vs-substance generator above,
+    # so the impact board in "Who's helping" is close to free. Throwing it away
+    # and having the board solve it again is the only way to make this
+    # expensive.
+    return table, feed, roles, impact, cliffs, (imp or {})
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner="Reading the team's tendencies…")
@@ -444,13 +468,65 @@ def _shot_diet_lines(ctx):
             for ln in SK.verdict(team_id=tid, shots=shots, games=games)]
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _pts_ctx(gender, season, team_id, fp=None):
+    """The league constants the points-per-game translator prices against.
+
+    `ts_all` is the per-team advanced pack (possessions per game, PPP, TOV%,
+    ORB%…) and `wins_per_point` inverts the Pythagorean exponent at this
+    pool's own scoring, so WPA converts to points using the league it was
+    measured in rather than a constant borrowed from the NBA.
+
+    Box-level only — no event walk — so tagging findings costs a pack build on
+    cold and nothing at all when warm.
+    """
+    out = {"ts_all": {}, "ts": {}, "wins_per_point": None}
+    try:
+        import helpers.league_analytics as LA
+        pack = LA.team_tracked_pack(gender=gender, season=season)
+        out["ts_all"] = pack.get("ts") or {}
+        out["ts"] = out["ts_all"].get(team_id) or {}
+    except Exception:
+        pass
+    try:
+        import helpers.hoopwar as HW
+        out["wins_per_point"] = HW.wins_per_point(
+            HW.league_ppg(gender=gender, season=season))
+    except Exception:
+        pass
+    return out
+
+
+def _scoped(ctx, tids):
+    """A ctx copy narrowed to the deck's game window.
+
+    The controls are CACHE-KEY inputs, not post-filters: every wrapper below
+    takes the tracked ids as part of its key, so a narrowed window recomputes a
+    smaller pool instead of computing the whole book and hiding most of it.
+    """
+    from types import SimpleNamespace
+    d = dict(vars(ctx))
+    d["tracked_ids"] = tuple(tids or ())
+    return SimpleNamespace(**d)
+
+
+@st.fragment
 def render(ctx):
     # (Team at a glance moved to the Overview tab — UI_DENSITY_PLAN phase A.)
+    #
+    # THE FRAGMENT IS NOT DECORATION. This module's docstring has claimed
+    # `render(ctx) @st.fragment` since it was written and the function carried
+    # no decorator, so every one of the four jump buttons reran the whole
+    # ~6,000-line page. The deck now owns three real widgets; without this the
+    # first keystroke in the player filter would rebuild the entire dashboard.
+    # The jump buttons still ask for an APP-scoped rerun explicitly, because
+    # they have to repaint a switcher that lives outside this fragment.
+    #
     # Cache key: recompute only when data THIS POOL reads changes. Scoped to the
     # gender+season tracked pool, which is exactly what _league and every other
     # cached wrapper below compute over.
     _fp = _data_fp(getattr(ctx, "season_gp", None))
-    table, feed, roles, impact, cliffs = _league(
+    table, feed, roles, impact, cliffs, impmap = _league(
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "season_gp", None), fp=_fp)
     # career rows (last season's read, open archive) keep the tab alive on a
@@ -489,10 +565,28 @@ def render(ctx):
         return
 
     # per-coach NEW chips: unseen lines get flagged; the blob is persisted once
-    # after both feeds render (so a fragment rerun mid-scroll never eats chips).
+    # after the player feed renders (so a fragment rerun mid-scroll never eats
+    # chips).
     _is_new, _seen_persist = _seen_tracker(getattr(ctx, "team_id", None))
 
-    _tids = getattr(ctx, "tracked_ids", None)
+    from helpers.dashboard import insights_deck as _DECK
+    from helpers.dashboard import insights_deep as _DEEP
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  THE CONTROLS, THEN THE DECK, THEN THE SECTIONS
+    # ══════════════════════════════════════════════════════════════════════════
+    # The controls come FIRST because they are cache-key inputs: everything
+    # below is computed over the window they select, so they cannot be rendered
+    # after the work they scope.
+    _book = len(getattr(ctx, "tracked_ids", None) or ())
+    _tids, _pid_filter, _scope = _DECK.controls(ctx, table, pids)
+    sctx = _scoped(ctx, _tids)
+    if _pid_filter:
+        pids = [p for p in pids if p in _pid_filter]
+        if not pids:
+            st.caption("No player on this roster matches that filter.")
+            return
+
     _tlines = _team_feed(
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "team_id", None),
@@ -501,16 +595,8 @@ def render(ctx):
         season_gp=tuple(getattr(ctx, "season_gp", None) or ()) or None,
     ).get(getattr(ctx, "team_id", None), [])
 
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TABS FIRST. Nothing sits above them.
-    # ══════════════════════════════════════════════════════════════════════════
-    # An always-visible masthead pushed every tab a screen and a half down and
-    # made the page feel like a scroll with tabs bolted on. The brief IS a tab
-    # now — the first one — which matches how Charts is organised and gets a
-    # coach to the numbers in one click instead of one scroll.
     _bundle = {}
     try:
-        from helpers.dashboard import insights_deep as _DEEP
         _bundle = _DEEP.brief_bundle(
             tuple(_tids or ()), getattr(ctx, "team_id", None), ctx.gender,
             league_gids=tuple(getattr(ctx, "season_gp", None) or ()) or None,
@@ -518,158 +604,361 @@ def render(ctx):
     except Exception as _exc:
         st.caption(f"Engine bundle unavailable — {type(_exc).__name__}: {_exc}")
 
-    # Offense sits BEFORE Defense. The page had a Defense tab and no offensive
-    # counterpart, which read as though the app knew more about the side it
-    # measures worse — defender assignment shares repeat at .17-.64, a shooter's
-    # own diet at .70-.92.
-    _t_scout, _t_players, _t_off, _t_def, _t_wl, _t_eng = st.tabs(
-        ["🧭 Auto-scout", "👤 Players", "🏀 Offense", "🛡️ Defense",
-         "📊 Wins & losses", "⚙️ Every engine"])
+    _plines, _pdiag = {}, {}
+    try:
+        _plines, _pdiag = _DEEP._ported(getattr(ctx, "team_id", None),
+                                        ctx.gender, tuple(_tids or ()), fp=_fp)
+    except Exception as _exc:
+        st.caption(f"Engine verdicts unavailable — "
+                   f"{type(_exc).__name__}: {_exc}")
 
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 1 — AUTO-SCOUT
-    # ══════════════════════════════════════════════════════════════════════════
-    with _t_scout:
-        try:
-            from helpers.dashboard import insights_brief as _BRIEF
-            _BRIEF.render(ctx, table, pids, _tlines, _bundle, fp=_fp)
-        except Exception as _exc:
-            st.caption(f"Auto-scout unavailable — "
-                       f"{type(_exc).__name__}: {_exc}")
-        if _tlines:
-            _evidence_jumps(_tlines, key="insj_team")
+    # ── ONE ORDERING ACROSS THREE ENGINE FAMILIES ───────────────────────────
+    # The three families keep their own internal order inside their own
+    # sections; this is an ADDITIONAL ordering used by the deck and by Monday.
+    # Nothing upstream is rewritten, so the miners' regression tests stay green.
+    _gp = len(_tids or ())
+    _pctx = _pts_ctx(ctx.gender, getattr(ctx, "season", "Current"),
+                     getattr(ctx, "team_id", None), fp=_fp)
+    _pctx = dict(_pctx)
+    _pctx.update({
+        "gp": _gp,
+        "deserved": (_bundle or {}).get("deserved") or {},
+        "cliffs": cliffs,
+        "wpa": impact,
+        "player_gp": {p: ((table[p].get("GP") or table[p].get("games")))
+                      for p in pids if p in table},
+    })
+    _ranked = SEV.rank(
+        SEV.collect(
+            player_feed={p: feed.get(p, []) for p in pids},
+            names={p: table[p]["name"] for p in pids if p in table},
+            team_lines=_tlines,
+            ported=_plines,
+            ported_sections={k: (_DEEP._PORT_SHORT.get(k, k), home)
+                             for k, _h, _c, home in _DEEP._PORT_SECTIONS}),
+        _pctx, gp=_gp)
+    _by_sect = SEV.by_section(_ranked)
 
-        # ── shot depth — the largest single actionable number the book has ───
-        # The 4-to-arc band is over a third of every shot in this league at
-        # 0.60 PPS against 1.14 at the rim, and no zone-based read surfaces it.
-        _sd = _shot_diet_lines(ctx)
-        if _sd:
-            st.markdown("<div class='lab-hdr'>Shot depth</div>",
-                        unsafe_allow_html=True)
-            st.markdown(verdict_card(_sd), unsafe_allow_html=True)
-
-        # ── every engine's verdict, packed — the whole board on one screen ──
-        try:
-            from helpers.dashboard import insights_deep as _DEEP
-            _DEEP.ported_blocks(ctx, fp=_fp, cols=4)
-        except Exception as _exc:
-            st.caption(f"Engine blocks unavailable — "
-                       f"{type(_exc).__name__}: {_exc}")
-
-        # ── self-scout: shot tendencies — how a scout attacks this team ──────
-        _render_tendencies(ctx, _tids, _fp)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 2 — PLAYERS
-    # ══════════════════════════════════════════════════════════════════════════
-    with _t_players:
-        from helpers.dashboard import insights_brief as _BR
-        _n_lines = sum(len(feed.get(p, [])) for p in pids)
-        st.markdown("<div class='lab-hdr'>Auto-scout — every player</div>",
+    if _scope:
+        st.markdown(_DECK.scope_note(_scope, len(_tids or ()), book=_book),
                     unsafe_allow_html=True)
-        st.markdown(
-            f"<div class='hdr-sub'>{_n_lines} findings across "
-            f"{sum(1 for p in pids if feed.get(p))} players · scored vs the "
-            f"whole league, not this roster · every line shown</div>",
-            unsafe_allow_html=True)
-        # One dense block per player, packed 4 across. Was a 2-column
-        # gloss-card grid at 12px, which put a full roster over several
-        # screens — the comparison a coach wants is between players, so they
-        # have to be visible together.
-        _blocks = []
-        for pid in pids:
-            lines = feed.get(pid, [])
-            if not lines:
-                continue
-            r = table[pid]
-            _sub = []
-            if r.get("OVERALL") is not None:
-                _sub.append(("OVR", f"{r['OVERALL']:.0f}"))
-            if r.get("MIN"):
-                _sub.append(("MIN", f"{r['MIN']:.0f}"))
-            _blocks.append(_BR.block(
-                r["name"], n=f"{len(lines)} read"
-                             f"{'s' if len(lines) != 1 else ''}",
-                rows=_sub,
-                lines=[(ln.get("metric"),
-                        f"<span style='color:var(--subtext)'>"
-                        f"n={ln.get('n')}</span> {_b(ln['text'])}")
-                       for ln in lines]))
-        if _blocks:
-            _BR.grid(_blocks, cols=4)
-        else:
-            st.caption("No standout signals yet — this roster reads close to "
-                       "league average on the tracked splits, or needs more "
-                       "games.")
-        # the NEW-chip bookkeeping still runs over every line that rendered
+
+    _axes = []
+    try:
+        _axes = _DECK.render(sctx, table=table, pids=pids, ranked=_ranked,
+                             bundle=_bundle, fp=_fp, jump=_request_view)
+    except Exception as _exc:
+        st.caption(f"Deck unavailable — {type(_exc).__name__}: {_exc}")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  THE SECTIONS — cut by the question a coach asks, not by data category
+    # ══════════════════════════════════════════════════════════════════════════
+    # `_seg`, NOT `st.tabs`: st.tabs executes EVERY tab body on every rerun, so
+    # the old six-tab layout did all six sections' work on every interaction.
+    # This is what pays for sections 3, 4 and 5 existing at all — per-rerun work
+    # goes DOWN even though the section count went up.
+    import helpers.ui as _UI
+    _sections = ["Who we are", "Why we win / why we lose", "Who's helping",
+                 "Who to play together", "What they'll take away", "Monday",
+                 "Receipts"]
+    _sec = _UI.seg("Section", _sections, default=_sections[0],
+                   key="ins_section", label_visibility="collapsed") \
+        or _sections[0]
+
+    # ── 1 · WHO WE ARE ──────────────────────────────────────────────────────
+    if _sec == "Who we are":
+        try:
+            from helpers.dashboard import insights_identity as _ID
+            _ID.render(sctx, axes=_axes, shot_diet_lines=_shot_diet_lines(ctx),
+                       ported=_plines, tids=_tids, fp=_fp)
+        except Exception as _exc:
+            st.caption(f"Who we are unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+        _section_feed(_by_sect, SEV.S_IDENTITY, "insj_id")
+
+    # ── 2 · WHY WE WIN / WHY WE LOSE ────────────────────────────────────────
+    elif _sec == "Why we win / why we lose":
+        _render_winloss(sctx, _tids, _fp)
+        _render_deserved_games(_bundle, sctx)
+        _ported_cards(_plines, ("runs", "anatomy", "stops", "ledger",
+                                "deserved"))
+        _section_feed(_by_sect, SEV.S_WHY, "insj_why")
+
+    # ── 3 · WHO'S HELPING ───────────────────────────────────────────────────
+    elif _sec == "Who's helping":
+        _player_feed(feed, pids, table)
         for pid in pids:
             for ln in feed.get(pid, []):
                 _is_new(ln)
-        _seen_persist()   # stamp today's first-sight dates (one write, if any)
-
-        _render_boards(pids, table, cliffs)
+        _seen_persist()      # stamp today's first-sight dates (one write, if any)
+        _impact_board(pids, table, impmap, impact)
         try:
-            from helpers.dashboard import insights_deep as _DEEP
+            _DEEP.render_offense_board(sctx, pids, table, fp=_fp)
+        except Exception as _exc:
+            st.caption(f"Offensive board unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+        try:
+            _DEEP.render_defense_board(sctx, pids, table, fp=_fp)
+        except Exception as _exc:
+            st.caption(f"Defensive board unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+        _render_wpa(pids, impact, table, side="off")
+        _render_wpa(pids, impact, table, side="def")
+        _render_pnr(pids, roles, table)
+        try:
             _DEEP.render_foul_rates(pids, table)
         except Exception as _exc:
             st.caption(f"Foul-rate board unavailable — "
                        f"{type(_exc).__name__}: {_exc}")
-        _render_passers(ctx, pids, table, _fp)
-        _render_ball_movement(ctx, pids, table, _tids, _fp)
+        _render_passers(sctx, pids, table, _fp)
+        _render_ball_movement(sctx, pids, table, _tids, _fp)
+        _ported_cards(_plines, ("involve", "hero", "fouls", "clock", "reb"))
+        _section_feed(_by_sect, SEV.S_HELPING, "insj_help")
 
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 3 — OFFENSE
-    # ══════════════════════════════════════════════════════════════════════════
-    with _t_off:
+    # ── 4 · WHO TO PLAY TOGETHER ────────────────────────────────────────────
+    elif _sec == "Who to play together":
         try:
-            from helpers.dashboard import insights_deep as _DEEP
-            _DEEP.render_offense_board(ctx, pids, table, fp=_fp)
+            from helpers.dashboard import insights_lineups as _LU
+            _LU.render(sctx, table=table, fp=_fp)
         except Exception as _exc:
-            st.caption(f"Offensive board unavailable — "
+            st.caption(f"Lineup section unavailable — "
                        f"{type(_exc).__name__}: {_exc}")
-        # The shot-depth verdict belongs beside the diet it is a reading of.
-        # It also renders on Auto-scout, which is the front page; here it sits
-        # under the table that shows the shares behind it.
-        _sd_off = _shot_diet_lines(ctx)
-        if _sd_off:
-            st.markdown("<div class='lab-hdr'>What the diet is costing</div>",
-                        unsafe_allow_html=True)
-            st.markdown(verdict_card(_sd_off), unsafe_allow_html=True)
-        _render_wpa(pids, impact, table, side="off")
-        # PnR handler-vs-roller is a SCORING read — who finishes the action —
-        # and it sat on the Defense tab only because there was no offensive tab
-        # to put it on. This is its home.
-        _render_pnr(pids, roles, table)
+        _section_feed(_by_sect, SEV.S_TOGETHER, "insj_tog")
 
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 4 — DEFENSE
-    # ══════════════════════════════════════════════════════════════════════════
-    with _t_def:
+    # ── 5 · WHAT THEY'LL TAKE AWAY ──────────────────────────────────────────
+    elif _sec == "What they'll take away":
+        st.caption(
+            "The same content as a self-scout, written the way an opposing "
+            "staff would write it. Nothing here is opponent prep — game "
+            "planning against someone else stays in the War Room.")
+        _ported_cards(_plines, ("selfscout", "tovs", "scheme"))
+        _render_tendencies(sctx, _tids, _fp)
+        _render_shot_map(sctx, _tids, _fp)
+        _render_boards(pids, table, cliffs)
+        _render_matchup_grid(sctx, pids, table, _tids, _fp)
+        _section_feed(_by_sect, SEV.S_SCOUT, "insj_scout")
+
+    # ── 6 · MONDAY ──────────────────────────────────────────────────────────
+    elif _sec == "Monday":
+        _render_monday(_ranked)
+
+    # ── 7 · RECEIPTS ────────────────────────────────────────────────────────
+    else:
         try:
-            from helpers.dashboard import insights_deep as _DEEP
-            _DEEP.render_defense_board(ctx, pids, table, fp=_fp)
+            _DEEP.ported_blocks(sctx, fp=_fp, cols=4)
         except Exception as _exc:
-            st.caption(f"Defensive board unavailable — "
+            st.caption(f"Engine blocks unavailable — "
                        f"{type(_exc).__name__}: {_exc}")
-        _render_wpa(pids, impact, table, side="def")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 5 — WINS & LOSSES
-    # ══════════════════════════════════════════════════════════════════════════
-    with _t_wl:
-        _render_winloss(ctx, _tids, _fp)
-        _render_deserved_games(_bundle, ctx)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 6 — EVERY ENGINE
-    # ══════════════════════════════════════════════════════════════════════════
-    with _t_eng:
         try:
-            from helpers.dashboard import insights_deep as _DEEP
-            _DEEP.render_ported(ctx, fp=_fp)
+            _DEEP.render_ported(sctx, fp=_fp)
         except Exception as _exc:
             st.caption(f"Ported sections unavailable — "
                        f"{type(_exc).__name__}: {_exc}")
+        _section_feed(_by_sect, SEV.S_RECEIPTS, "insj_rec")
+        _severity_audit(_ranked)
+
+
+def _section_feed(by_sect, section, key):
+    """Every ranked finding that belongs to this section, in full.
+
+    THE LAW, ON SCREEN. The deck shows five; this shows all of them, ordered by
+    the same severity. No cap, no confidence floor, no "top N" — if an engine
+    fired it, a coach is entitled to it, and severity only decides what she
+    reads first.
+    """
+    from helpers.dashboard import insights_brief as _BR
+    rows = by_sect.get(section) or []
+    if not rows:
+        return
+    _BR._hdr(f"Every finding here — {len(rows)}",
+             "Ranked by points at stake × reliability × sample. Nothing is "
+             "capped: severity decides the order, never the membership.")
+    _BR.grid([_BR.block(
+        str(f.get("metric") or "Read"),
+        n=(f.get("subject") or None),
+        lines=[(SEV.pts_chip(f.get("pts")) if f.get("pts") is not None
+                else f"r={f.get('r', 0):.2f}",
+                _b(str(f.get("text") or "")))])
+        for f in rows], cols=3)
+    _evidence_jumps([{"metric": f.get("metric")} for f in rows], key=key)
+
+
+def _ported_cards(plines, keys):
+    """A ported engine's verdict, rendered where its question is asked.
+
+    The long-form accordion version with its captions and its evidence pointers
+    still lives on Receipts — this is the same lines, unhidden, beside the
+    section they answer.
+    """
+    from helpers.dashboard import insights_deep as _DEEP
+    for key, header, cap, _home in _DEEP._PORT_SECTIONS:
+        if key not in keys:
+            continue
+        v = (plines or {}).get(key)
+        if not v:
+            continue
+        st.markdown(f"<div class='lab-hdr'>{header}</div>",
+                    unsafe_allow_html=True)
+        st.markdown(f"<div class='hdr-sub'>{html.escape(cap)}</div>",
+                    unsafe_allow_html=True)
+        st.markdown(verdict_card(v), unsafe_allow_html=True)
+
+
+def _player_feed(feed, pids, table):
+    """One dense block per player, packed 4 across, uncapped."""
+    from helpers.dashboard import insights_brief as _BR
+    n_lines = sum(len(feed.get(p, [])) for p in pids)
+    _BR._hdr("Every player, every read",
+             f"{n_lines} findings across "
+             f"{sum(1 for p in pids if feed.get(p))} players · scored vs the "
+             f"whole league, not this roster · every line shown")
+    blocks = []
+    for pid in pids:
+        lines = feed.get(pid, [])
+        if not lines:
+            continue
+        r = table[pid]
+        sub = []
+        if r.get("OVERALL") is not None:
+            sub.append(("OVR", f"{r['OVERALL']:.0f}"))
+        if r.get("MIN"):
+            sub.append(("MIN", f"{r['MIN']:.0f}"))
+        blocks.append(_BR.block(
+            r["name"], n=f"{len(lines)} read"
+                         f"{'s' if len(lines) != 1 else ''}",
+            rows=sub,
+            lines=[(ln.get("metric"),
+                    f"<span style='color:var(--subtext)'>"
+                    f"n={ln.get('n')}</span> {_b(ln['text'])}")
+                   for ln in lines]))
+    if blocks:
+        _BR.grid(blocks, cols=4)
+    else:
+        st.caption("No standout signals yet — this roster reads close to "
+                   "league average on the tracked splits, or needs more games.")
+
+
+def _impact_board(pids, table, impmap, wpa):
+    """RAPM · HoopWAR · WPA on one row, with the possession sample beside each.
+
+    Free: `_league` already solves the ridge for the stats-vs-substance
+    generator, so this board reads a result the page has paid for rather than
+    solving it a second time.
+    """
+    rows = []
+    for pid in pids:
+        im = (impmap or {}).get(pid) or {}
+        wp = (wpa or {}).get(pid) or {}
+        if not im and not wp:
+            continue
+        rows.append({
+            "Player": (table.get(pid) or {}).get("name") or f"#{pid}",
+            "RAPM": (f"{im['rapm']:+.1f}" if im.get("rapm") is not None
+                     else "—"),
+            "O-RAPM": (f"{im['orapm']:+.1f}" if im.get("orapm") is not None
+                       else "—"),
+            "D-RAPM": (f"{im['drapm']:+.1f}" if im.get("drapm") is not None
+                       else "—"),
+            "HoopWAR": (f"{im['war']:+.2f}" if im.get("war") is not None
+                        else "—"),
+            "Off WPA": f"{wp.get('off_wpa') or 0:+.2f}",
+            "Def WPA": f"{wp.get('def_wpa') or 0:+.2f}",
+            "Clutch": f"{wp.get('clutch_wpa') or 0:+.2f}",
+            "Poss": im.get("poss") or 0,
+            "_s": (im.get("rapm") if im.get("rapm") is not None else -99),
+        })
+    if not rows:
+        return
+    rows.sort(key=lambda r: -r["_s"])
+    for r in rows:
+        r.pop("_s")
+    from helpers.dashboard import insights_brief as _BR
+    _BR._hdr("Impact board — adjusted, not raw",
+             "RAPM strips out who a player shared the floor with; HoopWAR "
+             "prices that in wins; WPA is the leverage-weighted record of what "
+             "actually swung games. Read them together — they disagree when a "
+             "player's minutes flatter her.")
+    st.markdown(dense_table(rows), unsafe_allow_html=True)
+    st.caption("Poss = the possessions the ridge had to work with. A player "
+               "under a few hundred is being carried by the box-impact prior, "
+               "not measured.")
+
+
+def _render_monday(ranked):
+    """Ranked practice priorities, with the points at stake.
+
+    MONDAY NAMES THE PROBLEM. IT DOES NOT PRESCRIBE THE DRILL. A metric→drill
+    mapping would be authored by us rather than measured by the app, and this
+    book's standing rule is that a sentence needs a measurement behind it. The
+    coach decides how to fix it.
+
+    The narrowing — negative direction AND an authored `rehearsable` metric —
+    is a display grouping INSIDE Monday. It removes nothing from any other
+    section; the full uncapped list still renders in each of them.
+    """
+    from helpers.dashboard import insights_brief as _BR
+    rows = SEV.monday(ranked)
+    _BR._hdr(f"Monday — {len(rows)} things practice can move",
+             "Everything below points the wrong way AND sits on a metric the "
+             "app has authored as rehearsable. Ordered by what it is costing.")
+    if not rows:
+        st.caption(
+            "Nothing on the rehearsable list is pointing the wrong way right "
+            "now. That is a real answer, not an empty state — the findings "
+            "that fired are either going the right way or sit on metrics a "
+            "practice plan does not move (schedule luck, opponent strength, "
+            "close-game variance).")
+        return
+    st.markdown(dense_table([{
+        "Priority": i,
+        "What": f.get("metric"),
+        "Who": f.get("subject") or "Team",
+        "Costing": SEV.pts_chip(f.get("pts")),
+        "Sample": f.get("n"),
+        "r": f"{f.get('r', 0):.2f}",
+        "Evidence in": SEV.SECTION_LABELS.get(f.get("section"), "Receipts"),
+    } for i, f in enumerate(rows, start=1)]), unsafe_allow_html=True)
+    st.markdown(verdict_card([
+        (f.get("metric"), f.get("n"), str(f.get("text") or ""))
+        for f in rows]), unsafe_allow_html=True)
+    st.caption(
+        "`Costing` is blank where no defensible points conversion exists yet. "
+        "That is deliberate — no tag beats a wrong tag, and the table in "
+        "`helpers/insights_severity.py` grows only as derivations are proven.")
+
+
+def _severity_audit(ranked):
+    """The whole ranked list, as a table, with its inputs exposed.
+
+    Lives on Receipts because that is where a coach goes to check the app's
+    work. The two bands are visible as a column, so "why is this above that"
+    is answerable without reading the source.
+    """
+    if not ranked:
+        return
+    tagged = sum(1 for f in ranked if f.get("band") == SEV.BAND_TAGGED)
+    with st.expander(f"⚖️ The severity ranking — all {len(ranked)} findings, "
+                     f"and how each was scored", expanded=False):
+        st.caption(
+            f"**{tagged}** findings carry a points-per-game conversion and "
+            f"sort above the **{len(ranked) - tagged}** that do not. The bands "
+            "never interleave: a neutral stand-in for missing materiality "
+            "would let an untagged read outrank a genuinely small tagged one, "
+            "which is the app inventing a number it does not have. Within a "
+            "band the score can tie, and the order finishes on the miner's own "
+            "|z| — a tiebreak, not part of the score.")
+        st.markdown(dense_table([{
+            "#": i,
+            "Band": ("pts/g" if f.get("band") == SEV.BAND_TAGGED
+                     else "no conversion"),
+            "Metric": f.get("metric"),
+            "Who": f.get("subject") or "Team",
+            "pts/g": SEV.pts_chip(f.get("pts")),
+            "r": f"{f.get('r', 0):.2f}",
+            "conf": f"{f.get('confidence', 0):.2f}",
+            "severity": f"{f.get('severity', 0):.3f}",
+            "Section": SEV.SECTION_LABELS.get(f.get("section"), "Receipts"),
+        } for i, f in enumerate(ranked, start=1)]), unsafe_allow_html=True)
 
 
 def _render_winloss(ctx, _tids, _fp):
@@ -708,7 +997,7 @@ def _render_winloss(ctx, _tids, _fp):
             f"({_ss['bottom_games']}g).")]),
             unsafe_allow_html=True)
         _jump_btn("Charts", "Charts → Trends: the full 7-metric split →",
-                  "insj_str")
+                  "insj_str", sub="Trends")
 
     # ── deep dive: offense IN WINS vs IN LOSSES ───────────────────────────────
     _wl = _winloss(ctx.gender, ctx.team_id, _tids, fp=_fp) \
@@ -804,6 +1093,98 @@ def _render_winloss(ctx, _tids, _fp):
                    "side of the record — fills in as results build.")
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _team_located(team_id, tids, fp=None):
+    """This team's tap-located attempts — the shot map's only input."""
+    if not team_id or not tids:
+        return []
+    return S.located_shots(game_ids=list(tids), team_id=team_id)
+
+
+def _render_shot_map(ctx, _tids, _fp):
+    """The shot map, on Insights for the first time.
+
+    Insights has had zone TABLES since it was written and no court anywhere,
+    which is the one thing every coach reaches for first. It belongs in the
+    scout's section rather than beside the offensive board: the question here
+    is "what does an opponent see when they chart us", and a chart is the
+    literal answer.
+    """
+    shots = _team_located(getattr(ctx, "team_id", None), tuple(_tids or ()),
+                          fp=_fp)
+    if len(shots) < 25:
+        return
+    try:
+        import helpers.court as CRT
+        fig, n = CRT.shot_map(shots, title="")
+    except Exception as exc:
+        st.caption(f"Shot map unavailable — {type(exc).__name__}: {exc}")
+        return
+    if not n:
+        return
+    from helpers.dashboard import insights_brief as _BR
+    _BR._hdr(f"The shot chart an opponent would draw — {n} located attempts",
+             "Green = make, red ✕ = miss. Only tap-located attempts appear; "
+             "legacy zone-only shots are in the tables above, not here.")
+    st.plotly_chart(fig, width="stretch", key="ins_scout_shotmap")
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _matchups(gender, tids, _table, fp=None):
+    """{defender_id: {difficulty, shots_faced, Difficulty100}} for the pool.
+
+    `_table` is the league player table and carries a LEADING UNDERSCORE so
+    Streamlit does not hash it: it is a 100+ row dict rebuilt every run, and
+    hashing it would cost more than the engine it keys. `tids` + `fp` already
+    identify the data it was built from. Without a table there is no scorer-
+    quality map and the engine returns nothing, so it is required, not optional.
+    """
+    import helpers.matchups as MU
+    if not tids or not _table:
+        return {}
+    return MU.matchup_difficulty(game_ids=list(tids), table=_table)
+
+
+def _render_matchup_grid(ctx, pids, table, _tids, _fp):
+    """Who each defender actually guarded, and how hard that assignment was.
+
+    League-relative (50 = an average assignment), because "she guarded their
+    best scorer" only means something against what everyone else was asked to
+    do. It is a record of these games — assignment shares measure r .17-.64 —
+    and the caption says so rather than letting the 0-100 index imply a trait.
+    """
+    mm = _matchups(ctx.gender, tuple(_tids or ()), table, fp=_fp)
+    rows = []
+    for pid in pids:
+        m = mm.get(pid)
+        if not m or not m.get("shots_faced"):
+            continue
+        rows.append({
+            "Defender": (table.get(pid) or {}).get("name") or f"#{pid}",
+            "Assignment difficulty": f"{m.get('Difficulty100') or 50:.0f}",
+            "Avg shooter quality": f"{m.get('difficulty') or 0:.1f}",
+            "Shots faced": m.get("shots_faced"),
+            "_s": m.get("Difficulty100") or 0,
+        })
+    if len(rows) < 2:
+        return
+    rows.sort(key=lambda r: -r["_s"])
+    for r in rows:
+        r.pop("_s")
+    from helpers.dashboard import insights_brief as _BR
+    _BR._hdr("Matchup difficulty — who drew the hard jobs",
+             "Attempt-weighted quality of the shooters each defender actually "
+             "guarded, indexed against the league (50 = average assignment).")
+    st.markdown(dense_table(rows), unsafe_allow_html=True)
+    st.caption(
+        "A RECORD of these games, not a trait. The opponent chooses the "
+        "assignment, which is why defender assignment shares measure r "
+        ".17-.64 against a shooter's own diet at .70-.92 — read this as what "
+        "happened, and hide a defender by changing what happens next.")
+    _jump_btn("Charts", "Charts → Defense → Team Defense: the full matchup "
+              "grid →", "insj_mu", sub=("Defense", "Team Defense"))
+
+
 def _render_tendencies(ctx, _tids, _fp):
     """Self-scout: shot tendencies (force left/right, where shots live)."""
     _te = _tendencies(ctx.gender, ctx.team_id, _tids, fp=_fp) \
@@ -895,7 +1276,7 @@ def _render_passers(ctx, pids, table, _fp):
                if cold else "Teammates converted above the look value.")))
     st.markdown(verdict_card(_lines), unsafe_allow_html=True)
     _jump_btn("Charts", "Charts → Offense → Playmaking: the full passer table →",
-              "insj_pq")
+              "insj_pq", sub=("Offense", "Playmaking"))
 
 
 def _render_ball_movement(ctx, pids, table, _tids, _fp):
@@ -967,7 +1348,7 @@ def _render_ball_movement(ctx, pids, table, _tids, _fp):
                    "for − against while on the floor (min 50 attempts). The "
                    "per-player table lives on Charts → Offense → Playmaking.")
         _jump_btn("Charts", "Charts → Offense → Playmaking: the xA / Corsi "
-                  "table →", "insj_bm")
+                  "table →", "insj_bm", sub=("Offense", "Playmaking"))
 
 
 def _render_boards(pids, table, cliffs):

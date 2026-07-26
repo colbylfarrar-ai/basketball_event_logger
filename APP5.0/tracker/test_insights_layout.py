@@ -1,20 +1,22 @@
-"""End-to-end render of the RESTRUCTURED Insights tab (masthead + five tabs).
+"""End-to-end render of THE BOOK — the Insights deck over its seven sections.
 
-The 2026-07-25 restructure turned a flat ~20-block scroll into a plain-English
-masthead over five sub-tabs, collapsed three tables that were rendering on both
-Insights and Charts down to a verdict plus a jump, and removed every truncation
-cap on the page.
+The 2026-07-26 recut replaced six sub-tabs named after data categories with a
+persistent DECK over seven sections named after the question each answers. Four
+things changed that only an end-to-end render can check:
 
-What only an end-to-end render catches:
-
-  * `st.tabs` executes EVERY tab body on every run, so a section that used to
-    sit safely below an early `return` now runs unconditionally — a shape that
-    was previously unreachable on a thin team is now reachable;
-  * the masthead reads three engines through one cached bundle, and a missing
-    key there degrades to an error caption that looks like normal empty state;
-  * the brief's whole purpose is to be readable with no basketball knowledge,
-    so the unglossed-jargon check below is a real requirement, not style
-    policing.
+  * `st.tabs` became `_seg`. Under st.tabs every body ran on every rerun, which
+    is what made a six-tab page expensive; under `_seg` only the open section
+    runs, so a section that used to be carried by its neighbours' work now has
+    to stand up alone. This file renders EVERY section separately for exactly
+    that reason — and it is how the Charts recut's one real casualty was found
+    (`_td_shots`, defined in Shooting and used in Glass).
+  * the deck renders on every section, so a masthead regression is a
+    seven-section regression;
+  * `render` finally carries the `@st.fragment` its docstring has claimed since
+    it was written;
+  * THE FIVE is a spotlight over an uncapped list. If it ever becomes a cap,
+    the page silently stops being the deep-dive home. Every no-cap assertion
+    from the previous layout survives below, plus new ones for the ranking.
 
 SEASON TRAP: SEAS.ACTIVE is "Current" and has zero games; the tracked book is
 under the archived "2025-2026" label. Drive the picker there or the page
@@ -73,8 +75,12 @@ TEAM_ID = max(counts, key=counts.get)
 print(f"pool: {SEASON} / {GENDER} — {len(GIDS)} games; team {TEAM_ID} "
       f"({counts[TEAM_ID]} tracked games)")
 
+SECTIONS = ["Who we are", "Why we win / why we lose", "Who's helping",
+            "Who to play together", "What they'll take away", "Monday",
+            "Receipts"]
 
-def _render():
+
+def _render(section=None, extra=None):
     import streamlit as st
     from streamlit.testing.v1 import AppTest
     st.page_link = lambda *a, **k: None
@@ -83,106 +89,238 @@ def _render():
     cwd = os.getcwd()
     os.chdir(os.path.dirname(os.path.abspath(__file__)))   # secrets-free cwd
     try:
-        at = AppTest.from_file(page, default_timeout=1200)
+        at = AppTest.from_file(page, default_timeout=1800)
         at.session_state["ta_team"] = TEAM_ID
         at.session_state["ta_season"] = SEASON
         at.session_state["td_view"] = "Insights"
+        if section:
+            at.session_state["ins_section"] = section
+        for k, v in (extra or {}).items():
+            at.session_state[k] = v
         at.run()
         assert not at.exception, \
-            f"Insights raised: {[repr(e.value)[:500] for e in at.exception]}"
+            f"Insights[{section}] raised: " \
+            f"{[repr(e.value)[:500] for e in at.exception]}"
         md = " ".join(m.value for m in at.markdown if isinstance(m.value, str))
         cap = " ".join(c.value for c in at.caption if isinstance(c.value, str))
-        tabs = [t.label for t in at.tabs] if hasattr(at, "tabs") else []
-        return md + " " + cap, tabs, at
+        return md + " " + cap, at
     finally:
         os.chdir(cwd)
 
 
-try:
-    BODY, TABS, AT = _render()
-except Exception as exc:                       # pragma: no cover
-    print(f"  !! render could not run ({type(exc).__name__}: {exc})")
-    raise
+# ── every section stands up on its own ───────────────────────────────────────
+# This is the assertion the `_seg` conversion makes necessary. Under st.tabs a
+# section could lean on a name another tab's body happened to define; under
+# `_seg` only one body runs, and a leak is a NameError the moment a coach opens
+# that section.
+print("\nevery section renders alone, with no engine falling back to a caption")
+BODIES, ATS = {}, {}
+for _s in SECTIONS:
+    body, at = _render(_s)
+    BODIES[_s], ATS[_s] = body, at
+    ok(len(body) > 5000, f"'{_s}' rendered ({len(body)} chars)")
+    _degraded = re.findall(r"[A-Za-z' /]+unavailable — [A-Za-z]+Error", body)
+    ok(not _degraded, f"'{_s}' did not fall into an error caption {_degraded}")
 
-print(f"rendered {len(BODY)} chars, {len(TABS)} tab labels")
+BODY, AT = BODIES[SECTIONS[0]], ATS[SECTIONS[0]]
+_ALL = " ".join(BODIES.values())
 
-ok(len(BODY) > 5000, f"the Insights view rendered ({len(BODY)} chars)")
 
-
-# ── the auto-scout board ─────────────────────────────────────────────────────
-print("\nthe auto-scout board is present and built")
-ok("Auto-scout" in BODY, "the auto-scout header rendered")
-ok("Auto-scout unavailable" not in BODY,
-   "the board did not fall into its error caption")
+# ── the deck ─────────────────────────────────────────────────────────────────
+print("\nthe deck is above the switcher, on every section")
+for _s in SECTIONS:
+    ok("Severity =" in BODIES[_s],
+       f"THE FIVE rides above '{_s}' — the deck is the frame, not a section")
 for probe, label in (
         ("Extra shots", "the volume term is named"),
         ("Selection", "the quality term is named"),
         ("Shot-making", "the making term is named"),
-        ("Free throws", "the free-throw term is named")):
+        ("Free throws", "the free-throw term is named"),
+        ("decide their games", "the identity sentence is on the deck"),
+        ("pl-pct", "the DNA percentile rail rendered"),
+        ("margin/g", "the masthead carries record and margin per game")):
     ok(probe in BODY, label)
-ok("Team flags" in BODY, "the team-flag block rendered")
 
 
-# ── the sub-tabs ─────────────────────────────────────────────────────────────
-print("\nthe five sub-tabs exist, and nothing sits above them")
-for want in ("Auto-scout", "Players", "Defense", "Wins & losses",
-             "Every engine"):
-    ok(any(want in t for t in TABS), f"tab '{want}' is present")
-ok(TABS and "Auto-scout" in TABS[0],
-   "auto-scout is the FIRST tab — a coach lands on the read, not on a scroll")
-ok("Deep-dive sections unavailable" not in BODY,
-   "no tab fell into its error caption")
-ok("Ported sections unavailable" not in BODY, "the ported half rendered")
-ok("Defensive board unavailable" not in BODY, "the defensive board rendered")
+# ── THE FIVE is a spotlight, and says so ─────────────────────────────────────
+print("\nTHE FIVE is a spotlight over an uncapped list, and admits it")
+ok("spotlight, not a cap" in BODY,
+   "the deck states in words that nothing there is a cap")
+ok("findings fired in total" in BODY,
+   "the deck prints the FULL finding count beside the five it shows")
+ok("Every finding here" in _ALL,
+   "and the sections render the complete list for their own question")
+_five = re.search(r"The (\d+) — biggest first", BODY)
+ok(_five and int(_five.group(1)) <= 5, "the spotlight is five rows or fewer")
+_total = re.search(r"(\d+) findings fired in total", BODY)
+ok(_total and int(_total.group(1)) > 5,
+   f"and the full list is larger than the spotlight "
+   f"({_total.group(1) if _total else '?'} findings)")
 
 
-# ── the depth is still all there ─────────────────────────────────────────────
+# ── THE NON-NEGOTIABLE: the signature stats survive ─────────────────────────
+# Four stats, ranked by effect size, that separate THIS team's wins from its
+# losses — plus the record split by how many of them a game hit. It is the
+# most-quoted block on the page and the recut moved it from a tab named
+# "Wins & losses" to a section named "Why we win / why we lose". Moving it is
+# fine. Losing it is not.
+print("\nthe signature stats survived the recut")
+_why = BODIES["Why we win / why we lose"]
+for probe, label in (
+        ("signature stats", "the signature-stat block is present"),
+        ("What separates wins from losses",
+         "under its own heading, in the section that asks the question"),
+        ("effect-size ranked", "still ranked by effect size, not by taste"),
+        ("in wins", "each stat prints its wins value"),
+        ("in losses", "and its losses value"),
+        ("Record by goals hit", "the record-by-goals-hit ladder is still here"),
+        ("Target = midpoint", "and the goal targets are still explained"),
+        ("Do they beat good teams", "the strength-of-opponent split is here"),
+        ("in wins vs in losses", "the 7-metric win/loss split is here"),
+        ("Game by game", "the per-game margin ledger is here")):
+    ok(probe in _why, label)
+
+
+# ── the depth is all still there, in its new home ───────────────────────────
 print("\nnothing was consolidated away")
 for probe, label in (
         ("what each player is asked to guard", "defensive board"),
         ("DLOAD", "DLOAD% column"),
+        ("what each player actually shoots", "offensive board"),
+        ("OLOAD", "OLOAD% column"),
         ("Foul rate", "foul-rate board"),
-        ("gathered here", "ported verdicts"),
         ("Force them off their hand", "force-hand board"),
         ("Space dependence", "space-dependence board"),
         ("Who won games on defense", "defensive WPA"),
-        ("Auto-scout", "the auto-scout feed"),
-        ("Game by game", "the per-game margin ledger")):
-    ok(probe in BODY, f"{label} still renders")
+        ("Who won games on offense", "offensive WPA"),
+        ("Passer quality", "the passer verdict"),
+        ("Ball movement", "the ball-movement verdict"),
+        ("Every player, every read", "the uncapped player feed"),
+        ("gathered here", "the ported verdicts")):
+    ok(probe in _ALL, f"{label} still renders")
+
+# the largest gap the recut closes: the Impact Lab cluster is on Insights now
+print("\nthe Impact Lab cluster reached Insights")
+_tog = BODIES["Who to play together"]
+for probe, label in (
+        ("Five-man units", "the 5-man unit table"),
+        ("±95%", "with its confidence band"),
+        ("Trios & quads", "trios and quads"),
+        ("Rotation", "the rotation block"),
+        ("Chemistry, synergy and the best fifth", "the on-demand half"),
+        ("run on request rather than on every visit",
+         "which says on screen why it is behind a button")):
+    ok(probe in _tog, f"{label} is on Insights")
+ok(any("chemistry pass" in str(b.label).lower()
+       for b in ATS["Who to play together"].button),
+   "the ~20s chemistry walk is opt-in, not paid on every visit")
+ok("Impact board" in BODIES["Who's helping"],
+   "RAPM / HoopWAR / WPA render together, off the ridge the page already paid "
+   "for")
+
+# section 5 gained the two things Insights had never had: a court, and the
+# record of who each defender actually drew
+print("\nthe scout's section has a court and a matchup grid")
+_scout = BODIES["What they'll take away"]
+for probe, label in (
+        ("shot chart an opponent", "the shot map — Insights had zone tables "
+                                   "and no court anywhere until now"),
+        ("Matchup difficulty", "the matchup grid"),
+        ("Assignment difficulty", "with its league-relative index"),
+        ("Self-scout", "the shot-tendency self-scout"),
+        ("Force them off their hand", "the hand gaps"),
+        ("Space dependence", "and the space cliffs")):
+    ok(probe in _scout, label)
+ok("RECORD of these games, not a trait" in _scout,
+   "the matchup grid refuses to read an opponent-chosen assignment as a trait")
 
 
-# ── the duplicate tables became verdict + jump ───────────────────────────────
-print("\nthe three duplicated tables are verdicts here, tables on Charts")
-_btns = [b.label for b in AT.button] if hasattr(AT, "button") else []
-_jumps = [b for b in _btns if "Charts" in b]
-ok(len(_jumps) >= 1,
-   f"at least one 'the full table is on Charts' jump rendered ({_jumps})")
-ok("Look quality (xPPS)" not in BODY,
-   "the passer TABLE no longer renders here — Charts owns it")
-ok("vs Top-half (" not in BODY,
-   "the top-half/bottom-half TABLE no longer renders here — Charts owns it")
-ok("Passer quality" in BODY, "the passer VERDICT is still here")
-ok("Do they beat good teams" in BODY, "the strength VERDICT is still here")
+# ── Monday names the problem and refuses to prescribe the drill ─────────────
+print("\nMonday is a priority list, not a practice plan")
+_mon = BODIES["Monday"]
+import helpers.dashboard.insights_tab as IT           # noqa: E402
+_itsrc = open(IT.__file__, encoding="utf-8").read()
+ok("Monday —" in _mon, "Monday renders")
+ok("rehearsable" in _mon, "and says what put a row on it")
+ok("DOES NOT PRESCRIBE THE DRILL" in _itsrc,
+   "the refusal to author a metric->drill mapping is written down where the "
+   "next person will read it")
+for _drill in ("box-out drill", "shell drill", "run this drill"):
+    ok(_drill.lower() not in _mon.lower(),
+       f"Monday does not prescribe '{_drill}'")
+
+
+# ── the controls ─────────────────────────────────────────────────────────────
+print("\nthe view has controls for the first time, and they scope everything")
+_sel = [s.label for s in AT.selectbox]
+_ms = [m.label for m in AT.multiselect]
+ok("Players" in _ms, "the player filter exists")
+ok("Game window" in _sel, "the game-window control exists")
+ok("Opponent" in _sel, "the opponent-strength control exists")
+import helpers.dashboard.insights_deck as DECK        # noqa: E402
+_dsrc = open(DECK.__file__, encoding="utf-8").read()
+ok("cache-key" in _dsrc.lower(),
+   "the controls are documented as cache-key inputs, not post-filters")
+ok("_opp_halves" in _dsrc and "st.cache_data" in _dsrc,
+   "the opponent split is computed once and cached, not per render")
+
+
+# ── lazy, and a real fragment ────────────────────────────────────────────────
+print("\nthe sections are lazy and render() is finally a fragment")
+ok("@st.fragment\ndef render(ctx):" in _itsrc,
+   "render carries the @st.fragment its docstring has always claimed")
+_rbody = _itsrc[_itsrc.index("@st.fragment\ndef render(ctx):"):]
+# Comment lines are exempt: the fix's own comment names `st.tabs` to explain
+# why it was wrong, and that explanation is worth more than a grep that cannot
+# tell code from prose (same convention as tracker/test_view_jumps.py).
+_rcode = [ln for ln in _rbody.splitlines() if not ln.lstrip().startswith("#")]
+ok(not any("st.tabs" in ln for ln in _rcode),
+   "the sections are a _seg switcher, not st.tabs — st.tabs runs EVERY body")
+ok('_UI.seg("Section"' in _rbody, "and the switcher is the app's own _seg")
+
+# the same conversion, one level down, on the jump targets
+_page = open(os.path.join(_APP, "pages", "6_Team_Dashboard.py"),
+             encoding="utf-8").read()
+ok("_sub_seg" in _page, "Charts and Lab inner tabs are _seg too")
+for _obj in ("with ch_sc:", "with ch_sh:", "with ch_df:", "with ch_rb:",
+             "with ch_tr:", "with ch_adv:", "with ch_bld:", "with adv_eff:"):
+    ok(_obj not in _page,
+       f"'{_obj}' is gone — st.tabs no longer runs it eagerly")
+
+
+# ── caps are gone, and the ranking did not sneak one back in ────────────────
+print("\nno section is silently truncated")
+import helpers.dashboard.insights_deep as ID          # noqa: E402
+import helpers.insights_severity as SEV               # noqa: E402
+_src = _itsrc + open(ID.__file__, encoding="utf-8").read()
+for pat, label in ((r"hb\[:8\]", "force-hand board"),
+                   (r"cb\[:10\]", "space-dependence board"),
+                   (r"views\[:3\]", "evidence jumps"),
+                   (r"rows\[:3\]", "self-scout drift"),
+                   (r"key=lambda r: -\(r\.get\(\"REB\"\) or 0\)\)\[:2\]",
+                    "rebounding verdicts")):
+    ok(not re.search(pat, _src), f"{label} no longer caps its output")
+
+_sevsrc = open(SEV.__file__, encoding="utf-8").read()
+ok("EVERY line handed in comes back out" in _sevsrc,
+   "the severity module states the rank-never-hide law in its own source")
+_probe = SEV.rank(SEV.collect(team_lines=[
+    {"metric": f"M{i}", "text": "t", "n": 3, "z": 0.1} for i in range(40)]), {})
+ok(len(_probe) == 40,
+   "rank() returns all 40 of 40 findings — no confidence floor, no top-N")
+ok("never the membership" in _itsrc,
+   "and the section renderer says on screen that it is not capping")
 
 
 # ── the register: coach-to-coach, not explainer ──────────────────────────────
-# This assertion is the INVERSE of what it was on 2026-07-25. The first version
-# of the brief glossed every term inline for a reader who had never seen a
-# basketball game, and it read as condescending to the only audience that will
-# ever open the page. A coach does not need ORB or TOV explained.
-#
-# Asserted against the brief MODULE's own prose rather than the page body: the
-# AppTest body is all markdown followed by all captions, so the board cannot be
-# sliced out of it by position, and a page-level check would silently pass by
-# measuring the wrong text.
+# The INVERSE of what it was on 2026-07-25. The first version of the brief
+# glossed every term inline for a reader who had never seen a basketball game,
+# and it read as condescending to the only audience that will ever open the
+# page. A coach does not need ORB or TOV explained.
 print("\nthe register is coach-to-coach, not explainer")
 import ast                                           # noqa: E402
 import helpers.dashboard.insights_brief as IB        # noqa: E402
 _bsrc = open(IB.__file__, encoding="utf-8").read()
-# Collect string CONSTANTS via ast, not by regex: f-strings are JoinedStr nodes
-# whose literal halves are separate constants, and implicit concatenation across
-# lines defeats any regex worth reading. Docstrings are dropped because this
-# module's header discusses the register deliberately.
 _tree = ast.parse(_bsrc)
 _docs = set()
 for _n in ast.walk(_tree):
@@ -195,7 +333,6 @@ _lits = " ".join(
     if isinstance(_n, ast.Constant) and isinstance(_n.value, str)
     and _n.value not in _docs)
 
-# the specific sentences that made it read as a lecture
 for banned, label in (
         ("never watched", "no 'never watched a game' framing"),
         ("quick orientation", "no orientation paragraph"),
@@ -206,53 +343,37 @@ for banned, label in (
          "does not define a pick-and-roll")):
     ok(banned.lower() not in _lits.lower(), label)
 
-# shorthand is used BARE, which is the positive half of the same requirement
 _short = sorted(set(re.findall(r"\b(ORB|TOV|FGA|PPS|FT|FTs)\b", _lits)))
 ok(len(_short) >= 3,
    f"standard shorthand is used without apology ({_short})")
-
-# what the brief still owes the reader: the measurement behind a claim
 ok("r=" in _lits, "reliability rides as an r= chip rather than as hedging")
 
-# the team feed is rendered ONCE, on the auto-scout board, not duplicated
-ok(_bsrc.count("_team_flags(") <= 3,
-   "the team feed has a single render path")
 
-
-# ── the dense block grid ─────────────────────────────────────────────────────
-# The tab is scored on how much true information is on one screen. Blocks are
-# the unit; a regression to the old 2-column gloss-card layout would put a full
-# roster over several screens and is what these assertions exist to catch.
+# ── the dense block grid still does the layout ──────────────────────────────
 print("\nthe dense block grid is doing the layout")
-ok(BODY.count("ins-block") >= 12,
-   f"blocks are the layout unit ({BODY.count('ins-block')} rendered)")
-ok("ins-hd" in BODY, "blocks carry their short uppercase heading")
-ok("ins-row" in BODY or "ins-line" in BODY,
+_help_body = BODIES["Who's helping"]
+ok(_help_body.count("ins-block") >= 12,
+   f"blocks are the layout unit ({_help_body.count('ins-block')} rendered)")
+ok("ins-hd" in _ALL, "blocks carry their short uppercase heading")
+ok("ins-row" in _ALL or "ins-line" in _ALL,
    "blocks carry tight rows / one-line findings")
-ok("Every engine —" in BODY,
-   "the ported engine verdicts are packed onto Auto-scout as blocks, not "
-   "only hidden behind the Every-engine accordions")
-import helpers.dashboard.insights_brief as _IBmod            # noqa: E402
-ok(hasattr(_IBmod, "block") and hasattr(_IBmod, "grid"),
+ok(hasattr(IB, "block") and hasattr(IB, "grid"),
    "the block/grid helpers are exported for other sections to reuse")
-_g = _IBmod.grid.__doc__ or ""
+_g = IB.grid.__doc__ or ""
 ok("COLUMN-WISE" in _g or "round-robin" in _g,
    "the grid distributes round-robin so one tall block does not leave a "
    "ragged hole beside it")
 
 
-# ── caps are gone ────────────────────────────────────────────────────────────
-print("\nno section is silently truncated")
-import helpers.dashboard.insights_tab as IT          # noqa: E402
-import helpers.dashboard.insights_deep as ID         # noqa: E402
-_src = (open(IT.__file__, encoding="utf-8").read()
-        + open(ID.__file__, encoding="utf-8").read())
-for pat, label in ((r"hb\[:8\]", "force-hand board"),
-                   (r"cb\[:10\]", "space-dependence board"),
-                   (r"views\[:3\]", "evidence jumps"),
-                   (r"rows\[:3\]", "self-scout drift"),
-                   (r"key=lambda r: -\(r\.get\(\"REB\"\) or 0\)\)\[:2\]",
-                    "rebounding verdicts")):
-    ok(not re.search(pat, _src), f"{label} no longer caps its output")
+# ── the ranking shows its own work ──────────────────────────────────────────
+print("\nthe ranking shows its own work, on Receipts")
+_rec = BODIES["Receipts"]
+ok("points-per-game conversion" in _rec,
+   "the audit table is on Receipts, where a coach goes to check the work")
+ok("never interleave" in _rec, "and it explains the two bands in words")
+ok("no conversion" in _rec or "pts/g" in _rec,
+   "the band is a visible column, so 'why is this above that' is answerable")
+ok("a tiebreak, not part of the score" in _rec,
+   "and it is honest that |z| only breaks ties")
 
 print(f"\nALL {PASSED} CHECKS PASSED")

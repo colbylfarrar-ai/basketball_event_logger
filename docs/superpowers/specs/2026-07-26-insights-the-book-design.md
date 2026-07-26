@@ -2,7 +2,10 @@
 
 **Date:** 2026-07-26
 **Surface:** Team Dashboard → Insights (`helpers/dashboard/insights_tab.py`, `insights_deep.py`, `insights_brief.py`)
-**Status:** design, approved in brainstorm; not yet planned
+**Status:** **BUILT 2026-07-26.** All eleven sections below shipped, including
+every step of the build order in §10. See "What shipped" at the foot of this
+file for the deltas between the design and the code — three of them, all
+recorded rather than quietly absorbed.
 
 ---
 
@@ -341,3 +344,57 @@ Steps 1 and 2 are independently shippable and independently valuable.
 - Changing any generator's own score, gate or threshold. The severity engine reads them; it does not
   rewrite them.
 - Any change to the `_data_fp` cache-key split (§6).
+
+---
+
+## 12. What shipped (2026-07-26)
+
+Built in the §10 order. New modules: `helpers/insights_severity.py`,
+`helpers/dashboard/insights_deck.py`, `insights_identity.py`,
+`insights_lineups.py`. New tests: `tracker/test_insights_severity.py` (37
+checks, streamlit-free); `test_insights_layout.py` rewritten to render all
+seven sections separately (112 checks); `test_view_jumps.py` extended for the
+two-hop payload (15 checks).
+
+**Three deltas from the design, and why.**
+
+1. **THE FIVE does not sort the bad news to the front.** §4.1's mock reads
+   "ranked worst first" and interleaves ⚠ and ✓. Pushing negatives up would be
+   a SECOND ordering, which is the exact thing §5.1 exists to abolish. It ships
+   as the straight top of the single ranking, labelled "biggest first", with ⚠
+   / ✓ shown per row.
+
+2. **The points table launched with six derivations, not the nine listed in
+   §5.2.** Shipped: the deserved terms, the guarded cliff, WPA→points via
+   `hoopwar.wins_per_point`, team TOV%, forced-TOV rate, and team ORB%. Held
+   back: possession-ledger sources, foul-state net, player-level box-out
+   payoff, kill-strings — each needs an engine output the page does not
+   currently hold, and paying for a fresh event walk to earn a chip is the
+   wrong trade on 1 vCPU. They are named in the module docstring so the gap is
+   visible rather than forgotten. §5.2's rule held: nothing was guessed.
+
+3. **The jump payload is a PATH, not a single subview.** `(view, subview)`
+   could not address `Charts → Offense → Playmaking`, which is where a third of
+   the player-side evidence actually lives. It ships as `(view, [steps])`; each
+   `_sub_seg` consumes the one step it recognises and leaves the rest for the
+   switcher that opens underneath it.
+
+**One real casualty of the `_seg` conversion, found by the test that the
+conversion made necessary.** `_td_shots` was defined in Charts → Offense →
+Shooting and read in Charts → Defense → Glass. Under `st.tabs` every body ran,
+so the leak worked by accident; under `_seg` only the open sub-view runs and
+Glass raised `NameError` the moment it was opened first. Fixed by reading
+`_located_team` directly. An AST sweep for the same shape across all 19
+converted blocks found no others.
+
+**Also done, from §5.5:** the 13 ported engines' `home` chip became a button,
+and two of the destinations it named in plain text were not addressable at all
+(`"Defense"` is a Charts sub-view, not a top-level one). `_PORT_EVIDENCE` in
+`insights_deep.py` holds the real ones.
+
+**And the two §4.2 imports that would have been easy to skip:** the matchup
+grid (`matchups.matchup_difficulty`, league-indexed, captioned as a record
+rather than a trait because the opponent picks the assignment) and the shot map
+(`court.shot_map` over `stats.located_shots`). Both are in section 5. The shot
+map is the first court Insights has ever rendered — the view has had zone
+tables since it was written and no picture of the floor anywhere.

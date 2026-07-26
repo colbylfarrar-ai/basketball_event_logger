@@ -69,27 +69,42 @@ def run():
     UI.gender_radio = lambda *a, **k: "F"
     ENT.has_paid_plan = lambda *a, **k: True
     ENT.viewer_is_league_wide = lambda *a, **k: True
-    try:
-        at = AppTest.from_file(os.path.join(_APP, "pages", "6_Team_Dashboard.py"),
+    # ONE RENDER PER SUB-VIEW. This used to be a single render that asserted
+    # on Winning Formula AND on Charts > Offense > Playmaking at the same time,
+    # which only worked because `st.tabs` executes every tab body on every run.
+    # The 2026-07-26 recut made Charts' inner switcher a `_seg`, so only the
+    # open sub-view runs — that is the perf fix, and it means this harness has
+    # to open each sub-view it wants to check.
+    def _open(sub, nested=None):
+        at = AppTest.from_file(os.path.join(_APP, "pages",
+                                            "6_Team_Dashboard.py"),
                                default_timeout=900)
         at.session_state["ta_team"] = 1
         at.session_state["ta_season"] = SEASON
         at.session_state["td_view"] = "Charts"
+        at.session_state["ch_sub"] = sub
+        if nested:
+            at.session_state["ch_sub_off"] = nested
         at.run()
         assert not at.exception, \
-            "Charts raised: " + repr([repr(e.value)[:400] for e in at.exception])
+            f"Charts[{sub}] raised: " \
+            + repr([repr(e.value)[:400] for e in at.exception])
+        return at
+
+    try:
+        at = _open("Winning Formula")
 
         body = _text(at)
         print(f"  rendered {len(body)} chars of text, "
               f"{len(at.dataframe)} tables")
-        ok(len(body) > 60000,
+        ok(len(body) > 40000,
            f"NOT the 38.8k auth shell — real page rendered ({len(body)} chars)")
         ok("Sign in to continue" not in body, "no sign-in wall")
         ok("No finished games" not in body, "not the empty state")
 
         low = body.lower()
-        # NOTE: AppTest does not expose st.tabs labels (at.get("tabs") is empty),
-        # so the tab is proved by its CONTENT, not by its title.
+        # NOTE: AppTest does not expose st.tabs labels, and the switcher is a
+        # `_seg` now anyway — the sub-view is proved by its CONTENT.
         ok("oliver" in low, "the Oliver anchor made it onto the page")
         ok("exchange rate" in low,
            "the honesty caption ('read this as an exchange rate') rendered")
@@ -115,7 +130,12 @@ def run():
         ok(n_tables >= 2,
            f"Charts rendered {n_tables} tables including the formula pair")
 
-        # ── Charts > Offense > Playmaking: connection matrix (spec 4c) ────
+        # ── Charts > Offense > Playmaking ─────────────────────────────────
+        # Its own render: a different sub-view is a different body now.
+        at = _open("Offense", nested="Playmaking")
+        low = _text(at).lower()
+
+        # connection matrix (spec 4c)
         ok("connection matrix" in low, "the connection matrix rendered")
         ok("expected assists" in low,
            "the grid is labelled in xA, not raw assist counts")

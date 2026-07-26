@@ -137,7 +137,7 @@ try:
        f"the Insights view renders (team {TEAM_ID}, {SEASON}/{GENDER})")
 
     jumps = [b for b in at.button if str(getattr(b, "key", "") or "")
-             .startswith(("insj_", "ins_jump", "insjump"))]
+             .startswith(("insj_", "ins_jump", "insjump", "deck5_"))]
     ok(bool(jumps), f"the evidence jumps are on the page ({len(jumps)} buttons)")
 
     _before = at.session_state["td_view"]
@@ -151,6 +151,53 @@ try:
        f"and it actually switches the view ({_before} -> {_after})")
     ok(IT.TD_VIEW_GOTO not in at.session_state,
        "the parked key is consumed, not left to fire again on the next run")
+
+    # ── THE SUB-VIEW HALF (2026-07-26) ──────────────────────────────────────
+    # A view-only jump landed on Charts' FIRST sub-tab whatever the evidence
+    # actually was, because st.tabs cannot be selected from session state. The
+    # payload is now (view, path) and the inner switchers are `_seg`, so each
+    # one consumes the step it recognises on the way down.
+    print("\n-- the sub-view half of the handshake -------------------------------")
+    ok(IT.TD_SUB_GOTO != IT.TD_VIEW_GOTO,
+       "the sub-destination has its own plain key")
+    ok(_page_src.index("TD_SUB_GOTO") < _page_src.index('key="ch_sub"'),
+       "and the page parks it BEFORE any inner switcher widget exists")
+
+    at2 = AppTest.from_file(str(_APP / "pages" / "6_Team_Dashboard.py"),
+                            default_timeout=1800)
+    at2.session_state["ta_team"] = TEAM_ID
+    at2.session_state["ta_season"] = SEASON
+    at2.session_state["td_view"] = "Insights"
+    at2.run()
+    _named = [b for b in at2.button
+              if "→" in str(getattr(b, "label", "") or "")
+              and str(getattr(b, "key", "") or "").startswith("insj_")]
+    ok(bool(_named),
+       f"the evidence buttons name a full path ({[b.label for b in _named][:3]})")
+    _target = _named[0]
+    _label = str(_target.label)
+    _target.click().run()
+    ok(not at2.exception, "clicking a two-hop jump does not raise")
+    ok(at2.session_state["td_view"] in _label,
+       f"it lands on the named view ({at2.session_state['td_view']} in "
+       f"{_label!r})")
+    # the sub-step the button promised is now the inner switcher's selection
+    _steps = [s.strip() for s in _label.replace("→", "|").split("|")][1:]
+    _steps = [s for s in _steps if s]
+    # AppTest's session_state has no .get(), and reading a missing key raises
+    _picked = set()
+    for _k in ("ch_sub", "ch_sub_off", "ch_sub_def", "lab_sub"):
+        try:
+            _picked.add(at2.session_state[_k])
+        except (KeyError, AttributeError):
+            pass
+    if _steps:
+        ok(_steps[0] in _picked,
+           f"and on the named SUB-view: {_steps[0]!r} is selected "
+           f"({sorted(x for x in _picked if x)})")
+    ok(IT.TD_SUB_GOTO not in at2.session_state,
+       "the parked path is fully consumed -- a leftover step would hijack a "
+       "switcher three clicks later")
 finally:
     os.chdir(_cwd)
 

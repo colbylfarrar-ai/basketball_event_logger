@@ -1632,28 +1632,34 @@ def _matchup_grid(g, tid, _ids):
 #    profile_tab.py  → tab_prof      Player Profile
 #
 #  STILL INLINE — the Charts + Lab block (the hard one; shared data batch):
-#    with tab_lab:     creates the 4 ANALYST sub-tabs (ch_adv bld play impact)
-#       — created BEFORE tab_charts so the ch_* names exist for the with-blocks
-#       below; a `with ch_x:` routes output into whichever tab owns the object,
-#       no matter where the block physically sits in the file.
-#    with tab_charts:  creates the 6 top-level Charts tabs; Offense nests
-#       (ch_sc sh play) and Defense nests (ch_df dscheme rb).
-#       Scoring/Shooting/Rebounding/Defense/Trends render INSIDE this block —
-#       they SHARE one computed-once data batch (quarter, qs, cbg, poss, tb,
-#       ob…) and hold no widgets, which is why they are NOT fragmented. This
-#       shared batch is why the block resists a clean per-tab extraction: pull
-#       it apart only after decoupling the batch (refactor, then move).
+#    Lab   → `_labsub` (Advanced · Build · Impact Lab)
+#    Charts→ `_chsub`  (Offense · Play Style · Defense · Situational · Trends ·
+#            Quarters · Winning Formula), with `_choff` nesting under Offense
+#            (Scoring · Shooting · Playmaking) and `_chdef` under Defense
+#            (Team Defense · Scheme · Glass · Stops).
+#       Every sub-view is an `if _chsub == "…":` block. It used to be
+#       `with ch_x:` over `st.tabs`, and that cost twice: st.tabs runs EVERY
+#       body on every rerun, and a tab is not selectable from session state, so
+#       an Insights evidence jump could never name a sub-tab. The `_sub_seg`
+#       switcher fixes both. The block bodies did not move — only the header
+#       line of each changed — so the shared data batch below is untouched.
+#       Scoring/Shooting/Glass/Team Defense/Trends still SHARE one
+#       computed-once data batch (quarter, qs, cbg, poss, tb, ob…) and hold no
+#       widgets, which is why they are NOT fragmented. That batch is why the
+#       block resists a clean per-tab extraction: pull it apart only after
+#       decoupling the batch (refactor, then move).
 #       Play Style (DPLAYSTYLE.render, helpers/dashboard/playstyle_tab.py) and
 #       Impact Lab (_fx_chimpact) ARE fragments — each owns a radio, so flipping
 #       it reruns only that sub-tab.
-#    _fx_chqt/_fx_chadv/_fx_chbld → ch_qt/ch_adv/ch_bld  (Quarters/Advanced/Build,
-#       rendered BELOW at module level — the sub-tab objects are module globals)
+#    _fx_chqt/_fx_chadv/_fx_chbld  (Quarters/Advanced/Build, rendered BELOW at
+#       module level under their own `if` gates)
 #    tab_gloss   → Glossary
 # ══════════════════════════════════════════════════════════════════════════════
 # Lazy-load: a top-level "View" segmented_control instead of st.tabs, so only
 # the chosen view's heavy queries run each rerun (st.tabs computes every tab).
-# Inner sub-tabs (Charts/Lab) keep their st.tabs; the @st.fragment bodies keep
-# their own fast reruns. Switching View reruns the page once.
+# The Charts/Lab INNER switchers are `_seg` for the same reason (and so an
+# evidence jump can address them); the @st.fragment bodies keep their own fast
+# reruns. Switching View reruns the page once.
 # Players (roster scan) + Player Profile (one-player drill) fold into one "Roster"
 # view with an inner lazy selector — scan the roster, switch to drill into a name.
 # Only the chosen sub-view's fragment runs (see the Roster gate near the file tail,
@@ -1671,12 +1677,60 @@ _TD_VIEW_ICONS = {"Overview": "📊", "Scout": "🔍", "Insights": "💡",
 # and Streamlit rejects writes to a widget key after the widget exists — so they
 # park the destination and rerun; this is the only legal moment to apply it.
 _td_goto = st.session_state.pop(DINS.TD_VIEW_GOTO, None)
+# The payload is (view, subview) as of the Insights recut. A jump that could
+# only name a VIEW landed on Charts' first sub-tab when the evidence was on
+# Trends, which is a jump a coach stops trusting after the second try. The
+# subview is parked separately and consumed by the inner `_sub_seg` switcher
+# that owns it — the same before-the-widget-exists rule, one level down.
+_td_sub = None
+if isinstance(_td_goto, (tuple, list)):
+    _td_goto, _td_sub = (list(_td_goto) + [None])[:2]
 if _td_goto in _TD_VIEWS:
     st.session_state["td_view"] = _td_goto
+    # normalise to a PATH: one hop ("Trends") or two ("Offense", "Playmaking")
+    if _td_sub:
+        st.session_state[DINS.TD_SUB_GOTO] = (
+            list(_td_sub) if isinstance(_td_sub, (tuple, list))
+            else [_td_sub])
+    else:
+        # a fresh view-only jump clears any half-consumed path from an earlier
+        # one, so a stale step cannot hijack a switcher three clicks later
+        st.session_state.pop(DINS.TD_SUB_GOTO, None)
 
 _tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view",
                format_func=lambda v: f"{_TD_VIEW_ICONS.get(v, '')} {v}") \
     or "Overview"
+
+
+def _sub_seg(options, *, key, default=None):
+    """A lazy INNER view switcher that a parked evidence jump can address.
+
+    Two problems, one fix. `st.tabs` executes every tab body on every rerun, so
+    Charts paid for seven stories to show one; and a tab cannot be selected
+    from session state, so `insights_tab`'s evidence buttons could only ever
+    name a top-level view. A keyed `_seg` fixes both: only the chosen body
+    runs, and the parked `(view, subview)` payload can drive it.
+
+    The parked value is consumed only by the switcher whose options contain it,
+    so a Lab destination is not eaten by the Charts switcher on the way past.
+    """
+    dflt = default or options[0]
+    # The parked destination is a PATH ("Offense" → "Playmaking"), because the
+    # evidence for a read can live two switchers deep. Each switcher consumes
+    # the one step it recognises and leaves the rest for the nested switcher
+    # that opens underneath it.
+    parked = list(st.session_state.get(DINS.TD_SUB_GOTO) or ())
+    hit = next((p for p in parked if p in options), None)
+    if hit is not None:
+        parked.remove(hit)
+        if parked:
+            st.session_state[DINS.TD_SUB_GOTO] = parked
+        else:
+            st.session_state.pop(DINS.TD_SUB_GOTO, None)
+        # legal: written BEFORE the widget with this key is instantiated
+        st.session_state[key] = hit
+    return _seg("Section", options, default=dflt, key=key,
+                label_visibility="collapsed") or dflt
 
 # Persistent team-identity chrome: the slim banner (name · tier · record · Power)
 # above the view switcher output on every view EXCEPT Overview, which draws the
@@ -1759,36 +1813,44 @@ if _tdview == "Schedule":
 
 
 # The analyst toys live under one Lab tab — Scout and the game-prep charts
-# stop competing with the correlation heatmap for a coach's attention. Created
-# before tab_charts so the ch_* objects exist for every with-block below.
+# stop competing with the correlation heatmap for a coach's attention.
+#
+# `_choff` / `_chdef` are initialised here because the `if _choff == …` blocks
+# below sit inside the shared-data-batch block, which runs whichever Charts
+# sub-view is open — so the names have to exist even on a run where the nested
+# switcher that assigns them was never built. `_labsub` rides along for
+# symmetry; Lab's blocks are all inside its own `if _tdview == "Lab":` gate.
+_labsub = _choff = _chdef = None
 if _tdview == "Lab":
     st.caption("Analyst tools — deeper dives beyond the game-prep core.")
-    (ch_adv, ch_bld, ch_impact) = st.tabs(
-        ["Advanced", "Build", "Impact Lab"])
+    _labsub = _sub_seg(["Advanced", "Build", "Impact Lab"], key="lab_sub")
 
 if _tdview == "Charts":
-    # Six top-level stories instead of ten flat tabs: Offense and Defense carry
-    # nested sub-tabs. Scheme nests under Defense (it IS the defensive-identity
-    # deep dive, mirroring Play Style on offense); Rebounding folds in as Glass.
-    # Every ch_* object is still a module global referenced by the `with ch_*:`
-    # blocks scattered below — a `with ch_x:` routes output into whichever tab
-    # owns the object regardless of where the body sits in the file, so only
-    # THIS block drives what the user sees.
-    (tab_off, ch_ps, tab_def, ch_sit, ch_tr, ch_qt, ch_wf) = st.tabs(
-        ["Offense", "Play Style", "Defense", "Situational", "Trends",
-         "Quarters", "Winning Formula"])
-    with tab_off:
-        (ch_sc, ch_sh, ch_play) = st.tabs(
-            ["Scoring", "Shooting", "Playmaking"])
-    with tab_def:
-        (ch_df, ch_dscheme, ch_rb, ch_stops) = st.tabs(
-            ["Team Defense", "Scheme", "Glass", "Stops"])
+    # Seven top-level stories; Offense and Defense carry nested switchers.
+    # Scheme nests under Defense (it IS the defensive-identity deep dive,
+    # mirroring Play Style on offense); Rebounding folds in as Glass.
+    #
+    # `_seg`, NOT `st.tabs`. Two reasons, and both are load-bearing. st.tabs
+    # executes EVERY tab body on every rerun, so Charts computed seven stories
+    # to show one; and a tab cannot be selected from session state, which is
+    # why an Insights evidence jump to "Charts → Trends" used to land on
+    # Offense. The `with ch_x:` blocks scattered below are now `if _chsub == …:`
+    # blocks — the header line changed, the bodies did not move.
+    _chsub = _sub_seg(["Offense", "Play Style", "Defense", "Situational",
+                       "Trends", "Quarters", "Winning Formula"],
+                      key="ch_sub")
+    if _chsub == "Offense":
+        _choff = _sub_seg(["Scoring", "Shooting", "Playmaking"],
+                          key="ch_sub_off")
+    if _chsub == "Defense":
+        _chdef = _sub_seg(["Team Defense", "Scheme", "Glass", "Stops"],
+                          key="ch_sub_def")
 
     # ── Defense Scheme super-tab (the one-tap `defense` deep dive) ──────────
     # Modular renderer in helpers/dashboard/defense_tab.py (mirrors Play Style);
     # the page passes plain values + its own cached wrappers. Self-gates on
     # has_tracked internally (own @st.fragment), so NOT in the empty-state loop.
-    with ch_dscheme:
+    if _chdef == "Scheme":
         _def_ctx = SimpleNamespace(
             team_id=team_id, gender=gender, has_tracked=has_tracked,
             players=players, tracked_ids=tuple(bundle["tracked_ids"]),
@@ -1814,7 +1876,7 @@ if _tdview == "Charts":
     # plain values + its own cached wrappers so caching stays here and the module
     # is testable in isolation. Self-gates on has_tracked internally (it is its
     # own @st.fragment), so it is NOT in the empty-state loop below.
-    with ch_ps:
+    if _chsub == "Play Style":
         _ps_ctx = SimpleNamespace(
             team_id=team_id, gender=gender, has_tracked=has_tracked,
             players=players, tracked_ids=tuple(bundle["tracked_ids"]),
@@ -1840,7 +1902,7 @@ if _tdview == "Charts":
     # ── Situational super-tab (play_type/defense by quarter/score/run) ──────
     # Modular renderer in helpers/dashboard/situational_tab.py; self-gates on
     # has_tracked internally (own @st.fragment), so NOT in the empty-state loop.
-    with ch_sit:
+    if _chsub == "Situational":
         _sit_ctx = SimpleNamespace(
             team_id=team_id, gender=gender, has_tracked=has_tracked,
             players=players, tracked_ids=tuple(bundle["tracked_ids"]),
@@ -1857,12 +1919,14 @@ if _tdview == "Charts":
         DSITUATIONAL.render(_sit_ctx)
 
     if not has_tracked:
-        for _ch in (ch_sc, ch_sh, ch_rb, ch_df, ch_tr):
-            with _ch:
-                empty_state("No tracked games yet",
-                            "The analytics wall is built from play-by-play. Track a "
-                            "game in the Game Tracker to light up scoring, shooting, "
-                            "defense, play types and the rest.", icon="📊")
+        # One empty state for whichever sub-view is actually open. It used to
+        # paint the same card into five tab objects at once, which the `_seg`
+        # switcher makes both impossible and pointless — only one body runs.
+        if _chsub in ("Offense", "Defense", "Trends"):
+            empty_state("No tracked games yet",
+                        "The analytics wall is built from play-by-play. Track a "
+                        "game in the Game Tracker to light up scoring, shooting, "
+                        "defense, play types and the rest.", icon="📊")
     else:
         st.caption("The analytics wall — built from tracked-game events. Small "
                    "samples are directional.")
@@ -1898,7 +1962,7 @@ if _tdview == "Charts":
         _lg_dreb = [1 - v["def"]["ORB"] for v in _lgff.values()]
 
         # ───────────────────────────────────────────── SCORING ──────────────
-        with ch_sc:
+        if _choff == "Scoring":
             # plain-word read first (Insights pattern) — the numbers below are
             # the evidence, not the message
             _sc_lines = []
@@ -2016,7 +2080,7 @@ if _tdview == "Charts":
                            "the most efficient.")
 
         # ───────────────────────────────────────────── SHOOTING ─────────────
-        with ch_sh:
+        if _choff == "Shooting":
             _shp, _shc, _shm = st.tabs(
                 ["Shot Profile", "Contest", "Creation & Shot-making"])
             with _shp:
@@ -2655,7 +2719,7 @@ if _tdview == "Charts":
                            "them. A great offense does both.")
 
         # ───────────────────────────────────────────── REBOUNDING ───────────
-        with ch_rb:
+        if _chdef == "Glass":
             # plain-word read first — where this team's glass actually ranks
             _rb_dreb = S._safe(tb["DRB"], tb["DRB"] + ob["ORB"])
             _rb_opct = TA.percentile(ff["off"]["ORB"], _lg_orb,
@@ -2777,8 +2841,15 @@ if _tdview == "Charts":
                            "court: second chances we create. Right court: red "
                            "clusters are where we leak offensive boards.")
 
-            # putbacks — the shot IS roughly where the offensive board happened
-            _pb = [s for s in _td_shots if s.get("play_type") == "putback"]
+            # putbacks — the shot IS roughly where the offensive board happened.
+            # Reads the located-shot pool DIRECTLY rather than borrowing the
+            # `_td_shots` name from the Shooting sub-view. Under `st.tabs` every
+            # body ran, so that leak worked by accident; under the `_seg`
+            # switcher only the open sub-view runs and Glass raised NameError
+            # the moment it was opened without Shooting. `_located_team` is a
+            # cached wrapper, so reading it twice costs one dict lookup.
+            _rb_shots = _located_team(team_id, tuple(bundle["tracked_ids"]))
+            _pb = [s for s in _rb_shots if s.get("play_type") == "putback"]
             if len(_pb) >= 5:
                 st.markdown("<div class='lab-hdr'>Putbacks — where second-chance "
                             "shots go up</div>", unsafe_allow_html=True)
@@ -2860,7 +2931,7 @@ if _tdview == "Charts":
                                    "shot-creator tag.")
 
         # ───────────────────────────────────────────── DEFENSE ──────────────
-        with ch_df:
+        if _chdef == "Team Defense":
             # plain-word read first — where the defense ranks + where it leaks
             _df_lines = []
             _df_dpct = TA.percentile(summ.get("DRtg"), _lg_drtg,
@@ -3088,7 +3159,7 @@ if _tdview == "Charts":
                            "→ **Quarters** tab.")
 
         # ───────────────────────────────────────────── TRENDS ───────────────
-        with ch_tr:
+        if _chsub == "Trends":
             if len(trend) < 2:
                 st.info("Need at least two tracked games for trend charts.")
             else:
@@ -3918,7 +3989,7 @@ def _fx_chqt():
 #  CHARTS ▸ ADVANCED  (the futuristic analytics lab: 5 sub-tabs)
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Charts":
-    with ch_qt:
+    if _chsub == "Quarters":
         _fx_chqt()
 
 
@@ -3991,7 +4062,7 @@ def _fx_stops():
 
 
 if _tdview == "Charts":
-    with ch_stops:
+    if _chdef == "Stops":
         _fx_stops()
 
 
@@ -4116,7 +4187,7 @@ def _fx_formula():
 
 
 if _tdview == "Charts":
-    with ch_wf:
+    if _chsub == "Winning Formula":
         _fx_formula()
 
 
@@ -4252,7 +4323,7 @@ def _fx_foul_trouble():
 
 
 if _tdview == "Charts":
-    with ch_sit:
+    if _chsub == "Situational":
         _fx_foul_trouble()
 
 
@@ -4750,7 +4821,7 @@ def _fx_playmaking():
 if _tdview == "Charts":
     # Playmaking render — deferred to here so _fx_playmaking() is already defined
     # (the ch_* Charts sub-tab objects are module globals, set in the CHARTS view).
-    with ch_play:
+    if _choff == "Playmaking":
         _fx_playmaking()
 
 
@@ -4762,11 +4833,11 @@ def _fx_chadv():
                "need tracked "
                "games; the résumé works from results alone.")
 
-    adv_eff, adv_res, adv_flow = st.tabs(
-        ["Efficiency & DNA", "Résumé & Form", "Game Flow"])
+    _advsub = _sub_seg(["Efficiency & DNA", "Résumé & Form",
+                        "Game Flow"], key="lab_adv_sub")
 
     # ───────────────────────────────────────── EFFICIENCY & DNA ─────────────
-    with adv_eff:
+    if _advsub == "Efficiency & DNA":
         if not has_tracked or not sc_track:
             st.info("Tracked games needed for league-relative efficiency.")
         else:
@@ -4907,7 +4978,7 @@ def _fx_chadv():
                        "outward = better, defense and turnovers included.")
 
     # ───────────────────────────────────────── RÉSUMÉ & FORM ────────────────
-    with adv_res:
+    if _advsub == "Résumé & Form":
         power_by = {tid2: r.get("Power") for tid2, r in scored.items()}
         rank_by = {tid2: r.get("Rank") for tid2, r in scored.items()}
         sos = TA.strength_of_schedule(log, power_by, rank_by, len(scored))
@@ -5064,7 +5135,7 @@ def _fx_chadv():
             st.caption("Green = win, red = loss. Points to the right are tougher "
                        "opponents; high-up wins over strong teams are the marquee "
                        "results, low losses to weak teams are the red flags.")
-    with adv_flow:
+    if _advsub == "Game Flow":
         if not has_tracked:
             st.info("Tracked games needed to reconstruct the score flow.")
         else:
@@ -5168,7 +5239,7 @@ def _fx_chadv():
 #  TAB 7 — INSIGHTS
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Lab":
-    with ch_adv:
+    if _labsub == "Advanced":
         _fx_chadv()
 
 
@@ -5179,8 +5250,6 @@ if _tdview == "Lab":
 # Room page, Impact Lab moved here under Charts. `if True:` preserves the moved
 # Impact-Lab block's original indentation (no wholesale re-indent).
 if _tdview == "Lab":
-    h_impact = ch_impact
-
     # fragment: the WPA model radio lives INSIDE, so switching models reruns
     # only the Impact Lab, not the whole page.
     @st.fragment
@@ -5778,7 +5847,7 @@ if _tdview == "Lab":
             elif _picked:
                 st.caption("Pick at least two players to define a core.")
 
-    with h_impact:
+    if _labsub == "Impact Lab":
         _fx_chimpact()
 
 
@@ -5836,10 +5905,14 @@ if _tdview == "Scout":
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB — INSIGHTS (the scout that reads itself, scoped to this team)
 # ══════════════════════════════════════════════════════════════════════════════
+# `rec` / `team_name` feed THE DECK's masthead (record, margin, rank, rest,
+# next opponent). They are already on the page — the deck must not re-query the
+# schedule for a line the bundle has computed.
 _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
                                 has_tracked=has_tracked,
                                 tracked_ids=tuple(bundle["tracked_ids"]),
-                                season=season_pick, season_gp=_season_gp)
+                                season=season_pick, season_gp=_season_gp,
+                                rec=rec, team_name=team.get("name"))
 if _tdview == "Insights":
     DINS.render(_insights_ctx)
 
@@ -6261,7 +6334,7 @@ def _fx_chbld():
 #  TAB 9 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Lab":
-    with ch_bld:
+    if _labsub == "Build":
         _fx_chbld()
 
 

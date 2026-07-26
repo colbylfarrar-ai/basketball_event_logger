@@ -1436,8 +1436,16 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
 
 
 def guarded_cliffs(events):
-    """{pid: {'cliff','n'}} — pts of FG% better OPEN than CONTESTED (the richest
-    live signal: guarded_by_id is well-populated). Reads stats.player_zone_guarded."""
+    """{pid: {'cliff','n','gn','on'}} — pts of FG% better OPEN than CONTESTED
+    (the richest live signal: guarded_by_id is well-populated). Reads
+    stats.player_zone_guarded.
+
+    `gn`/`on` are the CONTESTED and OPEN attempt counts behind the cliff, kept
+    alongside the combined `n` because the points-per-game translator in
+    `insights_severity` prices the cliff against the contested attempts only —
+    the swing is what those specific shots would be worth converting at her
+    open rate, and `n` (both sides) would roughly double it.
+    """
     import helpers.stats as S
     zg = S.player_zone_guarded(events=events)
     out = {}
@@ -1446,7 +1454,8 @@ def guarded_cliffs(events):
         if g.get("FGA", 0) < 8 or o.get("FGA", 0) < 8:
             continue
         out[pid] = {"cliff": round((o["pct"] - g["pct"]) * 100, 0),
-                    "n": g["FGA"] + o["FGA"]}
+                    "n": g["FGA"] + o["FGA"],
+                    "gn": g["FGA"], "on": o["FGA"]}
     return out
 
 

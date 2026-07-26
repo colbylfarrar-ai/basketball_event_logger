@@ -264,7 +264,14 @@ print(f"  .. feed: {len(feed)} players, {n_lines} lines, "
 print("\nthe Insights view renders with all of it wired in")
 
 
-def _render_smoke():
+def _render_smoke(section=None):
+    """Render Insights, optionally driving its section switcher.
+
+    The 2026-07-26 recut made the sections LAZY (`_seg`, not `st.tabs`), so one
+    render no longer exercises the whole page — each board has to be asked for
+    by the section that owns it. That laziness is the point of the recut, and
+    it is why this smoke now renders twice.
+    """
     import streamlit as st
     from streamlit.testing.v1 import AppTest
     from database.db import query
@@ -285,9 +292,12 @@ def _render_smoke():
         at.session_state["ta_team"] = team_id
         at.session_state["ta_season"] = SEASON
         at.session_state["td_view"] = "Insights"
+        if section:
+            at.session_state["ins_section"] = section
         at.run()
         assert not at.exception, \
-            f"Insights raised: {[repr(e.value)[:400] for e in at.exception]}"
+            f"Insights[{section}] raised: " \
+            f"{[repr(e.value)[:400] for e in at.exception]}"
         body = " ".join(m.value for m in at.markdown if isinstance(m.value, str))
         return body
     finally:
@@ -295,21 +305,28 @@ def _render_smoke():
 
 
 try:
-    BODY = _render_smoke()
+    BODY = _render_smoke("Who's helping")
+    RECEIPTS = _render_smoke("Receipts")
 except Exception as exc:                       # pragma: no cover
     print(f"  -- render smoke could not run ({type(exc).__name__}: {exc})")
-    BODY = None
+    BODY = RECEIPTS = None
 
 if BODY is not None:
     ok(len(BODY) > 2000, f"the Insights view rendered ({len(BODY)} chars)")
+    # each board is probed in the SECTION that owns it after the recut. The
+    # defensive board and its offensive twin both live under "Who's helping"
+    # now — they answer one question and used to sit on two tabs.
     for probe, label in (
             ("what each player is asked to guard", "defensive board rendered"),
             ("DLOAD", "DLOAD% column present"),
-            ("Foul rate", "foul-rate board rendered"),
-            ("gathered here", "ported-verdict section rendered")):
+            ("what each player actually shoots", "offensive board rendered"),
+            ("OLOAD", "OLOAD% column present"),
+            ("Foul rate", "foul-rate board rendered")):
         ok(probe in BODY, label)
-    ok("Deep-dive sections unavailable" not in BODY,
-       "the deep-dive half did not fall into its error caption")
+    ok("gathered here" in RECEIPTS, "ported-verdict section rendered")
+    for _bd, _nm in ((BODY, "Who's helping"), (RECEIPTS, "Receipts")):
+        ok("unavailable —" not in _bd,
+           f"'{_nm}' did not fall into an error caption")
 
 
 # ── the ported verdict sections ───────────────────────────────────────────────

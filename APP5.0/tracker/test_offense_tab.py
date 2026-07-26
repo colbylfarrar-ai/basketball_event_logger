@@ -211,25 +211,29 @@ try:
     at.session_state["ta_team"] = TEAM_ID
     at.session_state["ta_season"] = SEASON
     at.session_state["td_view"] = "Insights"
+    # The 2026-07-26 recut cut Insights by the QUESTION a coach asks rather
+    # than by data category, so there is no "Offense" tab any more: the
+    # offensive board sits beside its defensive twin under "Who's helping",
+    # which is where a coach asks who is contributing. The sections are `_seg`
+    # and therefore LAZY, so the section has to be opened, not just rendered.
+    at.session_state["ins_section"] = "Who's helping"
     at.run()
     ok(not at.exception,
        f"Insights renders: {[repr(e.value)[:200] for e in at.exception]}")
-
-    labels = [t.label for t in at.tabs] if hasattr(at, "tabs") else []
-    ok(any("Offense" in str(l) for l in labels),
-       f"the Offense tab is on the page ({[str(l) for l in labels][:6]})")
-    _off_i = next(i for i, l in enumerate(labels) if "Offense" in str(l))
-    _def_i = next(i for i, l in enumerate(labels) if "Defense" in str(l))
-    ok(_off_i < _def_i, "and sits before Defense")
 
     body = " ".join(m.value for m in at.markdown if isinstance(m.value, str))
     cap = " ".join(c.value for c in at.caption if isinstance(c.value, str))
     both = body + " " + cap
 
-    # st.tabs executes EVERY tab body on every run, so the offense content is
-    # in this render whether or not the tab is "selected".
     ok("what each player actually shoots" in both.lower(),
        "the offense board's header drew")
+    ok("what each player is asked to guard" in both.lower(),
+       "and its defensive twin drew beside it — one question, both sides")
+    ok(both.lower().index("what each player actually shoots")
+       < both.lower().index("what each player is asked to guard"),
+       "offense still sits BEFORE defense: the app measures the side a shooter "
+       "chooses (.70-.92) better than the side an opponent chooses (.17-.64), "
+       "and the order should not suggest otherwise")
     ok("OLOAD%" in both, "the OLOAD% column drew")
     # the real content check: a player's name inside the offense table
     _names = {r["id"]: r["name"] for r in

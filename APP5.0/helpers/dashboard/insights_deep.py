@@ -834,13 +834,38 @@ _PORT_SECTIONS = (
 )
 
 
-def ported_blocks(ctx, fp=None, cols=4):
-    """Render every ported engine's verdict as a dense block grid.
+#: key -> (view, path) for the engine's real evidence.
+#:
+#: `_PORT_SECTIONS` already named a home for each engine, and it named it in
+#: PLAIN TEXT — a chip a coach could read and not click. Worse, two of the
+#: names ("Defense", "Charts") were not addressable: "Defense" is a Charts
+#: SUB-view, not a top-level one, so even a naive button would have missed.
+#: These are the real destinations, in the same (view, path) shape the
+#: severity table uses, so `_request_view` can drive them.
+_PORT_EVIDENCE = {
+    "stops": ("Charts", ("Defense", "Stops")),
+    "hero": ("Charts", ("Offense", "Scoring")),
+    "involve": ("Charts", ("Offense", "Playmaking")),
+    "fouls": ("Roster", None),
+    "clock": ("Roster", None),
+    "ledger": ("Lab", "Impact Lab"),
+    "runs": ("Charts", "Trends"),
+    "anatomy": ("Charts", "Trends"),
+    "deserved": ("Schedule", None),
+    "selfscout": ("Scout", None),
+    "tovs": ("Charts", ("Offense", "Playmaking")),
+    "reb": ("Charts", ("Defense", "Glass")),
+    "scheme": ("Charts", ("Defense", "Scheme")),
+}
 
-    Same lines as `render_ported`, without the expanders: on the Auto-scout tab
-    these sit open and packed so a coach sees all thirteen engines at once
-    instead of opening thirteen accordions. The long-form version with its
-    captions and its "evidence lives on X" pointers stays on Every engine.
+
+def ported_blocks(ctx, fp=None, cols=4):
+    """Every ported engine's verdict as one dense block grid.
+
+    Same lines as `render_ported`, without the expanders: all thirteen engines
+    on one screen instead of thirteen accordions to open. It leads Receipts,
+    with the long-form version and its captions underneath — a coach who wants
+    the summary reads the grid, a coach checking one engine opens its section.
     """
     tid = getattr(ctx, "team_id", None)
     tids = tuple(getattr(ctx, "tracked_ids", None) or ())
@@ -850,13 +875,19 @@ def ported_blocks(ctx, fp=None, cols=4):
     if not lines:
         return
     from helpers.dashboard import insights_brief as _BR
+    import helpers.insights_severity as _SEV
     blocks = []
     for key, _header, _cap, home in _PORT_SECTIONS:
         v = lines.get(key)
         if not v:
             continue
+        dest = _PORT_EVIDENCE.get(key)
+        # the VIEW only in the packed grid — a full two-hop path wraps a chip
+        # that has to fit one line at 9.5px. The expanders below print the
+        # whole path and offer the button.
         blocks.append(_BR.block(
-            _PORT_SHORT.get(key, key), n=home,
+            _PORT_SHORT.get(key, key),
+            n=(dest[0] if dest else home),
             lines=[(badge, txt) for badge, _n, txt in v]))
     if blocks:
         _hdr(f"Every engine — {len(blocks)} reads",
@@ -879,14 +910,25 @@ def render_ported(ctx, fp=None):
     st.caption(
         "These reads own a chart on another tab; the verdict is repeated here "
         "so one page carries everything the engines found. The chart behind "
-        "each one stays where it lives — nothing was moved.")
+        "each one stays where it lives — nothing was moved, and the button in "
+        "each section opens it.")
+    from helpers.dashboard import insights_tab as _IT
+    import helpers.insights_severity as _SEV
     for key, header, cap, home in _PORT_SECTIONS:
         v = lines.get(key)
         if not v:
             continue
-        with st.expander(f"{header}  ·  evidence on **{home}**", expanded=False):
+        dest = _PORT_EVIDENCE.get(key)
+        label = _SEV.dest_label(*dest) if dest else home
+        with st.expander(f"{header}  ·  evidence on **{label}**",
+                         expanded=False):
             st.caption(cap)
             st.markdown(verdict_card(v), unsafe_allow_html=True)
+            # the chip used to be text. A pointer a coach cannot click is a
+            # pointer she has to hold in her head while she navigates.
+            if dest:
+                _IT._jump_btn(dest[0], f"Open {label} →", f"insj_port_{key}",
+                              sub=dest[1])
     if diag:
         with st.expander("⚠️ Engines that failed to run", expanded=False):
             st.caption(

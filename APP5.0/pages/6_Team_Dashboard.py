@@ -1653,6 +1653,14 @@ _TD_VIEWS = ["Overview", "Scout", "Insights", "Projection", "Roster",
 _TD_VIEW_ICONS = {"Overview": "📊", "Scout": "🔍", "Insights": "💡",
                   "Projection": "🔮", "Roster": "👥", "Schedule": "📅",
                   "Charts": "📈", "Lab": "🧪", "Share": "📤", "Glossary": "📖"}
+# Consume a parked view jump BEFORE the switcher is built. The Insights tab's
+# evidence buttons cannot write `td_view` themselves — it is this widget's key,
+# and Streamlit rejects writes to a widget key after the widget exists — so they
+# park the destination and rerun; this is the only legal moment to apply it.
+_td_goto = st.session_state.pop(DINS.TD_VIEW_GOTO, None)
+if _td_goto in _TD_VIEWS:
+    st.session_state["td_view"] = _td_goto
+
 _tdview = _seg("View", _TD_VIEWS, default="Overview", key="td_view",
                format_func=lambda v: f"{_TD_VIEW_ICONS.get(v, '')} {v}") \
     or "Overview"

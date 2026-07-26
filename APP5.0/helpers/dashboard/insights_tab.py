@@ -134,10 +134,32 @@ def _seen_tracker(team_id):
     return is_new, persist
 
 
+# Handshake key for the view jumps below. `td_view` is the KEY OF A WIDGET —
+# the segmented_control near the top of 6_Team_Dashboard.py — and Streamlit
+# forbids assigning to a widget's key once that widget has been instantiated
+# this run. This tab renders ~4,000 lines after the switcher, so the old inline
+# `st.session_state["td_view"] = v` raised StreamlitAPIException and took the
+# whole Insights page down the moment a coach clicked a jump.
+#
+# So the button parks its destination HERE (a plain, non-widget key, always
+# legal to write) and asks for an app-scoped rerun; the page consumes it into
+# `td_view` BEFORE building the switcher, which is legal and is the documented
+# way to drive a keyed widget programmatically.
+TD_VIEW_GOTO = "_td_view_goto"
+
+
+def _request_view(view):
+    """Park a view jump for the page to consume on the next run, then rerun.
+
+    App-scoped on purpose: this tab is a fragment, and a fragment-scoped rerun
+    would never repaint the switcher.
+    """
+    st.session_state[TD_VIEW_GOTO] = view
+    st.rerun(scope="app")
+
+
 def _evidence_jumps(lines, key):
-    """Row of view-jump buttons for the evidence behind a card's lines. Sets the
-    page's top-level View switcher and forces a FULL rerun (this tab is a
-    fragment — a fragment-scoped rerun would never repaint the switcher).
+    """Row of view-jump buttons for the evidence behind a card's lines.
 
     EVERY distinct view the card's lines point at gets a button, not the first
     three: a card whose reads live on four different tabs was silently dropping
@@ -154,16 +176,14 @@ def _evidence_jumps(lines, key):
     for i, v in enumerate(views):
         if cols[i].button(f"{v} →", key=f"{key}_{v}",
                           help=f"Open {v} — the charts behind these reads"):
-            st.session_state["td_view"] = v
-            st.rerun(scope="app")
+            _request_view(v)
 
 
 def _jump_btn(view, label, key):
     """A single 'the full table lives on X' jump."""
     if st.button(label, key=key,
                  help=f"Open {view} — the full chart and table"):
-        st.session_state["td_view"] = view
-        st.rerun(scope="app")
+        _request_view(view)
 
 
 def _data_fp():
@@ -395,7 +415,10 @@ def _shot_diet_lines(ctx):
     if not shots:
         return []
     games = len(getattr(ctx, "tracked_ids", None) or ()) or None
-    return [("shot diet", ln["n"], html.escape(ln["text"]))
+    # NOT html.escape'd: SK.verdict emits its own <b> labels and interpolates
+    # only module constants and floats (see its docstring's markup contract).
+    # Escaping here printed a literal "<b>Diet</b>" on the card.
+    return [("shot diet", ln["n"], ln["text"])
             for ln in SK.verdict(team_id=tid, shots=shots, games=games)]
 
 

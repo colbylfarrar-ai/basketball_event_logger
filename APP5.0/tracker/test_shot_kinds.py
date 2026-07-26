@@ -169,8 +169,24 @@ ok("4 feet to the arc" in _v[0]["text"] and "layup" in _v[0]["text"],
 ok("floater" in SK.verdict(team_id=1, shots=_bad, games=10,
                            taxonomy="kind")[0]["text"],
    "and still speaks 'floater' when asked for the kind taxonomy")
-ok("league takes" in _v[1]["text"], "the evidence line carries the league diet")
+ok("vs league" in _v[1]["text"], "the evidence line carries the league diet")
 ok("1 points" not in _v[0]["text"], "no '1 points' -- the plural agrees")
+
+# The evidence line is TRUSTED HTML and both call sites render it raw. This
+# pins both halves, because the halves shipped out of sync: the <b> labels were
+# added to the producer while both consumers still html.escape'd, and a coach
+# read a literal "<b>Diet</b>" on the card on two separate surfaces.
+ok("<b>Diet</b>" in _v[1]["text"] and "<b>Value</b>" in _v[1]["text"],
+   "the evidence line labels whose number is whose, in bold")
+ok("&lt;" not in _v[1]["text"] and "&amp;" not in _v[1]["text"],
+   "and hands the caller raw markup, pre-escaped by nobody")
+_APP = Path(__file__).resolve().parent.parent
+for _mod in ("helpers/dashboard/shot_diet.py",
+             "helpers/dashboard/insights_tab.py"):
+    _src = (_APP / _mod).read_text(encoding="utf-8")
+    ok('html.escape(line["text"])' not in _src
+       and 'html.escape(ln["text"])' not in _src,
+       f"{_mod} renders the verdict raw rather than escaping its own labels")
 
 print("\n-- nothing is said below the sample gate ----------------------------")
 

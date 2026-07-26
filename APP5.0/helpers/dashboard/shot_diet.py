@@ -163,8 +163,10 @@ def render(shots, team_id, *, games=None, key_prefix="sd", offense=True,
 
     if offense:
         for line in SK.verdict(team_id=team_id, shots=shots, games=games):
+            # NOT escaped — SK.verdict owns its own <b> labels; see the markup
+            # contract in its docstring. (Escaping printed them literally.)
             st.markdown(
-                verdict_card([("shot diet", line["n"], html.escape(line["text"]))]),
+                verdict_card([("shot diet", line["n"], line["text"])]),
                 unsafe_allow_html=True)
 
     # Both cuts, stacked: DEPTH first because it owns the reads and carries the

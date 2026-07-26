@@ -675,6 +675,13 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
     Returns a list of dicts {"text", "tone", "n", "confidence"} so the caller
     renders rather than parses.
 
+    MARKUP CONTRACT: "text" is TRUSTED HTML — it carries its own <b> labels and
+    callers must render it raw, never through html.escape (both call sites once
+    did, and printed a literal "<b>Diet</b>" to the coach). Only module
+    constants and computed numbers may be interpolated below; if a team, player
+    or opponent name is ever added, escape it HERE at the interpolation, because
+    the callers no longer can.
+
     Says nothing at all below the gate. That is the whole point of the gate.
     """
     if shots is None:

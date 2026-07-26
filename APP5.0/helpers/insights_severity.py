@@ -55,6 +55,20 @@ worth the tag):
     GuardCliff              (open FG% - contested FG%) x contested attempts
                             per game x 2 — the points a shooter leaves on the
                             floor when the defense takes her space away.
+    HandGap                 the same shape, on the weak hand.
+    Clutch FT               (clutch FT% - her own FT%) x clutch attempts per
+                            game. The cleanest conversion in the book: a free
+                            throw is worth exactly one point, so there is no
+                            model and no league baseline in it at all.
+    Selection               (her xPPS - the qualifying pool's) x attempts per
+                            game — look value, before anything drops.
+    TO type                 turnovers per game x the share that are this kind
+                            x league PPP. The share is a NUMBER carried on the
+                            finding, never read back out of the sentence.
+    Rebounding (player)     OFFENSIVE side only: (her OREB/g - the pool's) x
+                            league PPP. A defensive board is the expected end
+                            of the opponent's trip, not an extra possession,
+                            so that half gets no tag rather than a wrong one.
     Impact                  WPA x the league's points-per-win, from
                             `hoopwar.wins_per_point` off the pool's own PPG.
     Ball security           (team TOV% - league TOV%) x possessions per game
@@ -64,11 +78,22 @@ worth the tag):
     Rebounding (team ORB%)  (team ORB% - league) x opponent DREB chances per
                             game x league PPP — the extra shots, priced.
 
-Deliberately NOT tagged yet, and named so the gap is visible rather than
-forgotten: possession-ledger sources, foul-state net, box-out payoff at the
-PLAYER level, and kill-strings. Each has a defensible derivation in the design
-but needs an engine output this page does not currently hold, and guessing one
-would break the rule above. The table grows as derivations are proven.
+Deliberately NOT tagged, and named so the gap is visible rather than forgotten:
+possession-ledger sources, foul-state net, kill-strings, Scoutability, Foul
+rate, Spacing, Contest rate. Each either needs an engine output this page does
+not hold or has no defensible conversion at all — play-call predictability does
+not become points without a model nobody has fitted. The table grows as
+derivations are proven.
+
+A SECOND QUANTITY IS WORTH THE TROUBLE. Pricing a finding off a number the
+generator did not use is not redundancy: it is the only automatic check that
+the sentence is pointing the right way. `insights._g_selection` scored shot
+selection on `ShotRating` — which is DIFFICULTY, "higher = the player takes
+harder shots" — and wrote the sentence as though it were quality, so the
+roster's best shot-selector was told she settles for tough shots. It shipped
+that way until this table priced the same read off xPPS (r = -0.72 against
+ShotRating on the live book) and the two signs disagreed out loud.
+`tracker/test_insights_severity.py` now asserts that agreement as an invariant.
 
 Streamlit-free and side-effect-free, so it is unit-testable without a render.
 """
@@ -275,7 +300,11 @@ METRIC_RELIABILITY = {
 #: which renders neutral. Guessing the sign is how a page tells a coach she is
 #: bad at something she is good at, so absence is the safe default.
 METRIC_Z_ORIENT = {
-    "POE": 1, "Selection": 1, "3P%": 1, "Rim finish": 1, "Shot creation": 1,
+    # Selection is scored on ShotRating, which is DIFFICULTY: a high z means
+    # she is taking the harder shots, which is the bad direction. See
+    # `insights._g_selection` — the sentence used to be inverted too.
+    "Selection": -1,
+    "POE": 1, "3P%": 1, "Rim finish": 1, "Shot creation": 1,
     "Impact": 1, "Consistency": 1, "Form": 1, "Playmaking": 1,
     "Rebounding": 1, "Clutch FT": 1, "Fouls drawn": 1, "Q4": 1,
     "Disruption": 1, "Defense": -1, "Rim D": -1, "Perim D": -1,
@@ -287,19 +316,46 @@ METRIC_Z_ORIENT = {
 }
 
 
+def measured_r(metric):
+    """The book's actual measurement for a metric, or None if never measured.
+
+    Kept separate from `reliability_of` because the two answer different
+    questions and CONFLATING THEM PRINTS A LIE. `reliability_of` returns a
+    ranking weight and falls back to `UNMEASURED_R` for anything unmeasured;
+    rendering that fallback as "r=0.30" tells a coach the app measured this
+    metric and got 0.30, when it has never measured it at all. Display reads
+    this function; ordering reads the other one.
+    """
+    key = METRIC_RELIABILITY.get(metric)
+    return REL.measured(*key) if key else None
+
+
 def reliability_of(metric):
-    """The measured split-half r for a metric, or `UNMEASURED_R`.
+    """The ranking WEIGHT for a metric — measured r, or `UNMEASURED_R`.
 
     Negative measurements are clamped to 0.0 rather than passed through: a
     metric that predicts itself at r = -0.15 carries no information about the
     future, and a negative multiplier would flip the whole severity score's
     sign. It still renders (the law), it simply cannot rank.
     """
-    key = METRIC_RELIABILITY.get(metric)
-    r = REL.measured(*key) if key else None
+    r = measured_r(metric)
     if r is None:
         return UNMEASURED_R
     return max(0.0, float(r))
+
+
+def r_chip(f):
+    """The reliability chip for one finding: `r=.52`, or an honest refusal.
+
+    An unmeasured metric prints "unmeasured", never the `UNMEASURED_R` floor
+    it is ranked with. The whole reliability book exists to stop the app
+    asserting things it has not measured, and a page full of identical
+    `r=0.30` chips is that exact failure wearing the book's own notation.
+    """
+    r = f.get("r_measured")
+    if r is None:
+        return "unmeasured"
+    return f"r={r:.2f}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -416,15 +472,124 @@ def _pts_team_orb(fnd, ctx):
     return ((orb - lg_orb) / 100.0) * miss_pg * lg_ppp
 
 
+def _row(fnd, ctx):
+    """The player's own stat row, or {}."""
+    return ((ctx or {}).get("player_pool") or {}).get(fnd.get("pid")) or {}
+
+
+#: attempts a player needs before she counts toward a league mean here. Set at
+#: the scale of the miners' own volume gates (`insights.tier_gate(22, …)`), so
+#: a per-player conversion is priced against the same field the finding was
+#: z-scored against — a pool that includes six-shot players is a different
+#: league from the one the generator used, and the two disagreeing is how a
+#: page ends up showing a ⚠ sentence with a ✓ number beside it.
+POOL_MIN_FGA = 20
+
+
+def _pool_mean(ctx, key, min_fga=POOL_MIN_FGA):
+    """League mean of a player-table column over the rated, qualifying pool."""
+    pool = (ctx or {}).get("player_pool") or {}
+    vals = []
+    for r in pool.values():
+        if min_fga and (_f(r.get("FGA")) or 0) < min_fga:
+            continue
+        v = _f(r.get(key))
+        if v is not None:
+            vals.append(v)
+    return (sum(vals) / len(vals)) if vals else None
+
+
+def _pts_clutch_ft(fnd, ctx):
+    """The cleanest conversion in the book: a free throw is worth one point.
+
+    (clutch FT% - her own FT%) x clutch attempts per game. No model, no league
+    baseline, no assumption — the comparison the finding itself makes, priced
+    at the only exchange rate basketball hands you for free.
+    """
+    r = _row(fnd, ctx)
+    cp, base = _f(r.get("ClutchFT%")), _f(r.get("FT%"))
+    cfta, gp = _f(r.get("ClutchFTA")), _f(r.get("GP"))
+    if None in (cp, base, cfta, gp) or not gp:
+        return None
+    return ((cp - base) / 100.0) * (cfta / gp)
+
+
+def _pts_hand_gap(fnd, ctx):
+    """Points lost to the weak hand — the same shape as the guarded cliff.
+
+    (strong FG% - weak FG%) x weak-hand attempts per game x 2. What her
+    weak-hand shots would return if they converted at her strong-hand rate.
+    """
+    r = _row(fnd, ctx)
+    dom, weak = _f(r.get("Dom_FG%")), _f(r.get("Weak_FG%"))
+    wfa, gp = _f(r.get("Weak_FGA")), _f(r.get("GP"))
+    if None in (dom, weak, wfa, gp) or not gp:
+        return None
+    return -((dom - weak) / 100.0) * (wfa / gp) * 2.0
+
+
+def _pts_to_type(fnd, ctx):
+    """This KIND of giveaway, priced as the empty possessions it is.
+
+    her turnovers per game x the share that are this kind x league PPP. The
+    share comes off the finding as a number (`insights._g_to_type` carries it);
+    it is never read back out of the sentence.
+    """
+    r = _row(fnd, ctx)
+    share = _f(fnd.get("share"))
+    tov, gp = _f(r.get("TOV")), _f(r.get("GP"))
+    lg_ppp = _lg_mean(ctx, "PPP")
+    if None in (share, tov, gp, lg_ppp) or not gp:
+        return None
+    return -(tov / gp) * share * lg_ppp
+
+
+def _pts_player_reb(fnd, ctx):
+    """OFFENSIVE rebounds only: extra possessions above the league's rate.
+
+    A defensive rebound is the expected end of the opponent's trip and is not
+    an extra possession, so the defensive half of this read gets no tag rather
+    than a fabricated one. `side` comes off the finding as a field.
+    """
+    if fnd.get("side") != "off":
+        return None
+    r = _row(fnd, ctx)
+    opg, lg_opg = _f(r.get("OREB/G")), _pool_mean(ctx, "OREB/G")
+    lg_ppp = _lg_mean(ctx, "PPP")
+    if None in (opg, lg_opg, lg_ppp):
+        return None
+    return (opg - lg_opg) * lg_ppp
+
+
+def _pts_selection(fnd, ctx):
+    """Shot selection, priced on the look value she chooses.
+
+    (her xPPS - the pool's xPPS) x her attempts per game. xPPS is what the
+    league makes from the looks she takes, so the gap is points per game her
+    diet is worth against an average one — before anything drops.
+    """
+    r = _row(fnd, ctx)
+    x, lg_x = _f(r.get("xPPS")), _pool_mean(ctx, "xPPS")
+    fga, gp = _f(r.get("FGA")), _f(r.get("GP"))
+    if None in (x, lg_x, fga, gp) or not gp:
+        return None
+    return (x - lg_x) * (fga / gp)
+
+
 #: metric -> derivation. A metric absent here is UNTAGGED — band 2, no pts/g
 #: chip, and that is a correct outcome, not a gap to paper over.
 PTS_RULES = {
     "Margin mix": _pts_margin_mix,
     "Deserved": _pts_margin_mix,
     "GuardCliff": _pts_guard_cliff,
+    "HandGap": _pts_hand_gap,
     "Impact": _pts_wpa,
     "Ball security": _pts_ball_security,
     "Takeaways": _pts_takeaways,
+    "Clutch FT": _pts_clutch_ft,
+    "TO type": _pts_to_type,
+    "Selection": _pts_selection,
+    "Rebounding": _pts_player_reb,
 }
 
 #: Team-level metrics whose derivation is the team ORB read. Kept separate from
@@ -486,6 +651,10 @@ def _norm(raw, *, family, subject=None, pid=None, key=None):
         "text": raw.get("text"),
         "n": raw.get("n"),
         "z": raw.get("z", raw.get("score")),
+        # numeric fields a generator computed and would otherwise throw away.
+        # The translator prices off THESE, never off the rendered sentence.
+        "share": raw.get("share"),
+        "side": raw.get("side"),
         "section": METRIC_SECTION.get(metric, S_RECEIPTS),
         "evidence": METRIC_EVIDENCE.get(metric),
         "rehearsable": metric in REHEARSABLE,
@@ -553,7 +722,11 @@ def score(findings, ctx=None, *, gp=None):
             f["pts"] = materiality(f, ctx)
         except Exception:
             f["pts"] = None
+        # two fields on purpose: `r` is the ranking weight (floored for
+        # unmeasured metrics), `r_measured` is what the book actually measured
+        # and is None when it never did. Render the second, rank on the first.
         f["r"] = reliability_of(f.get("metric"))
+        f["r_measured"] = measured_r(f.get("metric"))
         # a player finding is only as confident as THAT player's book
         f["gp"] = f.get("gp") or ctx.get("player_gp", {}).get(f.get("pid")) \
             or book_gp

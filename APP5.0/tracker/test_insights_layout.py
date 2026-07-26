@@ -242,6 +242,20 @@ import helpers.dashboard.insights_tab as IT           # noqa: E402
 _itsrc = open(IT.__file__, encoding="utf-8").read()
 ok("Monday —" in _mon, "Monday renders")
 ok("rehearsable" in _mon, "and says what put a row on it")
+
+# THE COLUMN THAT WAS EMPTY. Monday's whole promise is "what it is costing",
+# and it shipped with a column of em dashes because none of the rehearsable
+# metrics had a derivation. Five now do.
+ok(re.search(r"≈ [+-]?\d+\.\d+ pts/g", _mon),
+   "at least one Monday row carries a real points conversion")
+ok(re.search(r"\*\*\d+ of \d+\*\* carry a points conversion", _mon)
+   or "None of these carry a points conversion" in _mon,
+   "and Monday states HOW MANY of its rows are priced rather than leaving the "
+   "reader to count em dashes")
+ok("that is the size of the practice list" in _mon
+   or "None of these carry" in _mon,
+   "with the total at stake, framed as the size of the list and not as a "
+   "projection of what fixing it returns")
 ok("DOES NOT PRESCRIBE THE DRILL" in _itsrc,
    "the refusal to author a metric->drill mapping is written down where the "
    "next person will read it")
@@ -370,6 +384,20 @@ print("\nthe ranking shows its own work, on Receipts")
 _rec = BODIES["Receipts"]
 ok("points-per-game conversion" in _rec,
    "the audit table is on Receipts, where a coach goes to check the work")
+
+# THE FLOOR IS NOT A MEASUREMENT. Unmeasured metrics are RANKED at
+# UNMEASURED_R, and printing that as "r=0.30" told a coach the app had
+# measured every one of them and got 0.30. It had measured none of them.
+import helpers.insights_severity as _SEV2             # noqa: E402
+_floor = f"r={_SEV2.UNMEASURED_R:.2f}"
+for _s in SECTIONS:
+    ok(_floor not in BODIES[_s],
+       f"'{_s}' never prints the unmeasured floor ({_floor}) as if it were a "
+       f"measurement")
+ok("unmeasured" in _rec,
+   "unmeasured metrics say so in words instead of borrowing a number")
+ok("deliberately not printed as if it were a measurement" in _rec,
+   "and the audit explains why the weight and the measurement are two columns")
 ok("never interleave" in _rec, "and it explains the two bands in words")
 ok("no conversion" in _rec or "pts/g" in _rec,
    "the band is a visible column, so 'why is this above that' is answerable")

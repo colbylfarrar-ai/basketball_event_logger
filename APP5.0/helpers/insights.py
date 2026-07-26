@@ -95,7 +95,23 @@ def _g_poe(row, pools, d):
 
 
 def _g_selection(row, pools, d):
-    """Shot SELECTION: quality of the looks chosen (xPPS / ShotRating)."""
+    """Shot SELECTION: how hard the looks she chooses are.
+
+    `ShotRating` IS DIFFICULTY, NOT QUALITY. `stats.shot_rating` says so in its
+    own docstring — "50 = average-difficulty shot, 100 = a contested
+    self-created 3. Higher = the player takes harder shots" — and it measures
+    r = -0.72 against xPPS and -0.48 against actual PPS on the live book. This
+    generator read it as quality and had the sentence exactly backwards: the
+    roster's BEST shot-selector (lowest difficulty, highest xPPS) was told she
+    "settles for tough shots", and the player taking the hardest diet in the
+    league was congratulated for hunting high-value looks. Every other surface
+    in the app labels the same column "Shot difficulty" / "Toughest diet";
+    this was the only one that inverted it.
+
+    Found 2026-07-26 when the points-per-game translator priced this read off
+    xPPS and its sign disagreed with the sentence — which is the argument for
+    having a second, independent quantity behind a verdict.
+    """
     sr = _num(row, "ShotRating")
     gp = _num(row, "GP") or 0
     if sr is None or (_num(row, "FGA") or 0) < tier_gate(22, gp, 8):
@@ -105,11 +121,13 @@ def _g_selection(row, pools, d):
         return None
     n = int(row.get("FGA") or 0)
     if z >= 0:
-        txt = (f"**Great shot selection** — consistently hunts high-value looks "
-               f"(shot-quality {sr:.0f}, top of the league).")
+        txt = (f"**Settles for tough shots** — the hardest shot diet in the "
+               f"league (shot difficulty {sr:.0f} vs 50 average); live with "
+               f"the contested ones.")
     else:
-        txt = (f"**Settles for tough shots** — low-value shot diet "
-               f"(shot-quality {sr:.0f}); make them take the hard ones.")
+        txt = (f"**Great shot selection** — consistently hunts the easier "
+               f"look (shot difficulty {sr:.0f} vs 50 average); make her "
+               f"take the hard ones.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "Selection", "n": n}
 
 
@@ -361,7 +379,11 @@ def _g_totype(row, pools, d):
     else:
         txt = (f"**Turnover tell** — **{share:.0%} of their giveaways are "
                f"{label}** ({n} tagged); a pattern a defense can sit on.")
-    return {"text": txt, "score": score, "z": score, "metric": "TO type", "n": n}
+    # `share` rides along as a NUMBER so the points-per-game translator in
+    # insights_severity can price this kind of giveaway without parsing it back
+    # out of the sentence. Ordering and text are untouched.
+    return {"text": txt, "score": score, "z": score, "metric": "TO type",
+            "n": n, "share": share}
 
 
 def _g_ftdraw(row, pools, d):
@@ -600,8 +622,13 @@ def _g_rebound(row, pools, d):
             txt = (f"**Crash on them** — weak defensive rebounder "
                    f"(**{dpg:.1f} DREB/g**); send extra bodies to the offensive "
                    f"glass.")
+    # `side` rides along because the two halves of this read are NOT the same
+    # quantity: an offensive rebound is an EXTRA possession and can be priced
+    # at league PPP, while a defensive rebound is the expected end of the
+    # opponent's possession and cannot. insights_severity tags only the
+    # offensive side, and needs to be told which this is rather than guessing.
     return {"text": txt, "score": abs(z), "z": z, "metric": "Rebounding",
-            "n": int(reb)}
+            "n": int(reb), "side": ("off" if off_side else "def")}
 
 
 def _g_selfcreate(row, pools, d):

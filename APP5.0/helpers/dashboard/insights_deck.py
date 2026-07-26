@@ -386,7 +386,7 @@ def the_five(ranked, *, jump=None, key="deck5", n=5):
             f"<span style='font-weight:800;color:{colour};white-space:nowrap'>"
             f"{pts}</span>"
             f"<span style='color:var(--subtext);font-size:10.5px;"
-            f"white-space:nowrap'>r={f.get('r', 0):.2f}</span>"
+            f"white-space:nowrap'>{SEV.r_chip(f)}</span>"
             f"<span style='color:var(--subtext);font-size:10.5px;"
             f"white-space:nowrap'>→ {html.escape(sect)}</span></div>",
             unsafe_allow_html=True)

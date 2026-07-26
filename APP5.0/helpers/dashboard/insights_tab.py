@@ -625,6 +625,10 @@ def render(ctx):
         "deserved": (_bundle or {}).get("deserved") or {},
         "cliffs": cliffs,
         "wpa": impact,
+        # the WHOLE rated pool, not just this roster: the per-player
+        # conversions price a gap against the league, and a gap measured
+        # against nine teammates is not a league gap.
+        "player_pool": table,
         "player_gp": {p: ((table[p].get("GP") or table[p].get("games")))
                       for p in pids if p in table},
     })
@@ -777,9 +781,16 @@ def _section_feed(by_sect, section, key):
         str(f.get("metric") or "Read"),
         n=(f.get("subject") or None),
         lines=[(SEV.pts_chip(f.get("pts")) if f.get("pts") is not None
-                else f"r={f.get('r', 0):.2f}",
+                else SEV.r_chip(f),
                 _b(str(f.get("text") or "")))])
         for f in rows], cols=3)
+    _n_unmeasured = sum(1 for f in rows if f.get("r_measured") is None)
+    if _n_unmeasured:
+        st.caption(
+            f"**{_n_unmeasured}** of these sit on metrics the reliability book "
+            "has never measured, and say **unmeasured** rather than borrowing "
+            "a number. They rank at the floor and they still render — the "
+            "measurement decides the ORDER, never the membership.")
     _evidence_jumps([{"metric": f.get("metric")} for f in rows], key=key)
 
 
@@ -909,22 +920,34 @@ def _render_monday(ranked):
             "practice plan does not move (schedule luck, opponent strength, "
             "close-game variance).")
         return
+    _priced = [f for f in rows if f.get("pts") is not None]
     st.markdown(dense_table([{
         "Priority": i,
         "What": f.get("metric"),
         "Who": f.get("subject") or "Team",
         "Costing": SEV.pts_chip(f.get("pts")),
         "Sample": f.get("n"),
-        "r": f"{f.get('r', 0):.2f}",
+        "Reliability": SEV.r_chip(f),
         "Evidence in": SEV.SECTION_LABELS.get(f.get("section"), "Receipts"),
     } for i, f in enumerate(rows, start=1)]), unsafe_allow_html=True)
+    if _priced:
+        st.caption(
+            f"**{len(_priced)} of {len(rows)}** carry a points conversion, and "
+            f"together they are worth "
+            f"**{sum(abs(f['pts']) for f in _priced):.1f} pts/g** — that is "
+            f"the size of the practice list, not a projection of what fixing "
+            f"it returns.")
+    else:
+        st.caption(
+            "**None of these carry a points conversion yet.** `Costing` is an "
+            "em dash rather than a zero because no tag beats a wrong tag — the "
+            "derivation table in `helpers/insights_severity.py` grows only as "
+            "conversions are proven, and every one of these metrics is still "
+            "waiting for one. The ORDER is still real: it is reliability × "
+            "sample.")
     st.markdown(verdict_card([
         (f.get("metric"), f.get("n"), str(f.get("text") or ""))
         for f in rows]), unsafe_allow_html=True)
-    st.caption(
-        "`Costing` is blank where no defensible points conversion exists yet. "
-        "That is deliberate — no tag beats a wrong tag, and the table in "
-        "`helpers/insights_severity.py` grows only as derivations are proven.")
 
 
 def _severity_audit(ranked):
@@ -937,6 +960,7 @@ def _severity_audit(ranked):
     if not ranked:
         return
     tagged = sum(1 for f in ranked if f.get("band") == SEV.BAND_TAGGED)
+    unmeasured = sum(1 for f in ranked if f.get("r_measured") is None)
     with st.expander(f"⚖️ The severity ranking — all {len(ranked)} findings, "
                      f"and how each was scored", expanded=False):
         st.caption(
@@ -947,6 +971,13 @@ def _severity_audit(ranked):
             "which is the app inventing a number it does not have. Within a "
             "band the score can tie, and the order finishes on the miner's own "
             "|z| — a tiebreak, not part of the score.")
+        st.caption(
+            f"**Reliability** is the book's measured split-half r. "
+            f"**{unmeasured}** of these metrics have never been measured and "
+            f"say so; they are RANKED at the book's floor "
+            f"({SEV.UNMEASURED_R:.2f}) so they sort last within their band, "
+            f"and that floor is deliberately not printed as if it were a "
+            f"measurement. `weight` is what the sort actually used.")
         st.markdown(dense_table([{
             "#": i,
             "Band": ("pts/g" if f.get("band") == SEV.BAND_TAGGED
@@ -954,7 +985,8 @@ def _severity_audit(ranked):
             "Metric": f.get("metric"),
             "Who": f.get("subject") or "Team",
             "pts/g": SEV.pts_chip(f.get("pts")),
-            "r": f"{f.get('r', 0):.2f}",
+            "Reliability": SEV.r_chip(f),
+            "weight": f"{f.get('r', 0):.2f}",
             "conf": f"{f.get('confidence', 0):.2f}",
             "severity": f"{f.get('severity', 0):.3f}",
             "Section": SEV.SECTION_LABELS.get(f.get("section"), "Receipts"),

@@ -46,11 +46,24 @@ import helpers.reliability as REL              # noqa: E402
 
 
 # ── a book with all three families in it ─────────────────────────────────────
+# THE FIXTURE IS INTERNALLY COHERENT ON PURPOSE. Every z below points the same
+# way as the raw numbers underneath it, because the sign-coherence check near
+# the foot of this file is only meaningful over inputs that do not contradict
+# themselves — an arbitrary z beside an unrelated stat line would fail that
+# check for the fixture's reasons rather than the code's.
 PLAYER_FEED = {
-    1: [{"metric": "GuardCliff", "text": "space cliff", "n": 40, "z": -1.9},
+    # player 1: a big space cliff (bad), real on-floor impact, an untagged Q4
+    1: [{"metric": "GuardCliff", "text": "space cliff", "n": 40, "z": 1.9},
         {"metric": "Impact", "text": "on-floor", "n": 300, "z": 1.4},
-        {"metric": "Q4", "text": "fourth quarter", "n": 30, "z": 0.9}],
-    2: [{"metric": "HandGap", "text": "weak hand", "n": 22, "z": -2.2},
+        {"metric": "Q4", "text": "fourth quarter", "n": 30, "z": 0.9},
+        {"metric": "Selection", "text": "hard diet", "n": 200, "z": 1.6},
+        {"metric": "TO type", "text": "bad passes", "n": 15, "z": 1.3,
+         "share": 0.5}],
+    # player 2: weak hand, cold at the line late, weak offensive glass
+    2: [{"metric": "HandGap", "text": "weak hand", "n": 22, "z": 2.2},
+        {"metric": "Clutch FT", "text": "foul her late", "n": 12, "z": -1.5},
+        {"metric": "Rebounding", "text": "no glass threat", "n": 24,
+         "z": -1.2, "side": "off"},
         {"metric": "Usage", "text": "usage", "n": 120, "z": 1.1}],
 }
 NAMES = {1: "A. Player", 2: "B. Player"}
@@ -64,6 +77,21 @@ PORTED = {"stops": [("Kills", 40, "kill strings")],
           "reb": [("Box-out payoff", 55, "second chances")]}
 PORT_SECTIONS = {"stops": ("Stops", "Defense"), "reb": ("Rebounding", "Roster")}
 
+#: the league player pool the per-player conversions price against
+PLAYER_POOL = {
+    1: {"FGA": 200, "GP": 11, "TOV": 33, "xPPS": 0.86, "OREB/G": 1.0,
+        "ClutchFT%": 70.0, "FT%": 72.0, "ClutchFTA": 8,
+        "Dom_FG%": 44.0, "Weak_FG%": 30.0, "Weak_FGA": 33},
+    2: {"FGA": 150, "GP": 11, "TOV": 20, "xPPS": 0.94, "OREB/G": 0.6,
+        "ClutchFT%": 50.0, "FT%": 74.0, "ClutchFTA": 12,
+        "Dom_FG%": 48.0, "Weak_FG%": 26.0, "Weak_FGA": 44},
+    3: {"FGA": 180, "GP": 11, "TOV": 25, "xPPS": 1.02, "OREB/G": 1.8,
+        "ClutchFT%": 80.0, "FT%": 76.0, "ClutchFTA": 10,
+        "Dom_FG%": 46.0, "Weak_FG%": 40.0, "Weak_FGA": 30},
+    # under POOL_MIN_FGA — must NOT drag the league means around
+    4: {"FGA": 6, "GP": 3, "TOV": 2, "xPPS": 0.40, "OREB/G": 0.1},
+}
+
 CTX = {
     "gp": 11,
     "deserved": {"ranked_terms": [("volume", "Extra shots", 8.8, 3.1)],
@@ -71,15 +99,17 @@ CTX = {
     "cliffs": {1: {"cliff": 12.0, "n": 40, "gn": 22}},
     "wpa": {1: {"off_wpa": 0.8, "def_wpa": 0.4, "games": 11}},
     "wins_per_point": 0.031,
-    "ts": {"TOVpct": 18.0, "PPP": 0.92, "poss_pg": 61.0, "ORBpct": 30.0,
-           "fga_pg": 50.0, "stl_r": 9.0},
+    "player_pool": PLAYER_POOL,
+    # this team gives it away MORE than the field, which is what its z says
+    "ts": {"TOVpct": 22.0, "PPP": 0.88, "poss_pg": 60.0, "ORBpct": 26.0,
+           "fga_pg": 49.0, "stl_r": 9.0},
     "ts_all": {
         1: {"TOVpct": 18.0, "PPP": 0.92, "poss_pg": 61.0, "ORBpct": 30.0,
-            "fga_pg": 50.0, "stl_r": 9.0},
+            "fga_pg": 50.0, "stl_r": 7.0},
         2: {"TOVpct": 22.0, "PPP": 0.88, "poss_pg": 60.0, "ORBpct": 26.0,
-            "fga_pg": 49.0, "stl_r": 7.0},
+            "fga_pg": 49.0, "stl_r": 8.0},
         3: {"TOVpct": 20.0, "PPP": 0.90, "poss_pg": 62.0, "ORBpct": 28.0,
-            "fga_pg": 51.0, "stl_r": 8.0}},
+            "fga_pg": 51.0, "stl_r": 6.0}},
 }
 
 FINDINGS = SEV.collect(player_feed=PLAYER_FEED, names=NAMES,
@@ -148,10 +178,37 @@ ok(abs(_cliff["pts"] - _want) < 1e-9,
 _mix = next(f for f in RANKED if f["metric"] == "Margin mix")
 ok(abs(_mix["pts"] - 3.1) < 1e-9,
    "the deserved terms are already points per game and are passed through")
+# the sign of a rate conversion is the single easiest thing to get backwards,
+# so both directions are asserted rather than one
 _bs = next(f for f in RANKED if f["metric"] == "Ball security")
-ok(_bs["pts"] > 0,
-   "a team BELOW the league turnover rate is credited, not penalised -- the "
-   "sign of a rate conversion is the thing easiest to get backwards")
+ok(_bs["pts"] < 0,
+   f"a team ABOVE the league turnover rate is penalised ({_bs['pts']:+.2f})")
+_good_ctx = dict(CTX)
+_good_ctx["ts"] = dict(CTX["ts"], TOVpct=18.0)
+ok(SEV.materiality({"metric": "Ball security", "family": "team"},
+                   _good_ctx) > 0,
+   "and a team BELOW it is credited -- same rule, mirrored input")
+
+_ft = next(f for f in RANKED if f["metric"] == "Clutch FT")
+_want_ft = ((50.0 - 74.0) / 100.0) * (12 / 11)
+ok(abs(_ft["pts"] - _want_ft) < 1e-9,
+   f"clutch FT is priced at one point per free throw, no model at all: "
+   f"{_ft['pts']:.3f} == {_want_ft:.3f}")
+
+_reb = next(f for f in RANKED if f["metric"] == "Rebounding")
+ok(_reb["pts"] is not None and _reb["pts"] < 0,
+   "a below-league OFFENSIVE rebounder is priced as the possessions she does "
+   "not create")
+ok(SEV.materiality({"metric": "Rebounding", "family": "player", "pid": 2,
+                    "side": "def"}, CTX) is None,
+   "and the DEFENSIVE half of the same read gets NO tag -- a defensive board "
+   "is the expected end of the opponent's trip, not an extra possession")
+
+_pool_x = SEV._pool_mean(CTX, "xPPS")
+ok(_pool_x is not None and abs(_pool_x - (0.86 + 0.94 + 1.02) / 3) < 1e-9,
+   f"league means skip players under POOL_MIN_FGA ({SEV.POOL_MIN_FGA} FGA) -- "
+   f"a pool that includes six-shot players is a different league from the one "
+   f"the generator z-scored against")
 
 
 print("\n-- the ordering is total and stable ----------------------------------")
@@ -202,13 +259,78 @@ print("\n-- reliability comes from the measured book ---------------------------
 
 ok(_cliff["r"] == REL.measured("player", "band_fg"),
    "a measured metric takes its own split-half r")
-ok(next(f for f in RANKED if f["metric"] == "Luck")["r"] == SEV.UNMEASURED_R,
-   f"an unmeasured metric takes the book's floor ({SEV.UNMEASURED_R}) -- shown, "
-   f"ranked last, never flattered with a neutral 1.0")
+_luck = next(f for f in RANKED if f["metric"] == "Luck")
+ok(_luck["r"] == SEV.UNMEASURED_R,
+   f"an unmeasured metric is RANKED at the book's floor ({SEV.UNMEASURED_R}) "
+   f"-- shown, ranked last, never flattered with a neutral 1.0")
 ok(SEV.reliability_of("PnR role") >= 0.0,
    "a NEGATIVE measured reliability clamps to 0 rather than flipping the "
    "severity score's sign")
 ok(all(f["r"] >= 0 for f in RANKED), "no finding carries a negative weight")
+
+# THE FLOOR IS NOT A MEASUREMENT, AND MUST NOT BE PRINTED AS ONE. A page full
+# of identical "r=0.30" chips tells a coach the app measured every one of those
+# metrics and got 0.30. It has measured none of them.
+ok(_luck["r_measured"] is None,
+   "an unmeasured metric carries r_measured = None, distinct from its weight")
+ok(SEV.r_chip(_luck) == "unmeasured",
+   f"and renders as 'unmeasured', never as the floor "
+   f"({SEV.r_chip(_luck)!r})")
+ok(str(SEV.UNMEASURED_R) not in SEV.r_chip(_luck),
+   "the floor value does not appear in the chip at all")
+ok(SEV.r_chip(_cliff) == f"r={REL.measured('player', 'band_fg'):.2f}",
+   f"a measured metric prints its real r ({SEV.r_chip(_cliff)})")
+ok(SEV.measured_r("Luck") is None and SEV.measured_r("GuardCliff") is not None,
+   "measured_r answers 'did the book measure this', reliability_of answers "
+   "'what weight does it rank with' -- two questions, two functions")
+
+
+print("\n-- the number agrees with the sentence --------------------------------")
+
+# THE INVARIANT THAT CAUGHT A REAL BUG. `insights._g_selection` scored shot
+# selection on `ShotRating`, which is DIFFICULTY ("higher = the player takes
+# harder shots", stats.shot_rating), and wrote the sentence as though it were
+# quality -- so the roster's best shot-selector was told she "settles for tough
+# shots". Nothing caught it, because the sentence was the only description of
+# the finding. Pricing the same read off a SECOND, independent quantity (xPPS,
+# which correlates -0.72 with ShotRating on the live book) made the two
+# disagree out loud.
+ok(SEV.METRIC_Z_ORIENT.get("Selection") == -1,
+   "Selection's authored orientation matches what ShotRating measures: a high "
+   "z is a HARDER diet, which is the bad direction")
+
+_incoherent = []
+for f in RANKED:
+    if f.get("pts") is None:
+        continue
+    _o, _z = SEV.METRIC_Z_ORIENT.get(f["metric"]), f.get("z")
+    if _o is None or _z is None:
+        continue
+    _sentence = 1 if _o * _z > 0 else -1
+    _number = 1 if f["pts"] > 0 else -1
+    if _sentence != _number:
+        _incoherent.append((f["metric"], f["subject"], _z, f["pts"]))
+ok(not _incoherent,
+   f"every priced finding's SIGN agrees with its own sentence's direction "
+   f"(disagreements: {_incoherent})")
+
+# and the generator itself, driven directly
+import helpers.insights as _IN                             # noqa: E402
+_pool = (50.0, 8.0)          # mean, sd of ShotRating across the field
+_hard = _IN._g_selection(
+    {"ShotRating": 70.0, "GP": 20, "FGA": 200, "name": "X"},
+    {"ShotRating": _pool}, {})
+_easy = _IN._g_selection(
+    {"ShotRating": 32.0, "GP": 20, "FGA": 200, "name": "X"},
+    {"ShotRating": _pool}, {})
+ok("tough shots" in (_hard or {}).get("text", ""),
+   "a HIGH shot-difficulty diet reads as settling for tough shots")
+ok("Great shot selection" in (_easy or {}).get("text", ""),
+   "and a LOW one reads as good selection -- this pair was inverted until "
+   "2026-07-26")
+ok("shot difficulty" in (_hard or {}).get("text", "").lower(),
+   "the quoted number is named 'shot difficulty', matching every other "
+   "surface in the app, instead of 'shot-quality'")
 
 
 print("\n-- every metric the miners emit has a home ----------------------------")

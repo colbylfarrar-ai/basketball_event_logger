@@ -365,13 +365,17 @@ two-hop payload (15 checks).
    / ✓ shown per row.
 
 2. **The points table launched with six derivations, not the nine listed in
-   §5.2.** Shipped: the deserved terms, the guarded cliff, WPA→points via
-   `hoopwar.wins_per_point`, team TOV%, forced-TOV rate, and team ORB%. Held
-   back: possession-ledger sources, foul-state net, player-level box-out
-   payoff, kill-strings — each needs an engine output the page does not
-   currently hold, and paying for a fresh event walk to earn a chip is the
-   wrong trade on 1 vCPU. They are named in the module docstring so the gap is
-   visible rather than forgotten. §5.2's rule held: nothing was guessed.
+   §5.2 — and was widened to eleven the same day.** Monday shipped with a
+   `Costing` column of em dashes, because none of the REHEARSABLE metrics had
+   a derivation: the six that existed priced team-level and impact reads that
+   Monday never shows. Added: clutch free throws (one point per free throw —
+   no model at all), the weak-hand gap, giveaway kind, player offensive
+   rebounding, and shot selection. Monday now prices 5 of 10 rows and states
+   the count and the total rather than leaving a coach to read a column of
+   dashes. Still held back and named in the module docstring:
+   possession-ledger sources, foul-state net, kill-strings, Scoutability,
+   Foul rate, Spacing, Contest rate. §5.2's rule held throughout: nothing was
+   guessed.
 
 3. **The jump payload is a PATH, not a single subview.** `(view, subview)`
    could not address `Charts → Offense → Playmaking`, which is where a third of
@@ -391,6 +395,29 @@ converted blocks found no others.
 and two of the destinations it named in plain text were not addressable at all
 (`"Defense"` is a Charts sub-view, not a top-level one). `_PORT_EVIDENCE` in
 `insights_deep.py` holds the real ones.
+
+**A shipped bug the points table caught, and the honesty fix beside it.**
+
+`insights._g_selection` scored shot selection on `ShotRating`, which is
+DIFFICULTY — `stats.shot_rating`'s own docstring says "higher = the player
+takes harder shots" — and wrote the sentence as though it were quality. The
+roster's best shot-selector (lowest difficulty, highest xPPS) was told she
+"settles for tough shots"; the player with the hardest diet in the league was
+congratulated for hunting high-value looks. Every other surface in the app
+labels the same column "Shot difficulty". Nothing caught it because the
+sentence was the only description of the finding — until the translator priced
+the same read off xPPS, which correlates **−0.72** with ShotRating and −0.48
+with actual PPS on the live book, and the two signs disagreed out loud. Fixed,
+`METRIC_Z_ORIENT["Selection"]` corrected to −1, and sign coherence between a
+finding's number and its sentence is now a regression test. **That is the
+argument for a second, independent quantity behind a verdict.**
+
+Separately: unmeasured metrics were rendering as `r=0.30` — the ranking floor
+printed in the notation of a measurement, which told a coach the app had
+measured 130 metrics on Receipts and got 0.30 for every one. Findings now carry
+`r` (the ranking weight) and `r_measured` (None when the book never measured
+it) as two fields; display reads the second and prints **unmeasured**. The
+layout test asserts the floor value never appears on any section.
 
 **And the two §4.2 imports that would have been easy to skip:** the matchup
 grid (`matchups.matchup_difficulty`, league-indexed, captioned as a record

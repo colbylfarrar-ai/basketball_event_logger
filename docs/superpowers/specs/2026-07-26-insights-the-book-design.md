@@ -412,12 +412,26 @@ with actual PPS on the live book, and the two signs disagreed out loud. Fixed,
 finding's number and its sentence is now a regression test. **That is the
 argument for a second, independent quantity behind a verdict.**
 
-Separately: unmeasured metrics were rendering as `r=0.30` — the ranking floor
-printed in the notation of a measurement, which told a coach the app had
-measured 130 metrics on Receipts and got 0.30 for every one. Findings now carry
-`r` (the ranking weight) and `r_measured` (None when the book never measured
-it) as two fields; display reads the second and prints **unmeasured**. The
-layout test asserts the floor value never appears on any section.
+Separately, and it took two passes: unmeasured metrics were rendering as
+`r=0.30` — the ranking floor printed in the notation of a measurement, telling
+a coach the app had measured 130 metrics on Receipts and got 0.30 for every
+one. Findings now carry `r` (the ranking weight) and `r_measured` (None when
+the book never measured it) as two fields.
+
+The first fix printed **unmeasured** in place of the floor, which replaced one
+repeated non-statement with another and buried the two dozen chips that DO
+carry information. The shipped version gives an unmeasured metric **no chip at
+all** and states the count once per section ("20 of 33 sit on metrics the
+reliability book has actually measured"); table columns get an em dash, because
+a column needs a value in each row.
+
+Three real measurements turned out to exist only as prose in other modules and
+were wired into `reliability.MEASURED`, which is the one table allowed to grant
+display permission: player **foul rate** (SB .682 at 20 events of exposure —
+the most repeatable player-level defensive read in the book, and it was
+rendering as unmeasured), and raw **on/off** offense (−0.213) and defense
+(0.366), recorded as the negatives they measured because "we measured this and
+it does not repeat" is a stronger statement than silence.
 
 **And the two §4.2 imports that would have been easy to skip:** the matchup
 grid (`matchups.matchup_difficulty`, league-indexed, captioned as a record

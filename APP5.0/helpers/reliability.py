@@ -248,6 +248,29 @@ MEASURED = {
     ("game", "xmargin_picks_winner"): 0.731,   # 38 of 52, out of sample
     ("game", "xmargin_vs_margin"): 0.874,      # ceiling (actual FG margin) .981
     ("game", "attempt_gap_from_orb_tov"): 0.979,
+    # ── player FOUL RATE (measured 2026-07-26, helpers/foul_trouble.py) ──────
+    # 200 random half-splits of the girls' 2025-26 book (35 games, 919 fouls),
+    # foul rate per player-event of exposure. SB rises with the exposure gate:
+    #     @20 exposure  r .518  SB .682   (26.8 qualifying units)
+    #     @40           r .619  SB .765   (14.0)
+    #     @80           r .720  SB .837   ( 4.5)
+    # The book takes the @20 figure — the least flattering, and the only one
+    # with a unit count worth calling a measurement. This is the most
+    # repeatable player-level DEFENSIVE number in the book, better than every
+    # shot-making rate in it. It lived only in a comment in foul_trouble.py
+    # until now, which meant every surface quoting ".68-.84" was quoting prose
+    # rather than the one table that is allowed to grant display permission.
+    ("player", "foul_rate"): 0.682,
+
+    # ── raw ON/OFF (measured 2026-07-25, see insights.ONOFF_PRIOR_POSS) ──────
+    # Same players' odd games vs their even games, Spearman-Brown stepped up.
+    # The OFFENSIVE split anti-correlates: it was the single most-fired card in
+    # the app (37 of 242 players) and it was measuring noise. Recorded here as
+    # a negative rather than omitted, because "we measured this and it does not
+    # repeat" is a stronger statement than silence.
+    ("player", "onoff_off"): -0.213,
+    ("player", "onoff_def"): 0.366,
+
     # ── contest rate ALLOWED (measured 2026-07-25) ───────────────────────────
     # The book value is the WITHIN-GENDER, within-game-demeaned figure, which
     # is the least flattering of the four measured and the only one with every

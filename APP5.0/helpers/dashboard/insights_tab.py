@@ -784,13 +784,19 @@ def _section_feed(by_sect, section, key):
                 else SEV.r_chip(f),
                 _b(str(f.get("text") or "")))])
         for f in rows], cols=3)
-    _n_unmeasured = sum(1 for f in rows if f.get("r_measured") is None)
-    if _n_unmeasured:
+    _meas, _tot = SEV.measured_count(rows)
+    if _meas:
         st.caption(
-            f"**{_n_unmeasured}** of these sit on metrics the reliability book "
-            "has never measured, and say **unmeasured** rather than borrowing "
-            "a number. They rank at the floor and they still render — the "
-            "measurement decides the ORDER, never the membership.")
+            f"**{_meas} of {_tot}** sit on metrics the reliability book has "
+            f"actually measured, and those carry their `r=` inline. The rest "
+            f"have no chip because there is nothing measured to put in one — "
+            f"they rank at the book's floor and they all still render. "
+            f"Reliability decides the ORDER here, never the membership.")
+    else:
+        st.caption(
+            f"None of these {_tot} sit on a metric the reliability book has "
+            "measured yet, so none carries an `r=` chip. They still render in "
+            "full — reliability decides the order, never the membership.")
     _evidence_jumps([{"metric": f.get("metric")} for f in rows], key=key)
 
 
@@ -927,7 +933,7 @@ def _render_monday(ranked):
         "Who": f.get("subject") or "Team",
         "Costing": SEV.pts_chip(f.get("pts")),
         "Sample": f.get("n"),
-        "Reliability": SEV.r_chip(f),
+        "Reliability": SEV.r_cell(f),
         "Evidence in": SEV.SECTION_LABELS.get(f.get("section"), "Receipts"),
     } for i, f in enumerate(rows, start=1)]), unsafe_allow_html=True)
     if _priced:
@@ -972,12 +978,14 @@ def _severity_audit(ranked):
             "band the score can tie, and the order finishes on the miner's own "
             "|z| — a tiebreak, not part of the score.")
         st.caption(
-            f"**Reliability** is the book's measured split-half r. "
-            f"**{unmeasured}** of these metrics have never been measured and "
-            f"say so; they are RANKED at the book's floor "
-            f"({SEV.UNMEASURED_R:.2f}) so they sort last within their band, "
-            f"and that floor is deliberately not printed as if it were a "
-            f"measurement. `weight` is what the sort actually used.")
+            f"**Reliability** is the book's measured split-half r — an em dash "
+            f"means `helpers/reliability.py` has never measured that metric, "
+            f"which is true of **{unmeasured}** of these. Those are RANKED at "
+            f"the book's floor ({SEV.UNMEASURED_R:.2f}) so they sort last "
+            f"within their band, and that floor is deliberately never printed "
+            f"in the r= column: it is a ranking weight, not a finding about "
+            f"the metric. `weight` is what the sort actually used, which is "
+            f"why the two columns differ.")
         st.markdown(dense_table([{
             "#": i,
             "Band": ("pts/g" if f.get("band") == SEV.BAND_TAGGED
@@ -985,7 +993,7 @@ def _severity_audit(ranked):
             "Metric": f.get("metric"),
             "Who": f.get("subject") or "Team",
             "pts/g": SEV.pts_chip(f.get("pts")),
-            "Reliability": SEV.r_chip(f),
+            "Reliability": SEV.r_cell(f),
             "weight": f"{f.get('r', 0):.2f}",
             "conf": f"{f.get('confidence', 0):.2f}",
             "severity": f"{f.get('severity', 0):.3f}",

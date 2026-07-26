@@ -394,10 +394,27 @@ for _s in SECTIONS:
     ok(_floor not in BODIES[_s],
        f"'{_s}' never prints the unmeasured floor ({_floor}) as if it were a "
        f"measurement")
-ok("unmeasured" in _rec,
-   "unmeasured metrics say so in words instead of borrowing a number")
-ok("deliberately not printed as if it were a measurement" in _rec,
-   "and the audit explains why the weight and the measurement are two columns")
+# ...and the fix for that is not to stamp every line with the word
+# "unmeasured" either. An unmeasured metric gets NO chip; the section states
+# the count once, so the chips that survive are the ones carrying information.
+ok("unmeasured" not in _ALL.lower().replace("unmeasured floor", ""),
+   "no section repeats 'unmeasured' as a per-finding chip")
+ok(re.search(r"\*\*\d+ of \d+\*\* sit on metrics the reliability book has "
+             r"actually measured", _ALL),
+   "a section states once how many of its findings are measured")
+_rs = sorted(set(re.findall(r"r=0\.\d\d", BODIES["Who's helping"])))
+ok(len(_rs) >= 6,
+   f"and the chips that DO render carry real, varied measurements ({_rs})")
+ok("deliberately never printed" in _rec,
+   "the audit explains why the weight and the measurement are two columns")
+
+# a measurement that lived only as prose in another module now grants
+# display permission from the one table that is allowed to
+import helpers.reliability as _REL2                   # noqa: E402
+ok(_REL2.measured("player", "foul_rate") is not None,
+   "player foul rate is IN the reliability book, not just in a comment")
+ok("r=0.68" in BODIES["Who's helping"] or "r=0.68" in BODIES["Monday"],
+   "and the foul-rate findings render its r instead of reading as unmeasured")
 ok("never interleave" in _rec, "and it explains the two bands in words")
 ok("no conversion" in _rec or "pts/g" in _rec,
    "the band is a visible column, so 'why is this above that' is answerable")

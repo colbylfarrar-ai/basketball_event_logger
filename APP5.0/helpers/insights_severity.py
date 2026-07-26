@@ -287,6 +287,9 @@ METRIC_RELIABILITY = {
     "Defense": ("defender", "allowed_fg"),
     "Rim D": ("defender", "allowed_fg"),
     "Perim D": ("defender", "allowed_fg"),
+    "Foul rate": ("player", "foul_rate"),
+    "On/off offense": ("player", "onoff_off"),
+    "On/off defense": ("player", "onoff_def"),
     "Contest rate": ("team", "contest_share_allowed"),
     "Shots allowed": ("team", "band_share"),
     "3PT diet": ("team", "band_share"),
@@ -345,17 +348,31 @@ def reliability_of(metric):
 
 
 def r_chip(f):
-    """The reliability chip for one finding: `r=.52`, or an honest refusal.
+    """The INLINE reliability chip for one finding: `r=.52`, or nothing.
 
-    An unmeasured metric prints "unmeasured", never the `UNMEASURED_R` floor
-    it is ranked with. The whole reliability book exists to stop the app
-    asserting things it has not measured, and a page full of identical
-    `r=0.30` chips is that exact failure wearing the book's own notation.
+    Most of this book is genuinely unmeasured, and a chip is not the place to
+    say so. Printing the `UNMEASURED_R` floor as `r=0.30` claims a measurement
+    that was never made; printing the word "unmeasured" on all 130 of them
+    replaces one repeated non-statement with another and buries the two dozen
+    chips that DO carry information. So an unmeasured metric gets no chip, and
+    the section says once, in a caption, how many of its findings are measured.
+
+    Table cells use `r_cell` instead — a column needs a value in every row.
     """
     r = f.get("r_measured")
-    if r is None:
-        return "unmeasured"
-    return f"r={r:.2f}"
+    return "" if r is None else f"r={r:.2f}"
+
+
+def r_cell(f):
+    """The TABLE-CELL form: `r=.52`, or an em dash. Never the ranking floor."""
+    r = f.get("r_measured")
+    return "—" if r is None else f"r={r:.2f}"
+
+
+def measured_count(findings):
+    """(how many carry a measurement, how many there are)."""
+    fs = list(findings or ())
+    return sum(1 for f in fs if f.get("r_measured") is not None), len(fs)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -273,16 +273,39 @@ ok(all(f["r"] >= 0 for f in RANKED), "no finding carries a negative weight")
 # metrics and got 0.30. It has measured none of them.
 ok(_luck["r_measured"] is None,
    "an unmeasured metric carries r_measured = None, distinct from its weight")
-ok(SEV.r_chip(_luck) == "unmeasured",
-   f"and renders as 'unmeasured', never as the floor "
-   f"({SEV.r_chip(_luck)!r})")
-ok(str(SEV.UNMEASURED_R) not in SEV.r_chip(_luck),
-   "the floor value does not appear in the chip at all")
+ok(SEV.r_chip(_luck) == "",
+   f"and gets NO inline chip -- most of this book is genuinely unmeasured, and "
+   f"stamping 130 findings with the same word buries the two dozen chips that "
+   f"do carry information ({SEV.r_chip(_luck)!r})")
+ok(SEV.r_cell(_luck) == "—",
+   "a TABLE cell gets an em dash, because a column needs a value in each row")
+for _fn in (SEV.r_chip, SEV.r_cell):
+    ok(str(SEV.UNMEASURED_R) not in _fn(_luck),
+       f"{_fn.__name__} never prints the ranking floor -- it is a weight, not "
+       f"a finding about the metric")
 ok(SEV.r_chip(_cliff) == f"r={REL.measured('player', 'band_fg'):.2f}",
    f"a measured metric prints its real r ({SEV.r_chip(_cliff)})")
 ok(SEV.measured_r("Luck") is None and SEV.measured_r("GuardCliff") is not None,
    "measured_r answers 'did the book measure this', reliability_of answers "
    "'what weight does it rank with' -- two questions, two functions")
+_m, _t = SEV.measured_count(RANKED)
+ok(0 < _m < _t,
+   f"the section caption can state the count once ({_m} of {_t}) instead of "
+   f"repeating a non-statement on every line")
+
+# measurements that existed only as prose in another module are now IN the book,
+# which is the one table allowed to grant display permission
+ok(REL.measured("player", "foul_rate") == 0.682,
+   "player foul rate (SB .682 @20 exposure) is in the reliability book, not "
+   "just in a comment in foul_trouble.py")
+ok(SEV.measured_r("Foul rate") is not None,
+   "...and the Foul rate metric is wired to it -- it is the most repeatable "
+   "player defensive read in the book and it was rendering as unmeasured")
+ok(REL.measured("player", "onoff_off") < 0,
+   "raw on/off OFFENSE is recorded as the NEGATIVE it measured -- 'we measured "
+   "this and it does not repeat' is a stronger statement than silence")
+ok(SEV.reliability_of("On/off offense") == 0.0,
+   "and it ranks at zero rather than flipping any sign")
 
 
 print("\n-- the number agrees with the sentence --------------------------------")

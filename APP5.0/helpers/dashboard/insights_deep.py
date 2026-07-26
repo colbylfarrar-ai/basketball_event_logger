@@ -119,6 +119,209 @@ def _def_board(tids, fp=None):
             DP.team_allowed_diet(ev))
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner="Reading the offensive profile…")
+def _off_board(tids, fp=None):
+    """(diets, edges, load, footprint, own) — the offensive twin of _def_board.
+
+    One `_event_floor` walk feeds both load and footprint, as on the defensive
+    side; prod is 1 vCPU and this tab is already the expensive one.
+    """
+    import helpers.offense_profile as OP
+    import helpers.defense_profile as DP
+    ev = _events(tids, fp=fp)
+    if not ev:
+        return {}, {}, {}, {}, {}
+    gids = list(tids)
+    try:
+        import helpers.lineups as LU
+        floor = LU._event_floor(gids)
+    except Exception:
+        floor = None
+    # The generic pool/edge/team-relative helpers live on the defensive module
+    # and are shape-generic; offense_profile returns that shape on purpose so
+    # the two sides cannot drift into two implementations of one idea.
+    diets = DP.team_relative(OP.shooter_diets(ev), keys=OP.TEAM_RELATIVE)
+    return (diets, DP.diet_edges(diets),
+            OP.shooter_load(ev, floor=floor, game_ids=gids),
+            OP.offensive_footprint(ev, floor=floor, game_ids=gids),
+            OP.team_own_diet(ev))
+
+
+def render_offense_board(ctx, pids, table, fp=None):
+    """Per-player offensive profile — the read the Defense tab was mirroring.
+
+    Columns are ordered by what the measurement supports, exactly as on defense,
+    and on this side the ordering is the flattering one for once: the shares a
+    player CHOOSES measure SB .70-.92 against the .17-.64 of assignments an
+    opponent chooses for her. So the diet leads, the action axis follows, and
+    the percentages go last and stay descriptive — a per-player rim FG% (SB .11)
+    is the single least repeatable number in the book and never carries a
+    verdict here.
+    """
+    tids = tuple(getattr(ctx, "tracked_ids", None) or ())
+    if not tids:
+        return
+    diets, edges, load, footprint, own = _off_board(tids, fp=fp)
+    if not diets:
+        return
+
+    _hdr("Offense — what each player actually shoots")
+    st.caption(
+        "The mirror of the Defense tab, on the side the measurement actually "
+        "supports. **OLOAD%** is the offensive twin of DLOAD%: the share of her "
+        "team's shots a player takes while she is on the floor — five players "
+        "share every shot, so **20% is average by construction**. Read it as "
+        "who the offense is looking for.")
+
+    rows = []
+    for pid in pids:
+        d, l = diets.get(pid), load.get(pid)
+        if not d and not l:
+            continue
+        rows.append({
+            "Player": table[pid]["name"],
+            "OLOAD%": (f"{l['load'] * 100:.0f}%" if l else "—"),
+            "Shots": (d["n"] if d else (l["shots"] if l else 0)),
+            "Inside 4ft": (_pct(d["band"].get("rim04")) if d else "—"),
+            "4ft-arc": (_pct(d["band"].get("two419")) if d else "—"),
+            "Threes": (_pct(d["three_share"]) if d else "—"),
+            "Off dribble": (_pct(d["drive_share"]) if d else "—"),
+            "Off catch": (_pct(d["catch_share"]) if d else "—"),
+            "On-ball": (_pct(d["onball_share"]) if d else "—"),
+            "FG%": (_pct(d["FG%"]) if d else "—"),
+            "PPS": (f"{d['PPS']:.2f}" if d else "—"),
+            "_sort": (l["load"] if l else -1),
+        })
+    if not rows:
+        st.caption("No player has enough located attempts yet — this fills in "
+                   "as shots are tapped onto the court in the Game Tracker.")
+        return
+    rows.sort(key=lambda r: -r["_sort"])
+    for r in rows:
+        r.pop("_sort")
+    st.markdown(dense_table(rows), unsafe_allow_html=True)
+
+    _sb_band = REL.measured("player", "band_share")
+    _sb_kind = REL.measured("player", "kind_share")
+    _sb_play = REL.measured("player", "playtype_share")
+    _sb_pps = REL.measured("player", "pps")
+    _sb_bfg = REL.measured("player", "band_fg")
+    _sb_kfg = REL.measured("player", "kind_fg")
+    st.caption(
+        f"{conf_dot_r(_sb_band)} **depth shares** r={_sb_band:.2f} · "
+        f"{conf_dot_r(_sb_play)} **action share** r={_sb_play:.2f} · "
+        f"{conf_dot_r(_sb_kind)} **angular shares** r={_sb_kind:.2f} · "
+        f"{conf_dot_r(_sb_bfg)} **4ft-arc FG%** r={_sb_bfg:.2f} · "
+        f"{conf_dot_r(_sb_pps)} **PPS** r={_sb_pps:.2f} — measured over 200 "
+        "random half-splits. **This is the inverse of the defensive legend, and "
+        "for the stated reason**: a defender's assignment is chosen by the "
+        "opponent and measures .17-.64, while a shot is chosen by the shooter "
+        "and measures .70-.92. The shares here are the most repeatable numbers "
+        "in the book. The percentages are not — and the one a coach asks for "
+        f"first, per-player **rim FG%, measures r={_sb_kfg:.2f}**, the worst "
+        "figure in the entire reliability book despite having the largest "
+        "sample. It is shown nowhere on this page as a trait. FG% and PPS above "
+        "are the record of these games, not a claim they repeat.",
+        unsafe_allow_html=True)
+
+    with st.expander("Shot edges — where each player's diet departs from the "
+                     "league's"):
+        st.caption(
+            "Each player's most extreme shares against the pool of shooters, "
+            "shrunk toward the league by a phantom-attempt prior so a 58% share "
+            "on seven shots cannot outrank a real tendency. Unlike the "
+            "defensive version of this table, these ARE tendencies: they are "
+            "the player's own selection, which is what the .70-.92 was measured "
+            "on.")
+        arows = []
+        for pid in pids:
+            es = edges.get(pid)
+            if not es:
+                continue
+            top = [e for e in es if e["axis"] in ("band", "kind", "play",
+                                                  "creation")]
+            if not top:
+                continue
+            over = [e for e in top if e["z"] > 0]
+            under = [e for e in top if e["z"] <= 0]
+            arows.append({
+                "Player": table[pid]["name"],
+                "Takes more than the league": ", ".join(
+                    f"{e['label']} {e['share'] * 100:.0f}% vs "
+                    f"{e['lg_share'] * 100:.0f}% (n={e['n']})"
+                    for e in over) or "—",
+                "Takes less": ", ".join(
+                    f"{e['label']} {e['share'] * 100:.0f}% vs "
+                    f"{e['lg_share'] * 100:.0f}% (n={e['n']})"
+                    for e in under) or "—",
+                "Shots": diets.get(pid, {}).get("n", 0),
+            })
+        if arows:
+            st.markdown(dense_table(arows), unsafe_allow_html=True)
+        else:
+            st.caption("Needs more located attempts per player.")
+
+    with st.expander("On-floor footprint — YOUR OWN shot diet with each player "
+                     "on vs off (descriptive)"):
+        st.caption(
+            "What this team's own shot selection did while a player was out "
+            "there — the read behind \"the offense changes shape when she checks "
+            "in\". **Not teammate-adjusted and not repeatable**: the defensive "
+            "twin of this delta measured −0.06 across a split season, the same "
+            "failure mode as raw on/off. Describe the minutes with it; argue "
+            "about who caused what with the RAPM columns on Lab.")
+        frows = []
+        for pid in pids:
+            f = footprint.get(pid)
+            if not f:
+                continue
+            frows.append({
+                "Player": table[pid]["name"],
+                "Shots on": f["on"]["n"], "Shots off": f["off"]["n"],
+                "Rim share on": _pct(f["on"]["rim_share"]),
+                "Δ rim": f"{f['delta']['rim_share'] * 100:+.0f} pts",
+                "3P share on": _pct(f["on"]["three_share"]),
+                "Δ 3P": f"{f['delta']['three_share'] * 100:+.0f} pts",
+                "Δ own PPS": f"{f['delta']['own_pps']:+.2f}",
+            })
+        if frows:
+            st.markdown(dense_table(frows), unsafe_allow_html=True)
+        else:
+            st.caption("Needs on-floor lineup snapshots on more possessions.")
+
+    # ── the team's own shot diet, vs the league it plays in ───────────────────
+    tid = getattr(ctx, "team_id", None)
+    mine = own.get(tid)
+    if mine and mine["n"] >= 80:
+        _hdr("Shot diet taken — and what the league takes")
+        pool = [v for t, v in own.items() if t != tid and v["n"] >= 60]
+        import helpers.shot_kinds as SK
+        drows = []
+        for band in SK.BANDS:
+            share = mine["band"].get(band, 0.0)
+            lg = ([v["band"].get(band, 0.0) for v in pool] or [None])
+            lgm = (sum(lg) / len(lg)) if lg and lg[0] is not None else None
+            drows.append({
+                "Band": SK.BAND_LABELS.get(band, band),
+                "Shots taken": mine["band_n"].get(band, 0),
+                "Share": _pct(share),
+                "League": _pct(lgm),
+                "Δ": (f"{(share - lgm) * 100:+.0f} pts" if lgm is not None
+                      else "—"),
+            })
+        st.markdown(dense_table(drows), unsafe_allow_html=True)
+        st.caption(
+            f"Over **{mine['n']} attempts**, this offense was contested on "
+            f"**{_pct(mine['contested_share'])}** of them, had "
+            f"**{_pct(mine['assisted_share'])}** assisted, and scored "
+            f"**{mine['own_pps']:.2f} points per shot**. Shares are what an "
+            "offense controls — where it chooses to shoot from. Per-band FG% is "
+            "deliberately absent for the same reason it is absent from the "
+            "defensive mirror: team per-band shooting cannot be measured on a "
+            "six-team book, and asserting it in either direction would be a "
+            "claim this data never made.")
+
+
 def render_defense_board(ctx, pids, table, fp=None):
     """Per-defender assignment profile — the offensive shot-diet read, ported.
 

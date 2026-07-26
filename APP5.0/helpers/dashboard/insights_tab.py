@@ -3,10 +3,11 @@ insights_tab.py — Team Dashboard > Insights tab (the scout that reads itself,
 scoped to the SELECTED team).
 
 Renders each of the team's players' most-surprising true facts (helpers/insights.py),
-plus force-to-off-hand + space-dependence boards, defensive win-impact and the
-pick-&-roll role split — all filtered to this team but scored vs the whole league
-(so "elite" means elite leaguewide, not just on this roster). Team-scoped tracked
-data, so it sits behind the team tracked gate (ctx.has_tracked).
+plus force-to-off-hand + space-dependence boards, per-player OFFENSIVE and
+DEFENSIVE profile boards, win-impact on both sides and the pick-&-roll role
+split — all filtered to this team but scored vs the whole league (so "elite"
+means elite leaguewide, not just on this roster). Team-scoped tracked data, so
+it sits behind the team tracked gate (ctx.has_tracked).
 
 render(ctx) @st.fragment — the page builds a SimpleNamespace ctx. Display-only.
 """
@@ -493,9 +494,13 @@ def render(ctx):
     except Exception as _exc:
         st.caption(f"Engine bundle unavailable — {type(_exc).__name__}: {_exc}")
 
-    _t_scout, _t_players, _t_def, _t_wl, _t_eng = st.tabs(
-        ["🧭 Auto-scout", "👤 Players", "🛡️ Defense", "📊 Wins & losses",
-         "⚙️ Every engine"])
+    # Offense sits BEFORE Defense. The page had a Defense tab and no offensive
+    # counterpart, which read as though the app knew more about the side it
+    # measures worse — defender assignment shares repeat at .17-.64, a shooter's
+    # own diet at .70-.92.
+    _t_scout, _t_players, _t_off, _t_def, _t_wl, _t_eng = st.tabs(
+        ["🧭 Auto-scout", "👤 Players", "🏀 Offense", "🛡️ Defense",
+         "📊 Wins & losses", "⚙️ Every engine"])
 
     # ══════════════════════════════════════════════════════════════════════════
     #  TAB 1 — AUTO-SCOUT
@@ -589,7 +594,31 @@ def render(ctx):
         _render_ball_movement(ctx, pids, table, _tids, _fp)
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 3 — DEFENSE
+    #  TAB 3 — OFFENSE
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t_off:
+        try:
+            from helpers.dashboard import insights_deep as _DEEP
+            _DEEP.render_offense_board(ctx, pids, table, fp=_fp)
+        except Exception as _exc:
+            st.caption(f"Offensive board unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+        # The shot-depth verdict belongs beside the diet it is a reading of.
+        # It also renders on Auto-scout, which is the front page; here it sits
+        # under the table that shows the shares behind it.
+        _sd_off = _shot_diet_lines(ctx)
+        if _sd_off:
+            st.markdown("<div class='lab-hdr'>What the diet is costing</div>",
+                        unsafe_allow_html=True)
+            st.markdown(verdict_card(_sd_off), unsafe_allow_html=True)
+        _render_wpa(pids, impact, table, side="off")
+        # PnR handler-vs-roller is a SCORING read — who finishes the action —
+        # and it sat on the Defense tab only because there was no offensive tab
+        # to put it on. This is its home.
+        _render_pnr(pids, roles, table)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  TAB 4 — DEFENSE
     # ══════════════════════════════════════════════════════════════════════════
     with _t_def:
         try:
@@ -598,18 +627,17 @@ def render(ctx):
         except Exception as _exc:
             st.caption(f"Defensive board unavailable — "
                        f"{type(_exc).__name__}: {_exc}")
-        _render_def_wpa(pids, impact, table)
-        _render_pnr(pids, roles, table)
+        _render_wpa(pids, impact, table, side="def")
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 4 — WINS & LOSSES
+    #  TAB 5 — WINS & LOSSES
     # ══════════════════════════════════════════════════════════════════════════
     with _t_wl:
         _render_winloss(ctx, _tids, _fp)
         _render_deserved_games(_bundle, ctx)
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  TAB 5 — EVERY ENGINE
+    #  TAB 6 — EVERY ENGINE
     # ══════════════════════════════════════════════════════════════════════════
     with _t_eng:
         try:
@@ -977,10 +1005,18 @@ def _render_boards(pids, table, cliffs):
                 f"</div>", unsafe_allow_html=True)
 
 
-def _render_def_wpa(pids, impact, table):
-    """Win impact (def / clutch WPA) for this team."""
-    st.markdown("<div class='lab-hdr'>Who won games on defense</div>",
-                unsafe_allow_html=True)
+def _render_wpa(pids, impact, table, side="def"):
+    """Win impact (WPA) for this team, sorted by the side that owns the tab.
+
+    One renderer for both tabs. The table always shows defensive, offensive and
+    clutch WPA together — the comparison between a player's two halves is the
+    point — and only the heading and the sort change, so the Offense and Defense
+    tabs cannot drift into two different versions of one table.
+    """
+    _off = side == "off"
+    st.markdown(
+        f"<div class='lab-hdr'>Who won games on "
+        f"{'offense' if _off else 'defense'}</div>", unsafe_allow_html=True)
     st.markdown("<div class='hdr-sub'>Win probability added, min 4 GP. "
                 "Defensive · offensive · clutch.</div>",
                 unsafe_allow_html=True)
@@ -990,11 +1026,14 @@ def _render_def_wpa(pids, impact, table):
         st.caption("Win-impact needs a few tracked games to separate signal "
                    "from noise.")
     else:
-        irows.sort(key=lambda r: -(r.get("def_wpa") or 0))
+        _key = "off_wpa" if _off else "def_wpa"
+        irows.sort(key=lambda r: -(r.get(_key) or 0))
         st.markdown(dense_table([{
             "Player": r["name"], "GP": r.get("games"),
-            "Def WPA": f"{r.get('def_wpa') or 0:+.2f}",
-            "Off WPA": f"{r.get('off_wpa') or 0:+.2f}",
+            "Off WPA" if _off else "Def WPA":
+                f"{r.get(_key) or 0:+.2f}",
+            "Def WPA" if _off else "Off WPA":
+                f"{r.get('def_wpa' if _off else 'off_wpa') or 0:+.2f}",
             "Clutch": f"{r.get('clutch_wpa') or 0:+.2f}",
         } for r in irows]), unsafe_allow_html=True)
 

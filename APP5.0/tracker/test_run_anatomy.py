@@ -157,9 +157,9 @@ for badge, n, txt in V:
     ok(isinstance(badge, str) and isinstance(txt, str) and txt,
        f"'{badge}' is the (badge, n, html) shape verdict_card unpacks")
     ok("%" not in re.sub(r"\d+%", "", txt) or True, f"'{badge}' formats")
-_floor = [t for b, _n, t in V if b.startswith("On the floor")]
+_floor = [t for b, _n, t in V if b.startswith("Floor")]
 for t in _floor:
-    ok("not proof they caused it" in t,
+    ok("not proof of cause" in t,
        "an on-floor line refuses the causal claim (five players share every "
        "possession — the raw on/off failure mode)")
 ok(RN.anatomy_verdict({}) == [], "an empty anatomy produces no lines")

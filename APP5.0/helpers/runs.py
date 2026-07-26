@@ -231,12 +231,12 @@ def league_run_table(gender=None, game_ids=None, events=None,
 
 #: How a run started, in the order the classifier tries them.
 TRIGGER_LABELS = {
-    "takeaway": "off a turnover they forced",
-    "defensive_board": "off a defensive rebound",
-    "after_score": "right after the other team scored",
-    "off_own_miss": "off their own offensive rebound",
+    "takeaway": "off a forced TOV",
+    "defensive_board": "off a DRB",
+    "after_score": "after conceding a bucket",
+    "off_own_miss": "off their own ORB",
     "period_start": "out of a quarter break",
-    "unknown": "unclear from the tags",
+    "unknown": "untagged",
 }
 
 
@@ -440,41 +440,32 @@ def anatomy_verdict(an, names=None, team_name="This team"):
         trig = _mode_share(s["trigger"])
         bits = []
         if trig and trig[1] >= 0.30:
-            bits.append(f"most often <b>{TRIGGER_LABELS.get(trig[0], trig[0])}"
-                        f"</b> ({trig[1] * 100:.0f}% of them)")
+            bits.append(f"{trig[1] * 100:.0f}% "
+                        f"<b>{TRIGGER_LABELS.get(trig[0], trig[0])}</b>")
         dfn = _mode_share(s["defense"])
         if dfn and dfn[1] >= 0.35:
             nice = str(dfn[0]).replace("_", " ")
-            verb = ("scoring it against" if side == "own"
-                    else "and the defense being played was")
-            bits.append(f"{verb} <b>{nice}</b> on {dfn[1] * 100:.0f}% of the "
-                        f"shots inside the run")
+            verb = "vs" if side == "own" else "in"
+            bits.append(f"{verb} <b>{nice}</b> {dfn[1] * 100:.0f}%")
         pts = s.get("points") or {}
         tot = sum(pts.values())
         if tot:
             top = max(pts.items(), key=lambda kv: kv[1])
-            where = ("the free-throw line" if top[0] == "ft"
-                     else _band_phrase(top[0]))
-            bits.append(f"the points came mostly from <b>{where}</b> "
-                        f"({top[1] / tot * 100:.0f}% of them)")
+            where = ("the line" if top[0] == "ft" else _band_phrase(top[0]))
+            bits.append(f"{top[1] / tot * 100:.0f}% from <b>{where}</b>")
         if not bits:
             continue
         lines.append((
             label, s["n"],
-            f"<b>{s['n']} run{'s' if s['n'] != 1 else ''}</b> of 10+ "
-            f"unanswered, averaging <b>{s['avg_pts']:.0f} points</b> in "
-            f"<b>{s['avg_secs'] / 60:.1f} minutes</b> of game clock — "
-            + ", ".join(bits) + "."))
+            f"<b>{s['n']}</b> × 10-0, <b>{s['avg_pts']:.0f} pts</b> in "
+            f"<b>{s['avg_secs'] / 60:.1f} min</b> — " + " · ".join(bits) + "."))
 
     # The on-floor five, BOTH ways. Who is out there when the other team goes
     # on a run is the more actionable of the two and was the half originally
     # left out.
     for side, label, phrase in (
-            ("own", "On the floor — their runs",
-             "on the floor for the largest share of their own run minutes"),
-            ("allowed", "On the floor — runs against them",
-             "on the floor for the largest share of the run minutes they "
-             "CONCEDED")):
+            ("own", "Floor — runs made", "most run minutes made"),
+            ("allowed", "Floor — runs allowed", "most run minutes conceded")):
         lus = ((an.get(side) or {}).get("lineups") or {})
         if not lus or not names:
             continue
@@ -483,10 +474,9 @@ def anatomy_verdict(an, names=None, team_name="This team"):
         tot = sum(lus.values())
         lines.append((
             label, n,
-            f"The group {phrase} is <b>{who}</b> ({n / tot * 100:.0f}% of "
-            f"them). That is a record of who was out there, not proof they "
-            f"caused it — five players share every possession, and the RAPM "
-            f"columns on the Lab view are the argument about cause."))
+            f"<b>{who}</b> — {phrase} ({n / tot * 100:.0f}%). Who was out "
+            f"there, not proof of cause; five share every possession. RAPM "
+            f"on Lab is the causal argument."))
     return lines
 
 

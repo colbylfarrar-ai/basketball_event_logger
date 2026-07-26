@@ -137,7 +137,12 @@ def _seen_tracker(team_id):
 def _evidence_jumps(lines, key):
     """Row of view-jump buttons for the evidence behind a card's lines. Sets the
     page's top-level View switcher and forces a FULL rerun (this tab is a
-    fragment — a fragment-scoped rerun would never repaint the switcher)."""
+    fragment — a fragment-scoped rerun would never repaint the switcher).
+
+    EVERY distinct view the card's lines point at gets a button, not the first
+    three: a card whose reads live on four different tabs was silently dropping
+    the fourth, which is the one a coach would not have thought to look for.
+    """
     views = []
     for ln in lines:
         v = _EVIDENCE_VIEW.get(ln.get("metric"))
@@ -145,12 +150,20 @@ def _evidence_jumps(lines, key):
             views.append(v)
     if not views:
         return
-    cols = st.columns(3)
-    for i, v in enumerate(views[:3]):
+    cols = st.columns(max(3, len(views)))
+    for i, v in enumerate(views):
         if cols[i].button(f"{v} →", key=f"{key}_{v}",
                           help=f"Open {v} — the charts behind these reads"):
             st.session_state["td_view"] = v
             st.rerun(scope="app")
+
+
+def _jump_btn(view, label, key):
+    """A single 'the full table lives on X' jump."""
+    if st.button(label, key=key,
+                 help=f"Open {view} — the full chart and table"):
+        st.session_state["td_view"] = view
+        st.rerun(scope="app")
 
 
 def _data_fp():
@@ -248,18 +261,27 @@ def _league(gender, season="Current", season_gp=None, fp=None):
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner="Reading the team's tendencies…")
-def _team_feed(gender, season="Current", team_id=None, tids=None, fp=None):
+def _team_feed(gender, season="Current", team_id=None, tids=None, fp=None,
+               season_gp=None):
     """League-wide team insight feed (z-scored vs the tracked field) — the tab
     shows only the selected team's lines. The per-team extras (lineup / matchup
     / chemistry feeds) are built for the VIEWED team only, scoped to its own
-    visible game ids, so nothing beyond the pools reads other teams' depth."""
+    visible game ids, so nothing beyond the pools reads other teams' depth.
+
+    `season_gp` is the GENDER's season pool, handed to the extras builder as
+    the league baseline for the comparative reads (the allowed shot diet and
+    the contest rate). Without it those generators fall back to comparing this
+    team against only the opponents on its own schedule.
+    """
     import helpers.team_insights as TIN
     try:
         extras = None
         if team_id is not None:
             _ex = TIN.team_extras(team_id, gender=gender,
                                   game_ids=(list(tids) if tids else None),
-                                  season=season)
+                                  season=season,
+                                  league_game_ids=(list(season_gp)
+                                                   if season_gp else None))
             extras = {team_id: _ex} if _ex else None
         # top=None → EVERY qualifying team read (the tab is the deep-dive home;
         # the 3-line cap stays on the league-wide surfaces).
@@ -418,105 +440,178 @@ def render(ctx):
         st.caption("No tracked shooters on this roster yet.")
         return
 
-    st.caption("What the tracked data says about this team — each line is the "
-               "player's biggest deviation from the league, gated by sample size "
-               "so a hot night never headlines. Scored vs the whole league.")
-
     # per-coach NEW chips: unseen lines get flagged; the blob is persisted once
     # after both feeds render (so a fragment rerun mid-scroll never eats chips).
     _is_new, _seen_persist = _seen_tracker(getattr(ctx, "team_id", None))
 
-    # ── shot diet — the depth read, above the auto-scout ──────────────────────
-    # Leads the tab when it fires because it is the largest single actionable
-    # number the book can produce: the 4–10 ft band is a quarter of every shot
-    # taken in this league at 0.58 PPS against 1.13 at the rim, and no zone-based
-    # read could ever surface it. Fires for one team on the live book, which is
-    # the point — the gate is materiality, not just sample.
-    _sd = _shot_diet_lines(ctx)
-    if _sd:
-        st.markdown("<div class='lab-hdr'>Shot depth — the verdict</div>",
-                    unsafe_allow_html=True)
-        st.markdown(verdict_card(_sd), unsafe_allow_html=True)
-
-    # ── team auto-scout — the TEAM's own most surprising reads ────────────────
+    _tids = getattr(ctx, "tracked_ids", None)
     _tlines = _team_feed(
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "team_id", None),
-        tuple(getattr(ctx, "tracked_ids", None) or ()) or None,
+        tuple(_tids or ()) or None,
         fp=_fp,
+        season_gp=tuple(getattr(ctx, "season_gp", None) or ()) or None,
     ).get(getattr(ctx, "team_id", None), [])
-    if _tlines:
-        st.markdown("<div class='lab-hdr'>Auto-scout — team read</div>",
-                    unsafe_allow_html=True)
-        _tbody = "".join(_line_html(ln, new=_is_new(ln)) for ln in _tlines)
-        st.markdown(f"<div class='gloss-card'>{_tbody}</div>",
-                    unsafe_allow_html=True)
-        _evidence_jumps(_tlines, key="insj_team")
 
-    # ── per-player auto-scout (the team-by-team feed) — 2-col boxed grid so a
-    #    full roster's reads fit on ~half the page length ──────────────────────
-    st.markdown("<div class='lab-hdr'>Auto-scout — this team</div>",
-                unsafe_allow_html=True)
-    _cards = []
-    for pid in pids:
-        lines = feed.get(pid, [])
-        if not lines:
-            continue
-        nm = table[pid]["name"]
-        body = "".join(_line_html(ln, new=_is_new(ln)) for ln in lines)
-        _cards.append(
-            (pid, lines,
-             f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>{body}</div>"))
-    if _cards:
-        _pcols = st.columns(2)
-        for i, (pid, lines, c) in enumerate(_cards):
-            with _pcols[i % 2]:
-                st.markdown(c, unsafe_allow_html=True)
-                _evidence_jumps(lines, key=f"insj_{pid}")
-    else:
-        st.caption("No standout signals yet — this roster reads close to league "
-                   "average on the tracked splits, or needs more games.")
-    _seen_persist()   # stamp today's first-sight dates (one write, if any)
-
-    # ── the deep-dive half: the defensive board (new engine) + every other
-    #    tab's verdict, gathered here. Insights is the one page a new coach is
-    #    pointed at, so the reads live here even though the charts do not move.
+    # ══════════════════════════════════════════════════════════════════════════
+    #  TABS FIRST. Nothing sits above them.
+    # ══════════════════════════════════════════════════════════════════════════
+    # An always-visible masthead pushed every tab a screen and a half down and
+    # made the page feel like a scroll with tabs bolted on. The brief IS a tab
+    # now — the first one — which matches how Charts is organised and gets a
+    # coach to the numbers in one click instead of one scroll.
+    _bundle = {}
     try:
         from helpers.dashboard import insights_deep as _DEEP
-        _DEEP.render_defense_board(ctx, pids, table, fp=_fp)
-        _DEEP.render_foul_rates(pids, table)
-        _DEEP.render_ported(ctx, fp=_fp)
-    except Exception as _exc:      # never let the deep half blank the feed above
-        st.caption(f"Deep-dive sections unavailable — {type(_exc).__name__}: {_exc}")
+        _bundle = _DEEP.brief_bundle(
+            tuple(_tids or ()), getattr(ctx, "team_id", None), ctx.gender,
+            league_gids=tuple(getattr(ctx, "season_gp", None) or ()) or None,
+            fp=_fp)
+    except Exception as _exc:
+        st.caption(f"Engine bundle unavailable — {type(_exc).__name__}: {_exc}")
 
-    # ── deep dive: offense vs TOP-half vs BOTTOM-half opponents ────────────────
-    _tids = getattr(ctx, "tracked_ids", None)
+    _t_scout, _t_players, _t_def, _t_wl, _t_eng = st.tabs(
+        ["🧭 Auto-scout", "👤 Players", "🛡️ Defense", "📊 Wins & losses",
+         "⚙️ Every engine"])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  TAB 1 — AUTO-SCOUT
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t_scout:
+        try:
+            from helpers.dashboard import insights_brief as _BRIEF
+            _BRIEF.render(ctx, table, pids, _tlines, _bundle, fp=_fp)
+        except Exception as _exc:
+            st.caption(f"Auto-scout unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+        if _tlines:
+            _evidence_jumps(_tlines, key="insj_team")
+
+        # ── shot depth — the largest single actionable number the book has ───
+        # The 4-to-arc band is over a third of every shot in this league at
+        # 0.60 PPS against 1.14 at the rim, and no zone-based read surfaces it.
+        _sd = _shot_diet_lines(ctx)
+        if _sd:
+            st.markdown("<div class='lab-hdr'>Shot depth</div>",
+                        unsafe_allow_html=True)
+            st.markdown(verdict_card(_sd), unsafe_allow_html=True)
+
+        # ── self-scout: shot tendencies — how a scout attacks this team ──────
+        _render_tendencies(ctx, _tids, _fp)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  TAB 2 — PLAYERS
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t_players:
+        st.markdown("<div class='lab-hdr'>Auto-scout — every player</div>",
+                    unsafe_allow_html=True)
+        st.caption(
+            "Each card is one player's most surprising true facts, measured "
+            "against the whole league rather than against this roster — so "
+            "'elite' means elite everywhere, not just here. Every line the "
+            "engines produced is shown.")
+        _cards = []
+        for pid in pids:
+            lines = feed.get(pid, [])
+            if not lines:
+                continue
+            nm = table[pid]["name"]
+            body = "".join(_line_html(ln, new=_is_new(ln)) for ln in lines)
+            _cards.append(
+                (pid, lines,
+                 f"<div class='gloss-card'><b style='font-size:14px'>{nm}</b>"
+                 f"{body}</div>"))
+        if _cards:
+            _pcols = st.columns(2)
+            for i, (pid, lines, c) in enumerate(_cards):
+                with _pcols[i % 2]:
+                    st.markdown(c, unsafe_allow_html=True)
+                    _evidence_jumps(lines, key=f"insj_{pid}")
+        else:
+            st.caption("No standout signals yet — this roster reads close to "
+                       "league average on the tracked splits, or needs more "
+                       "games.")
+        _seen_persist()   # stamp today's first-sight dates (one write, if any)
+
+        _render_boards(pids, table, cliffs)
+        try:
+            from helpers.dashboard import insights_deep as _DEEP
+            _DEEP.render_foul_rates(pids, table)
+        except Exception as _exc:
+            st.caption(f"Foul-rate board unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+        _render_passers(ctx, pids, table, _fp)
+        _render_ball_movement(ctx, pids, table, _tids, _fp)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  TAB 3 — DEFENSE
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t_def:
+        try:
+            from helpers.dashboard import insights_deep as _DEEP
+            _DEEP.render_defense_board(ctx, pids, table, fp=_fp)
+        except Exception as _exc:
+            st.caption(f"Defensive board unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+        _render_def_wpa(pids, impact, table)
+        _render_pnr(pids, roles, table)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  TAB 4 — WINS & LOSSES
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t_wl:
+        _render_winloss(ctx, _tids, _fp)
+        _render_deserved_games(_bundle, ctx)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  TAB 5 — EVERY ENGINE
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t_eng:
+        try:
+            from helpers.dashboard import insights_deep as _DEEP
+            _DEEP.render_ported(ctx, fp=_fp)
+        except Exception as _exc:
+            st.caption(f"Ported sections unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+
+
+def _render_winloss(ctx, _tids, _fp):
+    """The wins-vs-losses half of the page.
+
+    The strength split renders as its VERDICT here; the identical 7-metric
+    table is on Charts → Trends (the page's `_strength_split`), and two copies
+    of one table is length without information.
+    """
+    # ── deep dive: offense vs TOP-half vs BOTTOM-half opponents ──────────────
     _ss = _strength(ctx.gender, ctx.team_id, _tids,
                     getattr(ctx, "season", "Current"), fp=_fp) \
         if getattr(ctx, "team_id", None) else {"available": False}
-    st.markdown("<div class='lab-hdr'>Deep dive — vs top teams vs bottom teams</div>",
-                unsafe_allow_html=True)
+    st.markdown("<div class='lab-hdr'>Do they beat good teams, or just bad "
+                "ones?</div>", unsafe_allow_html=True)
     if not _ss.get("available"):
         st.caption("Needs more tracked games against both stronger and weaker "
                    "opponents (≥15 shots each side) — this split fills in as the "
                    "schedule builds.")
     else:
         _tp, _bt = _ss["top"], _ss["bottom"]
-        st.markdown(dense_table(_split_rows(
-            _tp, _bt, f"vs Top-half ({_ss['top_games']}g)",
-            f"vs Bottom-half ({_ss['bottom_games']}g)")),
-            unsafe_allow_html=True)
         _dp = (_tp["PPP"] or 0) - (_bt["PPP"] or 0)
         if _dp <= -0.12:
-            st.caption(f"⚠ Offense drops **{abs(_dp):.2f} PPP** against top-half "
-                       "teams — the scoring is feasting on weaker opponents. Watch "
-                       "the 3PA / rim mix above to see what stops working.")
+            _v = (f"⚠ <b>{abs(_dp):.2f} PPP drop</b> vs the top half — the "
+                  f"record is built on the weaker half of the schedule.")
         elif _dp >= 0.12:
-            st.caption(f"This team *rises* **+{_dp:.2f} PPP** vs top-half teams — "
-                       "it brings its best against the better opponents.")
+            _v = (f"<b>+{_dp:.2f} PPP</b> vs the top half — they raise their "
+                  f"level against good teams.")
         else:
-            st.caption("Offense holds up about the same against strong and weak "
-                       "opponents — a steady, opponent-proof profile.")
+            _v = "Holds within 0.12 PPP either way — opponent-proof."
+        st.markdown(verdict_card([(
+            "Strength of opponent",
+            _ss["top_games"] + _ss["bottom_games"],
+            f"{_v} Top half <b>{_tp['PPP']:.2f}</b> PPP "
+            f"({_ss['top_games']}g) · bottom half <b>{_bt['PPP']:.2f}</b> "
+            f"({_ss['bottom_games']}g).")]),
+            unsafe_allow_html=True)
+        _jump_btn("Charts", "Charts → Trends: the full 7-metric split →",
+                  "insj_str")
 
     # ── deep dive: offense IN WINS vs IN LOSSES ───────────────────────────────
     _wl = _winloss(ctx.gender, ctx.team_id, _tids, fp=_fp) \
@@ -611,11 +706,16 @@ def render(ctx):
         st.caption("Signature win/loss stats need ≥2 tracked games on each "
                    "side of the record — fills in as results build.")
 
-    # ── self-scout: shot tendencies (force left/right, where shots live) ──────
+
+def _render_tendencies(ctx, _tids, _fp):
+    """Self-scout: shot tendencies (force left/right, where shots live)."""
     _te = _tendencies(ctx.gender, ctx.team_id, _tids, fp=_fp) \
         if getattr(ctx, "team_id", None) else {"available": False}
     st.markdown("<div class='lab-hdr'>Self-scout — shot tendencies (how to defend "
                 "us)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='hdr-sub'>Where their shots live — side of the "
+                "floor and depth. What an opposing scout keys on.</div>",
+                unsafe_allow_html=True)
     if not _te.get("available"):
         st.caption("Needs ~30 tracked shots to map the tendencies — fills in fast.")
     else:
@@ -661,33 +761,49 @@ def render(ctx):
         with _c3:
             _tend_table(_te["three"], "3-point shots")
 
-    # ── passer quality — look created vs finish (the pass-from FG% nuance) ────
+
+def _render_passers(ctx, pids, table, _fp):
+    """Passer quality — the VERDICT only.
+
+    The full table renders on Charts → Offense → Playmaking (the page's
+    `_passer_quality`), and rendering it twice made the flagship longer without
+    making it say more, and gave two surfaces the chance to drift apart. This
+    module's own docstring claims the reads are gathered here while the charts
+    stay where they live; for this section that claim was not true until now.
+    """
     _pq = _passers(ctx.gender, getattr(ctx, "season_gp", None), fp=_fp)
     _prows = sorted(((pid, _pq[pid]) for pid in pids if pid in _pq),
                     key=lambda t: -t[1]["xPPS_created"])
-    if _prows:
-        st.markdown("<div class='lab-hdr'>Passer quality — looks created vs "
-                    "finished</div>", unsafe_allow_html=True)
-        st.caption("**Look quality** = expected value of the shots a passer sets up "
-                   "(the zone/contest of the look, whether or not it dropped). "
-                   "**Finish Δ** = actual − expected: a big minus means the looks "
-                   "were there but the shooters missed — a *good pass to a poor "
-                   "shooter*, not a bad passer.")
-        st.markdown(dense_table([{
-            "Passer": table[pid]["name"], "Feeds": v["feeds"],
-            "Look quality (xPPS)": f"{v['xPPS_created']:.2f}",
-            "Result (PPS)": f"{v['PPS']:.2f}",
-            "Finish Δ": f"{v['finish_delta']:+.2f}",
-            "Assist FG%": f"{v['FG%'] * 100:.0f}%",
-        } for pid, v in _prows]), unsafe_allow_html=True)
-        _best = _prows[0]
-        st.caption(f"Top look-creator: **{table[_best[0]]['name']}** "
-                   f"({_best[1]['xPPS_created']:.2f} xPPS created on "
-                   f"{_best[1]['feeds']} feeds). Feeds this metric into the "
-                   "playmaking read.")
+    if not _prows:
+        return
+    st.markdown("<div class='lab-hdr'>Passer quality — looks created vs "
+                "finished</div>", unsafe_allow_html=True)
+    _best = _prows[0]
+    _lines = [(
+        "Look creator", _best[1]["feeds"],
+        f"<b>{table[_best[0]]['name']}</b> creates the best looks on the "
+        f"roster — <b>{_best[1]['xPPS_created']:.2f} xPPS</b> over "
+        f"{_best[1]['feeds']} feeds.")]
+    # every passer whose teammates under- or over-converted materially
+    _gap = [(pid, v) for pid, v in _prows if abs(v["finish_delta"]) >= 0.15
+            and v["feeds"] >= 10]
+    for pid, v in _gap:
+        cold = v["finish_delta"] < 0
+        _lines.append((
+            "Finish gap" if cold else "Finish bonus", v["feeds"],
+            f"<b>{table[pid]['name']}</b> — {v['xPPS_created']:.2f} xPPS "
+            f"created, {v['PPS']:.2f} returned "
+            f"(<b>{v['finish_delta']:+.2f}</b>). "
+            + ("Looks were there; the shooters missed them."
+               if cold else "Teammates converted above the look value.")))
+    st.markdown(verdict_card(_lines), unsafe_allow_html=True)
+    _jump_btn("Charts", "Charts → Offense → Playmaking: the full passer table →",
+              "insj_pq")
 
-    # ── ball movement — the verdict card (#8b): xA vs AST, hockey assists,
-    #    on-floor attempt tilt. Every line carries a plain-word verdict. ───────
+
+def _render_ball_movement(ctx, pids, table, _tids, _fp):
+    """Ball movement — the verdict card (#8b): xA vs AST, hockey assists,
+    on-floor attempt tilt. Every line carries a plain-word verdict."""
     _bm_tids = tuple(getattr(ctx, "tracked_ids", None) or ())
     _xa_map, _corsi_map, _hast_map = _ball_movement(ctx.gender, _bm_tids, fp=_fp)
     _pidset = set(pids)
@@ -751,12 +867,22 @@ def render(ctx):
         st.caption("xA values every feed by the LOOK it created (league "
                    "make-rate for that zone/creation/contest), so a teammate's "
                    "cold night can't erase good passing. Corsi = shot attempts "
-                   "for − against while on the floor (min 50 attempts).")
+                   "for − against while on the floor (min 50 attempts). The "
+                   "per-player table lives on Charts → Offense → Playmaking.")
+        _jump_btn("Charts", "Charts → Offense → Playmaking: the xA / Corsi "
+                  "table →", "insj_bm")
 
-    # ── boards: force-hand + space dependence ─────────────────────────────────
+
+def _render_boards(pids, table, cliffs):
+    """Force-hand + space dependence, side by side. Both lists render in FULL —
+    they were capped at 8 and 10, which silently dropped the back half of a
+    roster from a board whose whole job is to rank a roster."""
     bc1, bc2 = st.columns(2)
     with bc1:
         st.markdown("<div class='lab-hdr'>Force them off their hand</div>",
+                    unsafe_allow_html=True)
+        st.markdown("<div class='hdr-sub'>Strong-hand vs weak-hand FG%, "
+                    "min 6 FGA each side. Push them to the red bar.</div>",
                     unsafe_allow_html=True)
         hb = []
         for pid in pids:
@@ -770,7 +896,7 @@ def render(ctx):
         if not hb:
             st.caption("Needs tap-located shots on both sides — fills in as games "
                        "are tagged with the court tap.")
-        for gap, nm, dom, weak, n in hb[:8]:
+        for gap, nm, dom, weak, n in hb:
             st.markdown(
                 f"<div style='margin-bottom:7px'><div style='display:flex;"
                 f"justify-content:space-between;font-size:12px'><b>{nm}</b>"
@@ -786,11 +912,14 @@ def render(ctx):
     with bc2:
         st.markdown("<div class='lab-hdr'>Space dependence (open vs guarded)</div>",
                     unsafe_allow_html=True)
+        st.markdown("<div class='hdr-sub'>Open FG% minus contested FG%. "
+                    "High = needs space, negative = contest-proof.</div>",
+                    unsafe_allow_html=True)
         cb = sorted(((cliffs[p]["cliff"], table[p]["name"], cliffs[p]["n"])
                      for p in pids if p in cliffs), key=lambda t: -t[0])
         if not cb:
             st.caption("Needs more contested shots (guarded tag) to rank.")
-        for cliff, nm, n in cb[:10]:
+        for cliff, nm, n in cb:
             tag = ("needs space" if cliff > 8 else
                    "contest-proof" if cliff < -2 else "neutral")
             clr = ("var(--bad)" if cliff > 8 else
@@ -802,8 +931,13 @@ def render(ctx):
                 f"n={n}</span></span><span style='color:{clr}'>{cliff:+.0f} · {tag}</span>"
                 f"</div>", unsafe_allow_html=True)
 
-    # ── win impact (def / clutch WPA) for this team ───────────────────────────
+
+def _render_def_wpa(pids, impact, table):
+    """Win impact (def / clutch WPA) for this team."""
     st.markdown("<div class='lab-hdr'>Who won games on defense</div>",
+                unsafe_allow_html=True)
+    st.markdown("<div class='hdr-sub'>Win probability added, min 4 GP. "
+                "Defensive · offensive · clutch.</div>",
                 unsafe_allow_html=True)
     irows = [{"pid": p, **impact[p]} for p in pids
              if p in impact and (impact[p].get("games") or 0) >= 4]
@@ -819,7 +953,9 @@ def render(ctx):
             "Clutch": f"{r.get('clutch_wpa') or 0:+.2f}",
         } for r in irows]), unsafe_allow_html=True)
 
-    # ── pick-&-roll role split (lights up with play_type tags) ────────────────
+
+def _render_pnr(pids, roles, table):
+    """Pick-&-roll role split (lights up with play_type tags)."""
     rrows = []
     for pid in pids:
         pnr = (roles.get(pid) or {}).get("pnr")
@@ -836,6 +972,61 @@ def render(ctx):
     if rrows:
         st.markdown("<div class='lab-hdr'>Pick-&-roll role split</div>",
                     unsafe_allow_html=True)
-        st.caption("Ball-handler (used the screen) vs roll man (set it & finished). "
-                   "Lights up as games are tagged with play type.")
+        st.markdown("<div class='hdr-sub'>Handler vs roller PPP. Lights up "
+                    "as games get play-type tags.</div>",
+                    unsafe_allow_html=True)
         st.markdown(dense_table(rrows), unsafe_allow_html=True)
+
+
+def _render_deserved_games(bundle, ctx):
+    """Game by game, the four terms that add up to each final margin.
+
+    Every tracked game renders — no cap and no 'recent five'. The interesting
+    rows are the disagreements, and which those are is not known in advance.
+    """
+    d = (bundle or {}).get("deserved") or {}
+    if not d.get("available") or not d.get("rows"):
+        return
+    st.markdown("<div class='lab-hdr'>Game by game — margin, split four "
+                "ways</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='hdr-sub'>Extra shots · selection · making · FTs sum to "
+        "the final margin exactly. ⚠ = the play pointed at the other team."
+        "</div>", unsafe_allow_html=True)
+    rows = []
+    for r in d["rows"]:
+        flag = "⚠ " if (r["decided"] and not r["agree"]) else ""
+        rows.append({
+            "Date": (r["date"] or "")[:10],
+            "Opponent": ("vs " if r["home"] else "at ") + r["opp_name"],
+            "Result": f"{flag}{'W' if r['won'] else 'L'} {r['margin']:+.0f}",
+            "Extra shots": f"{r['volume']:+.1f}",
+            "Selection": f"{r['quality']:+.1f}",
+            "Making": f"{r['making']:+.1f}",
+            "Free throws": f"{r['ft_margin']:+d}",
+            "Shots": f"{r['fga']}–{r['opp_fga']}",
+            "Off. reb": f"{r['orb']}–{r['opp_orb']}",
+            "Turnovers": f"{r['tov']}–{r['opp_tov']}",
+            "Contested": f"{r['contest_rate'] * 100:.0f}%",
+        })
+    st.markdown(dense_table(rows), unsafe_allow_html=True)
+    st.caption(
+        f"Play matched result in **{d['agree']} of {d['decided']}**. "
+        f"*Contested* = share of that game's FGA a defender affected "
+        f"(contested .33 vs uncontested .46 leaguewide) — a feature of the "
+        f"game, not a tracking figure.")
+
+    # the single most interesting game, term by term
+    import helpers.deserved as DES
+    g = d.get("biggest_upset") or d.get("biggest_gap")
+    if g:
+        st.markdown("<div class='lab-hdr'>Widest gap between play and "
+                    "result</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='hdr-sub'>{'vs' if g['home'] else 'at'} "
+            f"{html.escape(g['opp_name'])} · final {g['margin']:+.0f} · "
+            f"play {g['xmargin']:+.1f} · descriptive, not a rematch "
+            f"projection</div>", unsafe_allow_html=True)
+        st.markdown(verdict_card([
+            (lbl, None, f"<b>{pts:+.0f}</b> — {txt}.")
+            for lbl, pts, txt in DES.game_story(g)]), unsafe_allow_html=True)

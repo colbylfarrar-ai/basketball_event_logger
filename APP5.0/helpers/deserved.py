@@ -308,9 +308,11 @@ def _pts(v):
 def deserved_verdict(d, team_name="This team"):
     """[(badge, n, html)] for helpers.cards.verdict_card.
 
-    Written for a reader who has never watched a basketball game: every term is
-    spelled out in what it physically means, and the units are points on the
-    scoreboard throughout.
+    Coach register: standard shorthand used bare (FGA, ORB, TOV, PPS), numbers
+    before prose, and no term-of-art glossed. What IS spelled out is the thing
+    a coach cannot get by looking — which of the four terms actually moved this
+    team's season, and how firmly it is measured. Units are scoreboard points
+    throughout so the four stay comparable.
     """
     if not d.get("available") or d["games"] < 3:
         return []
@@ -319,99 +321,70 @@ def deserved_verdict(d, team_name="This team"):
     m = d["means"]
     w, l = d["record"]
 
-    # 1. the headline — what the four terms say about the season as a whole
+    # 1. the headline — the four terms, largest first
     lead_key, lead_lbl, lead_abs, lead_signed = d["ranked_terms"][0]
     lines.append((
-        "Where the margin comes from", n,
-        f"Across <b>{n} tracked games</b> ({w}–{l}), every point of every "
-        f"final margin lands in one of four buckets, and they add up exactly. "
-        f"Per game this team is <b>{_pts(m['volume'])}</b> on extra shots, "
-        f"<b>{_pts(m['quality'])}</b> on the quality of those shots, "
-        f"<b>{_pts(m['making'])}</b> on whether the ball went in, and "
-        f"<b>{_pts(m['ft_margin'])}</b> at the free-throw line — "
-        f"<b>{_pts(m['margin'])}</b> a game overall. The biggest single "
-        f"influence on this team's results is <b>{lead_lbl}</b> "
-        f"(±{lead_abs:.1f} pts a game)."))
+        "Margin split", n,
+        f"<b>{n}g {w}–{l}</b>, <b>{_pts(m['margin'])}</b>/g. Extra shots "
+        f"<b>{_pts(m['volume'])}</b> · selection "
+        f"<b>{_pts(m['quality'])}</b> · making <b>{_pts(m['making'])}</b> · "
+        f"FTs <b>{_pts(m['ft_margin'])}</b>. Biggest swing: "
+        f"<b>{lead_lbl}</b> at ±{lead_abs:.1f}/g."))
 
     # 2. the volume term, named by its cause — the coachable half
     orb, tov = m["orb_gap"], m["tov_gap"]
     if abs(m["volume"]) >= 1.0:
-        who = "more" if m["volume"] > 0 else "fewer"
         cause = []
         if abs(orb) >= 0.7:
-            cause.append(
-                f"they {'win' if orb > 0 else 'lose'} the offensive glass by "
-                f"<b>{abs(orb):.1f} rebounds a game</b> (every offensive "
-                f"rebound is a whole extra shot)")
+            cause.append(f"ORB <b>{orb:+.1f}</b>")
         if abs(tov) >= 0.7:
-            cause.append(
-                f"they give the ball away <b>{abs(tov):.1f} "
-                f"{'more' if tov > 0 else 'fewer'} times a game</b> than the "
-                f"opponent (every turnover is a possession with no shot at "
-                f"all)")
-        why = (" Why: " + "; and ".join(cause) + ".") if cause else ""
+            cause.append(f"TOV <b>{tov:+.1f}</b>")
+        why = (" — " + " · ".join(cause)) if cause else ""
         lines.append((
             "Extra shots", n,
-            f"This team takes <b>{abs(m['fga_gap']):.1f} {who} shots a game</b> "
-            f"than its opponents, worth <b>{_pts(m['volume'])} points</b>."
-            f"{why} Over the whole book the shot gap is explained by rebounds "
-            f"minus turnovers at <b>r = 0.98</b>, so this is the half of the "
-            f"scoreboard a coach has the most direct control over."))
+            f"<b>{m['fga_gap']:+.1f} FGA/g</b> vs opponents, worth "
+            f"<b>{_pts(m['volume'])}</b>{why}. Across the book the shot gap "
+            f"is ORB minus TOV at <b>r = .98</b> — the most directly "
+            f"coachable half of the scoreboard."))
 
     # 3. did the shots and possessions agree with the scoreboard
     if d["agree_pct"] is not None and d["decided"] >= 3:
-        miss = d["decided"] - d["agree"]
         up = d["biggest_upset"]
         if up is not None:
             # a genuine sign flip — the only case that earns the phrase
-            example = (
-                f"The clearest was <b>vs {up['opp_name']}</b>: this team "
-                f"{'won' if up['margin'] > 0 else 'lost'} by "
-                f"<b>{abs(up['margin']):.0f}</b>, while the shots taken and "
-                f"the chances created were worth "
-                f"<b>{up['xmargin']:+.1f}</b> — the looks went one way and "
-                f"the ball went the other.")
+            example = (f"Widest miss <b>{up['opp_name']}</b>: "
+                       f"{'W' if up['margin'] > 0 else 'L'}"
+                       f"{abs(up['margin']):.0f} on "
+                       f"<b>{up['xmargin']:+.1f}</b> play.")
         else:
             g = d["biggest_gap"]
-            example = (
-                f"No game on this book was actually won by the team the "
-                f"shots favoured the other way. The widest stretch was "
-                f"<b>vs {g['opp_name']}</b>: a "
-                f"<b>{abs(g['margin']):.0f}-point</b> "
-                f"{'win' if g['margin'] > 0 else 'loss'} where the shots and "
-                f"chances were worth <b>{g['xmargin']:+.1f}</b> — the right "
-                f"team came out ahead, by more than the play deserved.")
+            example = (f"No result went against the play. Widest stretch "
+                       f"<b>{g['opp_name']}</b>: "
+                       f"{'W' if g['margin'] > 0 else 'L'}"
+                       f"{abs(g['margin']):.0f} on "
+                       f"<b>{g['xmargin']:+.1f}</b>.")
         lines.append((
             "Deserved result", d["decided"],
-            f"Counting only the shots taken and the chances created — "
-            f"before a single one went in or rimmed out — the game pointed "
-            f"at the eventual winner in <b>{d['agree']} of {d['decided']}</b> "
-            f"games ({d['agree_pct']:.0f}%). The other {miss} are the "
-            f"interesting ones. {example} That is a fact about the night it "
-            f"happened, not a prediction about the rematch."))
+            f"Play matched result in <b>{d['agree']} of {d['decided']}</b> "
+            f"({d['agree_pct']:.0f}%). {example} Descriptive — shot quality "
+            f"does not forecast scoring on this book."))
 
-    # 4. shot-making, stated as what it is: the least controllable term
+    # 4. shot-making, flagged as the least repeatable of the four
     if abs(m["making"]) >= 1.0:
         hot = m["making"] > 0
         lines.append((
             "Shot-making", n,
-            f"The ball went in <b>{abs(m['making']):.1f} points a game "
-            f"{'more' if hot else 'less'}</b> than the quality of the looks "
-            f"would predict. "
-            + ("That is the flattering half of this record: it is real, it "
-               "happened, and it is the term least likely to hold up on its "
-               "own — the possession and selection numbers above are the "
-               "ones to build on."
+            f"<b>{m['making']:+.1f}/g</b> against what the looks were worth — "
+            + ("the least repeatable of the four, so the volume and selection "
+               "numbers are the ones to build on."
                if hot else
-               "The looks were better than the results. That is the "
-               "encouraging reading of a disappointing record — the shots "
-               "being created are worth more than the scoreboard has paid "
-               "out.")))
+               "process is ahead of the record; the looks being created are "
+               "worth more than the scoreboard has paid out.")))
     return lines
 
 
 def game_story(row, team_name="This team"):
-    """One game, in plain sentences a non-basketball reader can follow.
+    """One game, term by term, coach register.
 
     Returns [(label, points, sentence)] ordered largest-influence-first, so the
     thing that decided the game leads regardless of which term it was.
@@ -427,34 +400,22 @@ def game_story(row, team_name="This team"):
     them_make = row["opp_pts_fg"] - row["opp_xpts"]
     terms = [
         ("Extra shots", row["volume"],
-         f"took <b>{abs(row['fga_gap'])} "
-         f"{'more' if row['fga_gap'] > 0 else 'fewer'}</b> "
-         f"shot{'s' if abs(row['fga_gap']) != 1 else ''} than the opponent "
-         f"(<b>{row['fga']}</b> to {row['opp_fga']}). Where the gap came from: "
-         f"<b>{row['orb']}</b> offensive rebounds to {row['opp_orb']}, and "
-         f"<b>{row['tov']}</b> turnovers to {row['opp_tov']}"),
+         f"<b>{row['fga_gap']:+d} FGA</b> ({row['fga']}–{row['opp_fga']}) · "
+         f"ORB {row['orb']}–{row['opp_orb']} · "
+         f"TOV {row['tov']}–{row['opp_tov']}"),
         ("Shot selection", row["quality"],
-         f"the looks created were "
-         f"{'better' if row['quality'] > 0 else 'worse'} than the opponent's, "
-         f"before anything went in: this team's attempts were worth "
-         f"<b>{row['xpts']:.0f}</b> points, the opponent's "
-         f"<b>{row['opp_xpts']:.0f}</b>, on "
-         f"{row['fga']} and {row['opp_fga']} shots"),
+         f"looks worth <b>{row['xpts']:.0f}</b> to "
+         f"<b>{row['opp_xpts']:.0f}</b> on "
+         f"{row['fga']} and {row['opp_fga']} FGA"),
         ("Shot-making", row["making"],
-         f"the ball went in "
-         f"{'more' if row['making'] > 0 else 'less'} than those looks were "
-         f"worth. This team scored <b>{row['pts_fg']:.0f}</b> from the field "
-         f"against <b>{row['xpts']:.0f}</b> expected, so "
-         f"<b>{us_make:+.0f}</b>; the opponent scored "
-         f"<b>{row['opp_pts_fg']:.0f}</b> against "
-         f"<b>{row['opp_xpts']:.0f}</b>, so <b>{them_make:+.0f}</b>. One side "
-         f"shooting above its looks and the other below both push the margin "
-         f"the same way, which is why the two combine to "
-         f"<b>{row['making']:+.0f}</b> rather than cancelling"),
+         f"<b>{row['pts_fg']:.0f}</b> from the field on "
+         f"<b>{row['xpts']:.0f}</b> expected (<b>{us_make:+.0f}</b>) vs "
+         f"opponent <b>{row['opp_pts_fg']:.0f}</b> on "
+         f"<b>{row['opp_xpts']:.0f}</b> (<b>{them_make:+.0f}</b>) — both "
+         f"push the same way, so they add to {row['making']:+.0f} rather "
+         f"than cancelling"),
         ("Free throws", float(row["ft_margin"]),
-         f"the free-throw line was worth <b>{abs(row['ft_margin'])}</b> point"
-         f"{'s' if abs(row['ft_margin']) != 1 else ''} "
-         + ("to this team" if row["ft_margin"] > 0 else "to the opponent")),
+         f"<b>{row['ft_margin']:+d}</b> at the line"),
     ]
     terms.sort(key=lambda t: -abs(t[1]))
     return [(lbl, pts, txt) for lbl, pts, txt in terms if abs(pts) >= 0.5]

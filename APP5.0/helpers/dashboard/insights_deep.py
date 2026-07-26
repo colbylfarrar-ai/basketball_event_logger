@@ -57,6 +57,46 @@ def _events(tids, fp=None):
     return S.fetch_events(list(tids)) if tids else []
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner="Building the ten-minute brief…")
+def brief_bundle(tids, team_id, gender, league_gids=None, fp=None):
+    """Everything the masthead needs, off ONE event pass.
+
+    The brief quotes three engines that would otherwise each fetch the same
+    rows — the margin decomposition, the allowed shot diet, and the run
+    anatomy. Prod is 1 vCPU; one pass reused beats three.
+
+    `league_gids` scopes the LEAGUE baseline for the allowed-diet comparison.
+    Without it the comparison falls back to this team's own schedule, which is
+    a narrower read and is labelled as such by the caller.
+    """
+    out = {}
+    ev = _events(tids, fp=fp)
+    if not ev:
+        return out
+    try:
+        import helpers.deserved as DES
+        out["deserved"] = DES.team_deserved(team_id, events=ev,
+                                            game_ids=list(tids))
+    except Exception as exc:
+        out["deserved_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        import helpers.runs as RN
+        out["anatomy"] = RN.run_anatomy(team_id, ev)
+    except Exception as exc:
+        out["anatomy_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        import helpers.team_insights as TIN
+        lg_ev = None
+        if league_gids:
+            lg_ev = _events(tuple(league_gids), fp=fp)
+        ad = TIN.allowed_diet_extra(team_id, events=ev, league_events=lg_ev)
+        out["allowed"] = ad.get("allowed_diet")
+        out["allowed_league_scoped"] = bool(lg_ev)
+    except Exception as exc:
+        out["allowed_error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  1. THE DEFENSIVE BOARD
 # ══════════════════════════════════════════════════════════════════════════════
@@ -163,16 +203,24 @@ def render_defense_board(ctx, pids, table, fp=None):
             es = edges.get(pid)
             if not es:
                 continue
-            top = [e for e in es if e["axis"] in ("play", "kind")][:3]
+            # every assignment edge the engine ranked, not the top three — the
+            # engine has already refused anything under EDGE_MIN_N, so a cap
+            # here only hides reads that cleared the gate.
+            top = [e for e in es if e["axis"] in ("play", "kind")]
             if not top:
                 continue
+            over = [e for e in top if e["z"] > 0]
+            under = [e for e in top if e["z"] <= 0]
             arows.append({
                 "Player": table[pid]["name"],
-                "Most-drawn": ", ".join(
-                    f"{e['label']} {e['share'] * 100:.0f}% (n={e['n']})"
-                    for e in top if e["z"] > 0) or "—",
-                "League": ", ".join(f"{e['lg_share'] * 100:.0f}%"
-                                    for e in top if e["z"] > 0) or "—",
+                "Drew more than the league": ", ".join(
+                    f"{e['label']} {e['share'] * 100:.0f}% vs "
+                    f"{e['lg_share'] * 100:.0f}% (n={e['n']})"
+                    for e in over) or "—",
+                "Drew less": ", ".join(
+                    f"{e['label']} {e['share'] * 100:.0f}% vs "
+                    f"{e['lg_share'] * 100:.0f}% (n={e['n']})"
+                    for e in under) or "—",
                 "Contests": diets.get(pid, {}).get("n", 0),
             })
         if arows:
@@ -313,10 +361,13 @@ def _ported(team_id, gender, tids, fp=None):
             sc = outs.get("scored") or {}
             tov = outs.get("turnover") or {}
             oreb = outs.get("oreb") or {}
-            top = srcs[0] if srcs else None
-            top_bit = (f" The biggest single source is <b>{top['label']}</b> at "
-                       f"{top['share'] * 100:.0f}% of the points."
-                       if top else "")
+            # EVERY scoring source the ledger separated, not just the biggest —
+            # the shape of the whole distribution is the read, and naming only
+            # the top one hides that second and third are level.
+            top_bit = (" Where the points come from: "
+                       + " · ".join(f"<b>{s['label']}</b> "
+                                    f"{s['share'] * 100:.0f}%" for s in srcs)
+                       + "." if srcs else "")
             lines.append((
                 f"Possessions {label}", n,
                 f"<b>{sc.get('pct', 0) * 100:.0f}%</b> of these possessions "
@@ -396,10 +447,12 @@ def _ported(team_id, gender, tids, fp=None):
             rows = drift.get(key) or []
             if not rows:
                 continue
+            # every drifted set, not the top three
             lines.append((
                 label, len(rows),
                 ", ".join(f"<b>{r['label']}</b> ({r['share'] * 100:.0f}% of "
-                          f"calls, {r['PPP']:.2f} PPP)" for r in rows[:3])
+                          f"calls, {r['PPP']:.2f} points per possession)"
+                          for r in rows)
                 + f" — {why}."))
         return lines
 
@@ -419,14 +472,27 @@ def _ported(team_id, gender, tids, fp=None):
                   "travel": "travels and violations",
                   "shot_clock": "shot-clock violations",
                   "held": "held balls", "other": "other giveaways"}
-        what = phrase.get(top["key"], top["label"].lower())
+
+        def _what(r):
+            return phrase.get(r["key"], r["label"].lower())
+        # the FULL mix, not just the leading kind — a coach drilling this needs
+        # to know whether it is one problem or three.
+        rest = " · ".join(f"{_what(r)} {r['share'] * 100:.0f}%"
+                          for r in rows[1:])
         return [("Giveaway mix", tagged,
                  f"<b>{top['share'] * 100:.0f}%</b> of this team's tagged "
-                 f"turnovers are <b>{what}</b> ({tagged} tagged). That is the "
-                 f"pattern an opponent sits on — and the one to drill out.")]
+                 f"turnovers are <b>{_what(top)}</b> ({tagged} tagged). That "
+                 f"is the pattern an opponent sits on — and the one to drill "
+                 f"out."
+                 + (f" The rest: {rest}." if rest else ""))]
 
     def _reb():
-        """The rebounding read for the roster's biggest mover."""
+        """The rebounding read for EVERY player the engine has one for.
+
+        Was capped at the roster's top two rebounders. The cap is gone — a
+        read that fired is a read a coach is entitled to see, and the engine
+        already refuses to produce one for a player without the sample.
+        """
         import helpers.rebounding as RB
         import helpers.player_ratings as PR
         tbl = PR.player_stat_table(gender=gender, min_games=1,
@@ -434,11 +500,21 @@ def _ported(team_id, gender, tids, fp=None):
         pool = [r for r in tbl.values()]
         mine = [r for r in pool if r.get("team_id") == team_id]
         lines = []
-        for row in sorted(mine, key=lambda r: -(r.get("REB") or 0))[:2]:
-            v = RB.rebounding_verdict(row, pool=pool)
-            for badge, n, txt in v:
+        for row in sorted(mine, key=lambda r: -(r.get("REB") or 0)):
+            for badge, n, txt in RB.rebounding_verdict(row, pool=pool):
                 lines.append((f"{row['name']} · {badge}", n, txt))
         return lines
+
+    def _anatomy():
+        """What this team's runs were MADE of (helpers/runs.run_anatomy)."""
+        import helpers.runs as RN
+        return RN.anatomy_verdict(RN.run_anatomy(team_id, ev), names=names)
+
+    def _deserved():
+        """The four-term margin decomposition (helpers/deserved.py)."""
+        import helpers.deserved as DES
+        return DES.deserved_verdict(
+            DES.team_deserved(team_id, events=ev, game_ids=gids))
 
     def _scheme():
         """What this offense does against each defensive scheme it has faced."""
@@ -470,6 +546,8 @@ def _ported(team_id, gender, tids, fp=None):
     stage("clock", _clock)
     stage("ledger", _ledger)
     stage("runs", _runs)
+    stage("anatomy", _anatomy)
+    stage("deserved", _deserved)
     stage("selfscout", _selfscout)
     stage("tovs", _tovs)
     stage("reb", _reb)
@@ -500,6 +578,14 @@ _PORT_SECTIONS = (
     ("runs", "📈 Runs — the swing count behind close results",
      "Scoring runs put together against runs conceded, and the record split by "
      "how many the team managed.", "Charts"),
+    ("anatomy", "🔬 Run anatomy — how the swings actually started",
+     "What each 10-0 stretch was made of: the event that handed them the ball, "
+     "the defense on the floor, where the points came from, and who was out "
+     "there — for runs made AND runs conceded.", "Charts"),
+    ("deserved", "⚖️ Where the margin came from — the four exact terms",
+     "Every point of every final margin split into extra shots · shot "
+     "selection · shot-making · free throws. The four add up to the "
+     "scoreboard exactly.", "Schedule"),
     ("selfscout", "🔍 Self-scout — how fast an opponent keys on you",
      "Play-call predictability, plus the sets that are over-run and "
      "inefficient (the scout's gift) and the ones left on the shelf.", "Scout"),

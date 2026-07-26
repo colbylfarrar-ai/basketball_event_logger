@@ -170,11 +170,18 @@ for badge, n, txt in V:
 _dr = [t for b, _n, t in V if b == "Deserved result"]
 if _dr:
     _txt = _dr[0]
-    _flip = "went one way and the ball went the other" in _txt
-    ok(_flip == (d["biggest_upset"] is not None),
-       "the 'looks one way, ball the other' phrase appears ONLY when a game "
-       "genuinely flipped — it is a sign disagreement, not a big gap")
-    ok("prediction about the rematch" in _txt,
+    # An UPSET (the play favoured the other team) and a big GAP (same team
+    # ahead on both counts, by different amounts) are different claims. The
+    # copy must not describe one as the other.
+    _claims_flip = "Widest miss" in _txt
+    _claims_none = "No result went against the play" in _txt
+    ok(_claims_flip == (d["biggest_upset"] is not None),
+       "'Widest miss' is claimed ONLY when a game's play genuinely pointed at "
+       "the other team — a sign disagreement, not just a big gap")
+    ok(_claims_none == (d["biggest_upset"] is None),
+       "with no upset on the book the copy says so outright rather than "
+       "dressing the widest gap up as one")
+    ok("does not forecast" in _txt,
        "the descriptive-only disclaimer is present (reliability.py refuses the "
        "forecast)")
 if d["biggest_upset"] is not None:
@@ -191,7 +198,7 @@ for lbl, pts, txt in _story:
 _make = [t for lbl, _p, t in _story if lbl == "Shot-making"]
 if _make:
     _plain = re.sub(r"<[^>]+>", "", _make[0])
-    _nums = [int(x) for x in re.findall(r"so ([+-]\d+)", _plain)]
+    _nums = [int(x) for x in re.findall(r"\(([+-]\d+)\)", _plain)]
     ok(len(_nums) == 2,
        "the shot-making sentence shows this team's over/under AND the "
        "opponent's, so the reader can reconcile it with the margin")
@@ -207,9 +214,9 @@ if _make:
        "netting off — the subtraction is not left for the reader to guess")
 _vol = [t for lbl, _p, t in _story if lbl == "Extra shots"]
 if _vol:
-    ok("offensive rebounds" in _vol[0] and "turnovers" in _vol[0],
-       "the volume sentence names its CAUSE — rebounds and turnovers, the "
-       "r=0.98 reconstruction — rather than just its size")
+    ok("ORB" in _vol[0] and "TOV" in _vol[0],
+       "the volume sentence names its CAUSE — ORB and TOV, the r=0.98 "
+       "reconstruction — rather than just its size")
 
 # thin-sample behaviour: a 2-game team must not get a season verdict
 _thin_team = min(cnt, key=cnt.get)

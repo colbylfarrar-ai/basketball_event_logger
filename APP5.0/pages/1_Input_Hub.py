@@ -5,7 +5,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import streamlit as st
 from database.db import (query, execute, normalize_date,
-                         delete_or_archive_player, delete_or_archive_official)
+                         delete_or_archive_player, delete_or_archive_official,
+                         delete_or_block_team, team_history_counts)
 from helpers.ui import page_chrome, page_header, lab_hero as _lab_hero, seg as _seg
 import helpers.seasons as SZ
 import helpers.auth as AUTH
@@ -437,8 +438,18 @@ if _hubview == "Teams":
             execute("UPDATE teams SET name=?, class=?, gender=?, state=? WHERE id=?",
                     (r["name"].strip(), r["class"], r["gender"], (r.get("state") or "OK"), r["id"]))
         def del_team(r):
-            if _gated_delete("teams", r["id"], f"team '{r.get('name','?')}'"):
-                execute("DELETE FROM teams WHERE id=?", (r["id"],))
+            # NOT a plain DELETE: teams cascade into games → game_events →
+            # game_event_lineup, so removing a team while tidying the list used
+            # to silently destroy every game it ever played. delete_or_block_team
+            # refuses when there is anything to lose and reports what.
+            if not _gated_delete("teams", r["id"], f"team '{r.get('name','?')}'"):
+                return
+            if delete_or_block_team(r["id"]) == "blocked":
+                c = team_history_counts(r["id"])
+                raise ValueError(
+                    f"Team '{r.get('name','?')}' can't be deleted — it would take "
+                    f"{c['games']} game(s) and {c['events']} tracked event(s) with "
+                    f"it. Rename the team instead, or delete its games first.")
 
         errs = apply_delta("teams_editor", orig, ins_team, upd_team, del_team)
         if errs:

@@ -827,6 +827,47 @@ def delete_or_archive_player(pid) -> str:
     return "deleted"
 
 
+def team_history_counts(tid) -> dict:
+    """What a hard-delete of this team would destroy. `teams` is the root of a
+    cascade — games.team1_id/team2_id are ON DELETE CASCADE, and games.id
+    cascades on into game_events, which cascades into game_event_lineup. So
+    `DELETE FROM teams WHERE id=?` silently takes every game the team ever
+    played and every tracked event in them, with no FK error and no warning.
+
+    Returns {'players', 'games', 'events', 'manual_box'} so the caller can name
+    exactly what it is refusing to destroy."""
+    tid = int(tid)
+    gids = [r["id"] for r in query(
+        "SELECT id FROM games WHERE team1_id=? OR team2_id=?", (tid, tid))]
+    events = 0
+    manual = 0
+    if gids:
+        ph = ",".join("?" * len(gids))
+        events = query(f"SELECT COUNT(*) c FROM game_events "
+                       f"WHERE game_id IN ({ph})", tuple(gids))[0]["c"]
+        manual = query(f"SELECT COUNT(*) c FROM manual_player_box "
+                       f"WHERE game_id IN ({ph})", tuple(gids))[0]["c"]
+    players = query("SELECT COUNT(*) c FROM players WHERE team_id=?", (tid,))[0]["c"]
+    return {"players": players, "games": len(gids),
+            "events": events, "manual_box": manual}
+
+
+def delete_or_block_team(tid) -> str:
+    """Hard-delete a team ONLY when it has no game footprint; otherwise refuse.
+
+    Unlike players and officials, teams have no `archived` column to fall back
+    on, so there is no safe middle state — and the cascade behind a team is the
+    largest in the schema (see team_history_counts). Refusing is the correct
+    outcome: a team with games is never something you want to remove while
+    tidying a roster list. Returns 'deleted' or 'blocked'."""
+    tid = int(tid)
+    counts = team_history_counts(tid)
+    if counts["games"] or counts["events"] or counts["manual_box"]:
+        return "blocked"
+    execute("DELETE FROM teams WHERE id=?", (tid,))
+    return "deleted"
+
+
 def official_has_history(oid) -> bool:
     """True if a ref is referenced by any logged foul (game_events.official_id) or
     has worked a game (game_lineup_officials) — i.e. hard-deleting them would

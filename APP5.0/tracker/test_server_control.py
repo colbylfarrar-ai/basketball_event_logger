@@ -15,12 +15,28 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# Linear scenario: the module body seeds AND performs the first restart, so the
+# `def test_*` groupings below are narration, not independent cases. Collected
+# by pytest they run a second time against state the script already advanced
+# ("no stamp before the first restart" — there is one; the body wrote it).
+# Run as its own process instead. See tracker/_test_kinds.py.
+RUN_AS_SCRIPT = True
+
 _TMP = tempfile.mkdtemp(prefix="app5_restart_test_")
 os.environ["APP5_DATA_DIR"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database.db import execute, query          # noqa: E402
+from database.db import (execute, initialize_database,   # noqa: E402
+                         query)
 import helpers.server_control as SC             # noqa: E402
+
+# database.db calls initialize_database() once at import, for whatever
+# APP5_DATA_DIR pointed at THEN. Run standalone that is this file's temp dir and
+# the schema lands. Under pytest another module has usually imported db already,
+# so the schema was built somewhere else and the seeds below hit "no such table:
+# teams" — which aborted collection for the whole session. Initialise the dir we
+# actually redirected to; the call is idempotent.
+initialize_database()
 
 PASS = 0
 

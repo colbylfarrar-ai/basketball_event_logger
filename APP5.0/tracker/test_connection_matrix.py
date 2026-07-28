@@ -40,7 +40,13 @@ _EID = [0]
 
 
 def shot(passer, shooter, made, team=1, zone="center", stype=2, screen=False,
-         guarded=False):
+         guarded=False, x=0.0, y=4.0):
+    """A located shot. COORDINATES matter, `zone` does not: the shot-quality key
+    reads stats._sq_loc, which is a shot KIND derived from shot_x/shot_y (see
+    the depth-beats-angle table in stats._sq_loc), not the zone column. This
+    fixture used to leave x/y None while setting zone='center', so every lookup
+    keyed ('unknown', ...), missed the seeded rates, and scored xa = 0.0 — which
+    silently turned the finish_delta assertion below into `10 > 0 > 0`."""
     _EID[0] += 1
     return {"id": _EID[0], "game_id": 900, "event_type": "shot",
             "quarter": 1, "time": "8:00", "possession_secs": 12,
@@ -52,7 +58,7 @@ def shot(passer, shooter, made, team=1, zone="center", stype=2, screen=False,
             "blocked_by_id": None,
             "guarded_by_id": (77 if guarded else None), "zone": zone,
             "secondary_player_id": None, "official_id": None,
-            "stolen_by_id": None, "shot_x": None, "shot_y": None,
+            "stolen_by_id": None, "shot_x": x, "shot_y": y,
             "play_type": None, "defense": None, "turnover_type": None,
             "hockey_from_id": None, "shooter_team_id": team}
 
@@ -60,7 +66,12 @@ def shot(passer, shooter, made, team=1, zone="center", stype=2, screen=False,
 print("\n-- make-independence: the property that justifies this module ------")
 
 TEAM_OF = {1: 1, 2: 1, 3: 1, 99: 1, 77: 2}
-rates = {("center", "pass", False): {"FGA": 100, "FGM": 50, "pct": 0.5}}
+# Keyed on the real (kind, creation, contested) triple the engine builds — the
+# default fixture coordinates (0, 4) classify as 'rim'. Asserted below rather
+# than hardcoded blind, so a change to the kind boundaries fails loudly here
+# instead of silently zeroing every xa again.
+assert S._sq_loc(shot(1, 2, True)) == "rim", "fixture coords must be a real kind"
+rates = {("rim", "pass", False): {"FGA": 100, "FGM": 50, "pct": 0.5}}
 
 all_made = [shot(1, 2, True) for _ in range(10)]
 all_miss = [shot(1, 2, False) for _ in range(10)]

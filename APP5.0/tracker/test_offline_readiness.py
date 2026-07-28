@@ -24,6 +24,14 @@ import os
 import socket
 import sys
 
+# Needs two pieces of PROCESS-WIDE state that only __main__ sets up: a
+# secrets-free cwd (the real secrets.toml [auth] block gates every page behind
+# "Sign in to continue", so every assertion below would measure a login screen)
+# and cut_the_wire(). Both are global, so setting them at import would reach
+# into any other module sharing a pytest session. Run as its own process.
+# See tracker/_test_kinds.py.
+RUN_AS_SCRIPT = True
+
 _APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _APP)
 

@@ -1619,7 +1619,7 @@ function renderFlow() {
         wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
           function () { f.expand = true; renderFlow(); }));
       }
-      wrap.appendChild(makeMissRow(logShot));
+      wrap.appendChild(makeMissRow(commitOnce(logShot)));
     }
 
   } else if (f.mode === 'ft') {
@@ -1632,7 +1632,7 @@ function renderFlow() {
         wrap.appendChild(flowBtn('+ details', 'btn ghost small flow-more',
           function () { f.expand = true; renderFlow(); }));
       }
-      wrap.appendChild(makeMissRow(logFT));
+      wrap.appendChild(makeMissRow(commitOnce(logFT)));
     }
 
   } else if (f.mode === 'foul') {
@@ -1647,7 +1647,7 @@ function renderFlow() {
         function (id) { f.official = id; renderFlow(); }, { allowNone: true, labelFn: oLabel }));
     }
     if (f.fouled != null && f.fouler != null) {
-      wrap.appendChild(flowBtn('LOG FOUL', 'btn primary big', logFoul));
+      wrap.appendChild(flowBtn('LOG FOUL', 'btn primary big', commitOnce(logFoul)));
     }
 
   } else if (f.mode === 'tov') {
@@ -1672,7 +1672,7 @@ function renderFlow() {
           f.tovKind, function (v) { f.tovKind = v; renderFlow(); },
           { labelFn: tovLabel }));
       }
-      wrap.appendChild(flowBtn('LOG TURNOVER', 'btn primary big', logTov));
+      wrap.appendChild(flowBtn('LOG TURNOVER', 'btn primary big', commitOnce(logTov)));
     }
   }
 }
@@ -1707,6 +1707,30 @@ async function queueEvent(ev) {
   renderPBP();
   updateSyncUI();
   flush();
+}
+
+// ONE COMMIT AT A TIME.
+// Every log* below awaits queueEvent -> qPut, an IndexedDB transaction, BEFORE
+// it clears S.flow and repaints. The buttons stay live across that await and
+// stay bound to the same S.flow object, so a fast double-tap ran the handler
+// twice against identical state. baseEvent() mints a fresh uuid() per tap, so
+// the server's client_uuid idempotency (game_events.log_event) cannot collapse
+// them — they are two legitimately distinct events. One double-tap on MAKE =
+// +4 on the board for one basket, two FGA, and +/- credited twice to all ten on
+// the floor. The window is widest on the first tap of a session, where idb()
+// runs the whole indexedDB.open handshake lazily inside qPut.
+//
+// Guarding the COMMIT rather than the buttons covers every entry point,
+// including any added later, and needs no DOM state that renderFlow() could
+// rebuild out from under it.
+let _committing = false;
+function commitOnce(fn) {
+  return async function () {
+    if (_committing) return;
+    _committing = true;
+    try { return await fn.apply(this, arguments); }
+    finally { _committing = false; }
+  };
 }
 
 async function logShot(result) {
@@ -2438,8 +2462,9 @@ function bindUI() {
     b.addEventListener('click', function () { setMode(b.dataset.mode); });
   });
   $('btn-undo').addEventListener('click', undo);
-  $('btn-to-home').addEventListener('click', function () { logTimeout('home'); });
-  $('btn-to-away').addEventListener('click', function () { logTimeout('away'); });
+  const _to = commitOnce(logTimeout);
+  $('btn-to-home').addEventListener('click', function () { _to('home'); });
+  $('btn-to-away').addEventListener('click', function () { _to('away'); });
   $('btn-to-undo').addEventListener('click', undoTimeout);
   $('btn-edit-log').addEventListener('click', openEditor);
   $('btn-leave').addEventListener('click', leaveGame);

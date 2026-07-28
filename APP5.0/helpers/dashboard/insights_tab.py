@@ -525,7 +525,14 @@ def render(ctx):
     # Cache key: recompute only when data THIS POOL reads changes. Scoped to the
     # gender+season tracked pool, which is exactly what _league and every other
     # cached wrapper below compute over.
-    _fp = _data_fp(getattr(ctx, "season_gp", None))
+    #
+    # Keyed on `season_fp_gp`, NOT `season_gp`. The latter is deliberately None
+    # on the current season (it makes the page's engine binders the identity), so
+    # keying on it sent _data_fp down its unscoped branch and counted the whole
+    # game_events table — leaving the global-key regression fully in place for
+    # every coach, all season. season_fp_gp is the same pool, always resolved.
+    _fp = _data_fp(getattr(ctx, "season_fp_gp", None)
+                   or getattr(ctx, "season_gp", None))
     table, feed, roles, impact, cliffs, impmap = _league(
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "season_gp", None), fp=_fp)

@@ -1221,6 +1221,16 @@ rank_info = TR.team_rank(team_id, scored=scored, tracked=tracked)
 # never the current one. `_season_arg(fn_takes_gender_only)` picks the value.
 _season_gp = None if _is_cur_season else tuple(_gender_tracked_ids(gender, season_pick))
 
+# The gender-season tracked pool, ALWAYS resolved — including the current season,
+# where `_season_gp` is deliberately None so the binders below stay the identity.
+# Only the Insights CACHE FINGERPRINT uses this. Keying that fingerprint off
+# `_season_gp` meant it fell to its unscoped branch on the current season, i.e.
+# a COUNT over the whole game_events table — so every tracker write anywhere in
+# the league moved the key and forced the 84.7s cold rebuild, which is the exact
+# regression the scoping was written to fix. Scoped, a live game cannot bust it
+# at all: a game carries tracked=0 until End Game, so it isn't in this pool yet.
+_season_fp_gp = tuple(_gender_tracked_ids(gender, season_pick))
+
 # Binders that pre-scope the tracked wrappers to the selected season. For the
 # CURRENT season they are the identity (byte-identical), so nothing changes; for a
 # PAST season they pre-bind the wrapper's `game_ids` to the archive pool:
@@ -5912,6 +5922,7 @@ _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
                                 has_tracked=has_tracked,
                                 tracked_ids=tuple(bundle["tracked_ids"]),
                                 season=season_pick, season_gp=_season_gp,
+                                season_fp_gp=_season_fp_gp,
                                 rec=rec, team_name=team.get("name"))
 if _tdview == "Insights":
     DINS.render(_insights_ctx)

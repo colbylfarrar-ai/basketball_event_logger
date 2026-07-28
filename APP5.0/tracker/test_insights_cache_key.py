@@ -16,6 +16,10 @@ The two directions both matter, and only one of them is about speed:
   * an IN-POOL write MUST bust it — otherwise a coach reads stale numbers, which
     is a worse failure than a slow page.
 
+This one reads the LIVE book (it needs a real tracked pool). The two write
+probes below insert a single event and delete it again in a `finally`, then
+assert the fingerprint is back where it started — nothing is left behind.
+
 Run: python tracker/test_insights_cache_key.py
 """
 import sys
@@ -35,7 +39,7 @@ def ok(cond, label):
 
 
 import helpers.seasons as SEAS                        # noqa: E402
-from database.db import query                         # noqa: E402
+from database.db import execute, query                # noqa: E402
 from helpers.dashboard import insights_tab as IT      # noqa: E402
 
 pools = {}
@@ -76,23 +80,39 @@ ok(_scoped[2] == _glob[2],
 
 print("\n-- what may bust it, and what may not ------------------------------")
 
-# The fingerprint is a pure function of these aggregates, so the two write
-# directions can be checked without touching the real database.
-_old = (_mine["c"], _mine["m"])
-_out_of_pool = (_mine["c"], _mine["m"])        # a row in a game we do not read
-_in_pool = (_mine["c"] + 1, _mine["m"] + 1)    # a row in one of our own games
-_old_global = (_tot["c"], _tot["m"])
-_new_global = (_tot["c"] + 1, _tot["m"] + 1)
+# These used to be tuple arithmetic — `(c,m) != (c+1,m+1)` — which passes against
+# ANY implementation, including the global key it was written to rule out. That
+# is why the regression shipped: nothing here ever called _data_fp twice. Write a
+# real row, re-read the real fingerprint, roll it back.
+def _fp_after_event(gid):
+    """_data_fp(GIDS) after inserting one event into `gid`, then rolled back."""
+    execute("INSERT INTO game_events (game_id, quarter, time, event_type) "
+            "VALUES (?, 1, '8:00', 'shot')", (gid,))
+    new_id = query("SELECT MAX(id) m FROM game_events")[0]["m"]
+    try:
+        return IT._data_fp(GIDS)
+    finally:
+        execute("DELETE FROM game_events WHERE id=?", (new_id,))
 
-ok(_old_global != _new_global,
-   "under the OLD global key, any write anywhere moved the key — this is the "
-   "regression: 85s on someone else's game")
-ok(_old == _out_of_pool,
-   "under the scoped key an out-of-pool write leaves it untouched, so the "
-   "cache stays warm")
-ok(_old != _in_pool,
-   "while a write to one of this pool's own games still busts it — her numbers "
+
+_out_gid = query(
+    f"SELECT id FROM games WHERE id NOT IN ({_marks}) "
+    f"AND id IN (SELECT game_id FROM game_events) LIMIT 1", tuple(GIDS))
+
+_before = IT._data_fp(GIDS)
+if _out_gid:
+    ok(_fp_after_event(_out_gid[0]["id"]) == _before,
+       "an OUT-OF-POOL write leaves the key untouched, so the cache stays warm "
+       "— this is the 85 seconds")
+else:
+    print("  -- no out-of-pool game with events in this DB; skipped that half")
+
+ok(_fp_after_event(GIDS[0]) != _before,
+   "while a write to one of this pool's OWN games still busts it — her numbers "
    "really did change, and a stale page is worse than a slow one")
+
+ok(IT._data_fp(GIDS) == _before,
+   "and the probe rolled back cleanly (the fingerprint is where it started)")
 
 _outside = _tot["c"] - _mine["c"]
 ok(_outside >= 0,
@@ -102,12 +122,29 @@ ok(_outside >= 0,
 
 print("\n-- the call site passes the scope ----------------------------------")
 
+# The old check here grepped for the literal expression render() used. That is
+# an implementation echo: it matched happily while the value being passed was
+# None on the current season, which is precisely how the global-key regression
+# survived a test written to catch it. Assert the BEHAVIOUR instead.
+from types import SimpleNamespace                     # noqa: E402
+
+_ctx_cur = SimpleNamespace(gender="F", season="Current",
+                           season_gp=None,            # what the page really sets
+                           season_fp_gp=tuple(GIDS))
+_keyed = IT._data_fp(getattr(_ctx_cur, "season_fp_gp", None)
+                     or getattr(_ctx_cur, "season_gp", None))
+ok(_keyed == _scoped,
+   "on the CURRENT season — where season_gp is None by design — render() still "
+   "keys on a SCOPED pool, not on the whole table")
+ok(_keyed != _glob,
+   "and that key is demonstrably not the global one (the regression, closed)")
+
 _src = (_APP / "helpers" / "dashboard" / "insights_tab.py").read_text(
     encoding="utf-8")
-ok("_data_fp(getattr(ctx, \"season_gp\", None))" in _src,
-   "render() keys on the pool it is viewing, not on the whole table")
 _code = [ln for ln in _src.splitlines() if not ln.lstrip().startswith("#")]
 ok(not any("_data_fp()" in ln for ln in _code),
    "and no call site takes the unscoped default any more")
+ok(not any('_data_fp(getattr(ctx, "season_gp", None))' in ln for ln in _code),
+   "nor keys on season_gp alone, which is None exactly when it matters")
 
 print(f"\nALL {PASS} CHECKS PASSED")

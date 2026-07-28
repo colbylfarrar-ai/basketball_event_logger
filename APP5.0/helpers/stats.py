@@ -61,12 +61,33 @@ _TRACKED_SUBQUERY = ("ge.game_id IN (SELECT id FROM games WHERE tracked=1 "
 def _game_filter(game_ids):
     """Return (sql_clause, params) restricting game_events (alias `ge`).
 
-    A specific `game_ids` list limits to exactly those games. `None`/empty means
-    "the whole sample" — which is every *tracked* game, NOT every game with rows
-    (untracked games are partial logs and must stay out of aggregates).
+    `None` (or the argument omitted) means "the whole sample" — every *tracked*
+    game, NOT every game with rows (untracked games are partial logs and must
+    stay out of aggregates).
+
+    An EMPTY collection means exactly what it says: no games, no rows.
+
+    That distinction is load-bearing. `None` and `[]` used to collapse into the
+    same branch, so an empty pool silently widened to the whole tracked sample —
+    and _TRACKED_SUBQUERY carries no gender predicate, so the result was last
+    tracked season's events for BOTH genders. Two ways in:
+
+      * the co-op read-filter. entitlement.visible_tracked_game_ids() returns an
+        empty set for a Free viewer or a Solo coach with no tracked games; that
+        set reaching here handed them the whole league's play-by-play.
+      * day one of a new season. playtypes._tracked_game_ids(gender) resolves the
+        ACTIVE season, which is empty until the first game is tracked, so
+        `fetch_events(_tracked_game_ids('F'))` returned 35 girls' + 8 boys' games
+        from LAST season — measured, identical for either gender argument.
+
+    It was guarded by hand at ~154 call sites and missed at several. Guarding it
+    here makes the wrong answer unreachable rather than merely unlikely; the
+    call-site guards stay correct and simply become redundant.
     """
-    if not game_ids:
+    if game_ids is None:
         return f" AND {_TRACKED_SUBQUERY}", ()
+    if not game_ids:
+        return " AND 0=1", ()
     marks = ",".join("?" * len(game_ids))
     return f" AND ge.game_id IN ({marks})", tuple(game_ids)
 

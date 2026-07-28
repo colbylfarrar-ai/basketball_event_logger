@@ -15,17 +15,60 @@ import streamlit as st
 
 from database.db import query, execute
 from helpers.ui import page_chrome, page_header, empty_state
+import helpers.auth as AUTH
+import helpers.entitlement as ENT
 import helpers.manual_box as MB
 import helpers.seasons as SZ
 import helpers.identity as IDN
 
 _cfg, ACCENT = page_chrome("Setup")
 
+# ── ownership scope ───────────────────────────────────────────────────────────
+# page_chrome authenticates, but this page WRITES: rosters, team district, game
+# type, and — via the box-score tab — games.home_score/away_score, which feed
+# records, Power ratings and the rankings for the whole league. Without a scope
+# every signed-in coach could edit every team in the database from the picker.
+# Editing is therefore limited to the teams the coach staffs; admin keeps the
+# league-wide view it needs for cleanup.
+_IDENT = AUTH.current_user()
+_IS_ADMIN = _IDENT.get("role") == "admin"
+_OWN = ENT._own_teams(_IDENT)
+
+
+def _team_scope(alias="", col="id"):
+    """(sql, params) restricting a query to the coach's own teams. Empty for
+    admin. Callers AND this into their WHERE."""
+    if _IS_ADMIN:
+        return "", ()
+    pre = f"{alias}." if alias else ""
+    if not _OWN:
+        return f"{pre}{col} IS NULL", ()      # no team assigned → nothing editable
+    ph = ",".join("?" * len(_OWN))
+    return f"{pre}{col} IN ({ph})", tuple(_OWN)
+
+
+def _game_scope(a1="t1", a2="t2"):
+    """(sql, params) restricting a games query to games one of the coach's own
+    teams plays in."""
+    if _IS_ADMIN:
+        return "", ()
+    if not _OWN:
+        return "1=0", ()
+    ph = ",".join("?" * len(_OWN))
+    return f"({a1}.id IN ({ph}) OR {a2}.id IN ({ph}))", tuple(_OWN) * 2
+
+
 page_header("Roster & District",
             sub="Set the extras the Game Tracker doesn't capture — player positions & "
                 "availability, team district, and game type. These power the depth "
                 "chart, standings and game tags. (The Input Hub & Game Tracker are "
                 "untouched.)")
+
+if not _IS_ADMIN and not _OWN:
+    empty_state("No team assigned",
+                "This page edits your own team's roster, district and games. "
+                "Ask the admin to assign you a team on the Settings page.")
+    st.stop()
 
 POSITIONS = ["", "PG", "SG", "SF", "PF", "C"]
 AVAIL = ["Active", "Questionable", "Out", "Injured", "Suspended"]
@@ -38,7 +81,9 @@ t_roster, t_teams, t_games, t_box = st.tabs(
 
 # ── roster: position + availability ───────────────────────────────────────────
 with t_roster:
-    teams = query("SELECT id, name FROM teams ORDER BY name")
+    _ts, _tp = _team_scope()
+    teams = query("SELECT id, name FROM teams"
+                  + (f" WHERE {_ts}" if _ts else "") + " ORDER BY name", _tp)
     if not teams:
         empty_state("No teams yet", "Add teams in the Input Hub first.")
     else:
@@ -108,7 +153,9 @@ with t_roster:
 
 # ── teams: district ───────────────────────────────────────────────────────────
 with t_teams:
-    trows = query("SELECT id, name, class, gender, district FROM teams ORDER BY name")
+    _ts, _tp = _team_scope()
+    trows = query("SELECT id, name, class, gender, district FROM teams"
+                  + (f" WHERE {_ts}" if _ts else "") + " ORDER BY name", _tp)
     if not trows:
         empty_state("No teams yet", "Add teams in the Input Hub first.")
     else:
@@ -147,7 +194,10 @@ with t_games:
                "often start the same day league-wide — filter by date (and class), "
                "then **Apply to all shown → Playoff**.")
     _gc1, _gc2, _gc3 = st.columns(3)
-    _gteams = [r["name"] for r in query("SELECT name FROM teams ORDER BY name")]
+    _ts, _tp = _team_scope()
+    _gteams = [r["name"] for r in query(
+        "SELECT name FROM teams" + (f" WHERE {_ts}" if _ts else "")
+        + " ORDER BY name", _tp)]
     _gteam = _gc1.selectbox("Team", ["All teams"] + _gteams, key="su_g_team")
     _gclasses = [r["class"] for r in query(
         "SELECT DISTINCT class FROM teams WHERE class IS NOT NULL AND class!='' "
@@ -157,6 +207,9 @@ with t_games:
                              placeholder="YYYY-MM-DD").strip()
 
     _w, _p = [], []
+    _gs, _gp = _game_scope()
+    if _gs:
+        _w.append(_gs); _p += list(_gp)
     if _gteam != "All teams":
         _w.append("(t1.name=? OR t2.name=?)"); _p += [_gteam, _gteam]
     if _gclass != "All classes":
@@ -210,11 +263,13 @@ with t_box:
                "feeds possessions, PPP, ORtg & the four factors — and sets the "
                "final score so records & rankings count it — but never marks the "
                "game 'tracked' (lineup / play-type stats need the Game Tracker).")
+    _bs, _bp = _game_scope()
     _g = query("""SELECT g.id, g.date, t1.name n1, t2.name n2,
                          g.team1_id, g.team2_id, g.tracked
                   FROM games g JOIN teams t1 ON t1.id=g.team1_id
                                JOIN teams t2 ON t2.id=g.team2_id
-                  ORDER BY g.date DESC LIMIT 400""")
+               """ + (f" WHERE {_bs}" if _bs else "")
+               + " ORDER BY g.date DESC LIMIT 400", _bp)
     _untr = [g for g in _g if not g["tracked"]]
     if not _untr:
         empty_state("No untracked games",

@@ -140,14 +140,11 @@ def set_plan(email: str, plan: str):
 
 def get_teams(email: str):
     """All team ids a coach staffs (multi-team). Source of truth = coach_teams;
-    falls back to the legacy single app_users.team_id if there are no rows yet."""
-    email = (email or "").strip().lower()
-    rows = query("SELECT team_id FROM coach_teams WHERE coach_email=? "
-                 "ORDER BY team_id", (email,))
-    if rows:
-        return [r["team_id"] for r in rows]
-    t = _team_of(email)
-    return [t] if t is not None else []
+    falls back to the legacy single app_users.team_id if there are no rows yet.
+    Delegates to entitlement.coach_team_ids so the Streamlit and tracker-API
+    paths can never drift apart."""
+    from helpers.entitlement import coach_team_ids
+    return coach_team_ids(email)
 
 
 def set_teams(email: str, team_ids):
@@ -222,12 +219,6 @@ def set_team_shares_pool(team_id, on: bool):
     _apply_pool_coupling()
     from helpers.entitlement import recompute_game_pool
     recompute_game_pool()
-
-
-def _team_of(email: str):
-    rows = query("SELECT team_id FROM app_users WHERE email=?",
-                 ((email or "").strip().lower(),))
-    return rows[0]["team_id"] if rows else None
 
 
 def set_shares_pool(email: str, on: bool):

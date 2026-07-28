@@ -148,6 +148,45 @@ def _own_teams(ident: dict | None) -> set:
     return {int(t)} if t is not None else set()
 
 
+def coach_team_ids(email: str) -> list:
+    """All team ids a coach staffs. Source of truth = coach_teams, falling back
+    to the legacy single app_users.team_id. Lives HERE rather than in auth.py so
+    the streamlit-free tracker process can resolve it too (helpers/auth.py imports
+    streamlit; the FastAPI process deliberately does not). auth.get_teams()
+    delegates here so there is exactly one implementation."""
+    email = (email or "").strip().lower()
+    rows = query("SELECT team_id FROM coach_teams WHERE coach_email=? "
+                 "ORDER BY team_id", (email,))
+    if rows:
+        return [r["team_id"] for r in rows]
+    rows = query("SELECT team_id FROM app_users WHERE email=?", (email,))
+    t = rows[0]["team_id"] if rows else None
+    return [t] if t is not None else []
+
+
+def gating_identity(row: dict) -> dict:
+    """Build a full gating identity from an app_users row, for a NON-Streamlit
+    caller (the tracker API). Mirrors the dict auth.require_login() assembles:
+    `team_ids` from coach_teams and the TEAM-level `shares_pool` (League-wide if
+    ANY of the coach's teams shares). Without these two keys every gate here
+    silently degrades — _own_teams would see only the legacy primary team, and
+    viewer_is_league_wide would read a missing flag as Solo."""
+    ident = dict(row or {})
+    email = (ident.get("email") or "").strip().lower()
+    teams = coach_team_ids(email)
+    ident["team_ids"] = teams
+    shares = False
+    for t in teams:
+        if t is None:
+            continue
+        r = query("SELECT shares_pool FROM teams WHERE id=?", (t,))
+        if r and r[0]["shares_pool"]:
+            shares = True
+            break
+    ident["shares_pool"] = 1 if shares else 0
+    return ident
+
+
 def team_has_pooled_tracked(team_id, season="Current") -> bool:
     """Does this team appear in ≥1 pooled tracked game (its depth is share-to-scout
     visible to any league-wide coach) in `season`?"""

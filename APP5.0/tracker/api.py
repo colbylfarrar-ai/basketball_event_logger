@@ -58,24 +58,34 @@ def _resolve_user(request: Request):
     tok = got[7:].strip()
     if not tok:
         return None
-    rows = query("SELECT email, role, plan, team_id FROM app_users "
-                 "WHERE tracker_token=? AND tracker_token<>''", (tok,))
+    # paid_until / pool_banned are selected because the entitlement gates read
+    # them (has_paid_plan honours a future paid_until; viewer_is_league_wide
+    # forces a banned coach out of the pool). gating_identity() then adds
+    # team_ids + the TEAM-level shares_pool.
+    rows = query("SELECT email, role, plan, paid_until, team_id, pool_banned "
+                 "FROM app_users WHERE tracker_token=? AND tracker_token<>''",
+                 (tok,))
     if rows:
-        return dict(rows[0])
+        return ENT.gating_identity(rows[0])
     # "assistant scorer" guest link — its own stored token; resolves to the owner
     # coach (inherits their plan so the tracker works) but flagged guest, so
     # require_full_user blocks it from anything past logging/undoing events.
-    grow = query("SELECT u.email, u.role, u.plan, u.team_id "
-                 "FROM tracker_guest_tokens g JOIN app_users u ON u.email=g.owner_email "
+    # Inheriting the owner's identity also means the per-game ownership gate
+    # below scopes the guest to games the OWNER may write — an assistant link is
+    # not a key to the rest of the league.
+    grow = query("SELECT u.email, u.role, u.plan, u.paid_until, u.team_id, "
+                 "u.pool_banned FROM tracker_guest_tokens g "
+                 "JOIN app_users u ON u.email=g.owner_email "
                  "WHERE g.token=? AND g.revoked=0", (tok,))
     if grow:
-        u = dict(grow[0])
+        u = ENT.gating_identity(grow[0])
         u["guest"] = True
         return u
     env_tok = os.environ.get("TRACKER_TOKEN")
     if env_tok and tok == env_tok:
         return {"email": os.environ.get("TRACKER_OWNER_EMAIL", "").strip().lower(),
-                "role": "admin", "plan": "paid", "team_id": None}
+                "role": "admin", "plan": "paid", "team_id": None,
+                "team_ids": [], "shares_pool": 1, "pool_banned": 0}
     return None
 
 
@@ -101,6 +111,82 @@ def require_full_user(request: Request) -> dict:
     if user.get("guest"):
         raise HTTPException(status_code=403,
                             detail="assistant scorer link is log-only")
+    return user
+
+
+# ── per-game authorization ─────────────────────────────────────────────────────
+# current_api_user proves WHO you are and that you hold a Paid plan. It does not
+# say WHICH games are yours — without the gates below, a valid token was a
+# league-wide master key: any paying coach could read, rewrite, finish or publish
+# any other coach's tracked game over HTTP, straight past the Streamlit co-op
+# gate (helpers/entitlement.py), which guards only the read path inside the app.
+#
+# The rule has to leave TRACK-TO-SCOUT intact: opponent-tracking a game you are
+# not in is the product, not an attack. So a game is WRITABLE when it is
+# UNCLAIMED (tracked_by empty — the first writer claims it, and create_game /
+# post_events / finish all stamp tracked_by), when YOU claimed it, or when one of
+# your own teams is playing in it. Everything else is someone else's game.
+def _game_row(game_id: int) -> dict:
+    g = query("SELECT id, team1_id, team2_id, tracked_by, in_pool, season, tracked "
+              "FROM games WHERE id=?", (game_id,))
+    if not g:
+        raise HTTPException(status_code=404, detail="no such game")
+    return dict(g[0])
+
+
+def _may_write_game(user: dict, g: dict) -> bool:
+    if user.get("role") == "admin":
+        return True
+    own = ENT._own_teams(user)
+    if (g["team1_id"] is not None and int(g["team1_id"]) in own) or \
+       (g["team2_id"] is not None and int(g["team2_id"]) in own):
+        return True
+    claimed = (g["tracked_by"] or "").strip().lower()
+    if not claimed:
+        return True                     # unclaimed → first writer claims it
+    return claimed == (user.get("email") or "").strip().lower()
+
+
+def _may_read_game(user: dict, g: dict) -> bool:
+    """Anything you may write, you may read. Beyond that the co-op rules decide:
+    League-wide coaches read POOLED games, and a past season is an open archive
+    (visible_tracked_game_ids' owner rule), which is also what retro-tracking a
+    previous season needs."""
+    if _may_write_game(user, g):
+        return True
+    if ENT._is_past_season(g.get("season")):
+        return True
+    return ENT.can_see_game_tracked(user, g["team1_id"], g["team2_id"],
+                                    in_pool=g["in_pool"])
+
+
+def require_game_read(game_id: int, request: Request) -> dict:
+    user = current_api_user(request)
+    g = _game_row(game_id)
+    if not _may_read_game(user, g):
+        raise HTTPException(status_code=403,
+                            detail="this game belongs to another coach")
+    return user
+
+
+def require_game_write(game_id: int, request: Request) -> dict:
+    """Guest-allowed (log/undo). The guest inherits its owner coach's identity,
+    so it reaches exactly the owner's games and no others."""
+    user = current_api_user(request)
+    g = _game_row(game_id)
+    if not _may_write_game(user, g):
+        raise HTTPException(status_code=403,
+                            detail="this game belongs to another coach")
+    return user
+
+
+def require_game_write_full(game_id: int, request: Request) -> dict:
+    """Ownership + no guests — for finish / edit / delete / roster / publish."""
+    user = require_full_user(request)
+    g = _game_row(game_id)
+    if not _may_write_game(user, g):
+        raise HTTPException(status_code=403,
+                            detail="this game belongs to another coach")
     return user
 
 
@@ -272,7 +358,7 @@ def list_seasons():
 
 
 @api.get("/games/{game_id}")
-def game_detail(game_id: int):
+def game_detail(game_id: int, _: dict = Depends(require_game_read)):
     g = query("""
         SELECT g.id, g.date, g.season, g.team1_id, g.team2_id, t1.name n1, t2.name n2,
                g.is_public, g.share_token, g.tracked
@@ -332,7 +418,7 @@ def game_detail(game_id: int):
 
 
 @api.get("/games/{game_id}/live")
-def game_live(game_id: int):
+def game_live(game_id: int, _: dict = Depends(require_game_read)):
     try:
         return GE.live_state(game_id)
     except ValueError:
@@ -341,9 +427,7 @@ def game_live(game_id: int):
 
 @api.post("/games/{game_id}/events")
 def post_events(game_id: int, batch: EventBatch,
-                user: dict = Depends(current_api_user)):
-    if not query("SELECT id FROM games WHERE id=?", (game_id,)):
-        raise HTTPException(status_code=404, detail="no such game")
+                user: dict = Depends(require_game_write)):
     pid2team = {p["id"]: p["team_id"] for p in query(
         "SELECT p.id, p.team_id FROM players p WHERE p.team_id IN "
         "(SELECT team1_id FROM games WHERE id=?) OR p.team_id IN "
@@ -392,9 +476,7 @@ def post_events(game_id: int, batch: EventBatch,
 
 
 @api.post("/games/{game_id}/undo")
-def undo(game_id: int):
-    if not query("SELECT id FROM games WHERE id=?", (game_id,)):
-        raise HTTPException(status_code=404, detail="no such game")
+def undo(game_id: int, _: dict = Depends(require_game_write)):
     eid = GE.undo_last_event(game_id)
     if eid:
         GE.bump_data_version(game_id)
@@ -410,7 +492,8 @@ class TimeoutIn(BaseModel):
 
 
 @api.post("/games/{game_id}/timeouts")
-def post_timeout(game_id: int, t: TimeoutIn):
+def post_timeout(game_id: int, t: TimeoutIn,
+                 _: dict = Depends(require_game_write)):
     """Log a timeout marker (the clock event the play-by-play can't carry —
     see the game_timeouts migration note in database/db.py). Idempotent on the
     client uuid, same contract as event posts."""
@@ -436,7 +519,7 @@ def post_timeout(game_id: int, t: TimeoutIn):
 
 
 @api.post("/games/{game_id}/timeouts/undo")
-def undo_timeout(game_id: int):
+def undo_timeout(game_id: int, _: dict = Depends(require_game_write)):
     """Delete the most recent timeout of the game (the PWA's mis-tap escape)."""
     row = query("SELECT id FROM game_timeouts WHERE game_id=? "
                 "ORDER BY id DESC LIMIT 1", (game_id,))
@@ -447,7 +530,7 @@ def undo_timeout(game_id: int):
 
 
 @api.get("/games/{game_id}/timeouts")
-def list_timeouts(game_id: int):
+def list_timeouts(game_id: int, _: dict = Depends(require_game_read)):
     """The game's timeout markers + per-team counts — so the tracker can SHOW
     how many each team has used (they're not game_events, so the PBP/box can't
     carry them) and the edit log can delete a mis-tap."""
@@ -460,7 +543,8 @@ def list_timeouts(game_id: int):
 
 
 @api.delete("/games/{game_id}/timeouts/{timeout_id}")
-def delete_timeout(game_id: int, timeout_id: int):
+def delete_timeout(game_id: int, timeout_id: int,
+                   _: dict = Depends(require_game_write)):
     """Delete a specific timeout by id (the edit log's per-row remove)."""
     row = query("SELECT id FROM game_timeouts WHERE id=? AND game_id=?",
                 (timeout_id, game_id))
@@ -471,9 +555,7 @@ def delete_timeout(game_id: int, timeout_id: int):
 
 
 @api.post("/games/{game_id}/finish")
-def finish(game_id: int, user: dict = Depends(require_full_user)):
-    if not query("SELECT id FROM games WHERE id=?", (game_id,)):
-        raise HTTPException(status_code=404, detail="no such game")
+def finish(game_id: int, user: dict = Depends(require_game_write_full)):
     hp, ap = GE.finish_game(game_id)
     if user.get("email"):
         execute("UPDATE games SET tracked_by=? WHERE id=? "
@@ -558,7 +640,7 @@ def create_game(g: NewGame, user: dict = Depends(require_full_user)):
 
 @api.post("/games/{game_id}/players")
 def quick_add_player(game_id: int, p: NewPlayer,
-                     _: dict = Depends(require_full_user)):
+                     _: dict = Depends(require_game_write_full)):
     g = query("SELECT team1_id, team2_id FROM games WHERE id=?", (game_id,))
     if not g:
         raise HTTPException(status_code=404, detail="no such game")
@@ -593,7 +675,7 @@ def quick_add_player(game_id: int, p: NewPlayer,
 
 @api.post("/games/{game_id}/players/{player_id}/handedness")
 def set_player_handedness(game_id: int, player_id: int, body: HandednessUpdate,
-                          _: dict = Depends(require_full_user)):
+                          _: dict = Depends(require_game_write_full)):
     """Flip an existing player's shooting hand from the tracker roster screen."""
     g = query("SELECT team1_id, team2_id FROM games WHERE id=?", (game_id,))
     if not g:
@@ -653,15 +735,14 @@ def _post_edit_rescore(game_id: int, was_in_sync: bool) -> bool:
 
 
 @api.get("/games/{game_id}/events")
-def list_events(game_id: int, quarter: int | None = None):
-    if not query("SELECT id FROM games WHERE id=?", (game_id,)):
-        raise HTTPException(status_code=404, detail="no such game")
+def list_events(game_id: int, quarter: int | None = None,
+                _: dict = Depends(require_game_read)):
     return {"events": EL.load_events(game_id, quarter)}
 
 
 @api.put("/games/{game_id}/events/{event_id}")
 def edit_event(game_id: int, event_id: int, vals: EventEdit,
-               _: dict = Depends(require_full_user)):
+               _: dict = Depends(require_game_write_full)):
     ev = query("SELECT * FROM game_events WHERE id=? AND game_id=?",
                (event_id, game_id))
     if not ev:
@@ -684,7 +765,7 @@ def edit_event(game_id: int, event_id: int, vals: EventEdit,
 
 @api.delete("/games/{game_id}/events/{event_id}")
 def remove_event(game_id: int, event_id: int,
-                 _: dict = Depends(require_full_user)):
+                 _: dict = Depends(require_game_write_full)):
     ev = query("SELECT id FROM game_events WHERE id=? AND game_id=?",
                (event_id, game_id))
     if not ev:
@@ -697,12 +778,10 @@ def remove_event(game_id: int, event_id: int,
 
 
 @api.post("/games/{game_id}/rescore")
-def rescore(game_id: int, _: dict = Depends(require_full_user)):
+def rescore(game_id: int, _: dict = Depends(require_game_write_full)):
     """Explicit re-freeze of games.home/away_score from the event stream —
     the PWA's equivalent of the Event Editor page's recompute button. Works
     for tracked AND in-progress games, same as the old page."""
-    if not query("SELECT id FROM games WHERE id=?", (game_id,)):
-        raise HTTPException(status_code=404, detail="no such game")
     scores = EL.recompute_final_score(game_id)
     if scores is None:
         raise HTTPException(status_code=422, detail="game has no events")
@@ -713,7 +792,7 @@ def rescore(game_id: int, _: dict = Depends(require_full_user)):
 # ── public "fan link" (no auth) + its coach-side toggle ─────────────────────────
 @api.post("/games/{game_id}/public")
 def toggle_public(game_id: int, body: PublicToggle | None = Body(None),
-                  user: dict = Depends(require_full_user)):
+                  user: dict = Depends(require_game_write_full)):
     """Set (or flip) a game's public fan link. Mints the share token the FIRST
     time a game goes public and keeps it stable across off/on cycles, so a
     link a coach already texted out survives a mid-game panic-toggle. Body
@@ -773,7 +852,8 @@ def live_team_page(team_id: int):
 
 
 @api.get("/games/{game_id}/fanqr")
-def fan_link_qr(game_id: int, request: Request):
+def fan_link_qr(game_id: int, request: Request,
+                _: dict = Depends(require_game_read)):
     """QR of the game's fan link (SVG) — the coach flashes it at the gym door.
     Requires the game to be public. Encodes the pretty live-host short URL on
     prod, the request host's /live path anywhere else."""

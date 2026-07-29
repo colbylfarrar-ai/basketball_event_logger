@@ -4579,10 +4579,14 @@ def _fx_playmaking():
             _irows = sorted(_ielig.items(), key=lambda kv: -kv[1]["rate"])
             ivf = go.Figure()
             _inames = [full_by.get(p, "?") for p, _r in reversed(_irows)]
+            # The breakdown shows the four NAMED slots the event carries. The
+            # offensive board (as_rebounder) is a walk-back inference, not a
+            # tagged slot; it still counts toward Involved %, so it lives in the
+            # caption rather than as a bar that reads like a captured field.
             for _lbl, _key, _col in (("Scored", "as_scorer", ACCENT),
                                      ("Passed", "as_passer", BLUE),
                                      ("Screened", "as_screener", PURPLE),
-                                     ("2nd chance", "as_rebounder", GOOD)):
+                                     ("Hockey", "as_hockey", GOOD)):
                 ivf.add_trace(go.Bar(
                     name=_lbl, y=_inames,
                     x=[r[_key] for _p, r in reversed(_irows)],
@@ -4601,7 +4605,7 @@ def _fx_playmaking():
                 "Scored": r["as_scorer"],
                 "Passed": r["as_passer"],
                 "Screened": r["as_screener"],
-                "2nd chance": r["as_rebounder"],
+                "Hockey": r["as_hockey"],
             } for p, r in _irows]), hide_index=True, width="stretch",
                 column_config={
                     "Involved %": st.column_config.NumberColumn(
@@ -4618,7 +4622,10 @@ def _fx_playmaking():
                 "A fingerprint is scoring, passing, setting the screen, the "
                 "hockey pass, or the offensive board that directly created the "
                 "basket — counted **once per basket**, so this is *did you "
-                "touch it*, not *how many ways*. The denominator is the baskets "
+                "touch it*, not *how many ways*. The columns break out the four "
+                "slots the event records; the offensive board is inferred by "
+                "walking the possession back, so it counts toward Involved % "
+                "without a column of its own. The denominator is the baskets "
                 "scored while she was on the floor, which is what stops this "
                 "from being a minutes stat: a reserve who touches half of hers "
                 "outranks a starter who touches a third."

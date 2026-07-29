@@ -15,7 +15,7 @@ Pure data layer: database.db + court_geom only, no streamlit.
 """
 from __future__ import annotations
 
-from database.db import query, execute
+from database.db import query, execute, atomic
 import helpers.court_geom as CG
 from helpers.event_log import delete_event, game_people, score_from_events
 
@@ -118,69 +118,74 @@ def log_event(game_id: int, ev: dict, on_court, on_officials=(),
     poss = possession_secs(game_id, q, t)
     g = lambda k: ev.get(k)
 
-    if etype == "shot":
-        sx, sy = g("shot_x"), g("shot_y")
-        if sx is not None and sy is not None:
-            zone = CG.zone_from_xy(sx, sy)
-            shot_type = CG.shot_value(sx, sy)
-        else:
-            zone = g("zone")
-            shot_type = int(g("shot_type") or 2)
-        eid = execute("""INSERT INTO game_events
-            (game_id,event_type,quarter,time,possession_secs,primary_player_id,
-             shot_type,shot_result,pass_from_id,shot_created_by_id,hockey_from_id,
-             rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y,
-             play_type,defense,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (game_id, "shot", q, t, poss,
-             g("primary_player_id"), shot_type, g("shot_result"),
-             g("pass_from_id"), g("shot_created_by_id"), g("hockey_from_id"),
-             g("rebound_by_id"), g("blocked_by_id"),
-             g("guarded_by_id"), zone, sx, sy,
-             g("play_type"), g("defense"), client_uuid))
-        pts = shot_type if g("shot_result") == "make" else 0
+    # The event row and its lineup snapshot / +/- credits are ONE fact. Committed
+    # separately (the old behaviour), a crash between them left an event that
+    # scores forever but that no lineup engine can see — and unrepairable, since
+    # recompute_game_plus_minus rebuilds from the snapshot rows that were lost.
+    with atomic():
+        if etype == "shot":
+            sx, sy = g("shot_x"), g("shot_y")
+            if sx is not None and sy is not None:
+                zone = CG.zone_from_xy(sx, sy)
+                shot_type = CG.shot_value(sx, sy)
+            else:
+                zone = g("zone")
+                shot_type = int(g("shot_type") or 2)
+            eid = execute("""INSERT INTO game_events
+                (game_id,event_type,quarter,time,possession_secs,primary_player_id,
+                 shot_type,shot_result,pass_from_id,shot_created_by_id,hockey_from_id,
+                 rebound_by_id,blocked_by_id,guarded_by_id,zone,shot_x,shot_y,
+                 play_type,defense,client_uuid)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (game_id, "shot", q, t, poss,
+                 g("primary_player_id"), shot_type, g("shot_result"),
+                 g("pass_from_id"), g("shot_created_by_id"), g("hockey_from_id"),
+                 g("rebound_by_id"), g("blocked_by_id"),
+                 g("guarded_by_id"), zone, sx, sy,
+                 g("play_type"), g("defense"), client_uuid))
+            pts = shot_type if g("shot_result") == "make" else 0
 
-    elif etype == "free_throw":
-        eid = execute("""INSERT INTO game_events
-            (game_id,event_type,quarter,time,possession_secs,
-             primary_player_id,shot_result,rebound_by_id,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?)""",
-            (game_id, "free_throw", q, t, poss,
-             g("primary_player_id"), g("shot_result"), g("rebound_by_id"),
-             client_uuid))
-        pts = 1 if g("shot_result") == "make" else 0
+        elif etype == "free_throw":
+            eid = execute("""INSERT INTO game_events
+                (game_id,event_type,quarter,time,possession_secs,
+                 primary_player_id,shot_result,rebound_by_id,client_uuid)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (game_id, "free_throw", q, t, poss,
+                 g("primary_player_id"), g("shot_result"), g("rebound_by_id"),
+                 client_uuid))
+            pts = 1 if g("shot_result") == "make" else 0
 
-    elif etype == "foul":
-        eid = execute("""INSERT INTO game_events
-            (game_id,event_type,quarter,time,possession_secs,
-             primary_player_id,secondary_player_id,official_id,
-             play_type,defense,client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (game_id, "foul", q, t, poss,
-             g("primary_player_id"), g("secondary_player_id"), g("official_id"),
-             g("play_type"), g("defense"), client_uuid))
-        pts = 0
+        elif etype == "foul":
+            eid = execute("""INSERT INTO game_events
+                (game_id,event_type,quarter,time,possession_secs,
+                 primary_player_id,secondary_player_id,official_id,
+                 play_type,defense,client_uuid)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (game_id, "foul", q, t, poss,
+                 g("primary_player_id"), g("secondary_player_id"), g("official_id"),
+                 g("play_type"), g("defense"), client_uuid))
+            pts = 0
 
-    else:  # turnover
-        eid = execute("""INSERT INTO game_events
-            (game_id,event_type,quarter,time,possession_secs,
-             primary_player_id,stolen_by_id,play_type,defense,turnover_type,
-             client_uuid)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (game_id, "turnover", q, t, poss,
-             g("primary_player_id"), g("stolen_by_id"), g("play_type"),
-             g("defense"), g("turnover_type"), client_uuid))
-        pts = 0
+        else:  # turnover
+            eid = execute("""INSERT INTO game_events
+                (game_id,event_type,quarter,time,possession_secs,
+                 primary_player_id,stolen_by_id,play_type,defense,turnover_type,
+                 client_uuid)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (game_id, "turnover", q, t, poss,
+                 g("primary_player_id"), g("stolen_by_id"), g("play_type"),
+                 g("defense"), g("turnover_type"), client_uuid))
+            pts = 0
 
-    scoring_tid = None
-    if pts:
-        pid = g("primary_player_id")
-        if pid:
-            row = query("SELECT team_id FROM players WHERE id=?", (pid,))
-            scoring_tid = row[0]["team_id"] if row else None
-    _snapshot_and_apply_pm(game_id, eid, on_court, on_officials,
-                           scoring_tid if pts else None, pts,
-                           on_official_slots=on_official_slots)
+        scoring_tid = None
+        if pts:
+            pid = g("primary_player_id")
+            if pid:
+                row = query("SELECT team_id FROM players WHERE id=?", (pid,))
+                scoring_tid = row[0]["team_id"] if row else None
+        _snapshot_and_apply_pm(game_id, eid, on_court, on_officials,
+                               scoring_tid if pts else None, pts,
+                               on_official_slots=on_official_slots)
     return eid
 
 

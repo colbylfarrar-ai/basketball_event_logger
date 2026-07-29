@@ -4,6 +4,7 @@ db.py — SQLite connection factory with season-aware path resolution.
 The active season's DB path is read from database/seasons.json on every
 connection.  If seasons.json doesn't exist, falls back to analytics.db.
 """
+import contextlib
 import contextvars
 import os
 import re
@@ -740,6 +741,53 @@ def initialize_database():
         conn.close()
 
 
+# ── Multi-statement transactions ───────────────────────────────────────────────
+# execute() commits per statement, which is right for the one-shot writes that
+# make up most of the app but WRONG for a write that is only meaningful as a
+# whole. The live event-logging path is the case that matters: log_event()
+# inserts one game_events row and then ~30 more statements (lineup snapshot,
+# game_lineup_players rows, +/- credits). Committed separately, a crash — or a
+# uvicorn worker killed mid-request — leaves an event that scores forever but
+# that no lineup engine can see, and recompute_game_plus_minus can't repair it
+# because it rebuilds FROM the snapshot rows that were never written.
+#
+# Inside `with atomic():` every execute()/executemany() on this thread skips its
+# own commit and joins the open transaction; the block commits once on exit and
+# rolls the whole thing back on any exception. Re-entrant: a nested atomic()
+# joins the outer one so only the outermost block commits (SQLite has no real
+# nested transactions, and a SAVEPOINT would buy nothing here).
+#
+# Thread-local to match get_connection(): each thread has its own connection and
+# therefore its own transaction depth.
+_txn_local = threading.local()
+
+
+def _in_txn() -> bool:
+    return getattr(_txn_local, "depth", 0) > 0
+
+
+@contextlib.contextmanager
+def atomic():
+    """Run a block of writes as ONE all-or-nothing transaction."""
+    conn = get_connection()
+    if _in_txn():                       # nested — the outermost block owns commit
+        _txn_local.depth += 1
+        try:
+            yield conn
+        finally:
+            _txn_local.depth -= 1
+        return
+    _txn_local.depth = 1
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        _txn_local.depth = 0
+
+
 # ── SELECT ─────────────────────────────────────────────────────────────────────
 # The connection now PERSISTS (thread-local, see get_connection) — it is NOT
 # closed after each call. A SELECT opens no write transaction, so a failed read
@@ -754,6 +802,14 @@ def query(sql: str, params: tuple = ()) -> list:
 # ── INSERT / UPDATE / DELETE ───────────────────────────────────────────────────
 def execute(sql: str, params: tuple = ()):
     conn = get_connection()
+    if _in_txn():
+        # Inside atomic(): no commit, and no rollback either — unwinding the
+        # whole transaction is the enclosing block's job, and rolling back here
+        # would silently discard the statements that already succeeded.
+        cur = conn.execute(sql, params)
+        _lr, _rc = cur.lastrowid, cur.rowcount
+        _audit_write(conn, sql, params, _lr, _rc)
+        return _lr
     try:
         cur = conn.execute(sql, params)
         conn.commit()
@@ -769,6 +825,11 @@ def execute(sql: str, params: tuple = ()):
 # ── Batch INSERT / UPDATE / DELETE ─────────────────────────────────────────────
 def executemany(sql: str, seq_of_params: list) -> int:
     conn = get_connection()
+    if _in_txn():
+        cur = conn.executemany(sql, seq_of_params)
+        _rc = cur.rowcount
+        _audit_write(conn, sql, (), None, _rc)
+        return _rc
     try:
         cur = conn.executemany(sql, seq_of_params)
         conn.commit()

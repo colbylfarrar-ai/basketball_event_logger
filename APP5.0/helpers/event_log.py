@@ -19,7 +19,7 @@ Pure data layer: database.db + court_geom (math only), no streamlit.
 """
 from __future__ import annotations
 
-from database.db import query, execute
+from database.db import query, execute, atomic
 import helpers.court_geom as CG
 
 ZONES = ("LC", "LW", "C", "RW", "RC")
@@ -243,26 +243,29 @@ def update_event(game_id, ev_id, vals, pid2team):
     clean = {f: (int(v) if v is not None and f not in _STR_FIELDS
                  else v) for f, v in clean.items()}
 
-    # +/- adjustment from old scoring -> new scoring over this event's floor
-    old_pts = event_points(old)
-    new_pts = event_points({"event_type": etype,
-                            "shot_result": clean["shot_result"],
-                            "shot_type": clean["shot_type"]})
-    _apply_pm_delta(game_id, ev_id, old_pts,
-                    pid2team.get(old["primary_player_id"]),
-                    new_pts, pid2team.get(clean["primary_player_id"]))
+    # +/- adjustment and the row edit are one fact: applied apart, a failure
+    # between them leaves every player on that floor carrying a +/- for a
+    # scoring event that no longer scores.
+    with atomic():
+        old_pts = event_points(old)
+        new_pts = event_points({"event_type": etype,
+                                "shot_result": clean["shot_result"],
+                                "shot_type": clean["shot_type"]})
+        _apply_pm_delta(game_id, ev_id, old_pts,
+                        pid2team.get(old["primary_player_id"]),
+                        new_pts, pid2team.get(clean["primary_player_id"]))
 
-    # shot_x/shot_y aren't editor-managed fields, but they must not survive a
-    # type change: a stale tap location on a row later flipped back to "shot"
-    # would resurrect on every shot chart and override the user's zone/2-3.
-    execute(
-        "UPDATE game_events SET event_type=?, quarter=?, time=?, "
-        + ", ".join(f"{f}=?" for f in _ALL_FIELDS)
-        + (", shot_x=NULL, shot_y=NULL" if etype != "shot" else "")
-        + " WHERE id=?",
-        (etype, int(vals.get("quarter") or old["quarter"]),
-         str(vals.get("time") or old["time"]),
-         *[clean[f] for f in _ALL_FIELDS], ev_id))
+        # shot_x/shot_y aren't editor-managed fields, but they must not survive a
+        # type change: a stale tap location on a row later flipped back to "shot"
+        # would resurrect on every shot chart and override the user's zone/2-3.
+        execute(
+            "UPDATE game_events SET event_type=?, quarter=?, time=?, "
+            + ", ".join(f"{f}=?" for f in _ALL_FIELDS)
+            + (", shot_x=NULL, shot_y=NULL" if etype != "shot" else "")
+            + " WHERE id=?",
+            (etype, int(vals.get("quarter") or old["quarter"]),
+             str(vals.get("time") or old["time"]),
+             *[clean[f] for f in _ALL_FIELDS], ev_id))
 
 
 # event types that carry a `defense` tag (the scheme in effect). FTs don't.
@@ -380,17 +383,21 @@ def insert_missed_event(game_id, ev):
         "SELECT official_id FROM game_lineup_officials WHERE game_id=?",
         (game_id,))]
 
-    eid = GE.log_event(game_id, ev, on_court, offs)
+    # log_event opens its own transaction; nesting joins it, so the insert and
+    # the clock re-split it forces on its neighbour commit together — a partial
+    # apply would double-count elapsed time in every per-player minutes read.
+    with atomic():
+        eid = GE.log_event(game_id, ev, on_court, offs)
 
-    start = (GE.time_to_secs(prev_ev["time"])
-             if prev_ev and prev_ev["quarter"] == q
-             else GE.quarter_start_secs(q))
-    execute("UPDATE game_events SET possession_secs=? WHERE id=?",
-            (max(0.0, start - tsec), eid))
-    if next_ev and next_ev["quarter"] == q:
+        start = (GE.time_to_secs(prev_ev["time"])
+                 if prev_ev and prev_ev["quarter"] == q
+                 else GE.quarter_start_secs(q))
         execute("UPDATE game_events SET possession_secs=? WHERE id=?",
-                (max(0.0, tsec - GE.time_to_secs(next_ev["time"])),
-                 next_ev["id"]))
+                (max(0.0, start - tsec), eid))
+        if next_ev and next_ev["quarter"] == q:
+            execute("UPDATE game_events SET possession_secs=? WHERE id=?",
+                    (max(0.0, tsec - GE.time_to_secs(next_ev["time"])),
+                     next_ev["id"]))
     return eid, len(on_court)
 
 
@@ -413,9 +420,10 @@ def set_shot_location(game_id, ev_id, x, y, pid2team):
     new_pts = event_points({"event_type": "shot",
                             "shot_result": old["shot_result"],
                             "shot_type": val})
-    _apply_pm_delta(game_id, ev_id, old_pts, stid, new_pts, stid)
-    execute("UPDATE game_events SET shot_x=?, shot_y=?, zone=?, shot_type=? "
-            "WHERE id=?", (float(x), float(y), zone, val, ev_id))
+    with atomic():
+        _apply_pm_delta(game_id, ev_id, old_pts, stid, new_pts, stid)
+        execute("UPDATE game_events SET shot_x=?, shot_y=?, zone=?, shot_type=? "
+                "WHERE id=?", (float(x), float(y), zone, val, ev_id))
     return zone, val
 
 
@@ -426,9 +434,10 @@ def delete_event(game_id, ev_id, pid2team):
     if not old:
         return
     old = old[0]
-    _apply_pm_delta(game_id, ev_id, event_points(old),
-                    pid2team.get(old["primary_player_id"]), 0, None)
-    execute("DELETE FROM game_events WHERE id=?", (ev_id,))
+    with atomic():
+        _apply_pm_delta(game_id, ev_id, event_points(old),
+                        pid2team.get(old["primary_player_id"]), 0, None)
+        execute("DELETE FROM game_events WHERE id=?", (ev_id,))
 
 
 def score_from_events(game_id):
@@ -469,37 +478,41 @@ def recompute_game_plus_minus(game_id):
     scoring event the scoring team is the scorer's own on-floor team; every
     on-floor player gets +pts (same team) or -pts (opponent). Verified to
     reproduce the live incremental credit exactly (tracker/test_retro_floor)."""
-    # Every player that appears on any floor must have a row to accumulate into.
-    execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) "
-            "SELECT ge.game_id, gel.team_id, gel.player_id "
-            "FROM game_event_lineup gel JOIN game_events ge ON ge.id = gel.event_id "
-            "WHERE ge.game_id = ?", (game_id,))
-    execute("UPDATE game_lineup_players SET plus_minus = 0 WHERE game_id = ?", (game_id,))
-    evs = query("SELECT id, event_type, shot_result, shot_type, primary_player_id "
-                "FROM game_events WHERE game_id = ? ORDER BY id", (game_id,))
-    for ev in evs:
-        pts = event_points(ev)
-        if not pts:
-            continue
-        # scoring team = the scorer's team on that event's floor (fall back to
-        # the roster team if the scorer somehow isn't in their own snapshot).
-        strow = query("SELECT team_id FROM game_event_lineup "
-                      "WHERE event_id=? AND player_id=?",
-                      (ev["id"], ev["primary_player_id"]))
-        if strow:
-            stid = strow[0]["team_id"]
-        else:
-            prow = query("SELECT team_id FROM players WHERE id=?",
-                         (ev["primary_player_id"],))
-            if not prow:
+    # Zero-then-accumulate: interrupted partway, every +/- in the game is left
+    # at some meaningless partial sum, so this runs as one transaction (which is
+    # also fewer fsyncs than committing each of the hundreds of statements).
+    with atomic():
+        # Every player that appears on any floor must have a row to accumulate into.
+        execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) "
+                "SELECT ge.game_id, gel.team_id, gel.player_id "
+                "FROM game_event_lineup gel JOIN game_events ge ON ge.id = gel.event_id "
+                "WHERE ge.game_id = ?", (game_id,))
+        execute("UPDATE game_lineup_players SET plus_minus = 0 WHERE game_id = ?", (game_id,))
+        evs = query("SELECT id, event_type, shot_result, shot_type, primary_player_id "
+                    "FROM game_events WHERE game_id = ? ORDER BY id", (game_id,))
+        for ev in evs:
+            pts = event_points(ev)
+            if not pts:
                 continue
-            stid = prow[0]["team_id"]
-        for r in query("SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?",
-                       (ev["id"],)):
-            delta = pts if r["team_id"] == stid else -pts
-            execute("UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
-                    "WHERE game_id=? AND player_id=?",
-                    (delta, game_id, r["player_id"]))
+            # scoring team = the scorer's team on that event's floor (fall back to
+            # the roster team if the scorer somehow isn't in their own snapshot).
+            strow = query("SELECT team_id FROM game_event_lineup "
+                          "WHERE event_id=? AND player_id=?",
+                          (ev["id"], ev["primary_player_id"]))
+            if strow:
+                stid = strow[0]["team_id"]
+            else:
+                prow = query("SELECT team_id FROM players WHERE id=?",
+                             (ev["primary_player_id"],))
+                if not prow:
+                    continue
+                stid = prow[0]["team_id"]
+            for r in query("SELECT player_id, team_id FROM game_event_lineup WHERE event_id=?",
+                           (ev["id"],)):
+                delta = pts if r["team_id"] == stid else -pts
+                execute("UPDATE game_lineup_players SET plus_minus = plus_minus + ? "
+                        "WHERE game_id=? AND player_id=?",
+                        (delta, game_id, r["player_id"]))
 
 
 def _team_floor(event_id, team_id):
@@ -552,16 +565,20 @@ def correct_floor_forward(game_id, from_event_id, team_id, new_pids):
 
     run = floor_run(game_id, from_event_id, team_id)
 
-    for eid in run:
-        execute("DELETE FROM game_event_lineup WHERE event_id=? AND team_id=?",
-                (eid, team_id))
-        for pid in deduped:
-            execute("INSERT OR IGNORE INTO game_event_lineup (event_id, player_id, team_id) "
-                    "VALUES (?,?,?)", (eid, pid, team_id))
-            execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) "
-                    "VALUES (?,?,?)", (game_id, team_id, pid))
+    # Delete-then-reinsert per event: a failure mid-run would leave those events
+    # with NO floor for the team at all — strictly worse than the stale five
+    # this is fixing — so the whole correction and its recompute are one txn.
+    with atomic():
+        for eid in run:
+            execute("DELETE FROM game_event_lineup WHERE event_id=? AND team_id=?",
+                    (eid, team_id))
+            for pid in deduped:
+                execute("INSERT OR IGNORE INTO game_event_lineup (event_id, player_id, team_id) "
+                        "VALUES (?,?,?)", (eid, pid, team_id))
+                execute("INSERT OR IGNORE INTO game_lineup_players (game_id, team_id, player_id) "
+                        "VALUES (?,?,?)", (game_id, team_id, pid))
 
-    recompute_game_plus_minus(game_id)
+        recompute_game_plus_minus(game_id)
     return {"events_changed": run, "size": len(run),
             "range": (run[0], run[-1]) if run else None,
             "old_five": sorted(S0), "new_five": sorted(deduped)}

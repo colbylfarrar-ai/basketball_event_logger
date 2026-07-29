@@ -109,7 +109,8 @@ def _build_boxes(game_id, t1id, t2id):
     quarters = {}
     for r in query("""
         SELECT ge.quarter AS q, p.team_id AS tid,
-               SUM(CASE WHEN ge.event_type='shot' AND ge.shot_result='make' THEN ge.shot_type
+               SUM(CASE WHEN ge.event_type='shot' AND ge.shot_result='make'
+                            THEN (CASE WHEN ge.shot_type=3 THEN 3 ELSE 2 END)
                         WHEN ge.event_type='free_throw' AND ge.shot_result='make' THEN 1
                         ELSE 0 END) AS pts
         FROM game_events ge JOIN players p ON p.id=ge.primary_player_id
@@ -357,7 +358,8 @@ def render_box_score(game_id: int):
     scoring.sort(key=lambda e: _elapsed(e["quarter"], e["time"]))
     times, hc, ac, h, a = [0.0], [0], [0], 0, 0
     for e in scoring:
-        pts = e["shot_type"] if e["event_type"] == "shot" else 1
+        pts = ((3 if e["shot_type"] == 3 else 2)          # NULL reads as a 2
+               if e["event_type"] == "shot" else 1)
         if e["shooter_team_id"] == t1id:
             h += pts
         elif e["shooter_team_id"] == t2id:

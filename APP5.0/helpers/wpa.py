@@ -237,7 +237,8 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
     h = a = 0
     for e in events:
         if e["event_type"] in ("shot", "free_throw") and e["shot_result"] == "make":
-            pts = e["shot_type"] if e["event_type"] == "shot" else 1
+            pts = ((3 if e["shot_type"] == 3 else 2)      # NULL reads as a 2
+                   if e["event_type"] == "shot" else 1)
             if e["shooter_team_id"] == t1:
                 h += pts
             elif e["shooter_team_id"] == t2:
@@ -360,7 +361,8 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
         for e in events:
             if e["event_type"] not in ("shot", "free_throw") or e["shot_result"] != "make":
                 continue
-            pts = e["shot_type"] if e["event_type"] == "shot" else 1
+            pts = ((3 if e["shot_type"] == 3 else 2)      # NULL reads as a 2
+                   if e["event_type"] == "shot" else 1)
             t = _elapsed(e["quarter"], e["time"])
             secs_left = max(end - t, 0)
             mb = h - a

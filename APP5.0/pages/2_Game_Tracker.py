@@ -217,7 +217,10 @@ def compute_box(game_id: int, t1id: int, t2id: int):
                 stats[sh]["sc"]  += 1
                 if ev["shot_type"] == 3: stats[sh]["tpa"] += 1
                 if ev["shot_result"] == "make":
-                    pts = ev["shot_type"]
+                    # NULL shot_type reads as a 2 here for the same reason it
+                    # does in every scoring helper — an unguarded `pts = None`
+                    # raised TypeError and took the whole box score down.
+                    pts = 3 if ev["shot_type"] == 3 else 2
                     stats[sh]["fgm"] += 1
                     stats[sh]["pts"] += pts
                     if ev["shot_type"] == 3: stats[sh]["tpm"] += 1
@@ -930,7 +933,7 @@ def _render_command_center():
         et = ev["event_type"]
         pts = 0
         if et == "shot" and ev["shot_result"] == "make":
-            pts = ev["shot_type"]
+            pts = 3 if ev["shot_type"] == 3 else 2       # NULL reads as a 2
         elif et == "free_throw" and ev["shot_result"] == "make":
             pts = 1
         if pts:

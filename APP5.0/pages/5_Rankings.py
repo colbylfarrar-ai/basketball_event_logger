@@ -2421,7 +2421,8 @@ def _gei_board(g, season="Current", _scored=None):
         scoring.sort(key=GF.elapsed)
         times, hc, ac, h, a = [0.0], [0], [0], 0, 0
         for e in scoring:
-            pts = e["shot_type"] if e["event_type"] == "shot" else 1
+            pts = ((3 if e["shot_type"] == 3 else 2)      # NULL reads as a 2
+                   if e["event_type"] == "shot" else 1)
             if e["shooter_team_id"] == r["team1_id"]:
                 h += pts
             elif e["shooter_team_id"] == r["team2_id"]:

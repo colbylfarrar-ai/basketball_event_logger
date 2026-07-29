@@ -224,7 +224,8 @@ def quarter_scores(game_id: int, t1id: int, t2id: int) -> dict:
     out: dict = {}
     for r in rows:
         qd = out.setdefault(r["quarter"], {t1id: 0, t2id: 0})
-        pts = r["shot_type"] if r["event_type"] == "shot" else 1
+        pts = ((3 if r["shot_type"] == 3 else 2)          # NULL reads as a 2
+               if r["event_type"] == "shot" else 1)
         if r["tid"] in qd:
             qd[r["tid"]] += pts
     return out

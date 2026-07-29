@@ -154,7 +154,8 @@ def weekly_awards(gender, season="Current", game_ids=None):
         scoring.sort(key=GF.elapsed)
         times, margins, h, a = [0.0], [0], 0, 0
         for e in scoring:
-            pts = e["shot_type"] if e["event_type"] == "shot" else 1
+            pts = ((3 if e["shot_type"] == 3 else 2)      # NULL reads as a 2
+                   if e["event_type"] == "shot" else 1)
             if e["shooter_team_id"] == g["team1_id"]:
                 h += pts
             elif e["shooter_team_id"] == g["team2_id"]:

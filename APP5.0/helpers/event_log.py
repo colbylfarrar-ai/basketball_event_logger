@@ -240,6 +240,14 @@ def update_event(game_id, ev_id, vals, pid2team):
     clean = {f: (vals.get(f) if f in keep else None) for f in _ALL_FIELDS}
     if etype != "shot":
         clean["shot_type"] = None
+    elif clean.get("shot_type") is None:
+        # A shot ALWAYS carries a value. Retyping a turnover/foul into a shot
+        # left this NULL, and NULL is read two different ways downstream: the
+        # scoring helpers treat it as a 2 (`3 if shot_type == 3 else 2`) while
+        # the raw readers hit `pts = None` and either crash or add nothing — so
+        # the scoreboard and +/- disagreed permanently on that game. Default to
+        # 2, exactly as log_event does on the live path (`int(... or 2)`).
+        clean["shot_type"] = 2
     clean = {f: (int(v) if v is not None and f not in _STR_FIELDS
                  else v) for f, v in clean.items()}
 
@@ -450,7 +458,7 @@ def score_from_events(game_id):
     rows = query("""
         SELECT p.team_id,
                SUM(CASE WHEN ge.event_type='shot'       AND ge.shot_result='make'
-                            THEN ge.shot_type
+                            THEN (CASE WHEN ge.shot_type=3 THEN 3 ELSE 2 END)
                         WHEN ge.event_type='free_throw'  AND ge.shot_result='make'
                             THEN 1 ELSE 0 END) pts
         FROM game_events ge JOIN players p ON p.id=ge.primary_player_id

@@ -107,8 +107,18 @@ def _migrate_legacy_db(target: Path) -> None:
         except OSError:
             pass
 
-# Track which DB files have already been initialised this process
+# Track which DB files have already been initialised this process. A path is
+# added only AFTER init finishes cleanly — marking it up front meant one failed
+# init left every later caller in the process believing a half-migrated DB was
+# ready. The lock makes the check-then-run atomic so two threads racing into
+# initialize_database() don't both run the migrations.
 _INIT_DONE: set[str] = set()
+_INIT_LOCK = threading.Lock()
+
+# Migrations that could not be applied, per DB path: [(statement, error)].
+# A migration is allowed to fail (see the loop in _run_init for why) but must
+# never do so invisibly — this is what to read when a schema change didn't take.
+_INIT_SKIPPED: dict[str, list[tuple[str, str]]] = {}
 
 
 # ── Date normalisation ─────────────────────────────────────────────────────────
@@ -224,8 +234,36 @@ def initialize_database():
     key = str(db_path)
     if key in _INIT_DONE:
         return
-    _INIT_DONE.add(key)
+    with _INIT_LOCK:
+        if key in _INIT_DONE:          # another thread finished while we waited
+            return
+        _run_init(db_path)
+        _INIT_DONE.add(key)            # only on success — a raise leaves it unset,
+        #                                so the next caller retries instead of
+        #                                running on a half-migrated DB
 
+
+def init_skipped(db_path=None) -> list:
+    """Migrations that could not be applied to a DB, as [(statement, error)].
+
+    Empty is the healthy answer. A non-empty list means the schema is not what
+    the code expects and something downstream will misbehave — read it when a
+    column or index seems to be missing."""
+    return list(_INIT_SKIPPED.get(str(db_path or get_db_path()), ()))
+
+
+def _is_expected_noop(exc) -> bool:
+    """True for the failure a migration is DESIGNED to hit once it has applied.
+
+    SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so re-running one
+    is expected to raise "duplicate column name" on every boot for the life of
+    the database. Those aren't worth recording; anything else is.
+    """
+    return (isinstance(exc, sqlite3.OperationalError)
+            and "duplicate column name" in str(exc).lower())
+
+
+def _run_init(db_path):
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
     try:
@@ -531,6 +569,32 @@ def initialize_database():
             # 2=U1, 3=U2). NULL = fall back to first-seen (id) order, the
             # default alignment most crews follow.
             "ALTER TABLE game_lineup_officials ADD COLUMN slot INTEGER",
+            # Repair duplicates, then (re)try uidx_glo. Before that unique index
+            # existed nothing stopped a game/official pair being inserted twice —
+            # the INSERT OR IGNORE in game_events._snapshot_and_apply_pm only
+            # ignores if a constraint is there to violate. On such a DB the
+            # CREATE UNIQUE INDEX above (uidx_glo, declared before this column
+            # existed) fails on the data and is skipped, and then every
+            # ON CONFLICT(game_id, official_id) upsert has no conflict target to
+            # name — which now takes the whole event down with it, since
+            # log_event is atomic. So the dupes are cleared here and the index is
+            # attempted again; IF NOT EXISTS makes it a no-op when it took first
+            # time round. This is the ONE unique index whose duplicates are safe
+            # to delete automatically: the table is a pure membership set, so a
+            # second row for the same pair carries no information. The two
+            # client_uuid indexes are deliberately NOT repaired this way — a
+            # duplicate uuid means a genuinely double-logged event, and deciding
+            # which one to destroy is not a migration's call.
+            "DELETE FROM game_lineup_officials WHERE slot IS NULL AND EXISTS ("
+            " SELECT 1 FROM game_lineup_officials b"
+            " WHERE b.game_id = game_lineup_officials.game_id"
+            "   AND b.official_id = game_lineup_officials.official_id"
+            "   AND b.slot IS NOT NULL)",
+            "DELETE FROM game_lineup_officials WHERE rowid NOT IN ("
+            " SELECT MIN(rowid) FROM game_lineup_officials"
+            " GROUP BY game_id, official_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uidx_glo "
+            "ON game_lineup_officials(game_id, official_id)",
             # Fan-link audience counter: daily unique viewers per public game
             # (uniqueness approximated in-process by helpers/public_feed.py;
             # one UPDATE per new viewer, never per poll). Shown to the coach
@@ -614,12 +678,33 @@ def initialize_database():
             "DELETE FROM audit_log WHERE ts < datetime('now','-12 months')",
         ]
 
+        # Every statement above is written to be a no-op once applied, so the
+        # EXPECTED failure is a schema one — "duplicate column name", "index
+        # already exists" — which is why this loop swallows and moves on.
+        #
+        # It used to catch only OperationalError, and a migration can also fail
+        # on the DATA rather than the schema: CREATE UNIQUE INDEX over a table
+        # that already holds duplicates raises IntegrityError. That escaped the
+        # loop, escaped initialize_database(), and aborted `import database.db`
+        # — which is every page, on every restart — on precisely the older
+        # databases these migrations exist to upgrade. A migration that cannot
+        # apply must never be fatal.
+        #
+        # Skipping is silent-by-default but not invisible: the statement and its
+        # error are recorded for init_skipped(). Only UNEXPECTED failures are
+        # recorded — an already-applied ALTER ADD COLUMN raises "duplicate
+        # column name" on every boot forever, and logging ~100 of those would
+        # bury the one entry that means something.
+        skipped = _INIT_SKIPPED.setdefault(str(db_path), [])
+        skipped.clear()
         for stmt in migrations:
             try:
                 conn.execute(stmt)
                 conn.commit()
-            except sqlite3.OperationalError:
-                pass
+            except sqlite3.Error as exc:
+                conn.rollback()        # don't carry an aborted txn into the next
+                if not _is_expected_noop(exc):
+                    skipped.append((stmt, f"{type(exc).__name__}: {exc}"))
 
         # Normalise legacy date text to ISO 'YYYY-MM-DD' so ORDER BY and
         # parsing are reliable. Only touches rows not already ISO.
@@ -636,8 +721,16 @@ def initialize_database():
                             f"UPDATE {table} SET date=? WHERE id=?", (iso, rid)
                         )
                 conn.commit()
-            except sqlite3.OperationalError:
-                pass
+            except sqlite3.Error as exc:
+                conn.rollback()
+                skipped.append((f"date normalisation ({table})",
+                                f"{type(exc).__name__}: {exc}"))
+
+        # Each one-time block below is guarded by its own app_settings marker and
+        # catches sqlite3.Error for the same reason the migration loop does: none
+        # of them is worth aborting `import database.db` — and therefore every
+        # page — over. A block that fails leaves its marker unset, so it is
+        # retried on the next boot rather than silently skipped forever.
 
         # One-time AXIS-2 migration: lift the deprecated team-level pool flag onto
         # the coaches who own those teams (per-coach shares_pool), then derive each
@@ -659,8 +752,10 @@ def initialize_database():
                     "INSERT OR REPLACE INTO app_settings (key, value) "
                     "VALUES ('mig_shares_pool_v1','1')")
                 conn.commit()
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.Error as exc:
+            conn.rollback()
+            skipped.append(("mig_shares_pool_v1",
+                            f"{type(exc).__name__}: {exc}"))
 
         # One-time TEAM-LEVEL migration: lift the per-coach shares_pool onto the
         # TEAM (a program is one unit — if any of its coaches opted in, the team is
@@ -685,8 +780,10 @@ def initialize_database():
                     "INSERT OR REPLACE INTO app_settings (key, value) "
                     "VALUES ('mig_team_shares_v1','1')")
                 conn.commit()
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.Error as exc:
+            conn.rollback()
+            skipped.append(("mig_team_shares_v1",
+                            f"{type(exc).__name__}: {exc}"))
 
         # One-time: seed coach_teams (multi-team membership) from the single
         # app_users.team_id each coach had, so existing coaches keep their team.
@@ -703,8 +800,10 @@ def initialize_database():
                     "INSERT OR REPLACE INTO app_settings (key, value) "
                     "VALUES ('mig_coach_teams_v1','1')")
                 conn.commit()
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.Error as exc:
+            conn.rollback()
+            skipped.append(("mig_coach_teams_v1",
+                            f"{type(exc).__name__}: {exc}"))
 
         # One-time: migrate the OLD global notes (teams.notes + scout_notes) into
         # the per-coach coach_notes table, assigned to the founding admin (the only
@@ -733,8 +832,10 @@ def initialize_database():
                     "INSERT OR REPLACE INTO app_settings (key, value) "
                     "VALUES ('mig_coach_notes_v1','1')")
                 conn.commit()
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.Error as exc:
+            conn.rollback()
+            skipped.append(("mig_coach_notes_v1",
+                            f"{type(exc).__name__}: {exc}"))
 
         conn.commit()
     finally:

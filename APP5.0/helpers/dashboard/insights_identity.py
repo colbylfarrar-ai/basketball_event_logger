@@ -224,8 +224,10 @@ def _spacing_block(ctx, tids, fp):
     cols[0].markdown(BR._tile("Spacing index", f"{sp['index']:.0f}",
                               f"{sp['n']} located shots"),
                      unsafe_allow_html=True)
+    import helpers.spacing as SP
     for i, c in enumerate(sp["components"], start=1):
-        cols[i].markdown(pctile_bar(c["label"], f"{c['value'] * 100:.0f}%",
+        # SP.fmt_component, not a blanket *100 — Floor width is a stdev in FEET
+        cols[i].markdown(pctile_bar(c["label"], SP.fmt_component(c),
                                     c.get("pct")), unsafe_allow_html=True)
 
 

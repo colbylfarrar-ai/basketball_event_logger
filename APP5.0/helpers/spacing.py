@@ -40,6 +40,19 @@ COMPONENTS = [
 ]
 
 
+def fmt_component(c):
+    """Display string for one component dict from ``spacing_index``.
+
+    THREE of the four components are shares; ``x_spread`` is a standard deviation
+    in FEET (court_geom coordinates are feet with the hoop at the origin). The
+    formatting lives here rather than at each render site because the second one
+    reinvented it as a blanket ``value * 100`` + '%' and published an 11.1 ft
+    floor width as "1106%"."""
+    if c.get("key") == "x_spread":
+        return f"{c['value']:.1f} ft"
+    return f"{c['value'] * 100:.0f}%"
+
+
 def team_components(shots):
     """Raw spacing components from one team's located shots (None if empty)."""
     n = len(shots)

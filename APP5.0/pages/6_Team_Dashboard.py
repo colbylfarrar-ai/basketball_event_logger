@@ -2166,9 +2166,8 @@ if _tdview == "Charts":
                     with _spb:
                         _sph = ""
                         for _c in _sp["components"]:
-                            _sv = (f"{_c['value']:.1f} ft" if _c["key"] == "x_spread"
-                                   else f"{_c['value'] * 100:.0f}%")
-                            _sph += _pctile_bar(_c["label"], _sv, _c["pct"])
+                            _sph += _pctile_bar(_c["label"],
+                                                SPACE.fmt_component(_c), _c["pct"])
                         st.markdown(_sph, unsafe_allow_html=True)
                     st.caption(_sp["note"] + f"  ·  {_sp['n']} located shots over a "
                                f"{_sp['pool_n']}-team pool.")

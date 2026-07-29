@@ -130,6 +130,28 @@ ok(_unw < _sh / _dn,
 ok(all(l["shots"] <= l["denom"] for l in load.values()),
    "nobody takes more shots than her team took while she was on the floor")
 
+# THE CASE THAT BROKE THE ABOVE. The numerator used to be incremented before the
+# lineup guards and the denominator only after them, so a shot with no floor
+# snapshot counted for the shooter and gave nobody a denominator. The live book
+# has a snapshot on every shot, which is why the two invariants above still held
+# — this forces the gap the ordering created.
+_pid = max(mine, key=lambda p: mine[p]["denom"])
+_ghost = dict(EV[0], id=-999, event_type="shot", primary_player_id=_pid,
+              shooter_team_id=TEAM_ID)
+_load2 = OP.shooter_load(list(EV) + [_ghost], floor=FLOOR, game_ids=GIDS)
+ok(_load2[_pid]["shots"] == load[_pid]["shots"],
+   f"a shot with no lineup snapshot adds NO numerator either — it cannot be "
+   f"divided by a floor it never recorded (got {_load2[_pid]['shots']} vs "
+   f"{load[_pid]['shots']})")
+ok(_load2[_pid]["denom"] == load[_pid]["denom"], "and no denominator")
+_sh2 = sum(l["shots"] for l in _load2.values() if l["team_id"] == TEAM_ID)
+_dn2 = sum(l["denom"] for l in _load2.values() if l["team_id"] == TEAM_ID)
+ok(abs(_sh2 / _dn2 - 0.20) < 0.005,
+   f"so the 20% the caption promises survives an unsnapshotted shot "
+   f"({_sh2 / _dn2 * 100:.2f}%)")
+ok(all(l["shots"] <= l["denom"] for l in _load2.values()),
+   "and the share still cannot exceed 100%")
+
 
 print("\n-- the shape contract with the defensive module ---------------------")
 

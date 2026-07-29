@@ -252,7 +252,16 @@ def shooter_load(events, floor=None, game_ids=None, min_denom=MIN_LOAD_DENOM):
     for e in events:
         if e["event_type"] != "shot" or e.get("primary_player_id") is None:
             continue
-        shots[e["primary_player_id"]] += 1
+        # The numerator used to be incremented HERE, before the three guards
+        # below, while the denominator was only incremented after them. A shot
+        # with no lineup snapshot (or no resolvable shooting team) therefore
+        # counted for the shooter but gave nobody — including her — a
+        # denominator, so her load was measured over a smaller floor than the
+        # shots being divided by it. Against a fixed 20% line that is a real
+        # mis-gate, and nothing stopped the ratio exceeding 1.0.
+        #
+        # Both sides now come from exactly the same events: a shot counts for
+        # the shooter only where it also counts toward her own denominator.
         onfloor = floor.get(e["id"])
         if not onfloor:
             continue
@@ -262,9 +271,12 @@ def shooter_load(events, floor=None, game_ids=None, min_denom=MIN_LOAD_DENOM):
         five = onfloor.get(shooter_team)
         if not five:
             continue
+        shooter = e["primary_player_id"]
         for pid in five:                 # only the SHOOTING team's five
             denom[pid] += 1
             team_of.setdefault(pid, shooter_team)
+            if pid == shooter:
+                shots[pid] += 1
 
     out = {}
     for pid, dn in denom.items():

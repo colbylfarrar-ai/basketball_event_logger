@@ -381,3 +381,64 @@ ok("rate" not in _cr[(7, 3)],
 ok(_cr[(7, 3)]["games"] == 4, "games are counted for when the sample grows")
 ok(FT.crew_foul_rate(events=_ck_ev, min_games=99) == {},
    "min_games filters the accumulator")
+
+print("\n-- carried_load: BOTH shares must cover the SAME quarters -----------")
+# The whole comparator exists to cancel a window confound (see the docstring:
+# the season baseline was thrown out for exactly this). But carry_share was
+# summed over EVERY quarter while clean_share was pooled over only the quarters
+# that had both a carrying and a clean window — so the two were computed over
+# different quarter sets, and `drag` was their difference anyway. The render
+# then stated it as "against X% of the SAME quarters".
+#
+# Q2 has both windows -> comparable.  Q4 is ALL carrying (she never plays it
+# clean) and she is on the floor for every event of it -> it belongs to neither
+# comparison, but it used to inflate the carry side alone.
+P, F1, F2, F3, F4 = 1, 8, 9, 10, 11
+_EID[0] = 5000
+_qm, _qfloor = [], {}
+
+
+def _add(kind, q, p_on, fouler=None):
+    x = e(kind, who=99, fouler=fouler, gid=900)
+    x["quarter"] = q
+    _qm.append(x)
+    five = {F1, F2, F3, F4} | ({P} if p_on else set())
+    _qfloor[x["id"]] = {1: frozenset(five)}
+
+
+for _i in range(10):                       # Q2 clean: on for 5 of 10
+    _add("shot", 2, _i < 5)
+for _i in range(2):                        # Q2: fouls 1 and 2, both still clean
+    _add("foul", 2, True, fouler=P)
+#   -> Q2 clean window: on 7 of 12
+for _i in range(10):                       # Q2 carrying (2 fouls in Q2): on for 8
+    _add("shot", 2, _i < 8)
+for _i in range(2):                        # fouls 3 and 4, still inside Q2 so that
+    _add("foul", 2, False, fouler=P)       # Q4 opens with her already at 4
+#   -> Q2 carrying window: on 8 of 12
+for _i in range(10):                       # Q4 carrying (4 fouls): on for ALL of it
+    _add("shot", 4, True)
+
+_qc = FT.carried_load(events=_qm, floor=_qfloor, team_id=1, min_events=10)
+ok(P in _qc, "the carrying player reports")
+_d = _qc[P]
+ok(_d["quarters"] == [2],
+   f"only Q2 is comparable — Q4 is carrying-only, with no clean window to "
+   f"compare against; got {_d['quarters']}")
+ok(_d["carry_share"] == round(100 * 8 / 12, 1),
+   f"carry_share is Q2's 8/12, NOT the 18/22=81.8 that blending in the "
+   f"carry-only Q4 produced; got {_d['carry_share']}")
+ok(_d["clean_share"] == round(100 * 7 / 12, 1),
+   f"clean_share is Q2's 7/12 over the same quarter; got {_d['clean_share']}")
+ok(abs(_d["drag"] - (_d["clean_share"] - _d["carry_share"])) < 0.15,
+   f"drag is still the difference of the two (it rounds the exact difference, "
+   f"not the difference of the rounded shares); got {_d['drag']}")
+ok(all(q in _d["quarters"] for (q, _f) in _d["by_state"]),
+   f"by_state describes the measured window too; got {sorted(_d['by_state'])}")
+
+# and the exclusion is total, not partial: a player with NO comparable quarter
+# is dropped rather than reported against a mismatched baseline
+_only = [x for x in _qm if x["quarter"] == 4]
+_onlyf = {x["id"]: _qfloor[x["id"]] for x in _only}
+ok(FT.carried_load(events=_only, floor=_onlyf, team_id=1, min_events=1) == {},
+   "a carry-only book yields nobody, instead of a drag against no baseline")

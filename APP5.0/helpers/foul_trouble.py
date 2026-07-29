@@ -638,21 +638,37 @@ def carried_load(game_ids=None, events=None, floor=None, team_id=None,
 
     out = {}
     for pid, by_q in cell.items():
-        c_on = sum(c["c_on"] for c in by_q.values())
-        c_team = sum(c["c_team"] for c in by_q.values())
+        # BOTH SHARES MUST COVER THE SAME QUARTERS, which is the entire point of
+        # this comparator (see the docstring: the season baseline was thrown out
+        # precisely because it compared across different windows). A quarter can
+        # only be compared if she has BOTH carrying and clean events in it.
+        #
+        # carry_share used to be summed over EVERY quarter while clean_share was
+        # pooled over only the comparable ones, so the two were computed over
+        # different quarter sets and `drag` was their difference anyway. A player
+        # who spent all of Q4 carrying — no clean Q4 to compare against — had Q4
+        # inflating her carry side and absent from her clean side, and the render
+        # then stated the result as "against X% of the same quarters". The
+        # confound this function exists to cancel was reintroduced by its own
+        # arithmetic.
+        comparable = {q: c for q, c in by_q.items()
+                      if c["c_team"] and c["k_team"]}
+        if not comparable:
+            # No quarter has both windows, so there is no within-quarter
+            # comparison to make and `drag` would be meaningless. Dropping her is
+            # correct — but it is a real exclusion, not an absence of trouble.
+            continue
+        c_on = sum(c["c_on"] for c in comparable.values())
+        c_team = sum(c["c_team"] for c in comparable.values())
         if c_team < min_events:
             continue
         # The clean comparator is pooled over the SAME quarters, weighted by how
         # much carrying happened in each — so a player whose trouble is all in
         # the fourth is compared mostly against her own fourth quarters.
         num = den = 0.0
-        for q, c in by_q.items():
-            if not c["c_team"] or not c["k_team"]:
-                continue
+        for q, c in comparable.items():
             num += (c["k_on"] / c["k_team"]) * c["c_team"]
             den += c["c_team"]
-        if not den:
-            continue
         carry = c_on / c_team
         clean = num / den
         out[pid] = {
@@ -662,8 +678,11 @@ def carried_load(game_ids=None, events=None, floor=None, team_id=None,
             "drag": round(100.0 * (clean - carry), 1),
             "games": len(games[pid]),
             "team_id": team_of.get(pid),
-            "quarters": sorted(by_q),
-            "by_state": {k: dict(v) for k, v in by_state[pid].items()},
+            # the quarters actually MEASURED, so `quarters` and `by_state`
+            # describe the same window the two shares were computed over
+            "quarters": sorted(comparable),
+            "by_state": {k: dict(v) for k, v in by_state[pid].items()
+                         if k[0] in comparable},
         }
     return out
 

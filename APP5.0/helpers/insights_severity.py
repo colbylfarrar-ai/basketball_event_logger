@@ -477,15 +477,19 @@ def _pts_takeaways(fnd, ctx):
 def _pts_team_orb(fnd, ctx):
     """Extra shots off the offensive glass, priced at the league's PPP."""
     ts = (ctx or {}).get("ts") or {}
-    orb, poss = _f(ts.get("ORBpct")), _f(ts.get("poss_pg"))
+    orb = _f(ts.get("ORBpct"))
     lg_orb, lg_ppp = _lg_mean(ctx, "ORBpct"), _lg_mean(ctx, "PPP")
-    if None in (orb, poss, lg_orb, lg_ppp):
+    if None in (orb, lg_orb, lg_ppp):
         return None
-    # a miss is the rebound chance; misses/g ~= poss/g x (1 - the pool's
-    # scoring rate) is not held here, so use the pack's own oreb chances
-    miss_pg = _f(ts.get("fga_pg"))
-    if miss_pg is None:
+    # ORB% is boards over rebound CHANCES, and a chance is a MISS — so the
+    # multiplier has to be misses per game. This used to pass fga_pg, every
+    # attempt including the ones that went in, which overstated the chip by
+    # 1/(miss rate) — roughly 2x on this league — and mis-ranked it against
+    # the other priced findings. The pack carries both halves.
+    fga_pg, fg_pct = _f(ts.get("fga_pg")), _f(ts.get("FGpct"))
+    if None in (fga_pg, fg_pct):
         return None
+    miss_pg = fga_pg * (1.0 - fg_pct / 100.0)
     return ((orb - lg_orb) / 100.0) * miss_pg * lg_ppp
 
 

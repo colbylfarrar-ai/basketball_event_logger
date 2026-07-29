@@ -187,6 +187,20 @@ else:
 # engine contract: None = all seasons, else the label / 'Current'
 _off_season = None if _off_season == "__all__" else _off_season
 _is_cur_off = _off_season is not None and SEAS.is_current(_off_season)
+# Scope this session's cache to the pool on screen (batch #6a), so a live-game
+# write to a different gender/season stops evicting it. st.cache_data.clear() is
+# PROCESS-global, so an undeclared session doesn't just lose its own warmth — it
+# takes every other coach's with it, and a cold Insights render is ~85s on the
+# 1-vCPU box.
+#
+# Declared only when BOTH axes are a single pool. This page's defaults span
+# several: gender=None is every league, and _off_season=None is the CAREER view
+# across every season (officials work season after season). Naming one scope for
+# a view that reads many would MISS the clear for the others, and stale numbers
+# is the one direction that must never happen — so those cases deliberately
+# declare nothing and keep the old clear-on-any-write behaviour.
+if gender and _off_season:
+    _uimod.declare_scope(gender, _off_season)
 
 # Tier gate: the entire officials hub is built from foul EVENTS attributed to a
 # named ref (who called what, when, vs which team) — event-derived analytics, no

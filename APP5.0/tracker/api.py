@@ -453,14 +453,33 @@ def post_events(game_id: int, batch: EventBatch,
                 on_court, ev.officials_on, client_uuid=ev.uuid,
                 on_official_slots=[(s.official_id, s.slot)
                                    for s in ev.official_slots])
-        except sqlite3.IntegrityError:
-            # A second device won the client_uuid race after the dup-check above
-            # (offline-first PWAs replay the same tap on reconnect). The unique
-            # index rejected our duplicate insert — resolve to the row the winner
-            # wrote so the retry stays idempotent instead of 500-ing.
+        except sqlite3.IntegrityError as exc:
+            # IntegrityError here is TWO different outcomes, and this used to
+            # treat both as the first one.
             row = query("SELECT id FROM game_events WHERE client_uuid=?", (ev.uuid,))
-            eid = row[0]["id"] if row else None
-            existed = True
+            if row:
+                # A second device won the client_uuid race after the dup-check
+                # above (offline-first PWAs replay the same tap on reconnect).
+                # The unique index rejected our duplicate insert — resolve to the
+                # row the winner wrote so the retry stays idempotent instead of
+                # 500-ing.
+                eid, existed = row[0]["id"], True
+            else:
+                # Nothing with this uuid exists, so it was never a duplicate.
+                # foreign_keys is ON and game_events references players(id) on
+                # nine columns plus officials(id), so a player id the server
+                # doesn't have raises IntegrityError too — a phone holding a
+                # stale cached roster (a road game, a roster edited since the
+                # last load) hits this on every tap it sends.
+                #
+                # Reporting that as "duplicate" told the client the tap was
+                # safely stored: app.js dequeues duplicates silently, so an
+                # entire game's queue could disappear off the phone without one
+                # toast. "rejected" is the honest status — the client still
+                # dequeues (the server will never accept it) but SAYS so.
+                results.append({"uuid": ev.uuid, "status": "rejected",
+                                "event_id": None, "detail": str(exc)[:200]})
+                continue
         results.append({
             "uuid": ev.uuid,
             "status": "duplicate" if existed else "inserted",

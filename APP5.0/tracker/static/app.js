@@ -211,7 +211,7 @@ async function flush() {
       const done = results.length
         ? results.map(function (r) { return r.uuid; })
         : batch.map(function (b) { return b.uuid; });
-      const rejected = results.filter(function (r) { return r.status === 'rejected'; }).length;
+      const rejects = results.filter(function (r) { return r.status === 'rejected'; });
       try { await qDelete(done); } catch (e) {}
       S.queue = S.queue.filter(function (q) { return done.indexOf(q.uuid) < 0; });
       // server live now includes the batch; queue no longer holds it -> no double count
@@ -219,7 +219,18 @@ async function flush() {
         Object.assign(S.lastLive, data.live);
         lsSet(LS.live(S.gameId), S.lastLive);
       }
-      if (rejected) toast(rejected + ' event(s) rejected by server');
+      if (rejects.length) {
+        // A FOREIGN KEY detail means this phone is holding a roster the server
+        // no longer has (a road game, a roster edited since the last load), and
+        // every tap naming one of those players will keep failing. Replaying
+        // won't help — the queued taps carry the dead ids — so say what the
+        // coach can actually act on instead of a bare count.
+        const stale = rejects.some(function (r) {
+          return String(r.detail || '').indexOf('FOREIGN KEY') >= 0;
+        });
+        toast(rejects.length + ' event(s) rejected by server'
+              + (stale ? ' — roster out of date, reload the game' : ''));
+      }
       setSyncStatus('Synced');
       ok = true;
     } else {

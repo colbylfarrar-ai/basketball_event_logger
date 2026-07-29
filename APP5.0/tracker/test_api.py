@@ -292,4 +292,40 @@ client.post(f"/api/games/{gid3}/finish")
 v1 = int(query("SELECT value FROM app_settings WHERE key='data_version'")[0]["value"])
 ok(v1 > v0, "data_version bumped on finish")
 
+# ── a stale roster must be REJECTED, not reported as a duplicate ──────────────
+# game_events references players(id) on nine columns with foreign_keys ON, so a
+# player id the server doesn't have raises IntegrityError — the same exception a
+# lost client_uuid race raises. Both used to be answered "duplicate", and app.js
+# dequeues duplicates SILENTLY: a phone holding a roster the server no longer has
+# (a road game, a roster edited since the last load) could lose a whole game's
+# queue without one toast. "rejected" is dequeued too, but the client says so.
+print("stale-roster events are rejected, not silently swallowed")
+_dead = 99999999                                  # a player id that never existed
+ok(not query("SELECT 1 FROM players WHERE id=?", (_dead,)), "the id is genuinely free")
+r = client.post(f"/api/games/{gid}/events", json={"events": [{
+    "uuid": "u-stale-roster", "event_type": "shot", "quarter": 1, "time": "5:00",
+    "primary_player_id": _dead, "shot_result": "make", "shot_type": 2,
+    "on_court": []}]}).json()
+_res = r["results"][0]
+ok(_res["status"] == "rejected",
+   f"a dead player id is rejected, not 'duplicate' (got {_res['status']!r})")
+ok(_res["event_id"] is None, "no event id is invented for it")
+ok("FOREIGN KEY" in (_res.get("detail") or ""),
+   f"the reason travels to the client: {_res.get('detail')!r}")
+ok(not query("SELECT 1 FROM game_events WHERE client_uuid='u-stale-roster'"),
+   "and nothing was written (log_event is atomic)")
+
+print("a real client_uuid race is still a duplicate")
+_good = client.post(f"/api/games/{gid}/events", json={"events": [{
+    "uuid": "u-race", "event_type": "shot", "quarter": 1, "time": "4:00",
+    "primary_player_id": home[0], "shot_result": "make", "shot_type": 2,
+    "on_court": floor}]}).json()["results"][0]
+ok(_good["status"] == "inserted", "first post inserts")
+_again = client.post(f"/api/games/{gid}/events", json={"events": [{
+    "uuid": "u-race", "event_type": "shot", "quarter": 1, "time": "4:00",
+    "primary_player_id": home[0], "shot_result": "make", "shot_type": 2,
+    "on_court": floor}]}).json()["results"][0]
+ok(_again["status"] == "duplicate" and _again["event_id"] == _good["event_id"],
+   "replay resolves to the same row")
+
 print(f"\nALL {PASS} CHECKS PASSED  (db: {_TMP})")

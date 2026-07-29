@@ -236,8 +236,18 @@ for _pid, _by in _early.items():
     for _lv, _d in _by.items():
         assert _d["early"] <= _d["games"], "more early than games reaching it"
         assert sum(_d["quarters"].values()) == _d["games"], "quarters don't sum"
-        assert all(q >= _lv for q in _d["quarters"] if q >= _lv) or True
-ok(True, "every early count is bounded by its games and its quarters sum")
+        # THE QUARTER RULE ITSELF: `early` is the games whose Nth foul landed in
+        # a quarter EARLIER than N. This used to read
+        #     assert all(q >= _lv for q in _d["quarters"] if q >= _lv) or True
+        # which is two tautologies stacked — the filter guarantees the predicate,
+        # and `or True` swallows whatever is left. Flipping < to <=, or comparing
+        # against halftime instead of the quarter, still passed it.
+        assert _d["early"] == sum(n for q, n in _d["quarters"].items()
+                                  if q < _lv), (
+            f"early count disagrees with the quarter tally at level {_lv}: "
+            f"{_d['early']} vs {dict(_d['quarters'])}")
+ok(True, "every early count is bounded by its games, sums, and matches the "
+         "quarters strictly BEFORE its own level")
 ok(all(lv in FT.EARLY_LEVELS for by in _early.values() for lv in by),
    f"EARLY is undefined for the 5th (no 5th quarter to beat) — levels "
    f"{FT.EARLY_LEVELS}")
@@ -249,9 +259,15 @@ ok(FT.CARRY_MIN_QUARTER == 2,
    "34% of all carrying events before this gate")
 ok(all(q >= FT.CARRY_MIN_QUARTER for d in _carr.values() for q in d["quarters"]),
    "so no Q1 window is counted at all")
-ok(all((q, f) for d in _carr.values() for (q, f) in d["by_state"]
-       if f >= q),
+# `all()` over TUPLES was the bug here: a non-empty tuple is truthy, so this
+# used to read `all((q, f) for ... if f >= q)` and could not fail — the filter
+# already dropped every counterexample, and each surviving item was truthy
+# regardless. It now tests the predicate over EVERY state, unfiltered.
+ok(all(f >= q for d in _carr.values() for (q, f) in d["by_state"]),
    "and every counted state really has fouls >= quarter")
+ok(any(d["by_state"] for d in _carr.values()),
+   "with at least one state to test — an empty by_state would make that "
+   "all() vacuous in a new way")
 
 # THE COMPARATOR. The first version measured carrying share against the SEASON
 # share and reproduced the entry-timing artifact bench_cost was rebuilt to

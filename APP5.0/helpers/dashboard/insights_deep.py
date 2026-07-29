@@ -570,18 +570,19 @@ def _ported(team_id, gender, tids, fp=None):
         import helpers.possession_value as PV
         led = PV.team_ledger(team_id, game_ids=gids, events=ev)
         lines = []
-        for side, label in (("offense", "scored"), ("defense", "allowed")):
+        # `label` names the section; `subject` opens the sentence. They used to
+        # be the same word, which made the defensive line read "19% of these
+        # possessions allowed at all" — the noun jammed into a verb slot.
+        for side, label, subject in (
+                ("offense", "scored", "We ended"),
+                ("defense", "allowed", "Opponents ended")):
             l = led.get(side)
             if not l or not l.get("outcomes"):
                 continue
-            outs = {o["key"]: o for o in l["outcomes"]}
             srcs = sorted(l.get("sources") or [], key=lambda s: -s["pts"])
             n = sum(o["n"] for o in l["outcomes"])
             if n < 60:
                 continue
-            sc = outs.get("scored") or {}
-            tov = outs.get("turnover") or {}
-            oreb = outs.get("oreb") or {}
             # EVERY scoring source the ledger separated, not just the biggest —
             # the shape of the whole distribution is the read, and naming only
             # the top one hides that second and third are level.
@@ -589,12 +590,19 @@ def _ported(team_id, gender, tids, fp=None):
                        + " · ".join(f"<b>{s['label']}</b> "
                                     f"{s['share'] * 100:.0f}%" for s in srcs)
                        + "." if srcs else "")
+            # All four outcomes, because they PARTITION the possessions —
+            # naming three of them invites the reader to total 82% and wonder
+            # what happened to the rest. outcome_pcts keeps the four closing
+            # at 100 once rounded.
+            pc = PV.outcome_pcts(l)
             lines.append((
                 f"Possessions {label}", n,
-                f"<b>{sc.get('pct', 0) * 100:.0f}%</b> of these possessions "
-                f"{label} at all; <b>{tov.get('pct', 0) * 100:.0f}%</b> ended "
-                f"in a turnover and <b>{oreb.get('pct', 0) * 100:.0f}%</b> were "
-                f"extended on the offensive glass.{top_bit}"))
+                f"{subject} <b>{pc.get('scored', 0)}%</b> of these "
+                f"possessions in a made field goal, "
+                f"<b>{pc.get('lost', 0)}%</b> in a miss the defense "
+                f"rebounded and <b>{pc.get('turnover', 0)}%</b> in a "
+                f"turnover; the other <b>{pc.get('oreb', 0)}%</b> "
+                f"were extended on the offensive glass.{top_bit}"))
         return lines
 
     def _runs():

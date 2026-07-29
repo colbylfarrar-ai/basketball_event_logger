@@ -69,3 +69,42 @@ def test_none_when_no_possessions():
 def test_team_ledger_bundle():
     b = PV.team_ledger(1, events=_events())
     assert b["offense"]["poss"] == 11 and b["defense"]["poss"] == 2
+
+
+# ── displayed percentages must close at 100 ──────────────────────────────────
+# The four outcomes PARTITION the possessions, so every surface that prints
+# them prints a total the coach will add up. Rounding each share on its own
+# broke that (Adair Girls: 33.5 / 29.8 / 17.8 / 18.9 -> 34+30+18+19 = 101);
+# outcome_pcts uses largest-remainder so the column always closes.
+def test_outcome_pcts_sum_to_100():
+    L = PV.possession_ledger(1, offense=True, events=_events())
+    pc = PV.outcome_pcts(L)
+    assert set(pc) == {"scored", "oreb", "lost", "turnover"}
+    assert sum(pc.values()) == 100
+
+
+def test_outcome_pcts_close_at_100_on_awkward_splits():
+    """The rounding cases that motivated this: independently rounding these
+    gives 101 and 99 respectively."""
+    def led(counts):
+        poss = sum(counts.values())
+        return {"poss": poss,
+                "outcomes": [{"key": k, "n": v} for k, v in counts.items()]}
+
+    # 540/304/480/287 of 1611 -> 33.5 / 18.9 / 29.8 / 17.8 (the real team)
+    pc = PV.outcome_pcts(led({"scored": 540, "oreb": 304,
+                              "lost": 480, "turnover": 287}))
+    assert sum(pc.values()) == 100
+    # every bucket stays within a point of its exact share
+    assert pc["scored"] in (33, 34) and pc["oreb"] in (18, 19)
+    assert pc["lost"] in (29, 30) and pc["turnover"] in (17, 18)
+
+    # a split whose naive rounding UNDERshoots
+    pc = PV.outcome_pcts(led({"scored": 1, "oreb": 1, "lost": 1, "turnover": 3}))
+    assert sum(pc.values()) == 100
+
+
+def test_outcome_pcts_empty_ledger():
+    assert PV.outcome_pcts(None) == {}
+    assert PV.outcome_pcts({}) == {}
+    assert PV.outcome_pcts({"poss": 0, "outcomes": []}) == {}

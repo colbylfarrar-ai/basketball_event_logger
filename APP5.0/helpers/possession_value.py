@@ -106,6 +106,31 @@ def possession_ledger(team_id, offense=True, game_ids=None, events=None):
     }
 
 
+def outcome_pcts(ledger):
+    """{key: whole-number %} for the four outcomes, guaranteed to total 100.
+
+    The outcomes PARTITION the possessions, so every surface that shows them
+    shows a total the coach WILL add up. Rounding each share on its own breaks
+    that in both directions — 33.5 / 29.8 / 17.8 / 18.9 renders as 34+30+18+19
+    = 101, and other splits come to 99. Largest-remainder fixes it: floor every
+    bucket, then hand the leftover points to the largest fractional parts, so
+    no bucket is ever off by more than one and the column always closes.
+
+    Returns {} when there is no ledger to describe.
+    """
+    outs = (ledger or {}).get("outcomes") or []
+    poss = (ledger or {}).get("poss") or 0
+    if not outs or not poss:
+        return {}
+    exact = {o["key"]: 100.0 * o["n"] / poss for o in outs}
+    floors = {k: int(v) for k, v in exact.items()}
+    leftover = 100 - sum(floors.values())
+    # biggest fractional part first; key name breaks ties so it's deterministic
+    for k in sorted(exact, key=lambda k: (-(exact[k] - floors[k]), k))[:leftover]:
+        floors[k] += 1
+    return floors
+
+
 def team_ledger(team_id, game_ids=None, events=None):
     """Both sides in one pass: {'offense': ledger|None, 'defense': ledger|None} —
     the full 'where our points come from' vs 'what we give up' view."""

@@ -5511,12 +5511,16 @@ if _tdview == "Lab":
                             {"Source": s["label"], "Pts/100": s["pts_100"]}
                             for s in _lg["sources"]]), hide_index=True,
                             width="stretch")
-                        _o = {x["key"]: x for x in _lg["outcomes"]}
+                        # The four outcomes are a partition the reader totals —
+                        # outcome_pcts rounds them so they close at 100. eFG is
+                        # a separate rate and stays outside that sum.
+                        import helpers.possession_value as _PVL
+                        _o = _PVL.outcome_pcts(_lg)
                         st.caption(
-                            f"Scored {_o['scored']['pct'] * 100:.0f}% · own board "
-                            f"{_o['oreb']['pct'] * 100:.0f}% · lost "
-                            f"{_o['lost']['pct'] * 100:.0f}% · TOV "
-                            f"{_o['turnover']['pct'] * 100:.0f}% · eFG "
+                            f"Scored {_o.get('scored', 0)}% · own board "
+                            f"{_o.get('oreb', 0)}% · lost "
+                            f"{_o.get('lost', 0)}% · TOV "
+                            f"{_o.get('turnover', 0)}% · eFG "
                             f"{_lg['efg'] * 100:.0f}%")
 
             # ── win probability added ────────────────────────────────────────

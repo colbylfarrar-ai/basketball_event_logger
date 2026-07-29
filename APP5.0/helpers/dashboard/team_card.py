@@ -491,12 +491,18 @@ def render_header(ctx):
             _tids = tuple(_bd["tracked_ids"]) if _bd else None
             _lg = _ledger(ctx.team_id, _tids)
             if _lg and _lg.get("outcomes"):
-                _mix = {o["key"]: o["pct"] for o in _lg["outcomes"]}
-                html += _kv("Possessions scored",
-                            f"{_mix.get('scored', 0) * 100:.0f}%")
+                # The ledger's FOUR outcomes partition the possessions. Showing
+                # only scored/lost/turnover left the offensive-rebound bucket
+                # off, so the three visible rows totalled ~82% and read as a
+                # broken percentage. Every bucket is shown, and outcome_pcts
+                # keeps them closing at 100 once rounded to whole points.
+                import helpers.possession_value as _PV
+                _mix = _PV.outcome_pcts(_lg)
+                html += _kv("Possessions scored", f"{_mix.get('scored', 0)}%")
                 html += _kv("Empty · turned over",
-                            f"{_mix.get('lost', 0) * 100:.0f}% · "
-                            f"{_mix.get('turnover', 0) * 100:.0f}%")
+                            f"{_mix.get('lost', 0)}% · "
+                            f"{_mix.get('turnover', 0)}%")
+                html += _kv("Extended (own board)", f"{_mix.get('oreb', 0)}%")
             st.markdown(html, unsafe_allow_html=True)
         else:
             html += ("<div style='font-size:12px;color:var(--subtext)'>Track games to "

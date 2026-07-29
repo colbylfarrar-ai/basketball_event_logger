@@ -332,19 +332,28 @@ def deserved_verdict(d, team_name="This team"):
         f"<b>{lead_lbl}</b> at ±{lead_abs:.1f}/g."))
 
     # 2. the volume term, named by its cause — the coachable half
+    #
+    # Both causes are margins (us minus them), but they push the shot gap in
+    # OPPOSITE directions: +ORB is more shots, -TOV is also more shots. Printed
+    # raw and side by side ("ORB +5.9 · TOV -10.4" under a +16.5 headline) the
+    # two read as if they should sum to -4.5, and the reader is left to notice
+    # the sign flip on their own. So each is quoted as its CONTRIBUTION to the
+    # shot gap — same sign as the headline — and named in words.
     orb, tov = m["orb_gap"], m["tov_gap"]
     if abs(m["volume"]) >= 1.0:
         cause = []
         if abs(orb) >= 0.7:
-            cause.append(f"ORB <b>{orb:+.1f}</b>")
+            cause.append(f"<b>{orb:+.1f}</b> on the offensive glass")
         if abs(tov) >= 0.7:
-            cause.append(f"TOV <b>{tov:+.1f}</b>")
-        why = (" — " + " · ".join(cause)) if cause else ""
+            cause.append(f"<b>{-tov:+.1f}</b> from "
+                         + ("giving it away less often" if tov < 0
+                            else "giving it away more often"))
+        why = (" — " + " and ".join(cause)) if cause else ""
         lines.append((
             "Extra shots", n,
             f"<b>{m['fga_gap']:+.1f} FGA/g</b> vs opponents, worth "
-            f"<b>{_pts(m['volume'])}</b>{why}. Across the book the shot gap "
-            f"is ORB minus TOV at <b>r = .98</b> — the most directly "
+            f"<b>{_pts(m['volume'])}</b>{why}. Across the book those two "
+            f"account for the shot gap at <b>r = .98</b> — the most directly "
             f"coachable half of the scoreboard."))
 
     # 3. did the shots and possessions agree with the scoreboard

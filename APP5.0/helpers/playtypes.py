@@ -20,6 +20,7 @@ the app: a shot ends a possession, so possessions == FGA and PPP == PPS.
 from __future__ import annotations
 
 from database.db import query
+import helpers.seasons as SEAS
 import helpers.stats as S
 import helpers.team_analytics as TA
 
@@ -88,15 +89,44 @@ def _tier(pct):
 
 # ── tracked game ids for a gender ────────────────────────────────────────────────
 def _tracked_game_ids(gender=None):
-    clause = "WHERE g.tracked = 1 AND g.season = 'Current'"
-    params = []
+    """This gender's tracked games in the active season, falling back to the most
+    recent season that HAS tracked games when the active one is still empty.
+
+    The fallback is the same post-rollover rule as
+    seasons.tracked_default_season_sql() — no games this season yet is a normal
+    state for months, and a coach should see last season rather than a blank app.
+
+    It is applied HERE, per gender, on purpose. It used to happen by accident one
+    layer down: this function returned [], stats._game_filter read an empty list
+    as "no scope given", and the default sample it fell back to
+    (_TRACKED_SUBQUERY) carries no gender predicate. So the fallback worked, but
+    it silently dropped the gender — `_tracked_game_ids('F')` and `('M')` both
+    returned every tracked game of both genders, and e.g. the girls' league
+    shot-quality model was being fit on boys' shots. Falling back with the gender
+    still attached keeps the behaviour a coach wants and loses the bug.
+    """
+    clause = "WHERE g.tracked = 1 AND g.season = ?"
+    params = [SEAS.ACTIVE]
     if gender:
         clause += " AND t1.gender = ?"
         params.append(gender)
-    rows = query(
-        f"SELECT g.id FROM games g JOIN teams t1 ON t1.id = g.team1_id {clause}",
-        tuple(params))
-    return [r["id"] for r in rows]
+    sql = f"SELECT g.id FROM games g JOIN teams t1 ON t1.id = g.team1_id {clause}"
+    rows = query(sql, tuple(params))
+    if rows:
+        return [r["id"] for r in rows]
+    # Active season empty for this gender → most recent season that has tracked
+    # games FOR THIS GENDER (not the league's newest season, which may be the
+    # other gender's).
+    last = query(
+        "SELECT g.season FROM games g JOIN teams t1 ON t1.id = g.team1_id "
+        "WHERE g.tracked = 1 AND g.season != ?"
+        + (" AND t1.gender = ?" if gender else "")
+        + " ORDER BY g.date DESC, g.id DESC LIMIT 1",
+        (SEAS.ACTIVE,) + ((gender,) if gender else ()))
+    if not last:
+        return []
+    params = [last[0]["season"]] + ([gender] if gender else [])
+    return [r["id"] for r in query(sql, tuple(params))]
 
 
 def _shooter_teams(events):

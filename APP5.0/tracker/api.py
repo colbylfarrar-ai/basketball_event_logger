@@ -74,12 +74,17 @@ def _resolve_user(request: Request):
     # below scopes the guest to games the OWNER may write — an assistant link is
     # not a key to the rest of the league.
     grow = query("SELECT u.email, u.role, u.plan, u.paid_until, u.team_id, "
-                 "u.pool_banned FROM tracker_guest_tokens g "
+                 "u.pool_banned, g.game_id AS guest_game_id "
+                 "FROM tracker_guest_tokens g "
                  "JOIN app_users u ON u.email=g.owner_email "
                  "WHERE g.token=? AND g.revoked=0", (tok,))
     if grow:
         u = ENT.gating_identity(grow[0])
         u["guest"] = True
+        # A link pinned to one game reaches only that game (see the game_id
+        # column note in database/db.py). NULL = every game the owner may
+        # write, which is what links issued before the column existed mean.
+        u["guest_game_id"] = grow[0]["guest_game_id"]
         return u
     env_tok = os.environ.get("TRACKER_TOKEN")
     if env_tok and tok == env_tok:
@@ -160,23 +165,41 @@ def _may_read_game(user: dict, g: dict) -> bool:
                                     in_pool=g["in_pool"])
 
 
+def _guest_game_gate(user: dict, game_id: int) -> None:
+    """A guest link PINNED to one game reaches only that game.
+
+    The guest inherits its owner's identity, which already keeps it inside the
+    owner's games — but "the owner's games" is the whole season, and a parent
+    helping at one tournament has no business in the rest of it. A pinned link
+    narrows to a single game; an unpinned one (game_id NULL, which is every link
+    issued before the column existed) keeps the owner-wide reach it was handed
+    out with."""
+    pin = user.get("guest_game_id")
+    if user.get("guest") and pin is not None and int(pin) != int(game_id):
+        raise HTTPException(
+            status_code=403, detail="this assistant link is for a different game")
+
+
 def require_game_read(game_id: int, request: Request) -> dict:
     user = current_api_user(request)
     g = _game_row(game_id)
     if not _may_read_game(user, g):
         raise HTTPException(status_code=403,
                             detail="this game belongs to another coach")
+    _guest_game_gate(user, game_id)
     return user
 
 
 def require_game_write(game_id: int, request: Request) -> dict:
     """Guest-allowed (log/undo). The guest inherits its owner coach's identity,
-    so it reaches exactly the owner's games and no others."""
+    so it reaches exactly the owner's games and no others — and only the ONE
+    game it was pinned to, when it was issued that way."""
     user = current_api_user(request)
     g = _game_row(game_id)
     if not _may_write_game(user, g):
         raise HTTPException(status_code=403,
                             detail="this game belongs to another coach")
+    _guest_game_gate(user, game_id)
     return user
 
 
@@ -310,7 +333,8 @@ def _scoreboard(game_id: int) -> dict:
 
 # ── API routes ──────────────────────────────────────────────────────────────────
 @api.get("/games")
-def list_games(q: str | None = None, season: str | None = None):
+def list_games(q: str | None = None, season: str | None = None,
+               user: dict = Depends(current_api_user)):
     """Tracker game picker. Default = current-season tracked OR recent games,
     capped — a fast, bounded list (the OSSAA importer can hold 13k+ schedule
     rows, which froze the PWA when sent whole). Pass ?q=<text> to SEARCH every
@@ -322,6 +346,11 @@ def list_games(q: str | None = None, season: str | None = None):
             "t1.gender AS gender")
     joins = ("FROM games g JOIN teams t1 ON t1.id=g.team1_id "
              "JOIN teams t2 ON t2.id=g.team2_id")
+    # A pinned assistant link opens exactly one game, so the picker shows that
+    # one — listing the rest would only offer taps the gates then refuse.
+    _pin = user.get("guest_game_id") if user.get("guest") else None
+    if _pin is not None:
+        return {"games": query(f"SELECT {cols} {joins} WHERE g.id=?", (_pin,))}
     szn = "Current" if SEAS.is_current(season) else str(season).strip()
     q = (q or "").strip()
     if len(q) >= 2:

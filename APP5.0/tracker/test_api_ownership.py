@@ -136,6 +136,41 @@ ok(not API._may_write_game(GUEST_OF_ANN, g(10)),
 ok(API._may_write_game(GUEST_OF_ANN, g(12)),
    "but can still score the game Ann's team is playing")
 
+# ── and a PINNED link narrows further, to a single game ──────────────────────
+# Owner-scoping still leaves an assistant the owner's whole season. A link
+# issued for one game now carries that game_id and reaches nothing else, so a
+# parent helping at one tournament is not handed the rest of the year.
+from fastapi import HTTPException                # noqa: E402
+
+PINNED = dict(ANN, guest=True, guest_game_id=12)
+UNPINNED = dict(ANN, guest=True, guest_game_id=None)
+
+
+def _gate_raises(user, game_id):
+    try:
+        API._guest_game_gate(user, game_id)
+        return False
+    except HTTPException as exc:
+        return exc.status_code == 403
+
+
+ok(not _gate_raises(PINNED, 12), "a pinned link opens the game it was issued for")
+# game 11 is unclaimed, so ownership alone WOULD let Ann's assistant write it —
+# which is exactly why the pin has to be a separate check
+ok(API._may_write_game(PINNED, g(11)), "ownership alone would allow game 11")
+ok(_gate_raises(PINNED, 11),
+   "but the pin refuses it — narrowing INSIDE the owner's own reach is the point")
+ok(not _gate_raises(UNPINNED, 11),
+   "an UNPINNED link keeps that owner-wide reach — that is what every link "
+   "issued before the column existed was handed out as, so narrowing them "
+   "retroactively would break an assistant mid-season")
+ok(not _gate_raises(dict(ANN, guest=False, guest_game_id=12), 11),
+   "the pin applies to guests only; a real coach's own token is unaffected")
+
+# the pin is enforced on top of ownership, never instead of it
+ok(not API._may_write_game(PINNED, g(10)),
+   "a pinned link still cannot reach Bob's game either")
+
 
 print("\n-- every game-scoped route actually declares a gate ------------------")
 

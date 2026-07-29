@@ -687,24 +687,53 @@ else:
             st.markdown("**Assistant scorer link** (log-only)")
             _glinks = AUTH.list_guest_tokens(_email)
             _trk = os.environ.get("APP5_TRACKER_URL", "").rstrip("/")
+            # Games this coach could pin a link to: their own teams' games, most
+            # recent first. Kept short — a pinned link is for "this game tonight".
+            _pin_rows = query(
+                "SELECT g.id, g.date, t1.name AS home, t2.name AS away "
+                "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
+                "JOIN teams t2 ON t2.id=g.team2_id "
+                "WHERE g.team1_id IN (SELECT team_id FROM coach_teams WHERE coach_email=?) "
+                "   OR g.team2_id IN (SELECT team_id FROM coach_teams WHERE coach_email=?) "
+                "ORDER BY g.date DESC, g.id DESC LIMIT 40", (_email, _email))
+            _pin_lbl = {r["id"]: f"{r['date']} · {r['home']} vs {r['away']}"
+                        for r in _pin_rows}
             for _g in _glinks:
                 _url = f"{_trk}/?t={_g['token']}" if _trk else f"?t={_g['token']}"
                 st.code(_url, language=None)
+                _gp = _g.get("game_id")
+                if _gp:
+                    st.caption("Scope: **this game only** — "
+                               + _pin_lbl.get(_gp, f"game #{_gp}"))
+                else:
+                    st.caption("Scope: **every game you can track** (not pinned).")
                 if st.button("Revoke link", key=f"glrm_{_g['token'][:10]}"):
                     AUTH.revoke_guest_token(_g["token"])
                     st.rerun()
             _can_glink = (_newplan == "paid") or (_role == "admin")
+            _pin_choice = None
+            if _pin_rows:
+                _pin_sel = st.selectbox(
+                    "Pin the new link to one game",
+                    ["Every game I can track"] + [_pin_lbl[r["id"]] for r in _pin_rows],
+                    key=f"glpin_{_email}",
+                    help="A pinned link opens that game and nothing else — the "
+                         "right choice for a parent helping at one tournament.")
+                if _pin_sel != "Every game I can track":
+                    _pin_choice = next(i for i, l in _pin_lbl.items()
+                                       if l == _pin_sel)
             if st.button("Generate assistant link", key=f"glgen_{_email}",
                          disabled=not _can_glink,
                          help=None if _can_glink else "Paid/admin only."):
-                AUTH.issue_guest_token(_email)
+                AUTH.issue_guest_token(_email, game_id=_pin_choice)
                 st.rerun()
             st.caption(
                 "Reusable, revocable link that lets an assistant LOG events into "
                 "your live games with no account. Can't finish/create games, edit, "
                 "or change settings. Anyone with the link can log — revoke to kill "
-                "it." + ("" if _trk else " Append the shown ?t=<token> to your "
-                "tracker URL."))
+                "it. Pin it to one game unless the assistant really does need the "
+                "whole season." + ("" if _trk else " Append the shown ?t=<token> "
+                "to your tracker URL."))
 
             if st.button("Remove user", key=f"rm_{_email}", disabled=_is_self,
                          help="You can't remove yourself." if _is_self else None):

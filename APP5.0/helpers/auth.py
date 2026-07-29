@@ -105,20 +105,29 @@ def get_tracker_token(email: str) -> str:
 
 
 # ── assistant "scorer" guest links (the link IS the token; log-only) ────────────
-def issue_guest_token(email: str, label: str = "") -> str:
+def issue_guest_token(email: str, label: str = "", game_id=None) -> str:
     """Create a standing, revocable assistant-scorer link token for this coach and
     return it. The tracker API resolves it to this coach but flagged guest, so it
     can only log/undo events — never finish/create/edit. Separate from the coach's
-    own tracker_token, so revoking an assistant never touches the coach."""
+    own tracker_token, so revoking an assistant never touches the coach.
+
+    game_id pins the link to ONE game: it opens that game and nothing else, which
+    is what you want for a parent helping at a single tournament. None (the
+    default, and what every link issued before this existed means) leaves it
+    reaching every game its owner may write."""
     tok = secrets.token_urlsafe(24)
-    execute("INSERT INTO tracker_guest_tokens (token, owner_email, label) "
-            "VALUES (?,?,?)", (tok, (email or "").strip().lower(), label or ""))
+    execute("INSERT INTO tracker_guest_tokens (token, owner_email, label, game_id) "
+            "VALUES (?,?,?,?)", (tok, (email or "").strip().lower(), label or "",
+                                 int(game_id) if game_id else None))
     return tok
 
 
 def list_guest_tokens(email: str):
-    """Active (non-revoked) assistant links for this coach, oldest first."""
-    return query("SELECT token, label, created_at FROM tracker_guest_tokens "
+    """Active (non-revoked) assistant links for this coach, oldest first.
+
+    `game_id` is the single game a link is pinned to, or None for owner-wide."""
+    return query("SELECT token, label, created_at, game_id "
+                 "FROM tracker_guest_tokens "
                  "WHERE owner_email=? AND revoked=0 ORDER BY created_at",
                  ((email or "").strip().lower(),))
 

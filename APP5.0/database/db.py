@@ -345,6 +345,15 @@ def _run_init(db_path):
             " revoked INTEGER NOT NULL DEFAULT 0)",
             "CREATE INDEX IF NOT EXISTS idx_guest_tokens_owner "
             "ON tracker_guest_tokens(owner_email)",
+            # Pin an assistant link to ONE game. Nullable and permanently so:
+            # NULL keeps the original meaning — every game its owner may write —
+            # which is what every link issued before this column existed was
+            # handed out as, and narrowing them retroactively would silently
+            # break an assistant mid-season. A set game_id means the link opens
+            # that game and nothing else, which is what you want for a parent
+            # helping at one tournament. No back-fill.
+            "ALTER TABLE tracker_guest_tokens ADD COLUMN game_id INTEGER "
+            "REFERENCES games(id) ON DELETE CASCADE",
             # Hygiene: rows retyped away from "shot" before update_event learned
             # to clear the tap location kept stale x/y — scrub them so a later
             # flip back to "shot" can't resurrect a wrong court spot.

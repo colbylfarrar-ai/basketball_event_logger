@@ -315,6 +315,46 @@ ok("FOREIGN KEY" in (_res.get("detail") or ""),
 ok(not query("SELECT 1 FROM game_events WHERE client_uuid='u-stale-roster'"),
    "and nothing was written (log_event is atomic)")
 
+# ── a pinned assistant link reaches ONE game, over real HTTP ─────────────────
+print("a pinned assistant link is confined to its game")
+import helpers.auth as _AUTH                                     # noqa: E402
+
+_gid2 = execute("INSERT INTO games (team1_id,team2_id,date) "
+                "VALUES (?,?, date('now'))", (t1, t2))
+_pin_tok = _AUTH.issue_guest_token("coach@test", "Parent", game_id=gid)
+_open_tok = _AUTH.issue_guest_token("coach@test", "Assistant")
+
+
+def _as(tok, method, path, **kw):
+    return getattr(client, method)(path, headers={"Authorization": f"Bearer {tok}"}, **kw)
+
+
+_tap = {"events": [{"uuid": "u-pin-1", "event_type": "shot", "quarter": 1,
+                    "time": "3:00", "primary_player_id": home[0],
+                    "shot_result": "make", "shot_type": 2, "on_court": floor}]}
+r = _as(_pin_tok, "post", f"/api/games/{gid}/events", json=_tap)
+ok(r.status_code == 200, f"the pinned link logs into ITS game ({r.status_code})")
+r = _as(_pin_tok, "post", f"/api/games/{_gid2}/events",
+        json={"events": [dict(_tap["events"][0], uuid="u-pin-2")]})
+ok(r.status_code == 403,
+   f"and is refused on another of the same coach's games ({r.status_code})")
+r = _as(_pin_tok, "get", f"/api/games/{_gid2}")
+ok(r.status_code == 403, f"it cannot even read that game ({r.status_code})")
+ok(not query("SELECT 1 FROM game_events WHERE client_uuid='u-pin-2'"),
+   "nothing was written by the refused call")
+
+_listed = _as(_pin_tok, "get", "/api/games").json()["games"]
+ok([x["id"] for x in _listed] == [gid],
+   f"the picker shows only the pinned game, so the assistant is never offered "
+   f"a tap that would be refused; got {[x['id'] for x in _listed]}")
+
+r = _as(_open_tok, "post", f"/api/games/{_gid2}/events",
+        json={"events": [dict(_tap["events"][0], uuid="u-open-1")]})
+ok(r.status_code == 200,
+   f"an UNPINNED link keeps the owner-wide reach it was issued with ({r.status_code})")
+ok(len(_as(_open_tok, "get", "/api/games").json()["games"]) > 1,
+   "and still sees the full picker")
+
 print("a real client_uuid race is still a duplicate")
 _good = client.post(f"/api/games/{gid}/events", json={"events": [{
     "uuid": "u-race", "event_type": "shot", "quarter": 1, "time": "4:00",

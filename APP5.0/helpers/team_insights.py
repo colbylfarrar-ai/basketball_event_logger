@@ -249,6 +249,43 @@ def _t_forced_tov(tid, ts, fm, pools, d):
     return {"text": txt, "score": abs(z), "z": z, "metric": "Takeaways", "n": n}
 
 
+def _t_off_glass(tid, ts, fm, pools, d):
+    """Offensive-glass share — the extra shots a team buys off its own misses.
+
+    This read was designed but never written: `pools["ORBpct"]` has always been
+    built here, and `insights_severity.TEAM_PTS_RULES` has always mapped a TEAM
+    "Rebounding" finding to the team-ORB pricing. Nothing emitted one, so that
+    converter could never fire — the pricing table documented a read no
+    generator produced. `_t_off_leak` names the offensive glass only in passing,
+    as one half of a possession-game leak.
+
+    Quoted against the field's own mean rather than a z alone, because ORB% is
+    the one four-factor number a coach acts on directly (box out, or crash).
+    """
+    orb = _num(ts, "ORBpct")
+    gp = d.get("trk_gp") or 0
+    pool = pools.get("ORBpct")
+    if orb is None or gp < MIN_TRACKED or not pool:
+        return None
+    z = _z(orb, pool)                      # higher = better
+    if abs(z) < MIN_Z:
+        return None
+    # sample = the rebound CHANCES the rate is measured over, i.e. own misses
+    fga, fgp = _num(ts, "fga_pg"), _num(ts, "FGpct")
+    n = int(round(fga * (1.0 - fgp / 100.0) * gp)) if None not in (fga, fgp) else gp
+    lg = pool[0]
+    if z >= 0:
+        txt = (f"**Owns the offensive glass** — puts back **{orb:.0f}% of their "
+               f"own misses** against a **{lg:.0f}%** field; box out or concede "
+               f"the extra shot every time they miss.")
+    else:
+        txt = (f"**One and done** — only **{orb:.0f}% of their own misses** come "
+               f"back (field **{lg:.0f}%**); they get one look a trip, so a "
+               f"contest ends the possession.")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Rebounding",
+            "n": n}
+
+
 def _t_frontrunner(tid, ts, fm, pools, d):
     """Blowout-vs-close personality: dominant when separated but shaky in tight
     games (front-runner), or the reverse (fighter)."""
@@ -801,7 +838,8 @@ def _t_after_scramble(tid, ts, fm, pools, d):
 
 _TEAM_GENERATORS = [_t_luck, _t_close, _t_volatility, _t_momentum,
                     _t_off_leak, _t_def_leak, _t_three_dep, _t_quarter,
-                    _t_lineup, _t_forced_tov, _t_frontrunner, _t_chemistry,
+                    _t_lineup, _t_forced_tov, _t_off_glass, _t_frontrunner,
+                    _t_chemistry,
                     _t_keys, _t_vs_scheme, _t_runs, _t_rest, _t_predictable,
                     _t_pv_leak, _t_after_push, _t_after_cold, _t_after_scramble,
                     _t_allowed_diet, _t_contest, _t_deserved]

@@ -407,4 +407,37 @@ ok(SEV.dest_label("Charts", ("Offense", "Shooting"))
    "text cannot describe two different places")
 
 
+print("\n-- TEAM_PTS_RULES must be REACHABLE, not documented fiction ---------")
+# materiality() picks TEAM_PTS_RULES only for family == "team", and its sole
+# entry is keyed "Rebounding". For a long time NO team generator emitted that
+# metric — `metric: "Rebounding"` came only from the PLAYER miner — so the team
+# ORB converter could never fire. The pricing table documented a read nothing
+# produced, which is why a 1.7x unit error in it went unnoticed: it had never
+# rendered. This asserts the wiring end to end.
+import helpers.team_insights as _TI                        # noqa: E402
+import inspect                                             # noqa: E402
+
+_gen_src = "".join(inspect.getsource(g) for g in _TI._TEAM_GENERATORS)
+for _m in SEV.TEAM_PTS_RULES:
+    ok(f'"metric": "{_m}"' in _gen_src or f"'metric': '{_m}'" in _gen_src,
+       f"some team generator actually emits metric {_m!r} — otherwise its "
+       f"entry in TEAM_PTS_RULES is dead code and its arithmetic is untested")
+
+# and the team rule, not the player one, is what a team finding is priced with
+_team_fnd = {"family": "team", "metric": "Rebounding", "side": "def"}
+_ctx = {"ts": {"ORBpct": 45.0, "fga_pg": 55.0, "FGpct": 40.0, "poss_pg": 67.0},
+        "ts_all": {1: {"ORBpct": 31.0, "PPP": 0.70},
+                   2: {"ORBpct": 31.0, "PPP": 0.70},
+                   3: {"ORBpct": 31.0, "PPP": 0.70},
+                   4: {"ORBpct": 31.0, "PPP": 0.70},
+                   5: {"ORBpct": 31.0, "PPP": 0.70}}}
+_v = SEV.materiality(_team_fnd, _ctx)
+# (45-31)/100 * 55*(1-0.40) * 0.70 = 0.14 * 33.0 * 0.70 = 3.234
+ok(abs(_v - 3.234) < 0.01,
+   f"the team chip prices off MISSES (rebound chances), not attempts — "
+   f"attempts would read 5.39; got {_v:.3f}")
+ok(SEV.materiality(dict(_team_fnd, family="player"), _ctx) != _v,
+   "and a PLAYER Rebounding finding does NOT take the team conversion — they "
+   "are different quantities that happen to share a name")
+
 print(f"\nALL {PASSED} CHECKS PASSED")

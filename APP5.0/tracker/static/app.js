@@ -1351,17 +1351,20 @@ function makeSelect(options, selected, onChange, numeric) {
   none.value = '';
   none.textContent = '—';
   sel.appendChild(none);
-  let curGroup = null, curOG = null;
+  // Groups are keyed by LABEL, not by "changed since the last option", so a
+  // non-contiguous list still yields one section per team instead of a repeated
+  // team header every time the group flips.
+  const groups = {};
   options.forEach(function (op) {
     let parent = sel;
     if (op.group) {
-      if (op.group !== curGroup) {
-        curOG = document.createElement('optgroup');
-        curOG.label = op.group;
-        sel.appendChild(curOG);
-        curGroup = op.group;
+      if (!groups[op.group]) {
+        const og = document.createElement('optgroup');
+        og.label = op.group;
+        sel.appendChild(og);
+        groups[op.group] = og;
       }
-      parent = curOG;
+      parent = groups[op.group];
     }
     const o = document.createElement('option');
     o.value = String(op.v);
@@ -1941,8 +1944,26 @@ const EDIT_ZONES = ['LC', 'LW', 'C', 'RW', 'RC'];
 
 const ED = { events: [], filter: 0, openId: null, form: null, from: 'tracker' };  // filter 0 = all
 
+// Editor pickers mirror the tracker's layout: HOME first, then AWAY, each team
+// contiguous and in jersey order with the archived (event-only) refs last.
+// The /games/{id} payload orders the roster by team_id and APPENDS the
+// event-referenced extras, so the raw order neither leads with home nor keeps a
+// team together — which is why the editor's dropdowns read as one flat list in
+// no coach-visible order instead of two team sections.
 function rosterIds() {
-  return ((S.game && S.game.players) || []).map(function (p) { return p.id; });
+  const g = S.game;
+  function sideRank(p) {
+    if (!g) return 2;
+    if (p.team_id === g.home.id) return 0;
+    if (p.team_id === g.away.id) return 1;
+    return 2;
+  }
+  return ((g && g.players) || []).slice().sort(function (a, b) {
+    return sideRank(a) - sideRank(b)
+      || (a.archived ? 1 : 0) - (b.archived ? 1 : 0)
+      || (parseInt(a.number, 10) || 0) - (parseInt(b.number, 10) || 0)
+      || String(a.name || '').localeCompare(String(b.name || ''));
+  }).map(function (p) { return p.id; });
 }
 
 async function loadEditorEvents() {

@@ -100,8 +100,8 @@ def build_context(team_id, gender=None, game_ids=None, season="Current"):
     """
     # When no explicit game_ids (own team / open archive → entitlement returns
     # None = unrestricted), resolve the team's tracked games FOR `season` — NOT
-    # via the 'Current'-hardcoded _team_game_ids, which reads zero on any archive
-    # season (the founder's "no tracked games for 2025-2026" bug).
+    # via _team_game_ids, which answers for the DEFAULT season and so reads zero
+    # on any archive season (the founder's "no tracked games for 2025-2026" bug).
     if game_ids is not None:
         gids = list(game_ids)
     else:

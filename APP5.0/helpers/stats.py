@@ -2082,18 +2082,29 @@ def team_summary(team_id, opp_id=None, outcome=None, game_ids=None, season="Curr
 #  sparsely-tracked sample — the helpers return opportunity counts so the UI can
 #  gate on sample size.
 
+# Both defaults below used to hardcode season='Current', which is EMPTY for the
+# first weeks of a season — so a no-arg call in that window returned no games and
+# the engines above it reported, in good faith, that a team has no key players
+# and no on/off signal. Same post-rollover gap the DWPA EP=0.0 bug came from, and
+# the same fix: fall back to the most recently played season that has tracked
+# games (seasons.tracked_default_season_sql). Every one of these readers goes on
+# to call fetch_events(), so a season with no tracked games has nothing to offer
+# either function and the tracked-games test is the right one for both.
+# An explicit game_ids still wins — this only decides the DEFAULT pool.
+
 def _team_game_ids(team_id):
-    """Tracked game ids the team appears in, active season only. Single source
+    """Tracked game ids the team appears in, default season only. Single source
     for the Tier-2 helpers (concession / possession_value / rotation_plan)."""
     return [r["id"] for r in query(
         "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
-        "AND season='Current'", (team_id, team_id))]
+        f"AND season = {SEAS.tracked_default_season_sql()}", (team_id, team_id))]
 
 
 def _team_game_ids_all(team_id):
-    """All game ids the team appears in (tracked or not), active season only."""
+    """All game ids the team appears in (tracked or not), default season only."""
     rows = query("SELECT id FROM games WHERE (team1_id=? OR team2_id=?) "
-                 "AND season='Current'", (team_id, team_id))
+                 f"AND season = {SEAS.tracked_default_season_sql()}",
+                 (team_id, team_id))
     return [r["id"] for r in rows]
 
 

@@ -26,6 +26,7 @@ import helpers.defenses as DEF
 import helpers.playtypes as PT
 import helpers.fouls as FOULS
 import helpers.game_events as GE
+import helpers.officials as OFF
 import helpers.seasons as SEAS
 import helpers.turnovers as TOV
 from PIL import Image
@@ -1517,10 +1518,16 @@ with st.expander("＋ Quick Add Player / Official"):
             delta = st.session_state.get("qa_officials_editor", {})
             added = delta.get("added_rows", [])
             saved = 0
+            # Badge numbers are unique only within a state association, so the
+            # quick-add stamps the host's state; OR IGNORE then means "this ref is
+            # already on the books HERE", not "somebody in another state shares
+            # the number".
+            _qa_state = OFF.state_for_game(game_id)
             for r in added:
                 if r.get("name","").strip() and r.get("official_id") is not None:
-                    execute("INSERT OR IGNORE INTO officials (name, official_id) VALUES (?,?)",
-                            (r["name"].strip(), int(r["official_id"])))
+                    execute("INSERT OR IGNORE INTO officials "
+                            "(name, official_id, state) VALUES (?,?,?)",
+                            (r["name"].strip(), int(r["official_id"]), _qa_state))
                     saved += 1
             if saved:
                 st.success(f"Added {saved} official(s).")

@@ -20,6 +20,7 @@ import helpers.entitlement as ENT
 import helpers.manual_box as MB
 import helpers.seasons as SZ
 import helpers.identity as IDN
+import helpers.officials as OFF
 
 _cfg, ACCENT = page_chrome("Setup")
 
@@ -444,13 +445,21 @@ with t_box:
                             _oid = query(     # never collides with real ref IDs
                                 "SELECT COALESCE(MIN(official_id),0)-1 AS x "
                                 "FROM officials")[0]["x"]
-                        # create or revive the ref (mirrors the tracker's add path)
+                        # create or revive the ref (mirrors the tracker's add path).
+                        # Badge numbers repeat across state associations, so the ref
+                        # is keyed on (badge, state) and the state comes off the
+                        # host team — the same number in another state is somebody
+                        # else and must not be overwritten here.
+                        _ostate = OFF.state_for_game(gsel["id"])
                         execute(
-                            "INSERT INTO officials (name, official_id) VALUES (?,?) "
-                            "ON CONFLICT(official_id) DO UPDATE SET archived=0, "
-                            "name=excluded.name", (_newnm.strip(), int(_oid)))
-                        _row = query("SELECT id FROM officials WHERE official_id=?",
-                                     (int(_oid),))
+                            "INSERT INTO officials (name, official_id, state) "
+                            "VALUES (?,?,?) "
+                            "ON CONFLICT(official_id, state) DO UPDATE SET archived=0, "
+                            "name=excluded.name",
+                            (_newnm.strip(), int(_oid), _ostate))
+                        _row = query("SELECT id FROM officials "
+                                     "WHERE official_id=? AND state=?",
+                                     (int(_oid), _ostate))
                         if _row:
                             _pids.append(_row[0]["id"])
                     # replace the crew for this game with the chosen set

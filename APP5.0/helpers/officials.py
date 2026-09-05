@@ -58,7 +58,35 @@ def _games(gender=None, allow=None, season="Current"):
 
 
 def _officials():
-    return {r["id"]: r for r in query("SELECT id, name, official_id FROM officials")}
+    return {r["id"]: r
+            for r in query("SELECT id, name, official_id, state FROM officials")}
+
+
+# ── badge scope ─────────────────────────────────────────────────────────────
+#  `officials.official_id` is an association badge number, unique only within the
+#  state that issued it: Arkansas #1234 and Oklahoma #1234 are two people, and
+#  UNIQUE(official_id, state) is what keeps their careers apart. So every add
+#  path has to know which state it is adding into, and the answer is the host's:
+#  associations assign crews inside the home team's state.
+DEFAULT_STATE = "OK"      # this is an Oklahoma app; matches the column default
+
+
+def state_for_game(game_id) -> str:
+    """The state whose association assigned this game's crew.
+
+    The HOME team's (team1) — a travelling team plays under the host's officials.
+    Falls back to the away team when the home team has no state, then to
+    DEFAULT_STATE, so this never returns an empty string into a NOT NULL column.
+    """
+    row = query(
+        "SELECT t1.state AS home, t2.state AS away FROM games g "
+        " JOIN teams t1 ON t1.id = g.team1_id "
+        " JOIN teams t2 ON t2.id = g.team2_id WHERE g.id=?", (game_id,))
+    if not row:
+        return DEFAULT_STATE
+    return ((row[0]["home"] or "").strip()
+            or (row[0]["away"] or "").strip()
+            or DEFAULT_STATE)
 
 
 def _worked(game_ids):
@@ -315,7 +343,7 @@ def official_overview(gender=None, game_ids=None, season="Current"):
     `game_ids` is the entitlement read-filter (see _games): None = unrestricted.
 
     Each official row:
-      off_pk, name, ext_id
+      off_pk, name, ext_id, state
       games            games worked
       fouls            fouls THIS ref called (assigned foul events)
       FPG              fouls / game
@@ -404,6 +432,9 @@ def official_overview(gender=None, game_ids=None, season="Current"):
             "off_pk": opk,
             "name": o["name"],
             "ext_id": o["official_id"],
+            # The badge is only unique inside its association, so the state
+            # travels with it — two refs CAN share a number (see state_for_game).
+            "state": o["state"] or DEFAULT_STATE,
             "games": n,
             "fouls": ftot,
             "strategic_calls": f_strat.get(opk, 0),

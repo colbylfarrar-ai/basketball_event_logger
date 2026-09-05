@@ -1060,7 +1060,10 @@ async function quickAddOfficial() {
   try {
     const res = await api('/api/officials', {
       method: 'POST',
-      body: JSON.stringify({ name: name, official_id: oid })
+      // gameId scopes the badge number to a state association: #1234 in Arkansas
+      // and #1234 in Oklahoma are two different officials, and the server keys
+      // the ref on (badge, host state) rather than the badge alone.
+      body: JSON.stringify({ name: name, official_id: oid, game_id: S.gameId })
     });
     if (!res.ok) { st.textContent = 'Failed (HTTP ' + res.status + ')'; return; }
     const d = await res.json();

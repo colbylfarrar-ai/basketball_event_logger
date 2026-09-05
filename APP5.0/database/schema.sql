@@ -48,12 +48,17 @@ CREATE TABLE IF NOT EXISTS schedule (
     season      TEXT    NOT NULL DEFAULT 'Current'
 );
 
+-- official_id is the association's badge number, unique only WITHIN a state:
+-- Arkansas #1234 and Oklahoma #1234 are two different people. The uniqueness is
+-- therefore on the PAIR. `state` defaults to 'OK' (this is an Oklahoma app) and
+-- is stamped from the home team's state on every add path.
 CREATE TABLE IF NOT EXISTS officials (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
-    official_id INTEGER NOT NULL UNIQUE,
+    official_id INTEGER NOT NULL,
     archived    INTEGER NOT NULL DEFAULT 0,
-    state       TEXT    NOT NULL DEFAULT 'OK'
+    state       TEXT    NOT NULL DEFAULT 'OK',
+    UNIQUE(official_id, state)
 );
 
 CREATE TABLE IF NOT EXISTS game_lineup_players (

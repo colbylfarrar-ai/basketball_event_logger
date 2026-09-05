@@ -52,6 +52,16 @@ _ARGB = f"{_AR},{_AG},{_AB}"
 #  SHARED HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _badge(r):
+    """A ref's badge as displayed. Badge numbers are unique only inside the
+    association that issued them, so an out-of-state ref carries the state with
+    the number - otherwise Arkansas #1234 and Oklahoma #1234 read as the same
+    official on this page."""
+    _st = (r.get("state") or OFF.DEFAULT_STATE)
+    return (f"{r['ext_id']}" if _st == OFF.DEFAULT_STATE
+            else f"{r['ext_id']} · {_st}")
+
+
 def _scatter(rows, xk, yk, xlab, ylab, xfmt, yfmt, color=ACCENT, qkey="games", qmin=1):
     """Bubble scatter of officials over two metrics, labelled by name."""
     pool = [r for r in rows
@@ -491,7 +501,7 @@ with tab_over:
     st.markdown("<div class='lab-hdr'>Full official table</div>",
                 unsafe_allow_html=True)
     full = pd.DataFrame([{
-        "Official": r["name"], "ID": r["ext_id"], "GW": r["games"],
+        "Official": r["name"], "ID": _badge(r), "GW": r["games"],
         "Fouls": r["fouls"], "FPG": round(r["FPG"], 1),
         "FP100": round(r["FP100"], 1),
         "Call share": round(r["foul_share"] * 100, 0),
@@ -693,7 +703,7 @@ def _fx_individual():
     pick = st.selectbox("Official", list(by_name.keys()), key="ind_pick")
     r = by_name[pick]
 
-    st.markdown(f"### {r['name']}  ·  ID {r['ext_id']}")
+    st.markdown(f"### {r['name']}  ·  ID {_badge(r)}")
 
     # league FPG (min 1 game) for a vs-league delta
     fpg_pool = [x["FPG"] for x in rows if x["games"] >= 1]

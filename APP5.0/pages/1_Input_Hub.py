@@ -11,6 +11,7 @@ from helpers.ui import page_chrome, page_header, lab_hero as _lab_hero, seg as _
 import helpers.seasons as SZ
 import helpers.auth as AUTH
 import helpers.change_requests as CR
+import helpers.officials as OFF
 
 _cfg, ACCENT = page_chrome("Input Hub")
 _me = AUTH.current_user()
@@ -1073,15 +1074,20 @@ if _hubview == "Officials":
     if st.button("Save Changes", key="save_officials", type="primary"):
         def ins_official(r):
             if r.get("name", "").strip() and r.get("official_id") is not None:
-                # Re-adding a previously-archived ref (same official_id) revives them
-                # (un-archive); the stored name is kept, matching the tracker API.
+                # Re-adding a previously-archived ref (same badge in the same
+                # state) revives them (un-archive); the stored name is kept,
+                # matching the tracker API. Badge numbers repeat across states, so
+                # the conflict target is the PAIR — the same number under another
+                # state is a different official and gets its own row.
                 execute(
                     "INSERT INTO officials (name, official_id, state) VALUES (?,?,?) "
-                    "ON CONFLICT(official_id) DO UPDATE SET archived=0",
-                    (r["name"].strip(), int(r["official_id"]), (r.get("state") or "OK")))
+                    "ON CONFLICT(official_id, state) DO UPDATE SET archived=0",
+                    (r["name"].strip(), int(r["official_id"]),
+                     (r.get("state") or OFF.DEFAULT_STATE).strip().upper()))
         def upd_official(r):
             execute("UPDATE officials SET name=?, official_id=?, state=? WHERE id=?",
-                    (r["name"].strip(), int(r["official_id"]), (r.get("state") or "OK"), r["id"]))
+                    (r["name"].strip(), int(r["official_id"]),
+                     (r.get("state") or OFF.DEFAULT_STATE).strip().upper(), r["id"]))
         def del_official(r):
             if _gated_delete("officials", r["id"], f"official '{r.get('name','?')}'"):
                 if delete_or_archive_official(r["id"]) == "archived":

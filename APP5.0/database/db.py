@@ -846,6 +846,76 @@ def _run_init(db_path):
             skipped.append(("mig_coach_notes_v1",
                             f"{type(exc).__name__}: {exc}"))
 
+        # One-time: officials.official_id was globally UNIQUE, but an association
+        # badge number is unique only WITHIN a state — Arkansas #1234 and Oklahoma
+        # #1234 are two different people. Under the old constraint the first
+        # out-of-state crew silently un-archived and renamed the same-numbered
+        # in-state ref and pooled two careers into one row. SQLite cannot drop a
+        # column-level UNIQUE, so the table is rebuilt with UNIQUE(official_id,
+        # state). `id` values are copied verbatim, so every FK pointing at
+        # officials(id) (game_lineup_officials, game_events.official_id) still
+        # resolves. foreign_keys is off for the swap only because DROP TABLE would
+        # otherwise CASCADE the crew rows away, and legacy_alter_table is on so the
+        # RENAME does not rewrite those tables' `REFERENCES officials` clauses.
+        try:
+            done = conn.execute(
+                "SELECT value FROM app_settings "
+                "WHERE key='mig_officials_state_unique_v1'").fetchone()
+            if not done:
+                # A unique index over official_id ALONE is the old shape; a DB
+                # created from today's schema.sql already has the pair and needs
+                # no swap.
+                needs = False
+                for _idx in conn.execute("PRAGMA index_list('officials')").fetchall():
+                    if not _idx[2]:                       # not a UNIQUE index
+                        continue
+                    cols = [c[2] for c in conn.execute(
+                        f"PRAGMA index_info('{_idx[1]}')").fetchall()]
+                    if cols == ["official_id"]:
+                        needs = True
+                if needs:
+                    conn.commit()
+                    _iso = conn.isolation_level
+                    conn.isolation_level = None           # explicit txn control
+                    conn.execute("PRAGMA foreign_keys=OFF")
+                    conn.execute("PRAGMA legacy_alter_table=ON")
+                    try:
+                        conn.execute("BEGIN")
+                        conn.execute(
+                            "CREATE TABLE officials_new ("
+                            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                            " name TEXT NOT NULL,"
+                            " official_id INTEGER NOT NULL,"
+                            " archived INTEGER NOT NULL DEFAULT 0,"
+                            " state TEXT NOT NULL DEFAULT 'OK',"
+                            " UNIQUE(official_id, state))")
+                        # Backfill: every row that predates the `state` column is
+                        # Oklahoma by definition (that was the column default and
+                        # the only association in the book).
+                        conn.execute(
+                            "INSERT INTO officials_new"
+                            " (id, name, official_id, archived, state) "
+                            "SELECT id, name, official_id, archived,"
+                            " COALESCE(NULLIF(TRIM(state),''),'OK') FROM officials")
+                        conn.execute("DROP TABLE officials")
+                        conn.execute("ALTER TABLE officials_new RENAME TO officials")
+                        conn.execute("COMMIT")
+                    except sqlite3.Error:
+                        conn.execute("ROLLBACK")
+                        raise
+                    finally:
+                        conn.execute("PRAGMA legacy_alter_table=OFF")
+                        conn.execute("PRAGMA foreign_keys=ON")
+                        conn.isolation_level = _iso
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_settings (key, value) "
+                    "VALUES ('mig_officials_state_unique_v1','1')")
+                conn.commit()
+        except sqlite3.Error as exc:
+            conn.rollback()
+            skipped.append(("mig_officials_state_unique_v1",
+                            f"{type(exc).__name__}: {exc}"))
+
         conn.commit()
     finally:
         conn.close()

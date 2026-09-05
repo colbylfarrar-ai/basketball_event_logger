@@ -38,6 +38,7 @@ import helpers.event_log as EL
 import helpers.game_events as GE
 import helpers.entitlement as ENT
 import helpers.identity as IDN
+import helpers.officials as OFF
 import helpers.public_feed as PF
 import helpers.seasons as SEAS
 
@@ -323,6 +324,13 @@ class PublicToggle(BaseModel):
 class NewOfficial(BaseModel):
     name: str
     official_id: int
+    # A badge number is unique only inside the association that issued it, so an
+    # add has to say WHICH state. The client sends the game it is adding from and
+    # the state is taken off the host (helpers/officials.state_for_game); an
+    # explicit `state` overrides it, and a client that sends neither lands in the
+    # default state, which is where every pre-existing row already sits.
+    game_id: int | None = None
+    state: str | None = None
 
 
 def _scoreboard(game_id: int) -> dict:
@@ -741,13 +749,19 @@ def set_player_handedness(game_id: int, player_id: int, body: HandednessUpdate,
 def quick_add_official(o: NewOfficial, _: dict = Depends(require_full_user)):
     if not o.name.strip():
         raise HTTPException(status_code=422, detail="name required")
-    # Re-adding a previously-archived ref (same official_id) revives them. Keep the
-    # STORED name on collision (the caller displays it back) — only un-archive.
-    execute("INSERT INTO officials (name, official_id) VALUES (?,?) "
-            "ON CONFLICT(official_id) DO UPDATE SET archived=0",
-            (o.name.strip(), int(o.official_id)))
-    row = query("SELECT id, name FROM officials WHERE official_id=?",
-                (o.official_id,))
+    state = (o.state or "").strip().upper()
+    if not state:
+        state = (OFF.state_for_game(o.game_id) if o.game_id
+                 else OFF.DEFAULT_STATE)
+    # Re-adding a previously-archived ref (same badge in the SAME state) revives
+    # them. Keep the STORED name on collision (the caller displays it back) —
+    # only un-archive. The same number in another state is a different official
+    # and inserts as its own row instead of overwriting this one.
+    execute("INSERT INTO officials (name, official_id, state) VALUES (?,?,?) "
+            "ON CONFLICT(official_id, state) DO UPDATE SET archived=0",
+            (o.name.strip(), int(o.official_id), state))
+    row = query("SELECT id, name FROM officials WHERE official_id=? AND state=?",
+                (o.official_id, state))
     if not row:
         raise HTTPException(status_code=422, detail="could not save official")
     GE.bump_data_version()

@@ -27,9 +27,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 _TMP = tempfile.mkdtemp(prefix="app5_pool_rollover_")
 os.environ["APP5_DATA_DIR"] = _TMP
 
-from database.db import execute, query          # noqa: E402  (migrates _TMP db)
+import database.db as DB                        # noqa: E402
+from database.db import execute, query          # noqa: E402
 import helpers.seasons as SEAS                  # noqa: E402
 import helpers.stats as S                       # noqa: E402
+
+# Migrate THIS module's temp DB. database.db does not initialise on import, and
+# under `pytest tracker/` an earlier module has already pointed the process at
+# its own APP5_DATA_DIR — see the hazard note in conftest.py.
+DB.initialize_database()
 
 _HOME, _AWAY = 7001, 7002
 _PAST = "2025-2026"

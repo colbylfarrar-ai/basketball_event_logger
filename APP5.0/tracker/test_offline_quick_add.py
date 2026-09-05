@@ -31,8 +31,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient            # noqa: E402
 
+import database.db as DB                             # noqa: E402
 from database.db import execute, query               # noqa: E402
 from tracker.api import app                          # noqa: E402
+
+# tracker.api runs initialize_database() the FIRST time it is imported, against
+# whichever APP5_DATA_DIR was set then. Under `pytest tracker/` that is another
+# module's temp dir, and the import above is a cached no-op — so this module has
+# to migrate its own DB or every write below lands on "no such table".
+# (conftest.py describes the same hazard from the other direction.)
+DB.initialize_database()
 
 _SRC = (Path(__file__).resolve().parent / "static" / "app.js").read_text(
     encoding="utf-8")

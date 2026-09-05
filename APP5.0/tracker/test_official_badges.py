@@ -29,6 +29,13 @@ import helpers.officials as OFF                      # noqa: E402
 from database.db import execute, query               # noqa: E402
 from tracker.api import app                          # noqa: E402
 
+# tracker.api runs initialize_database() the FIRST time it is imported, against
+# whichever APP5_DATA_DIR was set then. Under `pytest tracker/` that is another
+# module's temp dir, and the import above is a cached no-op — so this module has
+# to migrate its own DB or every write below lands on "no such table".
+# (conftest.py describes the same hazard from the other direction.)
+DB.initialize_database()
+
 # Two hosts in two states, so a game can be pinned to either association.
 _OK = execute("INSERT INTO teams (name, class, gender, state) "
               "VALUES ('Okla High','3A','M','OK')")

@@ -92,4 +92,37 @@ for t in (0.0, 900.0, 1900.0):
     ok(abs(WP.win_prob(0, REG - t, REG) - 0.5) < 1e-9,
        f"tied at {int(t)}s elapsed -> 50%")
 
+# ── 7. the same thing on REAL events, truncated mid-game ─────────────────────
+# Every game in the DB is finished, and a finished game SHOULD resolve to 0/1 —
+# so replaying one only as far as halftime is the only way to reproduce what a
+# bench actually saw. This is the regression: a real game, real events, and a
+# score line that must not read as decided at the half.
+try:
+    import helpers.stats as S
+    from database.db import query
+
+    gid = query("""SELECT g.id FROM games g WHERE g.tracked=1
+                   ORDER BY g.id DESC LIMIT 1""")
+    if not gid:
+        print("  --  no tracked game on file; live replay skipped")
+    else:
+        gid = gid[0]["id"]
+        g = query("SELECT team1_id, team2_id FROM games WHERE id=?", (gid,))[0]
+        evs = S.fetch_events([gid])
+        half = [e for e in evs if (e["quarter"] or 1) <= 2]
+
+        done = WPA.possession_timeline(evs, g["team1_id"], g["team2_id"], end=REG)
+        mid = WPA.possession_timeline(half, g["team1_id"], g["team2_id"], end=REG)
+        ok(len(mid) >= 2, f"game {gid}: the first half is a curve ({len(mid)} steps)")
+        ok(0.0 < mid[-1][2] < 1.0,
+           f"game {gid}: halftime win probability is live, not resolved "
+           f"({mid[-1][2] * 100:.0f}%)")
+        ok(0.02 < min(p for _t, _m, p in mid) and max(
+            p for _t, _m, p in mid) < 0.995,
+           "no point in the first half is a settled game")
+        # and the finished game still resolves, which is correct.
+        ok(len(done) >= len(mid), "the full game is at least as long a curve")
+except Exception as exc:                                    # pragma: no cover
+    print(f"  --  live replay skipped ({type(exc).__name__}: {exc})")
+
 print(f"\n{PASS} checks passed")

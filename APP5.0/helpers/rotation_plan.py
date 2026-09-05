@@ -179,6 +179,114 @@ def foul_prone(team_id, game_ids=None, min_minutes=24):
     return out
 
 
+# How long the stars can all sit before it is worth saying something, and how
+# long before it is worth saying it loudly. A whole quarter is 8 minutes, so two
+# and four minutes are "a long rest" and "most of a quarter".
+STARS_OFF_NOTE_SECS = 120
+STARS_OFF_ALERT_SECS = 240
+
+
+def _tracked_games_in_season_of(team_id, game_id):
+    """The team's tracked games in THE GAME'S OWN season.
+
+    Not stats._team_game_ids, which hardcodes season='Current'. A live game is
+    usually in the active season and the two agree — but right after a rollover
+    the active-season sentinel holds no games at all, and a default scoped to it
+    would quietly report that the team has no key players rather than reading
+    the season the game actually belongs to."""
+    return [r["id"] for r in query(
+        """SELECT g.id FROM games g
+           WHERE (g.team1_id=? OR g.team2_id=?) AND g.tracked=1
+             AND g.season = (SELECT season FROM games WHERE id=?)""",
+        (team_id, team_id, game_id))]
+
+
+def live_star_watch(team_id, game_id, now_secs, n=DEFAULT_TOP, stars=None,
+                    season_game_ids=None):
+    """The LIVE twin of star_coverage: are your key players on the floor right
+    now, and if not, how long have they all been off together?
+
+    star_coverage answers this after the fact, over a season — "you bleed X/100
+    in the minutes neither star is on". That is a planning read. The decision it
+    implies is made during a game, with a clock running, and nothing was telling
+    a coach they were four minutes into exactly those minutes.
+
+    `now_secs` is elapsed game seconds at the latest logged event (the caller
+    already computes it for the win-probability and foul-watch strips; taking it
+    keeps one clock model). `stars` overrides the auto top-`n`-by-minutes pick,
+    which is drawn from the team's OTHER tracked games — a live game's partial
+    minutes must not decide who counts as a star.
+
+    Returns {stars, on, off, off_secs, bleed, risk, note}. `risk` is 'low' while
+    a star is on, then 'note' / 'alert' by how long they have all been off.
+    Never raises: a game with no lineup snapshots returns risk 'low'."""
+    prior = [g for g in (season_game_ids if season_game_ids is not None
+                         else _tracked_games_in_season_of(team_id, game_id))
+             if g != game_id]
+    star_rows = ([{"pid": p} for p in stars] if stars
+                 else _top_by_minutes(team_id, prior, n))
+    if not star_rows:
+        return {"stars": [], "on": [], "off": [], "off_secs": 0.0,
+                "bleed": None, "risk": "low", "note": ""}
+    if stars:
+        nm = {r["id"]: r["name"] for r in query(
+            "SELECT id, name FROM players WHERE team_id=?", (team_id,))}
+        star_rows = [{"pid": p, "name": nm.get(p, str(p))} for p in stars]
+    starset = {r["pid"] for r in star_rows}
+    name_of = {r["pid"]: r.get("name", str(r["pid"])) for r in star_rows}
+
+    rot = GF.rotation(game_id)
+    mine = [r for r in rot["teams"].get(team_id, []) if r["player_id"] in starset]
+
+    # Every second a star was on, merged — the same union star_coverage takes,
+    # here so "off together" means off together and not merely subbed apart.
+    covered = _union_len([s for r in mine for s in r["segments"]])
+    on_now, last_on_end = [], 0.0
+    for r in mine:
+        for s, e in r["segments"]:
+            if s <= now_secs <= e:
+                on_now.append(name_of.get(r["player_id"], r["name"]))
+                break
+        last_on_end = max([last_on_end] + [e for _s, e in r["segments"]
+                                           if e <= now_secs])
+
+    off_secs = 0.0 if on_now else max(0.0, now_secs - last_on_end)
+    risk = ("low" if on_now
+            else "alert" if off_secs >= STARS_OFF_ALERT_SECS
+            else "note" if off_secs >= STARS_OFF_NOTE_SECS
+            else "low")
+
+    bleed = None
+    if prior:
+        try:
+            bleed = star_coverage(team_id, n=n, game_ids=prior,
+                                  stars=sorted(starset))["bleed"]
+        except Exception:
+            bleed = None
+
+    names = " & ".join(name_of[p] for p in sorted(starset,
+                                                  key=lambda p: name_of[p]))
+    if on_now:
+        note = f"{', '.join(sorted(on_now))} on the floor."
+    elif risk == "low":
+        note = f"{names} resting ({off_secs / 60:.1f} min)."
+    else:
+        cost = (f" — you have been {bleed:.1f}/100 worse in these minutes "
+                f"this season" if bleed and bleed > 0 else "")
+        # "has", "have both", "have all" — the star count is a setting, so the
+        # sentence has to survive n != 2.
+        verb = ("has" if len(starset) == 1
+                else "have both" if len(starset) == 2 else "have all")
+        note = (f"{names} {verb} been off for {off_secs / 60:.1f} min"
+                f"{cost}.")
+    return {"stars": star_rows, "on": sorted(on_now),
+            "off": sorted(name_of[p] for p in starset
+                          if name_of[p] not in on_now),
+            "off_secs": round(off_secs, 1),
+            "covered_secs": round(covered, 1),
+            "bleed": bleed, "risk": risk, "note": note}
+
+
 def foul_out_projection(fouls, min_played, secs_left, foul_limit=FOUL_LIMIT):
     """Live foul-out advisor. At the player's current foul pace, project minutes to
     foul-out and a sit-now risk tier.

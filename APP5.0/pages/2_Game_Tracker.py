@@ -360,8 +360,8 @@ _gt_view = _seg_ui("View", [_V_LIVE, _V_LOG], key="gt_view",
 
 # The Live side's insight picker — which panels the bench wants on screen.
 _LIVE_PANELS = ["Win probability", "Win formula", "Courtside strip",
-                "Box score", "Rosters", "Foul watch", "Shot chart",
-                "Play-by-play", "Scout cues"]
+                "Box score", "Rosters", "Rotation watch", "Foul watch",
+                "Shot chart", "Play-by-play", "Scout cues"]
 if _gt_view == _V_LIVE:
     _live_sel = st.multiselect(
         "Insights", _LIVE_PANELS, default=_LIVE_PANELS, key="gt_live_panels",
@@ -861,6 +861,35 @@ def _render_command_center():
                     st.caption("No roster yet — add players on Setup or the "
                                "phone's Quick Add.")
         st.caption("● = on the floor at the latest logged event.")
+
+    # ── rotation watch: the LIVE twin of the season star-coverage read. That
+    #    read tells a coach they bleed X/100 in the minutes neither key player is
+    #    on; this one tells them they are IN those minutes right now, with a
+    #    clock on it. Both teams, like the foul watch beside it — the opponent's
+    #    stars being off is the other half of the decision. Paid depth, guarded
+    #    — never blocks. ────────────────────────────────────────────────────────
+    if not is_tracked and _paid_view and _panel_on("Rotation watch"):
+        try:
+            import helpers.rotation_plan as _RP2
+            _QSEC = 480
+            _rec2 = max(events_asc, key=lambda e: (e["quarter"],
+                                                   -GE.time_to_secs(e["time"]),
+                                                   e["id"]))
+            _rq2, _rr2 = _rec2["quarter"], GE.time_to_secs(_rec2["time"])
+            _el2 = ((_rq2 - 1) * _QSEC + (_QSEC - _rr2) if _rq2 <= 4
+                    else 4 * _QSEC + (_rq2 - 5) * 240 + (240 - _rr2))
+            _rot_shown = False
+            for _tid2, _tnm2 in ((t1id, t1name), (t2id, t2name)):
+                _sw = _RP2.live_star_watch(_tid2, game_id, _el2)
+                if _sw["risk"] == "low" or not _sw["note"]:
+                    continue
+                if not _rot_shown:
+                    st.markdown("**🔄 Rotation watch**")
+                    _rot_shown = True
+                _emo2 = "🔴" if _sw["risk"] == "alert" else "🟠"
+                st.caption(f"{_emo2} {_tnm2} — {_sw['note']}")
+        except Exception:
+            pass
 
     # ── foul watch: live foul-out projection for players in trouble (Tier 2,
     #    ML_LAYER_ROADMAP). At each player's current foul pace, when do they foul

@@ -407,9 +407,11 @@ button {
 #defense-bar .flow-select, #playtype-bar .flow-select {
   display: inline-block;
   width: auto;
-  min-width: 46%;
+  /* Flexes down so the one-tap chips beside it stay on the same line, and back
+     up to fill the bar when there are none. */
+  flex: 1 1 120px;
+  min-width: 0;
   vertical-align: middle;
-  margin-left: 6px;
 }
 #playtype-bar { margin-bottom: 6px; }
 #playtype-bar:empty { display: none; }
@@ -524,3 +526,171 @@ button {
 }
 #wb-frame canvas { position: absolute; inset: 0; display: block; }
 #wb-draw { touch-action: none; }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   One-tap sticky tags (defense presets + the 'Other' escape hatch)
+   ══════════════════════════════════════════════════════════════════════════
+   These sit beside the defense / set-call dropdowns. The dropdown stays the
+   complete list; these are the two-to-five a staff actually reaches for, so
+   the common case never opens an OS picker. Tapping SETS the tag -- there is
+   no stashed previous value and nothing reverts. */
+.chip.quick-tag {
+  min-height: 40px;
+  padding: 6px 12px;
+  margin: 4px 0 0 6px;
+  font-size: 0.85rem;
+  color: var(--fg);
+  vertical-align: middle;
+}
+.chip.quick-tag.active {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: var(--bg);
+  font-weight: 700;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Officials: searchable slots
+   ══════════════════════════════════════════════════════════════════════════
+   Replaced a native <select>. A season's officials table runs to hundreds of
+   names, and on iOS a long <select> is a wheel with no type-ahead. */
+.official-pick { flex: 1; position: relative; display: flex; gap: 8px; align-items: center; }
+.official-search {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--edge);
+  color: inherit;
+  font: inherit;
+  font-size: 0.95rem;
+}
+.official-search:focus { outline: none; border-color: var(--gold); }
+.official-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin-top: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg2);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+}
+.official-results[hidden] { display: none; }
+.official-hit {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--edge);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.95rem;
+}
+.official-hit:last-child { border-bottom: 0; }
+.official-hit:active { background: var(--bg3); }
+.official-hit.add { color: var(--gold); font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Bench setup rows (period lengths, tablet layout, defense presets)
+   ══════════════════════════════════════════════════════════════════════════ */
+.setup-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+}
+.setup-row:empty { display: none; }
+.setup-lbl { flex: none; font-size: 0.85rem; color: var(--muted); }
+.setup-unit { flex: none; font-size: 0.85rem; color: var(--muted); margin-left: -4px; }
+.setup-row input, .setup-row select {
+  min-height: 44px;
+  padding: 0 10px;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.95rem;
+}
+.setup-row input[type="number"] { width: 80px; }
+.setup-row select { min-width: 130px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Tablet layout
+   ══════════════════════════════════════════════════════════════════════════
+   Most staffs track on an iPad, and the tracker was a fixed phone column
+   (max-width 640) that just centred itself in an ocean of empty screen -- the
+   court small, everything else a scroll away. On a wide screen the court and
+   the logging pad sit SIDE BY SIDE, so the shot chart is big and the flow,
+   mode row and action row never push each other off screen.
+
+   Detection is this media query; `.force-wide` / `.force-narrow` on <html> are
+   the coach's override from Bench setup, because a query alone guesses wrong
+   in both directions -- a phone in landscape measures wide, an iPad in a Split
+   View pane measures narrow -- and being stuck in the wrong layout mid-game
+   would be worse than either default. */
+@media (min-width: 768px) {
+  html:not(.force-narrow) .screen { max-width: 1180px; padding: 16px; }
+  html:not(.force-narrow) #screen-tracker:not([hidden]) { display: grid; }
+}
+html.force-wide .screen { max-width: 1180px; padding: 16px; }
+html.force-wide #screen-tracker:not([hidden]) { display: grid; }
+
+html.force-wide #screen-tracker,
+html:not(.force-narrow) #screen-tracker {
+  grid-template-columns: minmax(300px, 1.05fr) minmax(320px, 1fr);
+  column-gap: 16px;
+  align-items: start;
+}
+
+/* Full-width bands: the header carries score, period and clock, and the subs
+   panel is a takeover -- neither belongs in a column. */
+#screen-tracker > #track-head,
+#screen-tracker > #subs-panel,
+#screen-tracker > #track-tip { grid-column: 1 / -1; }
+
+/* Left column: the court and the shot-mode row that drives it. */
+#screen-tracker > #court-wrap,
+#screen-tracker > #shot-caption,
+#screen-tracker > #mode-row { grid-column: 1; }
+
+/* Right column: every tag, the event flow, and the action rows. */
+#screen-tracker > #defense-bar,
+#screen-tracker > #playtype-bar,
+#screen-tracker > #flow-opts,
+#screen-tracker > #flow,
+#screen-tracker > #to-row,
+#screen-tracker > #action-row,
+#screen-tracker > #sync-status,
+#screen-tracker > #coverage-badge,
+#screen-tracker > #pbp-toggle,
+#screen-tracker > #pbp { grid-column: 2; }
+
+/* The override has to be able to put a big screen BACK to the phone column. */
+html.force-narrow .screen { max-width: 640px; padding: 12px; }
+html.force-narrow #screen-tracker { display: block; }
+
+/* The sticky bars now carry a label, a dropdown and up to five one-tap chips,
+   so lay them out as a wrapping flex row instead of inline-block runs — the
+   chips keep an even gutter and wrap as a group rather than one at a time. */
+#defense-bar, #playtype-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+#defense-bar .chip-label, #playtype-bar .chip-label { margin: 0; }
+#defense-bar .chip.quick-tag, #playtype-bar .chip.quick-tag { margin: 0; }

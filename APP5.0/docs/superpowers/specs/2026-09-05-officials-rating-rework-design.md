@@ -133,8 +133,14 @@ z  = (ref_live_calls - mu) / sd
 ```
 
 42% on a 3-crew scores ~0 (it is chance). 90% of 25 live calls scores **+6.01**.
-Crew size and call count are both handled without a hand-set constant, and small
-samples mute themselves: 3 of 4 calls is 75% but only z=+1.77.
+Crew size and call count are both handled without a hand-set constant, and thin
+games mute themselves rather than spiking: were the `n >= 6` gate relaxed, 3 of
+4 calls would be a 75% share but only z=+1.77. The gate is belt-and-braces on
+top of that property, not the only thing holding it.
+
+A game that fails `k >= 2` or `n >= 6` contributes to neither the mean nor the
+worst-game term. A referee with no qualifying game has `rating = None`, the same
+as one below `RATING_MIN_GAMES`, and their games-worked count still displays.
 
 ## 6. Volume vs league
 

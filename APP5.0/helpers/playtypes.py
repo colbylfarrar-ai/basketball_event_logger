@@ -35,11 +35,11 @@ MIN_POOL = 4
 #   key, label, axis, blurb
 PLAY_TYPES = [
     ("transition", "Transition",            "tempo",
-     "Shot up within 6s of the possession starting — push / fast break."),
+     "Shot up within 8s of the possession starting — push / fast break."),
     ("early",      "Early offense",         "tempo",
-     "7–14s — secondary break and flowing into the set."),
+     "9–20s — secondary break and flowing into the set."),
     ("halfcourt",  "Half-court",            "tempo",
-     "15s+ — a called set against a set defense."),
+     "21s+ — the shot-clock bailout against a set defense."),
     ("self",       "Isolation / self-made", "creation",
      "No pass and no screen into the shot — pure self-creation off the bounce."),
     ("pass",       "Spot-up (off a pass)",  "creation",
@@ -52,15 +52,27 @@ PLAY_TYPES = [
 _AXIS_LABEL = {"tempo": "By tempo", "creation": "By shot creation"}
 
 
-def _tempo(secs):
+# ── tempo cuts ────────────────────────────────────────────────────────────────
+# Re-exported from team_analytics, which owns them (this module imports that
+# one, so the constants have to live on the lower layer). See the block there
+# for how 8 / 20 were measured and what re-cutting them costs.
+TEMPO_TRANSITION_MAX = TA.TEMPO_TRANSITION_MAX
+TEMPO_EARLY_MAX = TA.TEMPO_EARLY_MAX
+
+
+def tempo_bucket(secs):
     """Possession length → tempo bucket, or None for untimed (~16% carry 0s)."""
     if not secs or secs <= 0:
         return None
-    if secs <= 6:
+    if secs <= TEMPO_TRANSITION_MAX:
         return "transition"
-    if secs <= 14:
+    if secs <= TEMPO_EARLY_MAX:
         return "early"
     return "halfcourt"
+
+
+# Historical private name — kept so existing callers and tests keep working.
+_tempo = tempo_bucket
 
 
 def _creation(s):

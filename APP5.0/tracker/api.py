@@ -442,7 +442,11 @@ def game_detail(game_id: int, _: dict = Depends(require_game_read)):
                + [{**dict(p), "archived": 1} for p in extra_rows])
     # archived included (flagged) like players: the editor must resolve a ref on an
     # existing foul; the client filters archived out of the lineup picker.
-    officials = query("SELECT id, name, archived FROM officials ORDER BY name")
+    # official_id ships too so the tracker's picker can be searched by badge
+    # number as well as by name — a season's table runs to hundreds of refs and
+    # a coach often has the number off the game sheet, not the spelling.
+    officials = query(
+        "SELECT id, name, official_id, archived FROM officials ORDER BY name")
     return {
         "id": g["id"], "date": g["date"], "tracked": bool(g["tracked"]),
         "home": {"id": g["team1_id"], "name": g["n1"]},

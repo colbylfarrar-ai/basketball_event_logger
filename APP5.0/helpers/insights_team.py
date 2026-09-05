@@ -428,16 +428,17 @@ def _style_line(team_id, events):
             # half-court.
             if secs > 0:
                 timed += 1
-                if secs <= 6:
+                _tb = PT.tempo_bucket(secs)
+                if _tb == "transition":
                     trans_n += 1
                     trans_pts += pts
-                elif secs >= 15:
+                elif _tb == "halfcourt":
                     hc_n += 1
                     hc_pts += pts
         else:
             if secs > 0:
                 opp_timed += 1
-                if secs <= 6:
+                if PT.tempo_bucket(secs) == "transition":
                     opp_trans += 1
 
     out = {

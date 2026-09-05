@@ -257,7 +257,7 @@ STAT_DEFS = [
     ("Play Type", "Possession / Play Type", "Possession & Pace",
      "PPP per (tempo bucket) and per (shot-creation context), ranked vs league",
      "The Synergy-style view: points per possession grouped by HOW the shot was "
-     "generated — tempo (transition ≤6s / early 7–14s / half-court 15s+, from the "
+     "generated — tempo (transition ≤8s / early 9–20s / half-court 21s+, from the "
      "possession clock) and shot creation (self / off a pass / off a screen / "
      "both). Each gets a league percentile. Inferred from logged tempo + creation "
      "tags, NOT video-tagged play calls (no PnR/iso film here).",

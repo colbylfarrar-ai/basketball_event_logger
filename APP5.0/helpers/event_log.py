@@ -562,7 +562,13 @@ def correct_floor_forward(game_id, from_event_id, team_id, new_pids):
     for p in new_pids:
         if p not in deduped:
             deduped.append(p)
-    valid = {r["id"] for r in query("SELECT id FROM players WHERE team_id=?", (team_id,))}
+    # Validate against the GAME'S OWN season roster, the same invariant the
+    # pickers use — an unscoped team_id read accepted a player id belonging to
+    # another season's roster row for this team.
+    import helpers.seasons as SEAS
+    _vc, _vp = SEAS.roster_clause(SEAS.game_season(game_id))
+    valid = {r["id"] for r in query(
+        f"SELECT id FROM players WHERE team_id=? AND {_vc}", (team_id, *_vp))}
     bad = [p for p in deduped if p not in valid]
     if bad:
         raise ValueError(f"players {bad} are not on team {team_id}'s roster")

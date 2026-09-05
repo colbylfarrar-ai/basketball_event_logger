@@ -131,6 +131,35 @@ try {
       <p id="add-official-status" class="status"></p>
     </div>
   </div>
+
+  <!-- Bench setup: the handful of per-staff choices that shape the tracker
+       screen. Kept here with the roster and officials because this is the panel
+       a staff sets up once, before the season, rather than mid-game. -->
+  <div class="lineup-group">
+    <h3>Bench setup</h3>
+    <div class="setup-row">
+      <label class="setup-lbl" for="set-period-min">Quarter length</label>
+      <input id="set-period-min" type="number" min="1" max="20" inputmode="numeric">
+      <span class="setup-unit">min</span>
+      <label class="setup-lbl" for="set-ot-min">Overtime</label>
+      <input id="set-ot-min" type="number" min="1" max="20" inputmode="numeric">
+      <span class="setup-unit">min</span>
+    </div>
+    <p class="status">Advancing the period puts this much time back on the clock.</p>
+
+    <div class="setup-row">
+      <label class="setup-lbl" for="set-wide">Tablet layout</label>
+      <select id="set-wide">
+        <option value="auto">Auto (by screen size)</option>
+        <option value="on">Always wide</option>
+        <option value="off">Always phone</option>
+      </select>
+    </div>
+    <p class="status">Wide puts the roster beside the court on an iPad instead of below it.</p>
+
+    <div id="def-preset-row" class="setup-row"></div>
+    <p class="status">Up to four one-tap defenses on the tracker, for the schemes you actually run.</p>
+  </div>
   <!-- Public fan link: opt-in live viewer for parents/fans (score + basic box
        only, jersey numbers, refs anonymized R/U1/U2 — see helpers/public_feed.py).
        The link is minted once and survives off/on, so a shared text stays good. -->

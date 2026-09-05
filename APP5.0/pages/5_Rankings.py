@@ -564,7 +564,23 @@ if not scored:
     st.stop()
 
 name_of = {tid: r["name"] for tid, r in scored.items()}
-class_of = {tid: r.get("class_lbl", r["class"]) for tid, r in scored.items()}
+# Class for every team in the DB, not only the ranked ones. Schedule and
+# opponent tables list teams that never enter `scored` (untracked, or below the
+# games-played floor), and reading class off `scored` alone printed a column of
+# "N/A" for all of them. The ranked label still wins where there is one; the
+# season's own class snapshot fills the rest, so "N/A" now means the team
+# genuinely has no class on file.
+#
+# The fallback goes through TR.class_label with the LEAGUE-level multi-state
+# switch — the same labeler score_ratings uses. Labelling these by raw class
+# would put '4A' and 'OK 4A' in one column the moment the field spans states,
+# and class-keyed filters would stop matching across the two.
+_cls_multi = TR.league_multi_state()
+_state_of = {r["id"]: r["state"] for r in query("SELECT id, state FROM teams")}
+class_of = {tid: TR.class_label(cls, _state_of.get(tid), _cls_multi)
+            for tid, cls in SEAS.team_classes_for(season_pick).items() if cls}
+class_of.update({tid: r.get("class_lbl", r["class"])
+                 for tid, r in scored.items()})
 rank_of = {tid: r["Rank"] for tid, r in scored.items()}
 TOP5 = {tid for tid, r in scored.items() if r["Rank"] <= 5}
 TOP10 = {tid for tid, r in scored.items() if r["Rank"] <= 10}
@@ -2058,7 +2074,7 @@ def _fx_chart():
                                for t in teams}
                 _mix_stack(_lens_share, _tempo_keys, _ptlbl,
                            "Tempo mix — when the shot goes up",
-                           "Transition ≤6s · Early 7-14s · Half-court 15s+. "
+                           "Transition ≤8s · Early 9-20s · Half-court 21s+. "
                            "Untimed possessions (no clock logged) drop out.")
                 _mix_stack(_lens_share, _crea_keys, _ptlbl,
                            "Shot-creation mix — how the shot was made",

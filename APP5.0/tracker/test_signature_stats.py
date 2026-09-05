@@ -80,10 +80,15 @@ def test_style_line_keys():
     """Tempo / creation keys come off the raw events, with no tagging needed."""
     import helpers.insights_team as IT
 
+    # Seconds are chosen against team_analytics.TEMPO_* (transition <= 8s,
+    # half-court > 20s). The two half-court shots used to be 20s and 25s, which
+    # straddled the old 15s boundary; 20s is early offense under the measured
+    # 8/20 cuts, so it moves to 24s and the case still reads "two half-court
+    # possessions worth two points".
     ev = [
         _shot(1, 4, make=True),                       # transition, made 2
         _shot(1, 5),                                  # transition, miss
-        _shot(1, 20, make=True, created_by=99),       # half-court, off a screen
+        _shot(1, 24, make=True, created_by=99),       # half-court, off a screen
         _shot(1, 25, pass_from=98),                   # half-court, off a pass
         _shot(2, 3),                                  # opp transition
         _shot(2, 30),                                 # opp half-court

@@ -373,28 +373,50 @@ with tab_rate:
             "closeness). Clutch = fouls called in Q4/OT within a possession or "
             "two. FPG lower is better; everything else higher is better.")
 
-        # ── play-type foul bias ────────────────────────────────────────────
+        # ── foul bias, two axes ────────────────────────────────────────────
+        # Same share-gap read on the two tags every event already carries: the
+        # SET the offense called, and the DEFENSE it was played against. The
+        # defense one is often the more useful of the pair — "this crew calls
+        # the press" is a thing a staff can actually plan around.
         import helpers.playtypes as _PTP
+        import helpers.defenses as _DEFP
         _ptl = dict(_PTP.NAMED_PLAY_TYPES)
-        _bias_rows = [r for r in _rrows if r.get("pt_bias")]
-        if _bias_rows:
-            st.markdown("<div class='lab-hdr'>Play-type foul bias — which sets a "
-                        "ref whistles more</div>", unsafe_allow_html=True)
-            st.caption("How much more (or less) of a ref's fouls come on a given "
-                       "set call vs the league — a positive gap means they call "
-                       "that action tight. Needs play-type-tagged fouls.")
-            def _bias_cell(bias, i):
-                if i >= len(bias):
-                    return "—"
-                k, d, n, s = bias[i]
-                return f"{_ptl.get(k, k)} {d * 100:+.0f}%"
+
+        def _bias_cell(bias, i, labeller):
+            if i >= len(bias):
+                return "—"
+            k, d, _n, _s = bias[i]
+            return f"{labeller(k)} {d * 100:+.0f}%"
+
+        def _bias_table(field, labeller, title, caption, key):
+            rows_ = [r for r in _rrows if r.get(field)]
+            if not rows_:
+                return
+            st.markdown(f"<div class='lab-hdr'>{title}</div>",
+                        unsafe_allow_html=True)
+            st.caption(caption)
             st.dataframe(_pd.DataFrame([{
                 "Official": r["name"], "GP": r["games"],
-                "Calls tight #1": _bias_cell(r["pt_bias"], 0),
-                "#2": _bias_cell(r["pt_bias"], 1),
-                "#3": _bias_cell(r["pt_bias"], 2),
-            } for r in _bias_rows[:15]]), hide_index=True, width="stretch",
-                key="off_bias_df")
+                "Calls tight #1": _bias_cell(r[field], 0, labeller),
+                "#2": _bias_cell(r[field], 1, labeller),
+                "#3": _bias_cell(r[field], 2, labeller),
+            } for r in rows_[:15]]), hide_index=True, width="stretch", key=key)
+
+        _bias_table(
+            "pt_bias", lambda k: _ptl.get(k, k),
+            "Play-type foul bias — which sets a ref whistles more",
+            "How much more (or less) of a ref's fouls come on a given set call "
+            "vs the league — a positive gap means they call that action tight. "
+            "Needs play-type-tagged fouls.",
+            "off_bias_df")
+        _bias_table(
+            "def_bias", _DEFP.label,
+            "Defensive foul bias — which defenses a ref whistles more",
+            "The same read against the defense the possession was played in. A "
+            "positive gap means more of that ref's fouls come while the defense "
+            "is in that scheme than the league's do — worth knowing before you "
+            "press with this crew. Needs defense-tagged fouls.",
+            "off_def_bias_df")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

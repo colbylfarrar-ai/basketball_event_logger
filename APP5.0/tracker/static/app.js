@@ -13,8 +13,45 @@ const LS = {
   game: function (gid) { return 'tracker_game_' + gid; },   // per-game lineup/quarter/clock
   live: function (gid) { return 'tracker_live_' + gid; },   // last server live snapshot
   lastDefense: 'tracker_last_defense',                      // most-recent defense (new-game default)
-  tmpSeq: 'tracker_tmp_seq'                                 // local-id counter (see nextTempId)
+  tmpSeq: 'tracker_tmp_seq',                                // local-id counter (see nextTempId)
+  periodMin: 'tracker_period_min',                          // regulation period length, minutes
+  otMin: 'tracker_ot_min',                                  // overtime length, minutes
+  defPresets: 'tracker_def_presets',                        // up to 4 one-tap defense keys
+  wideMode: 'tracker_wide_mode'   // 'auto' | 'on' | 'off' — tablet layout override
 };
+
+/* Period lengths. HS is 8-minute quarters and 4-minute overtimes, but middle
+   school and some tournaments run shorter, so both are settable on the setup
+   screen. Used by the quarter stepper to reset the clock, and nowhere else —
+   the server clock model (helpers/win_probability) is its own constant. */
+const PERIOD_DEFAULT = 8;
+const OT_DEFAULT = 4;
+function periodMin() {
+  const v = parseInt(lsGet(LS.periodMin, PERIOD_DEFAULT), 10);
+  return (v > 0 && v <= 20) ? v : PERIOD_DEFAULT;
+}
+function otMin() {
+  const v = parseInt(lsGet(LS.otMin, OT_DEFAULT), 10);
+  return (v > 0 && v <= 20) ? v : OT_DEFAULT;
+}
+function periodLenFor(q) { return q > 4 ? otMin() : periodMin(); }
+
+/* Tablet layout. Auto-detect is the default and is right nearly always, but a
+   media query alone guesses wrong in both directions — a phone in landscape
+   measures tablet-wide, an iPad in a Split View pane measures phone-narrow —
+   and a coach who gets the wrong layout mid-game would have no way out. So the
+   detection is a CSS media query and this is the override on top of it. */
+const WIDE_MIN_PX = 768;
+function wideMode() {
+  const v = lsGet(LS.wideMode, 'auto');
+  return (v === 'on' || v === 'off') ? v : 'auto';
+}
+function applyWideMode() {
+  const m = wideMode();
+  const r = document.documentElement;
+  r.classList.toggle('force-wide', m === 'on');
+  r.classList.toggle('force-narrow', m === 'off');
+}
 
 function $(id) { return document.getElementById(id); }
 function lsGet(k, fb) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch (e) { return fb; } }
@@ -303,6 +340,10 @@ const SERVER_FIELDS = ['uuid', 'event_type', 'quarter', 'time', 'primary_player_
 // Crew roles in assigning order (slot column is 1-based; mirrors
 // helpers/public_feed._SLOT_LABELS on the read side).
 const OFFICIAL_SLOTS = [[1, 'R'], [2, 'U1'], [3, 'U2']];
+// How many search hits a slot shows at once. Long enough to be useful on a
+// two-letter query, short enough that the list never becomes the scroll it
+// replaced.
+const OFFICIAL_HITS = 12;
 
 // S.lineup.officialSlots {1,2,3}->officialId is the source of truth for roles;
 // S.lineup.officials is kept as the derived flat id list every other reader uses.
@@ -783,7 +824,7 @@ async function selectGame(gid) {
   const prefs = lsGet(LS.game(gid), {});
   S.lineup = prefs.lineup || { home: [], away: [], officials: [] };
   S.quarter = prefs.quarter || 1;
-  S.clockMin = prefs.clockMin != null ? prefs.clockMin : 8;
+  S.clockMin = prefs.clockMin != null ? prefs.clockMin : periodMin();
   S.clockSec = prefs.clockSec != null ? prefs.clockSec : 0;
   // Sticky D: keep this game's saved scheme if it has one; a fresh game defaults
   // to the most-recently-used scheme (carried across games via LS.lastDefense).
@@ -1147,46 +1188,168 @@ function renderLineup() {
   ob.innerHTML = '';
   // archived refs can't be assigned — editor pickers still resolve them via oLabel
   const availOffs = (S.game.officials || []).filter(function (o) { return !o.archived; });
+  // Search box per slot, not a <select>. A season's officials table runs to
+  // hundreds of names; on iOS a long <select> is an OS wheel with no type-ahead,
+  // so finding a ref meant scrolling blind. Matching is a case-insensitive
+  // substring on the name OR the badge number, since the coach often has the
+  // number off the game sheet and not the spelling.
   OFFICIAL_SLOTS.forEach(function (pair) {
     const slotNum = pair[0], roleLbl = pair[1];
-    const row = document.createElement('label');
+    const row = document.createElement('div');
     row.className = 'official-slot';
     const lbl = document.createElement('span');
     lbl.className = 'official-slot-lbl';
     lbl.textContent = roleLbl;
-    const sel = document.createElement('select');
-    sel.className = 'official-select';
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = '—';
-    sel.appendChild(none);
-    availOffs.forEach(function (o) {
-      const opt = document.createElement('option');
-      opt.value = String(o.id);
-      opt.textContent = o.name;
-      if (S.lineup.officialSlots[slotNum] === o.id) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    sel.addEventListener('change', function () {
-      const v = sel.value ? parseInt(sel.value, 10) : null;
+
+    const assign = function (id) {
       // one official can't work two roles — vacate any slot that held them
-      if (v != null) {
+      if (id != null) {
         [1, 2, 3].forEach(function (n) {
-          if (n !== slotNum && S.lineup.officialSlots[n] === v) S.lineup.officialSlots[n] = null;
+          if (n !== slotNum && S.lineup.officialSlots[n] === id) {
+            S.lineup.officialSlots[n] = null;
+          }
         });
       }
-      S.lineup.officialSlots[slotNum] = v;
+      S.lineup.officialSlots[slotNum] = id;
       syncOfficialsArray();
       savePrefs();
       renderLineup();
+    };
+
+    const picked = S.lineup.officialSlots[slotNum];
+    const pickedRow = picked != null
+      ? availOffs.filter(function (o) { return o.id === picked; })[0]
+      : null;
+
+    const box = document.createElement('div');
+    box.className = 'official-pick';
+    const input = document.createElement('input');
+    input.type = 'search';
+    input.className = 'official-search';
+    input.autocomplete = 'off';
+    input.placeholder = 'Search name or badge #';
+    input.value = pickedRow ? pickedRow.name : '';
+    box.appendChild(input);
+
+    if (picked != null) {
+      const clr = document.createElement('button');
+      clr.type = 'button';
+      clr.className = 'btn ghost small';
+      clr.textContent = 'Clear';
+      clr.addEventListener('click', function () { assign(null); });
+      box.appendChild(clr);
+    }
+
+    const results = document.createElement('div');
+    results.className = 'official-results';
+    results.hidden = true;
+    box.appendChild(results);
+
+    const paint = function () {
+      const q = input.value.trim().toLowerCase();
+      results.innerHTML = '';
+      // An empty box lists the head of the table so the control still works
+      // like a picker when the coach does not know who they are looking for.
+      const hits = availOffs.filter(function (o) {
+        if (!q) return true;
+        return (o.name || '').toLowerCase().indexOf(q) >= 0
+            || String(o.official_id == null ? '' : o.official_id).indexOf(q) >= 0;
+      }).slice(0, OFFICIAL_HITS);
+
+      hits.forEach(function (o) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'official-hit';
+        b.textContent = o.official_id != null && o.official_id !== ''
+          ? o.name + '  #' + o.official_id
+          : o.name;
+        b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        b.addEventListener('click', function () { assign(o.id); });
+        results.appendChild(b);
+      });
+
+      if (!hits.length) {
+        // No match is the moment the quick-add matters, so it opens right here
+        // instead of leaving the coach to find a separate hidden form.
+        const miss = document.createElement('button');
+        miss.type = 'button';
+        miss.className = 'official-hit add';
+        miss.textContent = '+ Add "' + input.value.trim() + '" as a new official';
+        miss.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        miss.addEventListener('click', function () {
+          const form = $('add-official-form');
+          if (form) {
+            form.hidden = false;
+            const nm = $('add-official-name');
+            if (nm) { nm.value = input.value.trim(); nm.focus(); }
+            form.scrollIntoView({ block: 'nearest' });
+          }
+        });
+        results.appendChild(miss);
+      }
+      results.hidden = false;
+    };
+
+    input.addEventListener('focus', paint);
+    input.addEventListener('input', paint);
+    input.addEventListener('blur', function () {
+      // let a click on a hit land before the list closes
+      setTimeout(function () { results.hidden = true; }, 150);
     });
+
     row.appendChild(lbl);
-    row.appendChild(sel);
+    row.appendChild(box);
     ob.appendChild(row);
   });
 
   renderHands('home');
   renderHands('away');
+  renderBenchSetup();
+}
+
+/* ----- bench setup: period lengths, tablet layout, defense presets -----
+   Per-device settings, so they live in localStorage next to the other tracker
+   prefs rather than on the server: a staff sets them up once on the tablet they
+   actually track on, and an assistant's phone keeps its own. ----- */
+function renderBenchSetup() {
+  const pm = $('set-period-min'), om = $('set-ot-min'), wm = $('set-wide');
+  if (pm) pm.value = periodMin();
+  if (om) om.value = otMin();
+  if (wm) wm.value = wideMode();
+
+  const row = $('def-preset-row');
+  if (!row) return;
+  row.innerHTML = '';
+  const cur = defPresets();
+  for (let i = 0; i < DEF_PRESET_MAX; i++) {
+    const lbl = document.createElement('label');
+    lbl.className = 'setup-lbl';
+    lbl.textContent = 'Preset ' + (i + 1);
+    row.appendChild(lbl);
+    const sel = document.createElement('select');
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '—';
+    sel.appendChild(none);
+    DEFENSES.forEach(function (d) {
+      const o = document.createElement('option');
+      o.value = d[0];
+      o.textContent = d[1];
+      if (cur[i] === d[0]) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', function () {
+      // Rebuild the whole list from the four selects, so clearing slot 2 leaves
+      // slots 3 and 4 where they are instead of shuffling them up a place.
+      const next = [];
+      row.querySelectorAll('select').forEach(function (s) {
+        if (s.value) next.push(s.value);
+      });
+      lsSet(LS.defPresets, next);
+      renderDefenseBar();
+    });
+    row.appendChild(sel);
+  }
 }
 
 /* ----- per-team shooting-hand editor (revealed table; keeps the roster
@@ -1348,7 +1511,9 @@ async function quickAddOfficial() {
         // official_id already existed under another name
         const oname = d.name || name;
         if (d.id != null && !(S.game.officials || []).some(function (o) { return o.id === d.id; })) {
-          S.game.officials = (S.game.officials || []).concat([{ id: d.id, name: oname }]);
+          // carry official_id so the new ref is findable by badge number too
+          S.game.officials = (S.game.officials || [])
+            .concat([{ id: d.id, name: oname, official_id: oid }]);
         }
         lsSet(LS.roster(S.gameId), S.game);
         accept(oname, false);
@@ -1359,7 +1524,8 @@ async function quickAddOfficial() {
   }
   // Offline the typed name is the best available; drainAdds adopts the stored
   // one if the server turns out to know this badge under another spelling.
-  await queueAdd('official', '/api/officials', body, name, { name: name }, 'officials');
+  await queueAdd('official', '/api/officials', body, name,
+                 { name: name, official_id: oid }, 'officials');
   accept(name, true);
 }
 
@@ -1754,6 +1920,38 @@ const DEFENSE_KEYS = DEFENSES.map(function (d) { return d[0]; });
 const DEFENSE_LABEL = DEFENSES.reduce(function (m, d) { m[d[0]] = d[1]; return m; }, {});
 function defLabel(k) { return DEFENSE_LABEL[k] || k; }
 
+// Up to four one-tap defenses a staff configures on the setup screen, so the
+// schemes THIS team actually runs are a tap away instead of a scroll inside an
+// 18-entry OS picker. Defaults to the two most common so the row is never a
+// mystery empty space.
+const DEF_PRESET_DEFAULT = ['man', 'zone_23'];
+const DEF_PRESET_MAX = 4;
+function defPresets() {
+  const raw = lsGet(LS.defPresets, null);
+  if (!Array.isArray(raw)) return DEF_PRESET_DEFAULT.slice();
+  return raw.filter(function (k) { return DEFENSE_KEYS.indexOf(k) >= 0; })
+            .slice(0, DEF_PRESET_MAX);
+}
+
+// A one-tap chip that SETS a sticky tag. No previous-value stash and no revert:
+// it changes what the tag is now, and the coach changes it again when the next
+// possession needs something else.
+function quickTagChip(label, active, onTap) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn chip quick-tag' + (active ? ' active' : '');
+  b.textContent = label;
+  b.addEventListener('click', onTap);
+  return b;
+}
+
+function setDefense(k) {
+  S.defense = k;
+  lsSet(LS.lastDefense, k);       // remember across games -> new-game default
+  savePrefs();
+  renderDefenseBar();
+}
+
 // Always-visible sticky defense selector (its own bar, above the flow, so it's
 // reachable in any mode and before a shot is started). Tapping sets S.defense
 // for every subsequent event; re-tapping the selected scheme clears it.
@@ -1770,12 +1968,16 @@ function renderDefenseBar() {
   bar.appendChild(makeSelect(
     DEFENSES.map(function (d) { return { v: d[0], label: d[1] }; }),
     S.defense,
-    function (k) {
-      S.defense = k;
-      lsSet(LS.lastDefense, k);   // remember across games -> new-game default
-      savePrefs();
-      renderDefenseBar();
-    }));
+    setDefense));
+  defPresets().forEach(function (k) {
+    bar.appendChild(quickTagChip(defLabel(k), S.defense === k,
+                                 function () { setDefense(k); }));
+  });
+  // 'Other' is its own chip rather than a preset slot: it is the offensive-foul
+  // escape hatch (nothing meaningful to tag), so it must always be reachable
+  // even when a staff has filled all four preset slots.
+  bar.appendChild(quickTagChip('Other', S.defense === 'other',
+                               function () { setDefense('other'); }));
 }
 
 // Sticky "current set call" — the play_type twin of the defense bar, in the
@@ -1783,6 +1985,13 @@ function renderDefenseBar() {
 // S.playType for every subsequent event (shots, TURNOVERS and FOULS inherit it
 // via baseEvent); the detailed shot flow's own Play-type chips override it for
 // that one shot. Re-tapping the selected call clears it.
+function setPlayType(k) {
+  S.playType = k;
+  savePrefs();
+  renderPlayTypeBar();
+  renderFlow();                 // shot flow previews the sticky pick
+}
+
 function renderPlayTypeBar() {
   const bar = $('playtype-bar');
   if (!bar) return;
@@ -1796,12 +2005,11 @@ function renderPlayTypeBar() {
   bar.appendChild(makeSelect(
     PLAY_TYPES.map(function (p) { return { v: p[0], label: p[1] }; }),
     S.playType,
-    function (k) {
-      S.playType = k;
-      savePrefs();
-      renderPlayTypeBar();
-      renderFlow();             // shot flow previews the sticky pick
-    }));
+    setPlayType));
+  // Twin of the defense bar's 'Other': an offensive foul has no set call worth
+  // tagging, and reaching it meant scrolling the picker to the bottom entry.
+  bar.appendChild(quickTagChip('Other', S.playType === 'other',
+                               function () { setPlayType('other'); }));
 }
 
 /* ----- in-place subs (tracker screen) -----
@@ -2716,6 +2924,22 @@ function bindUI() {
     f.hidden = !f.hidden;
   });
   $('add-official-save').addEventListener('click', quickAddOfficial);
+
+  // bench setup — period lengths and the tablet-layout override
+  $('set-period-min').addEventListener('change', function () {
+    const v = Math.max(1, Math.min(20, parseInt(this.value, 10) || PERIOD_DEFAULT));
+    this.value = v;
+    lsSet(LS.periodMin, v);
+  });
+  $('set-ot-min').addEventListener('change', function () {
+    const v = Math.max(1, Math.min(20, parseInt(this.value, 10) || OT_DEFAULT));
+    this.value = v;
+    lsSet(LS.otMin, v);
+  });
+  $('set-wide').addEventListener('change', function () {
+    lsSet(LS.wideMode, this.value);
+    applyWideMode();
+  });
   $('btn-start').addEventListener('click', function () {
     if (!onCourtIds().length) { toast('Select players first'); return; }
     savePrefs();
@@ -2752,10 +2976,22 @@ function bindUI() {
     $('q-label').textContent = qlabel(S.quarter);
     savePrefs();
   });
+  // Advancing the period puts a full clock back up (8:00, or the OT length once
+  // past Q4) and stops it — the coach was retyping that every quarter. Only on
+  // the way UP: q-minus is the "I bumped it" path, so it leaves the clock alone
+  // and, with the clock fields directly editable, is the whole undo story. No
+  // previous-value stash: a control that changes state just changes it.
   $('q-plus').addEventListener('click', function () {
-    S.quarter = Math.min(10, S.quarter + 1);
+    if (S.quarter >= 10) return;
+    S.quarter += 1;
     $('q-label').textContent = qlabel(S.quarter);
+    if (S.clockRunning) stopClock();
+    S.clockMin = periodLenFor(S.quarter);
+    S.clockSec = 0;
+    const mi = $('clock-min'); if (mi) mi.value = S.clockMin;
+    const se = $('clock-sec'); if (se) se.value = S.clockSec;
     savePrefs();
+    toast(qlabel(S.quarter) + ' — clock reset to ' + clockStr());
   });
   // Focusing a clock field while the clock is running pauses it first, so the tick
   // can't overwrite what you type. Manual entry + steppers stay fully available.
@@ -2836,6 +3072,7 @@ async function applyGuestMode() {
 
 async function init() {
   bindUI();
+  applyWideMode();          // before first paint, so the layout never flips
   await applyGuestMode();
   updateNetUI();
 
@@ -2850,8 +3087,14 @@ async function init() {
       const prefs = lsGet(LS.game(st.gameId), {});
       S.lineup = prefs.lineup || { home: [], away: [], officials: [] };
       S.quarter = prefs.quarter || 1;
-      S.clockMin = prefs.clockMin != null ? prefs.clockMin : 8;
+      S.clockMin = prefs.clockMin != null ? prefs.clockMin : periodMin();
       S.clockSec = prefs.clockSec != null ? prefs.clockSec : 0;
+      // Sticky tags, same rule as loadGame(). The cold-restore path skipped
+      // them, so a mid-game reload -- or iOS reclaiming the PWA, which is the
+      // common case courtside -- silently dropped the defense and set call and
+      // the next events logged untagged.
+      S.defense = ('defense' in prefs) ? prefs.defense : lsGet(LS.lastDefense, null);
+      S.playType = ('playType' in prefs) ? prefs.playType : null;
       S.lastLive = lsGet(LS.live(st.gameId), Object.assign({}, EMPTY_LIVE));
       try { S.queue = await qLoad(st.gameId); } catch (e) { S.queue = []; }
       // The cached roster already carries any offline adds, but the adds

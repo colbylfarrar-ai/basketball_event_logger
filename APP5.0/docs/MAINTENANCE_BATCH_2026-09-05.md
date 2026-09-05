@@ -332,6 +332,53 @@ change it -- never store the previous value to restore it later. Applies to
 defense, play type, and anything else sticky on the tracker.
 
 
+
+---
+
+## TEST STATE ON THIS BRANCH
+
+`tracker/run_all.py` (script half): **95 / 95**.
+`python -m pytest tracker/` (pytest half): **241 / 242**, one pre-existing
+failure that is a data slip, not code — see below.
+
+### The environment was running less than it looked like
+
+Three declared dependencies were missing from the pinned interpreter
+(`%LOCALAPPDATA%\Programs\Python\Python312`):
+
+- `uvicorn` (requirements.txt:29) — the tracker server could not start locally.
+- `xhtml2pdf` (requirements.txt:41) — `test_pdf_export` failed with "a PDF
+  engine is available", which reads like a code failure and is not one.
+- **`pytest` itself** — so the ~38 pytest modules, the half `run_all.py`
+  deliberately skips (see `conftest.py`), were collected by *nothing*. A green
+  `run_all` was covering less than it appeared to.
+
+All three are installed now. Worth a `pip install -r requirements.txt` against
+that interpreter before the season, and worth knowing that "run_all is green"
+is only half the suite.
+
+### One real data slip, pre-existing and unfixed
+
+`test_charges.py::test_real_book_encoding` fails on `main` too. Of 55 tagged
+charges, exactly one has the drawer and the committer as the SAME player:
+
+    game_events.id = 7101 — game 14123 (2026-02-06), Q1 0:01,
+    primary_player_id = secondary_player_id = 509 ("#21", team 1678)
+
+Event `7100` is a foul at the same timestamp with primary 509 / secondary 498,
+so this looks like a double-log where the second row took the same player into
+both slots. **Not touched** — it is live data in the coach's book, and the fix
+belongs in the Event Editor, not in a script. One row.
+
+### One test this batch legitimately invalidated
+
+`test_signature_stats.py::test_style_line_keys` built its fixture with a 20s
+shot as "half-court", which was true under the old 15s+ rule and is early
+offense under the measured 8/20 cuts. The fixture moved to 24s; the assertions
+are unchanged, because the case it means to test ("two half-court possessions
+worth two points") is unchanged. This is the re-bucketing cost T3 warned about,
+showing up exactly where it should.
+
 ---
 
 ## NOTICED WHILE WORKING — next batch candidates

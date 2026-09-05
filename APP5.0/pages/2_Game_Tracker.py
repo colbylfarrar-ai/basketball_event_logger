@@ -596,6 +596,7 @@ def _render_command_center():
         from helpers.settings_utils import get_setting as _get_setting
         _acc = _get_setting("accent_color", "#f0a500")
         _QSEC = 480   # 8-min HS quarters (win_probability.GAME_SECONDS / 4)
+        _tot = 4 * _QSEC + max(cur_q - 4, 0) * 240   # full game length
         _mc, _s1, _s2 = [(0.0, 0)], 0, 0
         for _ev in sorted(events_asc,
                           key=lambda e: (e["quarter"],
@@ -618,15 +619,29 @@ def _render_command_center():
             _el = ((_q - 1) * _QSEC + (_QSEC - _rem) if _q <= 4
                    else 4 * _QSEC + (_q - 5) * 240 + (240 - _rem))
             _mc.append((float(_el), _s1 - _s2))
+        # Anchor the walk at the CURRENT clock, not the last made basket. Without
+        # this the curve's final point is the last score, and since wp_curve
+        # defaults total_secs to that point's own elapsed time it read "0 seconds
+        # left" -> a resolved game -> a permanent 100%. The margin is unchanged
+        # since the last bucket; only the clock moves.
+        if events_asc:
+            _now = max(events_asc,
+                       key=lambda e: (e["quarter"], -GE.time_to_secs(e["time"]),
+                                      e["id"]))
+            _nq, _nrem = _now["quarter"], GE.time_to_secs(_now["time"])
+            _elnow = ((_nq - 1) * _QSEC + (_QSEC - _nrem) if _nq <= 4
+                      else 4 * _QSEC + (_nq - 5) * 240 + (240 - _nrem))
+            if float(_elnow) > _mc[-1][0]:
+                _mc.append((float(_elnow), _s1 - _s2))
         if len(_mc) >= 2:
-            _curve = _WP.wp_curve(_mc)
+            _curve = _WP.wp_curve(_mc, total_secs=_tot)
             _summ = _WP.summarize(_curve)   # GEI/summary stay on the scoring
             # curve (award-history stability) — the RIBBON shows the possession
             # model: a step at every shot/turnover, so stops move the line.
             import helpers.stats as _S2
             import helpers.wpa as _WPA
             _pcurve = _WPA.possession_timeline(
-                _S2.fetch_events([game_id]), t1id, t2id)
+                _S2.fetch_events([game_id]), t1id, t2id, end=_tot)
             _wpfig = _wp_ribbon(_pcurve if len(_pcurve) >= 2 else _curve,
                                 home_name=t1name, accent=_acc,
                                 height=160)

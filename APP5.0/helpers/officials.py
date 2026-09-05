@@ -19,6 +19,8 @@ Everything here is pure data — no Streamlit. `official_overview()` is the sing
 entry point the page reads; it returns a finished per-official table plus the
 team lookup the charts need.
 """
+import math
+import re
 import statistics
 from collections import defaultdict
 
@@ -555,23 +557,72 @@ def official_environment(gender=None, game_ids=None, season="Current",
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  OFFICIALS RATING — "the ref a coach WANTS: gets big games, lets them play,
-#  makes the gutsy call when it matters"  (founder spec)
+#  OFFICIALS RATING — "in the heat of the game, was this a shared crew effort?"
 # ══════════════════════════════════════════════════════════════════════════════
-# Founder's importance order (1 = most important): 1 low fouls/game · 2 works
-# high-leverage games · 3 high scoring (PPP) · 4 high pace · 5 clutch calls.
-# Each is z-scored across the rated pool, weighted by that order, and scaled to a
-# 0-100 index (50 = pool average, +10 per SD). Rewards the "let them play" ref
-# who still makes the call late in a close one.
-_RATING_WEIGHTS = [
-    ("fpg",     -0.30),   # fewer fouls/game is better (negative weight)
-    ("leverage", 0.25),   # the games' stakes (team quality + drama)
-    ("ppp",      0.20),   # scoring environment
-    ("pace",     0.15),   # possessions/game
-    ("clutch",   0.10),   # willingness to make the late high-leverage call
+# The old composite put 60% of its weight on leverage / PPP / pace, which
+# describe the GAMES a ref was assigned rather than the ref: work two run-and-gun
+# teams and you outrank an identical ref who drew two grinders.
+#
+# What replaced it was chosen by measurement, not preference (see
+# docs/superpowers/specs/2026-09-05-officials-rating-rework-design.md, and
+# tools/measure_officials.py to re-run the whole table on a bigger sample):
+#
+#   • No ref-level RATE is a stable trait at this sample. Split-half reliability
+#     over 63 tracked games is +0.067 for FPG and +0.027 for foul share, and
+#     |ha_diff| ("home cooking") sits at p=0.391 against a coin-flip null. So the
+#     rating makes no predictive quality claim — it prices what a ref DID.
+#   • No game-environment metric survives either. Team-adjusted game fouls looked
+#     significant at 43 games (p=0.038) and decayed to p=0.191 on the 63-game
+#     superset, while team-adjusted pace moved the other way (p=0.397 → p=0.036).
+#     The significant result changes metrics between samples, which is multiple
+#     comparisons rather than an effect. FPG, leverage, PPP, pace and clutch stay
+#     on the row as DESCRIPTORS and enter no score. In particular FPG carries no
+#     goodness sign: a tight crew is a different game plan, not a worse crew.
+#   • Share DID hold up and strengthened with sample — across 63 games the top
+#     ref's slice averages 43.7% against a matched null of 40.8%.
+#
+# So the score is one idea: in live minutes, did one official take the whole
+# whistle? That is an observed fact about games that happened, so the reliability
+# result does not bar it. 50 = a crew that split the game normally; a ref lands
+# below only by taking a share chance cannot explain.
+RATING_MIN_GAMES = 3       # below this an official isn't rated (too few games)
+CLUTCH_MARGIN = 6          # |margin| within this in Q4/OT = a clutch situation
+
+SHARE_MIN_LIVE_CALLS = 6   # a game thinner than this can't price a share
+CREW_MAX_REAL = 3          # a bigger logged crew is a tracking artifact
+_SHARE_MEAN_W = 0.60       # a ref's typical night ...
+_SHARE_WORST_W = 0.40      # ... blended with their worst one (see below)
+_SHARE_W = 0.75            # share dominates ...
+_VOLUME_W = 0.25           # ... volume-vs-league rides along (r≈+0.86 with it)
+CREDIT_FACTOR = 0.25       # below fair share earns only a quarter of the slope
+RATING_SLOPE = 12.0        # rating points per unit of blended deviation
+
+# What the rating is made of, for the page's "how is this scored" caption.
+_RATING_TERMS = [
+    ("share",  _SHARE_W),   # slice of a game's live calls vs the crew's fair share
+    ("volume", _VOLUME_W),  # live calls per game against the league
 ]
-RATING_MIN_GAMES = 3      # below this an official isn't rated (too few games)
-CLUTCH_MARGIN = 6         # |margin| within this in Q4/OT = a clutch situation
+
+# The worst-game term is load-bearing. A mean alone divides one egregious night
+# by the ref's game count and parks them among refs who did nothing unusual —
+# which is exactly the case this rework exists for (game 13979: one official
+# called 21 of 26 live calls on a three-man crew, z=+5.13).
+#
+# The credit side is asymmetric on purpose. Scoring low share symmetrically would
+# crown the quietest ref in the league as its best; at a quarter slope they land
+# above average and nowhere near the top. Quiet is worth a little. Disappearing
+# is not excellence.
+
+_PLACEHOLDER_NAME = re.compile(r"^\s*unknown\b", re.I)
+
+
+def is_placeholder_name(name):
+    """True for the `Unknown 11` rows the tracker writes when nobody caught the
+    official's name. They are rated normally — they are real people who really
+    worked those games, and the most extreme share in the book belongs to one —
+    but they sort below every named ref so the ends of the table stay
+    actionable. Note the convention carries no '#'."""
+    return bool(_PLACEHOLDER_NAME.match(name or ""))
 
 
 def _game_leverage(games, scored):
@@ -599,19 +650,25 @@ def _game_leverage(games, scored):
     return out
 
 
-def _clutch_and_playtype(game_ids):
+def _clutch_and_playtype(game_ids, exclude=None):
     """One events pass → (clutch_fouls, playtype_fouls, league_playtype).
 
     clutch_fouls  {off_pk: n} — fouls a ref called in Q4/OT while the score was
                   within CLUTCH_MARGIN (running margin reconstructed from the
                   scoring events, like situational/runs).
     playtype_fouls {off_pk: {play_type: n}}  — fouls by the set they happened in.
-    league_playtype {play_type: n}           — the pooled baseline for bias."""
+    league_playtype {play_type: n}           — the pooled baseline for bias.
+
+    `exclude` is a set of foul event ids to leave out of both tallies — the live
+    pool (no intentional clock-stops, nothing after the game was decided). A
+    trailing team hacking in the last minute is not a whistle profile, and it
+    lands squarely inside CLUTCH_MARGIN if left in."""
     import helpers.gameflow as GF
     import helpers.stats as S
     clutch = defaultdict(int)
     pt_off = defaultdict(lambda: defaultdict(int))
     pt_lg = defaultdict(int)
+    skip = set(exclude or ())
     if not game_ids:
         return dict(clutch), pt_off, dict(pt_lg)
     ev = S.fetch_events(list(game_ids))   # provides derived shooter_team_id
@@ -624,7 +681,9 @@ def _clutch_and_playtype(game_ids):
         t1 = _game_team1(gid)
         for e in evs:
             et = e["event_type"]
-            if et == "foul":
+            if et == "foul" and e.get("id") in skip:
+                pass                       # not the official's decision
+            elif et == "foul":
                 q = e["quarter"] or 0
                 if q >= 4 and abs(margin) <= CLUTCH_MARGIN:
                     opk = e["official_id"]
@@ -675,26 +734,161 @@ def _z(values):
             for k, v in values.items()}
 
 
+def _garbage_foul_event_ids(game_ids):
+    """{event_id} of fouls called with the game already decided — Q4/OT with the
+    margin at or past runs.GARBAGE_MARGIN.
+
+    Reuses the Runs engine's constant instead of adding a fourth garbage-time
+    definition to the app (situational.GARBAGE is 15 at any point, late_game's
+    window is the final two minutes). On the book this drops 139 calls."""
+    import helpers.runs as R
+    import helpers.stats as S
+    if not game_ids:
+        return set()
+    out = set()
+    by_game = defaultdict(list)
+    for e in S.fetch_events(list(game_ids)):
+        by_game[e["game_id"]].append(e)
+    for gid, evs in by_game.items():
+        evs.sort(key=lambda e: (S.elapsed(e["quarter"], e["time"]),
+                                e.get("id") or 0))
+        t1 = _game_team1(gid)
+        margin = 0                       # team1 - team2, BEFORE the event
+        for e in evs:
+            if (e["event_type"] == "foul" and (e["quarter"] or 0) >= 4
+                    and abs(margin) >= R.GARBAGE_MARGIN):
+                out.add(e["id"])
+            et = e["event_type"]
+            if ((et == "shot" and e["shot_result"] == "make")
+                    or (et == "free_throw" and e["shot_result"] == "make")):
+                pts = (3 if e["shot_type"] == 3 else 2) if et == "shot" else 1
+                if e["shooter_team_id"] == t1:
+                    margin += pts
+                elif e["shooter_team_id"] is not None:
+                    margin -= pts
+    return out
+
+
+def _live_foul_counts(game_ids):
+    """({game_id: {off_pk: live}}, {game_id: {off_pk: attributed}}, {event_id})
+    — calls made in the heat of the game, the raw attributed counts beside them,
+    and the set that was thrown out (so the bias tallies can drop the same rows).
+
+    Two categories come out, because neither is the official's decision:
+      • intentional clock-stop fouls (helpers.late_game) — a trailing team
+        stopping the clock, already excluded from the tendency aggregates;
+      • calls made once the game was decided (_garbage_foul_event_ids).
+    On the book: 1654 attributed → 1448 live."""
+    rows = _foul_events(game_ids)
+    garbage = _garbage_foul_event_ids(game_ids)
+    live = defaultdict(lambda: defaultdict(int))
+    raw = defaultdict(lambda: defaultdict(int))
+    dropped = set()
+    for r in rows:
+        opk = r["off_pk"]
+        if opk is None:
+            continue
+        raw[r["game_id"]][opk] += 1
+        if r["strategic"] or r["eid"] in garbage:
+            dropped.add(r["eid"])
+            continue
+        live[r["game_id"]][opk] += 1
+    return live, raw, dropped
+
+
+def _effective_crew(crew, raw_by_off):
+    """The officials a game's share math should be measured against.
+
+    A logged crew bigger than CREW_MAX_REAL is a tracking artifact: on every such
+    game in the book EXACTLY three officials have any foul at all, the extras
+    arriving from a tournament day where two crews got attached to one game.
+    Left uncorrected the fair share becomes 1/6 = 17%, and an ordinary 50% night
+    scores like an outlier — four of the ten most extreme games were refs at a
+    perfectly normal 43-56%.
+
+    Crews of three or fewer are left exactly as logged. In a normal crew 8% of
+    officials (14 of 171) genuinely called nothing, and dropping them would erase
+    the quiet ref while inflating every colleague's fair share."""
+    if len(crew) <= CREW_MAX_REAL:
+        return set(crew)
+    return {o for o in crew if raw_by_off.get(o, 0) > 0} or set(crew)
+
+
+def _share_z_by_game(live, raw, crew_by_game):
+    """{off_pk: {game_id: z}} — how far a ref's slice of a game's live calls sits
+    from the fair share of that crew, in standard deviations.
+
+    A flat threshold cannot do this job. Under pure random dealing the TOP ref of
+    a three-man crew already averages 41-45% of the calls depending on how many
+    there were, so a 40% line would fire on most games while under-punishing 40%
+    on a bigger crew. Against Binomial(n, 1/k) instead, 42% on a three-man crew
+    scores ~0 because that IS chance, and 21-of-26 scores +5.13.
+
+    Sample rides along for free: thin games mute themselves rather than spiking
+    (3 of 4 calls is a 75% share but only z=+1.77), and SHARE_MIN_LIVE_CALLS is
+    belt-and-braces on top of that."""
+    out = defaultdict(dict)
+    for gid, crew in crew_by_game.items():
+        eff = _effective_crew(crew, raw.get(gid) or {})
+        g_live = live.get(gid) or {}
+        k = len(eff)
+        n = sum(g_live.get(o, 0) for o in eff)
+        if k < 2 or n < SHARE_MIN_LIVE_CALLS:
+            continue
+        p = 1.0 / k
+        sd = math.sqrt(n * p * (1.0 - p))
+        if not sd:
+            continue
+        mu = n * p
+        for o in eff:
+            out[o][gid] = (g_live.get(o, 0) - mu) / sd
+    return dict(out)
+
+
+def _rating_from(share_mean, share_worst, vol_z):
+    """The 0-100 map, split out so the weighting is testable without a DB.
+
+    Blends a ref's typical share deviation with their worst single game, leans
+    the result mostly on share (volume correlates ≈+0.86 with it), and scales
+    only a quarter of the slope on the credit side."""
+    share_term = _SHARE_MEAN_W * share_mean + _SHARE_WORST_W * share_worst
+    d = _SHARE_W * share_term + _VOLUME_W * vol_z
+    if d < 0:
+        d *= CREDIT_FACTOR              # taking less than your share is not a win
+    return max(0.0, min(100.0, 50.0 - RATING_SLOPE * d))
+
+
 def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
-    """The Officials Rating table — the founder's composite. Builds on
-    official_overview (FPG / PPP / POSSPG), adds the mean leverage of the games
-    each ref worked, a clutch-call count, a 0-100 rating, and each ref's
-    play-type foul BIAS (which sets they whistle more than the field).
+    """The Officials Rating table. Builds on official_overview, adds the mean
+    leverage of the games each ref worked, a clutch-call count, each ref's
+    play-type foul BIAS, and a 0-100 crew-share rating.
+
+    The rating answers one question: in the heat of the game, did one official
+    take the whole whistle? 50 is a crew that split it normally. Leverage, PPP,
+    pace, FPG and clutch come back on the row as DESCRIPTORS and enter no score
+    — none of them measured as a property of the ref (see the block comment
+    above RATING_MIN_GAMES).
 
     `scored` = team_ratings.score_ratings (for game leverage); without it
     leverage falls back to game closeness only. Returns
-    {"officials": [row + {leverage, clutch, clutch_pg, rating, pt_bias}],
-     "weights": _RATING_WEIGHTS}."""
+    {"officials": [row + {leverage, clutch, clutch_pg, pt_bias, rating,
+                          share_z, worst_z, live_pg, rated_games}],
+     "weights": _RATING_TERMS}, ordered best-first with placeholder-named refs
+    after every named one."""
     base = official_overview(gender=gender, game_ids=game_ids, season=season)
     rows = base["officials"]
     if not rows:
-        return {"officials": [], "weights": _RATING_WEIGHTS}
+        return {"officials": [], "weights": _RATING_TERMS}
 
     games = _games(gender, allow=game_ids, season=season)
     lev = _game_leverage(games, scored or {})
     # per-official mean leverage over the games they worked
     worked = _worked(list(games.keys()))
-    clutch, pt_off, pt_lg = _clutch_and_playtype(list(games.keys()))
+    # The live pool is computed first: the bias tallies read the same exclusions
+    # the rating does, so a late hacking spree can't masquerade as a tendency.
+    live, raw, dropped = _live_foul_counts(list(games.keys()))
+    clutch, pt_off, pt_lg = _clutch_and_playtype(list(games.keys()),
+                                                 exclude=dropped)
     lg_pt_total = sum(pt_lg.values()) or 1
 
     for r in rows:
@@ -706,7 +900,9 @@ def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
         r["clutch_pg"] = _safe(r["clutch"], r["games"])
         # play-type foul bias: this ref's share of a set among their fouls vs the
         # league share — the biggest positive gap is "calls this a lot".
-        mine = pt_off.get(opk, {})
+        # Gated at RATING_MIN_GAMES (N3): the table used to list anyone with two
+        # calls on a tag, which at one game worked is a coin toss with a label.
+        mine = pt_off.get(opk, {}) if r["games"] >= RATING_MIN_GAMES else {}
         mine_total = sum(mine.values()) or 1
         bias = []
         for pk, nn in mine.items():
@@ -718,23 +914,44 @@ def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
         bias.sort(key=lambda t: -t[1])
         r["pt_bias"] = bias[:3]
 
-    # rated pool = officials with enough games; z-score each component there
-    rated = [r for r in rows if r["games"] >= RATING_MIN_GAMES]
-    metrics = {
-        "fpg":      {r["off_pk"]: r["FPG"] for r in rated},
-        "leverage": {r["off_pk"]: r["leverage"] for r in rated},
-        "ppp":      {r["off_pk"]: r["PPP"] for r in rated},
-        "pace":     {r["off_pk"]: r["POSSPG"] for r in rated},
-        "clutch":   {r["off_pk"]: r["clutch_pg"] for r in rated},
-    }
-    zmaps = {k: _z(v) for k, v in metrics.items()}
-    for r in rows:
-        if r["games"] < RATING_MIN_GAMES:
-            r["rating"] = None
-            continue
-        wz = sum(w * zmaps[k].get(r["off_pk"], 0.0) for k, w in _RATING_WEIGHTS)
-        r["rating"] = max(0.0, min(100.0, 50.0 + 10.0 * wz))
+    # ── the rating ────────────────────────────────────────────────────────────
+    # crew per game (inverse of _worked), then each ref's per-game share z.
+    crew_by_game = defaultdict(set)
+    for opk, gset in worked.items():
+        for gid in gset:
+            crew_by_game[gid].add(opk)
+    share_z = _share_z_by_game(live, raw, crew_by_game)
 
-    rows.sort(key=lambda r: (r["rating"] is not None, r["rating"] or -1),
+    # A ref is rated on games that could actually price a share, which is a
+    # stricter pool than "games worked" — a blowout or a whistle-free night
+    # tells us nothing about how the crew split the work.
+    for r in rows:
+        zs = share_z.get(r["off_pk"]) or {}
+        r["rated_games"] = len(zs)
+        r["live_pg"] = (statistics.mean(
+            [live.get(g, {}).get(r["off_pk"], 0) for g in zs]) if zs else None)
+
+    rated = [r for r in rows
+             if r["games"] >= RATING_MIN_GAMES and r["rated_games"]]
+    # Volume vs the league. z-scoring over the pool IS the "minus the league
+    # mean" step, so the mean never gets hardcoded and moves with the season.
+    vol_z = _z({r["off_pk"]: r["live_pg"] for r in rated})
+
+    for r in rows:
+        zs = share_z.get(r["off_pk"]) or {}
+        if r["games"] < RATING_MIN_GAMES or not zs:
+            r["rating"] = r["share_z"] = r["worst_z"] = None
+            continue
+        vals = list(zs.values())
+        r["share_z"] = statistics.mean(vals)
+        r["worst_z"] = max(vals)
+        r["rating"] = _rating_from(r["share_z"], r["worst_z"],
+                                   vol_z.get(r["off_pk"], 0.0))
+
+    # Best first, but every placeholder-named ref sits below every named one so
+    # both ends of the table are somebody a coach can actually act on.
+    rows.sort(key=lambda r: (not is_placeholder_name(r["name"]),
+                             r["rating"] is not None,
+                             r["rating"] if r["rating"] is not None else -1),
               reverse=True)
-    return {"officials": rows, "weights": _RATING_WEIGHTS, "teams": base["teams"]}
+    return {"officials": rows, "weights": _RATING_TERMS, "teams": base["teams"]}

@@ -600,21 +600,43 @@ def _game_leverage(games, scored):
 
 
 def _clutch_and_playtype(game_ids):
-    """One events pass → (clutch_fouls, playtype_fouls, league_playtype).
+    """One events pass → (clutch, playtype_fouls, league_playtype,
+                          defense_fouls, league_defense).
 
     clutch_fouls  {off_pk: n} — fouls a ref called in Q4/OT while the score was
                   within CLUTCH_MARGIN (running margin reconstructed from the
                   scoring events, like situational/runs).
     playtype_fouls {off_pk: {play_type: n}}  — fouls by the set they happened in.
-    league_playtype {play_type: n}           — the pooled baseline for bias."""
+    league_playtype {play_type: n}           — the pooled baseline for bias.
+    defense_fouls {off_pk: {defense: n}}     — the same split on the DEFENSE the
+                  possession was played against, the twin read of the play-type
+                  one: "this crew calls the press" is a thing coaches say, and
+                  the tag is already on every event through the sticky bar.
+    league_defense {defense: n}              — its pooled baseline.
+
+    Unknown / legacy defense tags fold to 'other' the way helpers.defenses does,
+    so a retired scheme name cannot open its own one-ref column."""
     import helpers.gameflow as GF
     import helpers.stats as S
+    import helpers.defenses as DEF
+    import helpers.late_game as LG
     clutch = defaultdict(int)
     pt_off = defaultdict(lambda: defaultdict(int))
     pt_lg = defaultdict(int)
+    df_off = defaultdict(lambda: defaultdict(int))
+    df_lg = defaultdict(int)
     if not game_ids:
-        return dict(clutch), pt_off, dict(pt_lg)
+        return dict(clutch), pt_off, dict(pt_lg), df_off, dict(df_lg)
     ev = S.fetch_events(list(game_ids))   # provides derived shooter_team_id
+    # Intentional clock-stop fouls are coach strategy, not a whistle profile.
+    # official_overview has always excluded them from `fouls`/FPG; these three
+    # reads did not, so a late-game foul barrage was inflating the clutch count
+    # and dragging every bias axis toward whatever defense the trailing team
+    # happened to be in. Same exclusion, same source of truth.
+    try:
+        _strategic = LG.strategic_foul_event_ids(ev)
+    except Exception:
+        _strategic = set()
     by_game = defaultdict(list)
     for e in ev:
         by_game[e["game_id"]].append(e)
@@ -624,19 +646,20 @@ def _clutch_and_playtype(game_ids):
         t1 = _game_team1(gid)
         for e in evs:
             et = e["event_type"]
-            if et == "foul":
+            if et == "foul" and e["id"] not in _strategic:
                 q = e["quarter"] or 0
-                if q >= 4 and abs(margin) <= CLUTCH_MARGIN:
-                    opk = e["official_id"]
-                    if opk is not None:
-                        clutch[opk] += 1
-                        pk = e.get("play_type")
-                        if pk:
-                            pt_off[opk][pk] += 1
-                            pt_lg[pk] += 1
-                elif e.get("play_type") and e["official_id"] is not None:
-                    pt_off[e["official_id"]][e["play_type"]] += 1
-                    pt_lg[e["play_type"]] += 1
+                opk = e["official_id"]
+                if q >= 4 and abs(margin) <= CLUTCH_MARGIN and opk is not None:
+                    clutch[opk] += 1
+                if opk is not None:
+                    pk = e.get("play_type")
+                    if pk:
+                        pt_off[opk][pk] += 1
+                        pt_lg[pk] += 1
+                    dk = DEF._norm(e.get("defense"))
+                    if dk:
+                        df_off[opk][dk] += 1
+                        df_lg[dk] += 1
             elif ((et == "shot" and e["shot_result"] == "make")
                   or (et == "free_throw" and e["shot_result"] == "make")):
                 pts = (3 if e["shot_type"] == 3 else 2) if et == "shot" else 1
@@ -644,7 +667,7 @@ def _clutch_and_playtype(game_ids):
                     margin += pts
                 elif e["shooter_team_id"] is not None:
                     margin -= pts
-    return dict(clutch), pt_off, dict(pt_lg)
+    return dict(clutch), pt_off, dict(pt_lg), df_off, dict(df_lg)
 
 
 _TEAM1_CACHE = {}
@@ -678,12 +701,14 @@ def _z(values):
 def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
     """The Officials Rating table — the founder's composite. Builds on
     official_overview (FPG / PPP / POSSPG), adds the mean leverage of the games
-    each ref worked, a clutch-call count, a 0-100 rating, and each ref's
-    play-type foul BIAS (which sets they whistle more than the field).
+    each ref worked, a clutch-call count, a 0-100 rating, and each ref's foul
+    BIAS on two axes: which SETS they whistle more than the field (pt_bias) and
+    which DEFENSES they whistle more (def_bias).
 
     `scored` = team_ratings.score_ratings (for game leverage); without it
     leverage falls back to game closeness only. Returns
-    {"officials": [row + {leverage, clutch, clutch_pg, rating, pt_bias}],
+    {"officials": [row + {leverage, clutch, clutch_pg, rating, pt_bias,
+                          def_bias}],
      "weights": _RATING_WEIGHTS}."""
     base = official_overview(gender=gender, game_ids=game_ids, season=season)
     rows = base["officials"]
@@ -694,8 +719,24 @@ def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
     lev = _game_leverage(games, scored or {})
     # per-official mean leverage over the games they worked
     worked = _worked(list(games.keys()))
-    clutch, pt_off, pt_lg = _clutch_and_playtype(list(games.keys()))
+    clutch, pt_off, pt_lg, df_off, df_lg = _clutch_and_playtype(list(games.keys()))
     lg_pt_total = sum(pt_lg.values()) or 1
+    lg_df_total = sum(df_lg.values()) or 1
+
+    def _share_bias(mine, league, league_total):
+        """This ref's share of a tag among their own fouls minus the league's
+        share of the same tag — the biggest positive gap is "calls this a lot".
+        A tag under two calls is dropped: one whistle is not a tendency."""
+        mine_total = sum(mine.values()) or 1
+        out = []
+        for key, nn in mine.items():
+            if nn < 2:
+                continue
+            my_share = nn / mine_total
+            out.append((key, my_share - league.get(key, 0) / league_total,
+                        nn, my_share))
+        out.sort(key=lambda t: -t[1])
+        return out[:3]
 
     for r in rows:
         opk = r["off_pk"]
@@ -704,19 +745,10 @@ def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
                          if gset else 0.0)
         r["clutch"] = clutch.get(opk, 0)
         r["clutch_pg"] = _safe(r["clutch"], r["games"])
-        # play-type foul bias: this ref's share of a set among their fouls vs the
-        # league share — the biggest positive gap is "calls this a lot".
-        mine = pt_off.get(opk, {})
-        mine_total = sum(mine.values()) or 1
-        bias = []
-        for pk, nn in mine.items():
-            if nn < 2:
-                continue
-            my_share = nn / mine_total
-            lg_share = pt_lg.get(pk, 0) / lg_pt_total
-            bias.append((pk, my_share - lg_share, nn, my_share))
-        bias.sort(key=lambda t: -t[1])
-        r["pt_bias"] = bias[:3]
+        r["pt_bias"] = _share_bias(pt_off.get(opk, {}), pt_lg, lg_pt_total)
+        # The same read against the DEFENSE the possession was played in, so a
+        # crew that lives in the press or lets a zone get physical shows up.
+        r["def_bias"] = _share_bias(df_off.get(opk, {}), df_lg, lg_df_total)
 
     # rated pool = officials with enough games; z-score each component there
     rated = [r for r in rows if r["games"] >= RATING_MIN_GAMES]

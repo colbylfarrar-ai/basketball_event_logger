@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 _TMP = tempfile.mkdtemp(prefix="app5_pool_rollover_")
 os.environ["APP5_DATA_DIR"] = _TMP
 
+import pytest                                   # noqa: E402
 import database.db as DB                        # noqa: E402
 from database.db import execute, query          # noqa: E402
 import helpers.seasons as SEAS                  # noqa: E402
@@ -54,12 +55,34 @@ def _seed():
             "VALUES (7103,7001,7002,'2026-01-24',0,?)", (_PAST,))
 
 
-class TeamGamePoolRollover(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        if not query("SELECT id FROM teams WHERE id=7001"):
-            _seed()
+# ── the DB this module talks to ─────────────────────────────────────────────
+# pytest imports EVERY module in the directory before it runs any test, and each
+# hermetic module points APP5_DATA_DIR at its own temp dir as it imports. So by
+# the time these tests run, the variable holds whichever module imported LAST —
+# the setup above and the assertions below would be reading different databases,
+# and a test only "passes" then when it happens not to care which one it hit.
+# conftest.py documents the same hazard for module-body assertions; this is the
+# `def test_*` form of it. Re-pin the variable for the duration of each test.
+@pytest.fixture(autouse=True)
+def _this_modules_db():
+    prev = os.environ.get("APP5_DATA_DIR")
+    os.environ["APP5_DATA_DIR"] = _TMP
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("APP5_DATA_DIR", None)
+        else:
+            os.environ["APP5_DATA_DIR"] = prev
 
+# Seed at IMPORT, not in setUpClass: a unittest class fixture runs outside the
+# function-scoped fixture above, so it would still be pointed at whichever
+# module imported last.
+if not query("SELECT id FROM teams WHERE id=7001"):
+    _seed()
+
+
+class TeamGamePoolRollover(unittest.TestCase):
     def test_the_active_season_really_is_empty(self):
         """The premise: without the fallback there is nothing to find."""
         self.assertEqual(

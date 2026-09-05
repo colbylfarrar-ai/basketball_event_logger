@@ -29,6 +29,7 @@ _TMP = tempfile.mkdtemp(prefix="app5_offadd_")
 os.environ["APP5_DATA_DIR"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pytest                                        # noqa: E402
 from fastapi.testclient import TestClient            # noqa: E402
 
 import database.db as DB                             # noqa: E402
@@ -54,6 +55,26 @@ execute("INSERT INTO app_users (email, role, name, plan, tracker_token) "
 client = TestClient(app)
 client.headers.update({"Authorization": "Bearer tok"})
 
+
+# ── the DB this module talks to ─────────────────────────────────────────────
+# pytest imports EVERY module in the directory before it runs any test, and each
+# hermetic module points APP5_DATA_DIR at its own temp dir as it imports. So by
+# the time these tests run, the variable holds whichever module imported LAST —
+# the setup above and the assertions below would be reading different databases,
+# and a test only "passes" then when it happens not to care which one it hit.
+# conftest.py documents the same hazard for module-body assertions; this is the
+# `def test_*` form of it. Re-pin the variable for the duration of each test.
+@pytest.fixture(autouse=True)
+def _this_modules_db():
+    prev = os.environ.get("APP5_DATA_DIR")
+    os.environ["APP5_DATA_DIR"] = _TMP
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("APP5_DATA_DIR", None)
+        else:
+            os.environ["APP5_DATA_DIR"] = prev
 
 # ── 1. the server contract the queue leans on ───────────────────────────────
 

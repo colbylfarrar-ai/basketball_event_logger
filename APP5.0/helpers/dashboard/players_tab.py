@@ -95,10 +95,14 @@ def render(ctx):
                    "that projects a five from the player ratings.")
 
         # ── depth chart (position · availability · measurables) ─────────────
+        # Season-scoped like the empty-season fallback above: a bare archived=0
+        # showed the CURRENT roster under a past season's header.
+        import helpers.seasons as _SEAS2
+        _dc, _dp = _SEAS2.roster_clause(getattr(ctx, "season", "Current"))
         _depth = query(
-            """SELECT number, name, position, availability, height, wingspan, weight
-               FROM players WHERE team_id=? AND archived=0 ORDER BY number""",
-            (ctx.team_id,))
+            f"""SELECT number, name, position, availability, height, wingspan, weight
+                FROM players WHERE team_id=? AND {_dc} ORDER BY number""",
+            (ctx.team_id, *_dp))
         if any((p["position"] or "").strip() for p in _depth):
             st.markdown("<div class='pl-hdr'>Depth chart</div>",
                         unsafe_allow_html=True)

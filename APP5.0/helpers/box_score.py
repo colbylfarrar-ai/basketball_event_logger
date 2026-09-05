@@ -79,9 +79,14 @@ def _build_boxes(game_id, t1id, t2id):
     """Returns (boxes, team_pts, quarters) — per-player boxes decorated with
     roster meta + MIN + +/-, plus team points and a per-quarter point split."""
     boxes_raw = S.aggregate_player_boxes([game_id])
+    # Scope to the GAME'S OWN season. players holds one row per season a player
+    # was rostered, so an unscoped team_id lookup returns a returning player once
+    # per season and duplicates her all the way through the box.
+    _rc, _rp = SEAS.roster_clause(SEAS.game_season(game_id), alias="p")
     roster = query(
-        "SELECT id AS pid, name, number, team_id FROM players "
-        "WHERE team_id IN (?,?) ORDER BY number, name", (t1id, t2id))
+        "SELECT p.id AS pid, p.name, p.number, p.team_id FROM players p "
+        f"WHERE p.team_id IN (?,?) AND {_rc} ORDER BY p.number, p.name",
+        (t1id, t2id) + _rp)
     meta = {p["pid"]: p for p in roster}
 
     mins = {r["player_id"]: (r["secs"] or 0.0) for r in query(
@@ -1310,9 +1315,15 @@ def render_box_score(game_id: int):
         cols = ["#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%", "FT", "FT%",
                 "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF", "+/-",
                 "SC", "eFG%", "TS%", "GS"]
+        # Same season scope as _build_boxes — this list drives the DNP rows, so
+        # an unscoped read printed a returning player once per season she was on
+        # the roster (worst on past-season boxes, where the active-season row is
+        # always an extra).
+        _brc, _brp = SEAS.roster_clause(g["season"], alias="p")
         roster_all = query(
-            "SELECT id AS pid, name, number, team_id FROM players "
-            "WHERE team_id IN (?,?) ORDER BY number, name", (t1id, t2id))
+            "SELECT p.id AS pid, p.name, p.number, p.team_id FROM players p "
+            f"WHERE p.team_id IN (?,?) AND {_brc} ORDER BY p.number, p.name",
+            (t1id, t2id) + _brp)
 
         def make_df(tid):
             rows, played = [], set()

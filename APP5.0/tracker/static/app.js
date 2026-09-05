@@ -12,7 +12,8 @@ const LS = {
   roster: function (gid) { return 'tracker_roster_' + gid; },
   game: function (gid) { return 'tracker_game_' + gid; },   // per-game lineup/quarter/clock
   live: function (gid) { return 'tracker_live_' + gid; },   // last server live snapshot
-  lastDefense: 'tracker_last_defense'                       // most-recent defense (new-game default)
+  lastDefense: 'tracker_last_defense',                      // most-recent defense (new-game default)
+  tmpSeq: 'tracker_tmp_seq'                                 // local-id counter (see nextTempId)
 };
 
 function $(id) { return document.getElementById(id); }
@@ -56,6 +57,7 @@ const S = {
   playType: null,                               // sticky "current set call" (see PLAY_TYPES) — stamps shots, TOs AND fouls
   lastLive: Object.assign({}, EMPTY_LIVE),      // last synced server state (never includes queue)
   queue: [],                                    // unsynced events for current game, oldest first
+  pendingAdds: [],                              // unsynced roster adds (players/officials), oldest first
   flushing: false,
   courtDrawn: false,
   flow: null,
@@ -96,12 +98,19 @@ let dbPromise = null;
 function idb() {
   if (!dbPromise) {
     dbPromise = new Promise(function (resolve, reject) {
-      const req = indexedDB.open('tracker', 1);
+      const req = indexedDB.open('tracker', 2);
       req.onupgradeneeded = function () {
         const db = req.result;
         if (!db.objectStoreNames.contains('queue')) {
           const st = db.createObjectStore('queue', { keyPath: 'uuid' });
           st.createIndex('gameId', 'gameId');
+        }
+        // v2: roster adds made offline. Same durability contract as the event
+        // queue — a quick-add survives the tab being reclaimed — but a separate
+        // store because these flush FIRST and against different endpoints.
+        if (!db.objectStoreNames.contains('adds')) {
+          const ad = db.createObjectStore('adds', { keyPath: 'luid' });
+          ad.createIndex('gameId', 'gameId');
         }
       };
       req.onsuccess = function () { resolve(req.result); };
@@ -144,6 +153,144 @@ function qDelete(uuids) {
       tx.onerror = function () { reject(tx.error); };
     });
   });
+}
+
+// Rewrite queued events in place after a roster add resolves — the local ids
+// they carry have to become server ids on disk too, or a reload replays taps
+// that the server can only reject.
+function qPutAll(items) {
+  if (!items.length) return Promise.resolve();
+  return idb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction('queue', 'readwrite');
+      const st = tx.objectStore('queue');
+      items.forEach(function (it) { st.put(it); });
+      tx.oncomplete = resolve;
+      tx.onerror = function () { reject(tx.error); };
+    });
+  });
+}
+
+/* ---------- IndexedDB pending roster adds ---------- */
+
+function aLoad(gameId) {
+  return idb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const req = db.transaction('adds', 'readonly').objectStore('adds')
+        .index('gameId').getAll(gameId);
+      req.onsuccess = function () {
+        resolve((req.result || []).sort(function (a, b) { return a.ts - b.ts; }));
+      };
+      req.onerror = function () { reject(req.error); };
+    });
+  });
+}
+
+function aPut(item) {
+  return idb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction('adds', 'readwrite');
+      tx.objectStore('adds').put(item);
+      tx.oncomplete = resolve;
+      tx.onerror = function () { reject(tx.error); };
+    });
+  });
+}
+
+function aDelete(luids) {
+  if (!luids.length) return Promise.resolve();
+  return idb().then(function (db) {
+    return new Promise(function (resolve, reject) {
+      const tx = db.transaction('adds', 'readwrite');
+      const st = tx.objectStore('adds');
+      luids.forEach(function (u) { st.delete(u); });
+      tx.oncomplete = resolve;
+      tx.onerror = function () { reject(tx.error); };
+    });
+  });
+}
+
+/* ---------- local ids for offline roster adds ---------- */
+// A player or ref added in a gym with no signal has no server id yet, but the
+// coach has to be able to tap them immediately. They get a LOCAL id — negative,
+// so it can never collide with a server AUTOINCREMENT id, and monotonically
+// decreasing through localStorage so ids stay unique across reloads. Every
+// local id is swapped for the real one before the taps naming it are sent
+// (see drainAdds / remapEvent); nothing negative ever reaches the server.
+
+function nextTempId() {
+  const next = (lsGet(LS.tmpSeq, 0) | 0) - 1;
+  lsSet(LS.tmpSeq, next);
+  return next;
+}
+
+function isTempId(v) { return typeof v === 'number' && v < 0; }
+
+// Every field on a queued event that holds a player or official id. Both kinds
+// share one local-id sequence, so one map covers them all.
+const EVENT_ID_FIELDS = ['primary_player_id', 'pass_from_id', 'shot_created_by_id',
+  'hockey_from_id', 'rebound_by_id', 'blocked_by_id', 'guarded_by_id',
+  'secondary_player_id', 'stolen_by_id', 'official_id'];
+
+function hasTempIds(ev) {
+  if (EVENT_ID_FIELDS.some(function (f) { return isTempId(ev[f]); })) return true;
+  if ((ev.on_court || []).some(isTempId)) return true;
+  if ((ev.officials_on || []).some(isTempId)) return true;
+  return (ev.official_slots || []).some(function (s) { return isTempId(s.official_id); });
+}
+
+function remapEvent(ev, map) {
+  let hit = false;
+  EVENT_ID_FIELDS.forEach(function (f) {
+    if (isTempId(ev[f]) && map[ev[f]] != null) { ev[f] = map[ev[f]]; hit = true; }
+  });
+  ['on_court', 'officials_on'].forEach(function (f) {
+    if (!Array.isArray(ev[f])) return;
+    ev[f] = ev[f].map(function (v) {
+      if (isTempId(v) && map[v] != null) { hit = true; return map[v]; }
+      return v;
+    });
+  });
+  (ev.official_slots || []).forEach(function (s) {
+    if (isTempId(s.official_id) && map[s.official_id] != null) {
+      s.official_id = map[s.official_id];
+      hit = true;
+    }
+  });
+  return hit;
+}
+
+// The same swap over everything the SCREEN is holding: the cached roster, the
+// on-court five, the crew slots. Without it the coach keeps tapping a local id
+// after it has already been reconciled.
+function remapLocalState(map) {
+  if (S.game) {
+    (S.game.players || []).forEach(function (p) {
+      if (map[p.id] != null) p.id = map[p.id];
+    });
+    (S.game.officials || []).forEach(function (o) {
+      if (map[o.id] != null) o.id = map[o.id];
+    });
+    lsSet(LS.roster(S.gameId), S.game);
+  }
+  ['home', 'away'].forEach(function (side) {
+    S.lineup[side] = (S.lineup[side] || []).map(function (id) {
+      return map[id] != null ? map[id] : id;
+    });
+  });
+  const slots = S.lineup.officialSlots || {};
+  [1, 2, 3].forEach(function (n) {
+    if (slots[n] != null && map[slots[n]] != null) slots[n] = map[slots[n]];
+  });
+  syncOfficialsArray();
+  if (S.flow) {
+    ['shooter', 'fouled', 'fouler', 'official', 'player', 'stolen'].forEach(function (k) {
+      if (S.flow[k] != null && map[S.flow[k]] != null) S.flow[k] = map[S.flow[k]];
+    });
+    const d = S.flow.details || {};
+    Object.keys(d).forEach(function (k) { if (map[d[k]] != null) d[k] = map[d[k]]; });
+  }
+  savePrefs();
 }
 
 /* ---------- sync engine ---------- */
@@ -193,12 +340,84 @@ function toServer(item) {
 
 function setSyncStatus(msg) { $('sync-status').textContent = msg; }
 
+// Send the roster adds made offline and swap their local ids for server ids
+// everywhere — queued events, the cached roster, the on-court five.
+//
+// This runs BEFORE the event batch and its result gates that batch: an event
+// carrying a local id would come back `rejected`, and flush DEQUEUES rejected
+// events, so sending one loses the tap permanently. Anything still holding a
+// local id therefore waits for the next flush instead.
+//
+// Both endpoints are idempotent on the server (a player of that name already on
+// the game's season roster is reused; an official upserts on badge+state), so a
+// retry after a half-delivered request returns the same id rather than a twin.
+async function drainAdds() {
+  const map = {};
+  const done = [];
+  for (const item of S.pendingAdds.slice()) {
+    let res;
+    try {
+      res = await api(item.url, { method: 'POST', body: JSON.stringify(item.body) });
+    } catch (e) {
+      break;                       // still offline — keep this and everything after it
+    }
+    if (res.ok) {
+      const d = await res.json();
+      if (d.id != null) map[item.tempId] = d.id;
+      // the server answers with the STORED name, which differs from the typed
+      // one when this badge/roster spot already existed under another spelling
+      if (d.name) item.serverName = d.name;
+      done.push(item);
+    } else if (res.status === 408 || res.status === 429 || res.status >= 500) {
+      break;                       // transient — retry the whole tail next flush
+    } else {
+      // A 4xx will never succeed. Drop the add rather than wedging the queue
+      // behind it, and say so — the taps naming this player cannot sync.
+      const stuck = S.queue.filter(function (q) {
+        return hasTempIds(q) && JSON.stringify(q).indexOf(String(item.tempId)) >= 0;
+      }).length;
+      toast('Could not add ' + item.label + ' (HTTP ' + res.status + ')'
+            + (stuck ? ' — ' + stuck + ' tap(s) stuck' : ''));
+      done.push(item);
+    }
+  }
+  if (!done.length) return;
+  const luids = done.map(function (d) { return d.luid; });
+  S.pendingAdds = S.pendingAdds.filter(function (a) { return luids.indexOf(a.luid) < 0; });
+  try { await aDelete(luids); } catch (e) {}
+  if (!Object.keys(map).length) return;
+  const touched = S.queue.filter(function (ev) { return remapEvent(ev, map); });
+  try { await qPutAll(touched); } catch (e) {}
+  // adopt the stored names now that the server has spoken
+  done.forEach(function (it) {
+    const rid = map[it.tempId];
+    if (rid == null || !it.serverName || !S.game) return;
+    const bag = it.kind === 'official' ? (S.game.officials || []) : (S.game.players || []);
+    const row = bag.find(function (r) { return r.id === it.tempId; });
+    if (row) row.name = it.serverName;
+  });
+  remapLocalState(map);
+  renderLineup();
+}
+
 async function flush() {
-  if (S.flushing || !S.gameId || !S.queue.length) { updateSyncUI(); return; }
+  if (S.flushing || !S.gameId) { updateSyncUI(); return; }
+  if (!S.queue.length && !S.pendingAdds.length) { updateSyncUI(); return; }
   S.flushing = true;
-  const batch = S.queue.slice(); // snapshot; events logged mid-flight stay queued
   let ok = false;
   try {
+    if (S.pendingAdds.length) await drainAdds();
+    // snapshot; events logged mid-flight stay queued, and so does anything still
+    // naming a roster row the server has not accepted yet
+    const batch = S.queue.filter(function (q) { return !hasTempIds(q); });
+    if (!batch.length) {
+      // "Synced" would be a lie while a roster add is still on this phone: the
+      // taps naming it are held back with it.
+      if (S.pendingAdds.length) setSyncStatus('Offline — roster adds queued');
+      else if (S.queue.length) setSyncStatus('Waiting on a roster add');
+      else setSyncStatus('Synced');
+      return;
+    }
     const res = await api('/api/games/' + S.gameId + '/events', {
       method: 'POST',
       body: JSON.stringify({ events: batch.map(toServer) })
@@ -521,12 +740,31 @@ function renderGames(games) {
   }
 }
 
+// Roster rows added offline exist only on this phone until they flush, so a
+// fresh server roster has to have them folded back in — otherwise re-opening the
+// game makes the player the coach just added disappear out from under the taps
+// still queued against them.
+function mergePendingAdds(roster, adds) {
+  adds.forEach(function (a) {
+    const bag = a.kind === 'official' ? 'officials' : 'players';
+    roster[bag] = roster[bag] || [];
+    if (roster[bag].some(function (r) { return r.id === a.tempId; })) return;
+    const b = a.body;
+    roster[bag].push(a.kind === 'official'
+      ? { id: a.tempId, name: b.name }
+      : { id: a.tempId, name: b.name, number: b.number,
+          team_id: b.team_id, handedness: b.handedness });
+  });
+  return roster;
+}
+
 async function selectGame(gid) {
   let roster = lsGet(LS.roster(gid), null);
+  try { S.pendingAdds = await aLoad(gid); } catch (e) { S.pendingAdds = []; }
   try {
     const res = await api('/api/games/' + gid);
     if (res.ok) {
-      roster = await res.json();
+      roster = mergePendingAdds(await res.json(), S.pendingAdds);
       lsSet(LS.roster(gid), roster);
     }
   } catch (e) { /* fall back to cache */ }
@@ -1008,7 +1246,27 @@ async function setHandedness(p, value, side) {
   } catch (e) { toast('Needs connection'); }
 }
 
-/* ----- quick-add player / official (lineup, online-only) ----- */
+/* ----- quick-add player / official (lineup) ----- */
+// A gym with no signal is the normal case, so these queue exactly like events:
+// the row goes on the roster immediately under a local id, and drainAdds swaps
+// that id for the server's on the next flush. The online path still goes
+// straight to the server, because only the server can answer with the STORED
+// name — a badge or a roster spot that already exists under another spelling.
+
+// Park an add for the next flush and return the local id the UI should use now.
+async function queueAdd(kind, url, body, label, row, bag) {
+  const tempId = nextTempId();
+  const item = {
+    luid: 'add-' + Math.abs(tempId) + '-' + Date.now(),
+    gameId: S.gameId, kind: kind, url: url, body: body,
+    label: label, tempId: tempId, ts: Date.now()
+  };
+  S.pendingAdds.push(item);
+  try { await aPut(item); } catch (e) { /* in-memory queue still works this session */ }
+  S.game[bag] = (S.game[bag] || []).concat([Object.assign({ id: tempId }, row)]);
+  lsSet(LS.roster(S.gameId), S.game);
+  return tempId;
+}
 
 async function quickAddPlayer(side) {
   if (!S.game) return;
@@ -1021,29 +1279,38 @@ async function quickAddPlayer(side) {
   const handIn = $('add-' + side + '-hand');
   const hand = (handIn && handIn.value === 'left') ? 'left' : 'right';
   if (!name) { st.textContent = 'Name required'; return; }
-  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
-  try {
-    const res = await api('/api/games/' + S.gameId + '/players', {
-      method: 'POST',
-      body: JSON.stringify({ team_id: S.game[side].id, name: name, number: num, handedness: hand })
-    });
-    if (!res.ok) { st.textContent = 'Failed (HTTP ' + res.status + ')'; return; }
-    const d = await res.json();
-    if (!playerById(d.id)) {
-      S.game.players = (S.game.players || []).concat([
-        { id: d.id, name: name, number: num, team_id: S.game[side].id, handedness: hand }
-      ]);
-    }
-    lsSet(LS.roster(S.gameId), S.game);  // cached roster includes the new player
+  const teamId = S.game[side].id;
+  const url = '/api/games/' + S.gameId + '/players';
+  const body = { team_id: teamId, name: name, number: num, handedness: hand };
+  const row = { name: name, number: num, team_id: teamId, handedness: hand };
+
+  function accept(queued) {
     nameIn.value = '';
     numIn.value = '';
     if (handIn) handIn.value = 'right';
     $('add-' + side + '-form').hidden = true;
-    toast('Added #' + num + ' ' + name);
+    toast('Added #' + num + ' ' + name + (queued ? ' — will sync' : ''));
     renderLineup();
-  } catch (e) {
-    st.textContent = 'Needs connection';
+    updateSyncUI();
   }
+
+  if (isOnline()) {
+    try {
+      const res = await api(url, { method: 'POST', body: JSON.stringify(body) });
+      if (res.ok) {
+        const d = await res.json();
+        if (!playerById(d.id)) {
+          S.game.players = (S.game.players || []).concat([Object.assign({ id: d.id }, row)]);
+        }
+        lsSet(LS.roster(S.gameId), S.game);  // cached roster includes the new player
+        accept(false);
+        return;
+      }
+      if (res.status < 500) { st.textContent = 'Failed (HTTP ' + res.status + ')'; return; }
+    } catch (e) { /* the connection died mid-add — fall through and queue it */ }
+  }
+  await queueAdd('player', url, body, '#' + num + ' ' + name, row, 'players');
+  accept(true);
 }
 
 async function quickAddOfficial() {
@@ -1056,32 +1323,44 @@ async function quickAddOfficial() {
   const oid = parseInt(idIn.value, 10);
   if (!name) { st.textContent = 'Name required'; return; }
   if (isNaN(oid)) { st.textContent = 'Official ID required'; return; }
-  if (!isOnline()) { st.textContent = 'Needs connection'; return; }
-  try {
-    const res = await api('/api/officials', {
-      method: 'POST',
-      // gameId scopes the badge number to a state association: #1234 in Arkansas
-      // and #1234 in Oklahoma are two different officials, and the server keys
-      // the ref on (badge, host state) rather than the badge alone.
-      body: JSON.stringify({ name: name, official_id: oid, game_id: S.gameId })
-    });
-    if (!res.ok) { st.textContent = 'Failed (HTTP ' + res.status + ')'; return; }
-    const d = await res.json();
-    // server returns the STORED name — differs from the input when this
-    // official_id already existed under another name
-    const oname = d.name || name;
-    if (d.id != null && !(S.game.officials || []).some(function (o) { return o.id === d.id; })) {
-      S.game.officials = (S.game.officials || []).concat([{ id: d.id, name: oname }]);
-    }
-    lsSet(LS.roster(S.gameId), S.game);
+  // gameId scopes the badge number to a state association: #1234 in Arkansas and
+  // #1234 in Oklahoma are two different officials, and the server keys the ref
+  // on (badge, host state) rather than the badge alone.
+  const body = { name: name, official_id: oid, game_id: S.gameId };
+
+  function accept(oname, queued) {
     nameIn.value = '';
     idIn.value = '';
     $('add-official-form').hidden = true;
-    toast('Added ' + oname);
+    toast('Added ' + oname + (queued ? ' — will sync' : ''));
     renderLineup();
-  } catch (e) {
-    st.textContent = 'Needs connection';
+    updateSyncUI();
   }
+
+  if (isOnline()) {
+    try {
+      const res = await api('/api/officials', {
+        method: 'POST', body: JSON.stringify(body)
+      });
+      if (res.ok) {
+        const d = await res.json();
+        // server returns the STORED name — differs from the input when this
+        // official_id already existed under another name
+        const oname = d.name || name;
+        if (d.id != null && !(S.game.officials || []).some(function (o) { return o.id === d.id; })) {
+          S.game.officials = (S.game.officials || []).concat([{ id: d.id, name: oname }]);
+        }
+        lsSet(LS.roster(S.gameId), S.game);
+        accept(oname, false);
+        return;
+      }
+      if (res.status < 500) { st.textContent = 'Failed (HTTP ' + res.status + ')'; return; }
+    } catch (e) { /* the connection died mid-add — fall through and queue it */ }
+  }
+  // Offline the typed name is the best available; drainAdds adopts the stored
+  // one if the server turns out to know this badge under another spelling.
+  await queueAdd('official', '/api/officials', body, name, { name: name }, 'officials');
+  accept(name, true);
 }
 
 /* ----- tracker screen ----- */
@@ -1242,7 +1521,9 @@ function renderScore() {
 }
 
 function updateSyncUI() {
-  const n = S.queue.length;
+  // Roster adds count too: they are unsynced work, and until they land the taps
+  // naming them cannot be sent either.
+  const n = S.queue.length + S.pendingAdds.length;
   const b = $('sync-badge');
   b.textContent = n;
   b.className = 'badge' + (n === 0 ? ' ok' : '');
@@ -1866,6 +2147,11 @@ async function undo() {
 async function finishGame() {
   if (!window.confirm('End game and save the final score?')) return;
   await flush();
+  if (S.pendingAdds.length) {
+    toast(S.pendingAdds.length + ' roster add(s) still queued — get online, then '
+          + 'try again (the taps naming them cannot send until they land)');
+    return;
+  }
   if (S.queue.length) {
     toast(S.queue.length + ' events still queued — get online, then try again');
     return;
@@ -2568,6 +2854,9 @@ async function init() {
       S.clockSec = prefs.clockSec != null ? prefs.clockSec : 0;
       S.lastLive = lsGet(LS.live(st.gameId), Object.assign({}, EMPTY_LIVE));
       try { S.queue = await qLoad(st.gameId); } catch (e) { S.queue = []; }
+      // The cached roster already carries any offline adds, but the adds
+      // themselves have to come back too or they would never be sent.
+      try { S.pendingAdds = await aLoad(st.gameId); } catch (e) { S.pendingAdds = []; }
       resetFlow('shot');
       if (st.screen === 'tracker') {
         enterTracker();

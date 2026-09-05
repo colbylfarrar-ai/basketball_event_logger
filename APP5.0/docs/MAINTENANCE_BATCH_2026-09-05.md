@@ -379,59 +379,85 @@ are unchanged, because the case it means to test ("two half-court possessions
 worth two points") is unchanged. This is the re-bucketing cost T3 warned about,
 showing up exactly where it should.
 
+
 ---
 
-## NOTICED WHILE WORKING — next batch candidates
+## NOTICED WHILE WORKING — ruled on by the founder 2026-09-05
 
-Ranked by how much they cost a coach in a real season. None of these are built.
+### N1 · Badge numbers — CLOSED as designed, with one live remnant
+**Founder ruling: by design.** Every ref has a number, it never changes across
+their career, it is never duplicated, and the coach can get it before walking
+into the gym — the ref writes it in the book pregame, same as the rosters. So
+quick-add demanding an Official ID is correct, and the T6 no-results state is
+asking for the right thing.
 
-### N1 · A ref you cannot find still cannot be added without their badge number
-The T6 search fixes finding a ref who IS in the table. If they are NOT, quick-add
-demands an Official ID: `officials.official_id` is `INTEGER NOT NULL UNIQUE` and
-the upsert dedupes on it (`tracker/api.py` `quick_add_official`). At a gym, on a
-Tuesday, a coach has a name and a face and no badge number — which is exactly the
-moment T6's no-results state now hands them a form they cannot complete.
+**The remnant is cross-state, and it is not hypothetical.** `officials.official_id`
+is `INTEGER NOT NULL UNIQUE` — globally unique, with `officials.state` sitting
+beside it and doing nothing. Today every official on file is `OK`. But the
+**teams** table already spans 23 states (1,146 OK, 94 TX, 85 AR, 57 KS, 33 MO,
+…), so the first out-of-state crew entered can collide on a number.
 
-Fix is a migration (drop the NOT NULL, dedupe on name+state when the number is
-missing, backfill later from the game sheet), so it is a real change with real
-blast radius. **Highest-value item on this list** — it is the difference between
-the officials data being complete this season or not.
+The failure is silent and bad: `quick_add_official` upserts
+`ON CONFLICT(official_id) DO UPDATE SET archived=0` and returns the **stored**
+name. An Arkansas #1234 entered while Oklahoma #1234 exists does not error — it
+un-archives the Oklahoma ref, hands the coach back the wrong name, and pools two
+careers' calls into one record.
 
-### N2 · Quick-add needs a connection
-`quickAddOfficial` bails with "Needs connection" when offline, and so does
-quick-add player. Everything else in the tracker is offline-first with a queue.
-A gym with no signal is the normal case, not the edge case. Queue these the way
-events are queued and reconcile on flush.
+Fix is a migration: `UNIQUE(official_id, state)`, upsert on the pair, and default
+the state from the game's teams rather than the `'OK'` column default.
+**Small, contained, and worth doing before out-of-state games are tracked.**
 
-### N3 · The officials bias tables show refs with three games
-The rating itself is gated on `RATING_MIN_GAMES`, but the two bias tables (play
-type, and the new defense one) list anyone with two calls on a tag. At three
-games that is noise wearing a tendency's clothes, and the audit already said
-officials need ~15-20 games before the read is shippable. Either gate the tables
-the same way or label the low-sample rows.
+### N2 · Quick-add needs a connection — LOG, next session
+`quickAddOfficial` and quick-add player bail with "Needs connection" while
+everything else in the tracker is offline-first with a queue. A gym with no
+signal is the normal case. Queue them the way events are queued and reconcile
+on flush.
 
-### N4 · The tablet layout only covers the tracker screen
-`>=768px` grids `#screen-tracker`. The setup and lineup screens just get a wider
-column, so on an iPad the roster chips run in very long rows. Worth a second
-pass once the tracker layout has been used in a real game.
+### N3 · The officials bias tables show refs with three games — LOG, next session
+The rating is gated on `RATING_MIN_GAMES = 3`, but the two bias tables list
+anyone with two calls on a tag. The audit put the shippable threshold at ~15-20
+games. Gate the tables or label the low-sample rows. Pairs naturally with the
+ref-rating rework below.
 
-### N5 · `stats._team_game_ids` is a rollover trap
-Hardcodes `season='Current'`, which holds no games for the first weeks of a new
-season. `star_coverage` and `foul_prone` use it as their default pool, so a
-no-arg call silently reports a team has no key players. Every caller passes
-`game_ids` today, so nothing is broken — but the next caller who does not will
-get a wrong answer with no error. Give it the same season fallback
-`seasons.tracked_default_season_sql()` already implements.
+### N4 · A tablet-native layout — LOG, next session (thoughts below)
+What shipped is the phone layout widened: same four screens, court beside the
+pad at >=768px. A real "iPad Mode" would collapse screens rather than widen
+them — the lineup and the tracker as ONE view with a persistent left rail
+(roster, on-court five, subs), the court centre, the event flow right, and the
+edit log as a slide-over instead of a screen swap. The wins are real: subs and
+mistake-fixing without leaving the game, and no screen transitions during live
+play.
 
-### N6 · `cur_q` on the live page is inferred from events, not the tracker clock
-`cur_q = max(quarter over events)`, so between the tracker advancing a period and
-the first event of that period being logged, the bench page still says the old
-quarter — and the win-probability and courtside strips price the game against a
-slightly short clock. Small, but it is a wrong number on the screen during
-exactly the dead-ball stretch when people look at it.
+**The cost is where it is not obvious.** `S.screen` is load-bearing for crash
+recovery — `init()` restores a mid-game session by reading `st.screen` and
+branching to `enterTracker()` or `renderLineup()`. Collapsing screens for real
+means touching the restore path, which is the one piece of the tracker that must
+never be wrong (it is what saves a game when iOS reclaims the tab).
 
-### N7 · Untimed possessions are 16% of the sample
-`possession_secs` is 0 on roughly a sixth of possessions, and those leave every
-tempo read's denominator. That is by design and was reviewed before, but with the
-tempo cuts now doing more work (T3), it is worth knowing which situations produce
-them and whether the tracker could capture more of them cheaply.
+**Recommendation: keep the screen state machine exactly as it is and change only
+what each screen RENDERS at tablet width.** "iPad Mode" becomes a composition
+choice, not a new navigation model — the lineup screen and tracker screen render
+as one composed view while `S.screen` stays whatever it already was. Same visible
+result, none of the recovery risk.
+
+### N5 · `stats._team_game_ids` is a rollover trap — LOG, next session
+Hardcodes `season='Current'`, empty for the first weeks of a season. Default pool
+for `star_coverage` and `foul_prone`, so a no-arg call silently reports a team
+has no key players. Nothing broken today (every caller passes `game_ids`); give
+it the fallback `seasons.tracked_default_season_sql()` already implements.
+
+### N6 · `cur_q` from events — CLOSED as designed
+**Founder ruling: by design.** The bench page is event-sourced — it reconstructs
+state from what was logged, rather than mirroring live tracker UI state. There is
+no server-side "current quarter" to read and there should not be one. The only
+residual is cosmetic: between the tracker advancing to OT and the first OT event
+landing, the win-probability strip prices the game against regulation length.
+Self-correcting on the next logged event. **No action.**
+
+### N7 · Untimed possessions — CLOSED, the proposed rule is already the rule
+**Founder ruling: by design, subtract them from the denominator.** That is
+already what happens everywhere: `tempo_bucket()` returns `None` for `secs <= 0`,
+`insights_team._style_line` gates its tempo counters on `secs > 0`,
+`quarter_possession_secs` skips them, and `POSS_BUCKETS` reports them as a
+separate `Untimed` row rather than folding them into half-court. Verified across
+all four surfaces. **No action.**

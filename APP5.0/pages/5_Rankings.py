@@ -2074,7 +2074,7 @@ def _fx_chart():
                                for t in teams}
                 _mix_stack(_lens_share, _tempo_keys, _ptlbl,
                            "Tempo mix — when the shot goes up",
-                           "Transition ≤6s · Early 7-14s · Half-court 15s+. "
+                           "Transition ≤8s · Early 9-20s · Half-court 21s+. "
                            "Untimed possessions (no clock logged) drop out.")
                 _mix_stack(_lens_share, _crea_keys, _ptlbl,
                            "Shot-creation mix — how the shot was made",

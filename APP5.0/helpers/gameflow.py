@@ -29,6 +29,7 @@ from collections import defaultdict
 
 from database.db import query
 import helpers.stats as S
+import helpers.playtypes as PT
 import helpers.team_analytics as TA
 
 
@@ -109,7 +110,10 @@ def scoring_buckets(game_ids, events=None):
                     if e["zone"] == "C" and e["shot_type"] != 3:
                         o["paint"] += pts
                     psec = e["possession_secs"] or 0
-                    if 0 < psec <= 6:
+                    # Same cut the tempo buckets use — a fast break and a
+                    # "transition" possession have to mean the same thing or the
+                    # game-flow split and the Charts tab disagree on one game.
+                    if PT.tempo_bucket(psec) == "transition":
                         o["fast_break"] += pts
                     if prev is not None:
                         if (prev["event_type"] == "turnover"

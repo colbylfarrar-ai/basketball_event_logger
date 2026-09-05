@@ -973,9 +973,40 @@ def creation_breakdown(team_id, game_ids=None, events=None):
     return out
 
 
-# possession-length buckets, in seconds of possession_secs on the shot event
-POSS_BUCKETS = [("Transition (≤6s)", 0.01, 6), ("Early (7–14s)", 6, 14),
-                ("Half-court (15s+)", 14, 1e9)]
+# ── tempo cuts ────────────────────────────────────────────────────────────────
+# THE possession-length boundaries, in seconds of possession_secs on the shot
+# event. Every surface that talks about transition vs half-court reads these, so
+# a "transition" possession means one thing in the Charts tab, the Insights tab,
+# the scouting report and the game-flow fast-break split. They live here rather
+# than in playtypes because playtypes imports this module.
+#
+# 8 / 20, measured on the 43-game sample (docs/DB_AUDIT_2026-07-28 section 2.2
+# and the follow-up per-2s pass), not adopted from an outside claim:
+#
+#   * 8s is where transition ENDS. The share of shots tagged putback/transition
+#     -- an independent, manually-entered column, so this is a real sign check
+#     and not a circular one -- runs 75% / 56% / 52% / 51% across the 1-2, 3-4,
+#     5-6 and 7-8s bands and then falls off a cliff to 25% at 9-10s. The old 6s
+#     cut was leaving real transition inside the half-court bucket.
+#   * 20s is where half-court efficiency breaks. 21s+ is 0.70 PPS on the largest
+#     bucket in the database (21.8% of all shots), 99.4% of it half-court -- the
+#     shot-clock bailout -- against a flat 0.78-0.84 plateau from 4s to 20s.
+#
+# The old 6/14 split did not separate its own last two buckets (0.794 vs 0.760,
+# inside noise). These do: 0.97 / 0.80 / 0.70, roughly 0.10 PPS at each step.
+#
+# Changing these re-buckets every historical possession, so every playtype
+# rating, percentile and league baseline moves with them. Treat them like any
+# other model constant: measure before you touch them.
+TEMPO_TRANSITION_MAX = 8       # <= this many seconds is transition
+TEMPO_EARLY_MAX = 20           # <= this is early offense; past it, half-court
+
+POSS_BUCKETS = [
+    (f"Transition (≤{TEMPO_TRANSITION_MAX}s)", 0.01, TEMPO_TRANSITION_MAX),
+    (f"Early ({TEMPO_TRANSITION_MAX + 1}–{TEMPO_EARLY_MAX}s)",
+     TEMPO_TRANSITION_MAX, TEMPO_EARLY_MAX),
+    (f"Half-court ({TEMPO_EARLY_MAX + 1}s+)", TEMPO_EARLY_MAX, 1e9),
+]
 
 
 def _creation_counts(shots):

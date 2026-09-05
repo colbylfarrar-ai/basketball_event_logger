@@ -1296,7 +1296,7 @@ def render(ctx):
             _plf.update_yaxes(title="Points per shot")
             ctx.style(_plf, 300)
             st.plotly_chart(_plf, width="stretch", key="scout_plen")
-            st.caption("How they score by tempo — transition (≤6s) vs early vs "
+            st.caption("How they score by tempo — transition (≤8s) vs early vs "
                        "half-court. If they spike in transition, get back on "
                        "defense; if half-court is weak, make them play in a crowd.")
 

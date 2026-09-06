@@ -321,15 +321,23 @@ tab_rate, tab_over, tab_charts, tab_ind, tab_gloss = st.tabs(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 0 — OFFICIALS RATING  (the ref a coach wants)
+#  TAB 0 — OFFICIALS RATING  (was one crew member calling everything?)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_rate:
     st.caption(
-        "The **Officials Rating** — the ref coaches want: works the big games, "
-        "lets them play, and still makes the gutsy call late. A 0-100 index "
-        "(50 = average) weighting, in order: **fewer fouls/game** · **higher-"
-        "leverage games worked** · **higher scoring** · **higher pace** · "
-        "**clutch calls** (Q4/OT with the game within a possession or two).")
+        "The **Officials Rating** — in the heat of the game, was this a shared "
+        "crew effort? A 0-100 index where **50 is a crew that split the night "
+        "normally**. A ref drops below it by taking more of the whistle than "
+        "chance explains for their crew size, and one lopsided game counts for "
+        "more than a quiet average hides. Intentional clock-stop fouls and "
+        "anything called after the game was decided are left out — those are a "
+        "coach's decision, not the official's.")
+    st.caption(
+        "It deliberately does **not** rate how good a ref is. Over 63 tracked "
+        "games no per-ref rate repeated itself (foul rate agrees with itself at "
+        "r=+0.07, home/away lean is a coin flip), so fouls per game, pace, PPP, "
+        "leverage and clutch are shown as **descriptors** — a tight crew is a "
+        "different game plan, not a worse crew.")
     _rat = _official_ratings(gender, _off_gids, _off_season)
     _rrows = _rat.get("officials", [])
     _rated = [r for r in _rrows if r.get("rating") is not None]
@@ -340,17 +348,18 @@ with tab_rate:
     else:
         # headline tiles
         _top = _rated[0]
+        # the point of the board: who took the whistle over from their crew
+        _lopsided = min(_rated, key=lambda r: r["rating"])
         _bigstage = max(_rrows, key=lambda r: r.get("leverage", 0))
-        _letplay = min([r for r in _rrows if r["games"] >= 2],
-                       key=lambda r: r["FPG"], default=_rated[0])
         _clutchref = max(_rrows, key=lambda r: r.get("clutch_pg", 0))
         gg = st.columns(4)
-        _glass(gg[0], "TOP-RATED", f"{_top['rating']:.0f}",
+        _glass(gg[0], "BEST SHARED CREW", f"{_top['rating']:.0f}",
                f"{_top['name']}", ACCENT)
-        _glass(gg[1], "BIG-STAGE REF", f"{_bigstage['leverage']:.2f}",
+        _glass(gg[1], "MOST ONE-SIDED", f"{_lopsided['rating']:.0f}",
+               f"{_lopsided['name']} · worst game "
+               f"{_lopsided['worst_z']:+.1f}σ", _uimod.BAD)
+        _glass(gg[2], "BIG-STAGE REF", f"{_bigstage['leverage']:.2f}",
                f"{_bigstage['name']} · leverage", "#e3b341")
-        _glass(gg[2], "LETS THEM PLAY", f"{_letplay['FPG']:.1f}",
-               f"{_letplay['name']} · FPG", _uimod.GOOD)
         _glass(gg[3], "MAKES THE CALL", f"{_clutchref['clutch']}",
                f"{_clutchref['name']} · clutch", "#bc8cff")
 
@@ -359,7 +368,11 @@ with tab_rate:
         _glossary_key("FPG", "Leverage", "PPP", "Clutch")
         _rdf = _pd.DataFrame([{
             "Official": r["name"], "Rating": round(r["rating"], 0),
-            "GP": r["games"], "FPG": round(r["FPG"], 1),
+            "GP": r["games"], "Priced": r["rated_games"],
+            "Share σ": round(r["share_z"], 2),
+            "Worst σ": round(r["worst_z"], 2),
+            "Live/G": round(r["live_pg"], 1),
+            "FPG": round(r["FPG"], 1),
             "Leverage": round(r["leverage"], 2),
             "PPP": round(r["PPP"], 2), "Pace": round(r["POSSPG"], 0),
             "Clutch": r["clutch"],
@@ -369,9 +382,20 @@ with tab_rate:
             column_config={"Rating": st.column_config.ProgressColumn(
                 "Rating", format="%.0f", min_value=0, max_value=100)})
         st.caption(
-            "Leverage = mean stakes of the games worked (team quality + "
-            "closeness). Clutch = fouls called in Q4/OT within a possession or "
-            "two. FPG lower is better; everything else higher is better.")
+            "**Share σ** is how far this ref's slice of a game's live calls sat "
+            "from their crew's fair share, in standard deviations — 0 is a "
+            "normal split, positive means they took more of the whistle. "
+            "**Worst σ** is their most lopsided single game. **Priced** is how "
+            "many of their games had enough live calls to score (GP is games "
+            "worked). Live/G = calls per game after clock-stop and decided-game "
+            "fouls come out. "
+            "FPG, Leverage, PPP, Pace and Clutch are descriptors and carry no "
+            "goodness direction — none of them measured as a property of the "
+            "official rather than of the game.")
+        if any(OFF.is_placeholder_name(r["name"]) for r in _rated):
+            st.caption("Officials still recorded as *Unknown* are rated the same "
+                       "way but sorted below every named ref — give them a name "
+                       "in the Event Editor and they take their real place.")
 
         # ── foul bias, two axes ────────────────────────────────────────────
         # Same share-gap read on the two tags every event already carries: the
@@ -388,13 +412,20 @@ with tab_rate:
             k, d, _n, _s = bias[i]
             return f"{labeller(k)} {d * 100:+.0f}%"
 
+        # Both axes now carry the rating's game floor and its exclusions, so the
+        # caption says so once, under every table.
+        _bias_floor = (f" Same {OFF.RATING_MIN_GAMES}-game floor as the rating "
+                       f"(two calls on a tag in one game worked is a coin toss "
+                       f"with a label on it), and clock-stop and decided-game "
+                       f"fouls are excluded here too.")
+
         def _bias_table(field, labeller, title, caption, key):
             rows_ = [r for r in _rrows if r.get(field)]
             if not rows_:
                 return
             st.markdown(f"<div class='lab-hdr'>{title}</div>",
                         unsafe_allow_html=True)
-            st.caption(caption)
+            st.caption(caption + _bias_floor)
             st.dataframe(_pd.DataFrame([{
                 "Official": r["name"], "GP": r["games"],
                 "Calls tight #1": _bias_cell(r[field], 0, labeller),

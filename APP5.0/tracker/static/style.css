@@ -696,6 +696,16 @@ html.is-wide #track-head {
    the quarter stepper it must never be confused with. */
 html.is-wide #track-controls #btn-undo { margin-left: auto; }
 
+/* Two-up on every tablet size, not only where the height forces it: a coach
+   who picks up a different iPad should not find the rows rearranged. */
+html.is-wide .detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 10px;
+}
+html.is-wide .detail-grid .sel-row { margin-bottom: 8px; }
+html.is-wide .detail-grid .flow-select { width: 100%; }
+
 /* The override has to be able to put a big screen BACK to the phone column. */
 html.force-narrow .screen { max-width: 640px; padding: 12px; }
 html.force-narrow #screen-tracker { display: block; }

@@ -2144,11 +2144,17 @@ function renderFlow() {
     wrap.appendChild(chipRow('Shooter', players, f.shooter, function (id) { f.shooter = id; renderFlow(); }));
     if (f.shooter != null) {
       if (!quickModeOn() || f.expand) {
-        // dropdowns, not sliding chip strips — five detail rows fit one screen
+        // dropdowns, not sliding chip strips. They go in their own container so
+        // the tablet layout can run them two-up: six stacked rows need 438px of
+        // the 744px an iPad mini has, and the tag bars and MAKE/MISS want more
+        // than the 306px that would leave.
+        const dgrid = document.createElement('div');
+        dgrid.className = 'detail-grid';
         SHOT_DETAILS.forEach(function (d) {
-          wrap.appendChild(selRow(d[1], playerOpts(players), f.details[d[0]],
+          dgrid.appendChild(selRow(d[1], playerOpts(players), f.details[d[0]],
             function (id) { f.details[d[0]] = id; renderFlow(); }, { numeric: true }));
         });
+        wrap.appendChild(dgrid);
         // Set call comes from the always-visible sticky bar (renderPlayTypeBar)
         // above the flow — no per-shot Play type row here (it duplicated the bar).
         // baseEvent already stamps S.playType onto the shot; f.details.play_type

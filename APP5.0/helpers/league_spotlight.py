@@ -335,12 +335,39 @@ def render(gender, *, paid=False, vis=None, accent="#4c8bf5", scored=None):
                     unsafe_allow_html=True)
 
     if paid:
-        intel = _intel(gender, vis)
+        # ── the mined league reads — OPT-IN ──────────────────────────────────
+        # `_intel` is essentially the whole cost of this view: a league-wide
+        # player_stat_table at min_games=2, a full event fetch, RAPM, WAR and
+        # the team feed. Measured on this book it is ~24 s of a ~25 s cold
+        # Spotlight, and it ran on arrival for everyone who opened the view —
+        # including the coaches who came for the awards digest, the risers strip
+        # or the game of the season, which are all cheap and all above it.
+        #
+        # So it is a button now. The header and the caption still render, so the
+        # feature is visible rather than hidden — what changed is that the
+        # mining is a decision instead of a toll. `_intel` keeps its own
+        # cache_data(ttl=300), so pressing it once covers the next five minutes,
+        # and the flag is per-GENDER because switching the radio is a different
+        # pool and a second full mine.
+        _hdr("What the data noticed")
+        st.caption("Auto-mined from the tracked play-by-play — the biggest "
+                   "signals across the league, gated by sample size.")
+        _ikey = f"ls_intel_{gender}"
+        if not (st.session_state.get(_ikey)
+                or st.button("🔎 Mine the league", key=f"{_ikey}_btn",
+                             help="Runs the league-wide miner: every tracked "
+                                  "player and team, top signals only. Takes "
+                                  "a few seconds; cached for five minutes "
+                                  "after that.")):
+            st.caption("Not run yet — this one reads every tracked possession "
+                       "in the league, so it waits for a click rather than "
+                       "charging every visit.")
+            intel = []
+        else:
+            st.session_state[_ikey] = True
+            intel = _intel(gender, vis)
         if intel:
             drew = True
-            _hdr("What the data noticed")
-            st.caption("Auto-mined from the tracked play-by-play — the biggest "
-                       "signals across the league, gated by sample size.")
             ic = st.columns(2)
             for i, (_z, nm, txt, met, n) in enumerate(intel):
                 ic[i % 2].markdown(

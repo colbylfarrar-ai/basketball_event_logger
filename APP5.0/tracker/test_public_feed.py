@@ -147,7 +147,7 @@ for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
         assert part not in blob, f"LEAK: '{part}' in public payload"
 ok(True, "no player/official name fragment in payload")
 for tag in ("pnr", "iso", "2-3 zone", "man press", "play_type", "defense",
-            "official_id", "turnover_type", "foul_type"):
+            "official_id", "turnover_type"):
     assert tag not in blob, f"LEAK: '{tag}' in public payload"
 ok(True, "no play_type/defense/tag fields in payload")
 

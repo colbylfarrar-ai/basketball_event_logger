@@ -14,7 +14,7 @@ Public by design:  score, status, quarter/clock, quarter scores, team fouls,
                    (a wall poster ranking — derived from the same final scores
                    the scoreboard already publishes).
 Never public:      player names, official names, play_type, defense,
-                   turnover_type, foul_type, ratings of any kind (no Power /
+                   turnover_type, ratings of any kind (no Power /
                    Rating / AdjNet — rank ordinals only), minutes,
                    possession counts.
 

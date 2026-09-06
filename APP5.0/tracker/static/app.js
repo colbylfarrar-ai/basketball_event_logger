@@ -67,6 +67,22 @@ function applyWideMode() {
   r.classList.toggle('force-narrow', m === 'off');
   // is-wide is the single class every tablet layout rule uses.
   r.classList.toggle('is-wide', wideActive());
+  placeUndo();
+}
+
+// Undo lives with the rare controls on a phone, but on a tablet it belongs in
+// the always-visible header -- it is the fix for a mis-tap and has to be one
+// tap away mid-possession. The ELEMENT moves; its click handler rides along.
+function placeUndo() {
+  const btn = document.getElementById('btn-undo');
+  if (!btn) return;
+  const head = document.getElementById('track-controls');
+  const cold = document.getElementById('action-row');
+  if (!head || !cold) return;
+  const want = wideActive() ? head : cold;
+  if (btn.parentElement === want) return;          // idempotent
+  if (want === cold) cold.insertBefore(btn, cold.firstChild);
+  else want.appendChild(btn);
 }
 
 function $(id) { return document.getElementById(id); }

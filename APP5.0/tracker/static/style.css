@@ -692,6 +692,10 @@ html.is-wide #track-head {
   border-top: 1px solid var(--edge);
 }
 
+/* Undo sits at the right end of the header controls, visually separated from
+   the quarter stepper it must never be confused with. */
+html.is-wide #track-controls #btn-undo { margin-left: auto; }
+
 /* The override has to be able to put a big screen BACK to the phone column. */
 html.force-narrow .screen { max-width: 640px; padding: 12px; }
 html.force-narrow #screen-tracker { display: block; }

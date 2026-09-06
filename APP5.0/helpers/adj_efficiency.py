@@ -37,14 +37,21 @@ import numpy as np
 from database.db import query
 import helpers.stats as S
 
+# Season-scoped READ default — see helpers/seasons.DEFAULT. A bare
+# season="Current" names an EMPTY partition for the months between a rollover
+# and the first game of the new year, so any caller without a season picker to
+# pass one from read nothing over a full database.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 # Evidence (in average-games of FGA) required before a team's own shooting
 # signal outweighs the league-mean prior. 2 ≈ half-shrunk at two games.
 LAMBDA_GAMES = 2.0
 
 
-def _tracked_pairs(gender=None, game_ids=None, season="Current"):
+def _tracked_pairs(gender=None, game_ids=None, season=SEAS_DEFAULT):
     """[(game_id, team1, team2)] for finished tracked games of `season`
     (default = the active season; pass a label to view an archive)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     sql = """SELECT g.id, g.team1_id t1, g.team2_id t2
              FROM games g JOIN teams t ON t.id = g.team1_id
              WHERE g.tracked = 1 AND g.season = ?"""
@@ -79,7 +86,7 @@ def _game_shooting(pairs):
 
 
 def adjusted_shooting(gender=None, game_ids=None, lambda_games=LAMBDA_GAMES,
-                      season="Current"):
+                      season=SEAS_DEFAULT):
     """Opponent-adjusted eFG% for every tracked team.
 
     Returns {team_id: {"AdjeFG","AdjoeFG","RawEFG","RawOeFG","dEFG","dOeFG",

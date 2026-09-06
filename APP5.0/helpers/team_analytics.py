@@ -28,6 +28,15 @@ from database.db import query
 import helpers.stats as S
 import helpers.team_ratings as TR
 import helpers.player_ratings as PR
+# The season-scoped READ default. See helpers/seasons.DEFAULT: a bare
+# season="Current" was a rollover trap — for the months between a rollover and
+# the first game of the new year it names an EMPTY partition, so every caller
+# without a season picker to pass one from read zero over a full database.
+# SEAS_DEFAULT means "resolve at call time", and resolves through the same
+# default_read_season() fallback the pickers have always used. An explicit
+# 'Current' is still honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 
 
 _safe = S._safe   # shared definition lives in helpers.stats
@@ -116,13 +125,14 @@ def four_factors(team_box, opp_box):
 #  GAME LOG / SCHEDULE  (all completed games, not just tracked)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_game_log(team_id, season="Current"):
+def team_game_log(team_id, season=SEAS_DEFAULT):
     """
     Every completed game for the team, oldest first. Each row:
         game_id, date, location, site ('vs'/'@'), opp_id, opp, opp_class,
         pf, pa, margin, won, tracked, video_url.
     `season` partitions to the active season by default (pass None for all).
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     extra = ""
     params = [team_id, team_id]
     if season is not None:
@@ -387,7 +397,7 @@ def shooting_breakeven(box):
 #  PLAYERS ON THE TEAM  (filtered slice of the league-wide player table)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_player_rows(team_id, gender=None, min_games=1, season="Current"):
+def team_player_rows(team_id, gender=None, min_games=1, season=SEAS_DEFAULT):
     """
     Every eligible player on `team_id`, each row the full flat stat line from
     PR.player_stat_table (ratings are still pool-relative to the whole league,
@@ -405,6 +415,7 @@ def team_player_rows(team_id, gender=None, min_games=1, season="Current"):
     no player rows; callers already handle the empty case by falling back to the
     raw season-scoped roster (see helpers/dashboard/players_tab.py).
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     gids = [r["id"] for r in query(
         "SELECT id FROM games WHERE tracked=1 AND season=?", (season or "Current",))]
     if not gids:
@@ -732,7 +743,7 @@ def lineup_prediction(player_rows, pids, ctx, team_id, opp_id=None):
 #  LEAGUE CONTEXT  (four factors for every tracked team — for percentile ranking)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def league_four_factors(gender=None, season="Current"):
+def league_four_factors(gender=None, season=SEAS_DEFAULT):
     """
     {team_id: {'off': {...}, 'def': {...}, 'GP': n}} for every team in the
     league with at least one tracked game. Used by the Insights tab to say
@@ -740,6 +751,7 @@ def league_four_factors(gender=None, season="Current"):
     Built from one box pass per tracked game (TR._tracked_team_game_boxes).
     `season` scopes the field to one season (archive views).
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     games = TR._finished_games(gender=gender, tracked_only=True, season=season)
     if not games:
         return {}
@@ -1839,7 +1851,7 @@ def strength_of_schedule(game_log, power_by_team, rank_by_team, n_teams):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None,
-                season="Current"):
+                season=SEAS_DEFAULT):
     """
     One call that assembles the team's analytics from tracked games:
         game_log, record (all games), tracked record/efficiency (S.team_summary),
@@ -1854,6 +1866,7 @@ def team_bundle(team_id, gender=None, min_games=1, visible_game_ids=None,
     POOLED games, so the team's own Solo-tracked games stay private). The full
     `game_log` (box-score level, Free) is never filtered.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     game_log = team_game_log(team_id, season=season)
     tracked_ids = [g["game_id"] for g in game_log if g["tracked"]]
     if visible_game_ids is not None:

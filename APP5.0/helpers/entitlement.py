@@ -42,6 +42,15 @@ from datetime import date
 
 from database.db import query, execute
 import helpers.game_dedup as GD
+# The season-scoped READ default. See helpers/seasons.DEFAULT: a bare
+# season="Current" was a rollover trap — for the months between a rollover and
+# the first game of the new year it names an EMPTY partition, so every caller
+# without a season picker to pass one from read zero over a full database.
+# SEAS_DEFAULT means "resolve at call time", and resolves through the same
+# default_read_season() fallback the pickers have always used. An explicit
+# 'Current' is still honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 
 # The active-season sentinel (mirrors helpers.seasons.ACTIVE; kept local so this
 # gating module has no import cycle). A PAST season is an OPEN ARCHIVE — the
@@ -124,7 +133,7 @@ def viewer_is_league_wide(ident: dict | None) -> bool:
     return bool(ident.get("shares_pool")) and not is_pool_banned(ident)
 
 
-def pooled_game_ids(season="Current") -> set[int]:
+def pooled_game_ids(season=SEAS_DEFAULT) -> set[int]:
     """Tracked game ids in the shared pool (games.in_pool = 1) — the read-filter
     candidate set for every LEAGUE-WIDE tracked aggregation. Duplicate tracks of
     the same real game are collapsed to one canonical (most-detailed / admin-pinned)
@@ -133,7 +142,8 @@ def pooled_game_ids(season="Current") -> set[int]:
     archived label returns exactly what was shared THAT season (no leak)."""
     return GD.representative_game_ids(
         {r["id"] for r in query(
-            "SELECT id FROM games WHERE in_pool=1 AND season=?", (season,))})
+            "SELECT id FROM games WHERE in_pool=1 AND season=?",
+            (resolve_read_season(season),))})
 
 
 def _own_teams(ident: dict | None) -> set:
@@ -187,9 +197,10 @@ def gating_identity(row: dict) -> dict:
     return ident
 
 
-def team_has_pooled_tracked(team_id, season="Current") -> bool:
+def team_has_pooled_tracked(team_id, season=SEAS_DEFAULT) -> bool:
     """Does this team appear in ≥1 pooled tracked game (its depth is share-to-scout
     visible to any league-wide coach) in `season`?"""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if team_id is None:
         return False
     rows = query("SELECT 1 FROM games WHERE in_pool=1 AND tracked=1 "
@@ -234,13 +245,14 @@ def can_see_game_tracked(ident: dict | None, team1_id, team2_id,
     return team_has_pooled_tracked(team1_id) or team_has_pooled_tracked(team2_id)
 
 
-def visible_tracked_game_ids(ident: dict | None, season="Current") -> set[int] | None:
+def visible_tracked_game_ids(ident: dict | None, season=SEAS_DEFAULT) -> set[int] | None:
     """The set of tracked game ids whose DEPTH this viewer may aggregate — the
     read-filter's teeth. None means UNRESTRICTED (admin / local owner). Otherwise:
     own-team tracked games ∪ (the pooled set, if League-wide). A Solo coach gets
     own games only; a Free viewer gets an empty set (depth is gated upstream).
     `season` scopes to the active season by default (archived labels view history).
     A PAST season is an open archive → unrestricted (None) for everyone."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if _is_past_season(season):
         return None                          # past = open archive, full depth
     if ident and ident.get("role") == "admin":
@@ -259,13 +271,14 @@ def visible_tracked_game_ids(ident: dict | None, season="Current") -> set[int] |
 
 
 def visible_untracked_boxed_game_ids(ident: dict | None,
-                                     season="Current") -> set[int] | None:
+                                     season=SEAS_DEFAULT) -> set[int] | None:
     """Untracked games WITH an entered box the viewer may aggregate — the
     officials-environment analog of visible_tracked_game_ids (used only to scope
     helpers.officials.official_environment). None = UNRESTRICTED (admin / past
     archive). Otherwise own-team boxed games. Entered boxes aren't pooled
     cross-org (no in_pool concept for untracked), so League-wide adds nothing —
     a coach's manually entered box stays their own."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if _is_past_season(season):
         return None
     if ident and ident.get("role") == "admin":
@@ -282,7 +295,7 @@ def visible_untracked_boxed_game_ids(ident: dict | None,
         f"AND (g.team1_id IN ({ph}) OR g.team2_id IN ({ph}))", params)}
 
 
-def team_visible_tracked_ids(ident: dict | None, team_id, season="Current") -> set[int] | None:
+def team_visible_tracked_ids(ident: dict | None, team_id, season=SEAS_DEFAULT) -> set[int] | None:
     """The tracked game ids of ONE team whose depth this viewer may aggregate.
     None = unrestricted (own team / admin → the team's full tracked depth).
     A league-wide scout of another team → only that team's POOLED games (so a
@@ -290,6 +303,7 @@ def team_visible_tracked_ids(ident: dict | None, team_id, season="Current") -> s
     team's own Solo games stay private). Used to scope the team dashboard bundle.
     `season` scopes the pooled-visibility query (frozen in_pool → correct history).
     A PAST season is an open archive → unrestricted (None) for everyone."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if _is_past_season(season):
         return None                      # past = open archive, full depth
     if ident and ident.get("role") == "admin":
@@ -304,7 +318,7 @@ def team_visible_tracked_ids(ident: dict | None, team_id, season="Current") -> s
 
 
 def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
-                 season="Current"):
+                 season=SEAS_DEFAULT):
     """Resolve a team's tracked-depth visibility for the UI.
 
     Returns (visible, lock_msg):
@@ -315,6 +329,7 @@ def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
 
     A PAST season is an open archive: any viewer sees full tracked depth, no Paid
     / co-op gate (owner rule)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if not raw_has_tracked:
         return False, None
     if _is_past_season(season):

@@ -29,6 +29,12 @@ from database.db import query
 import helpers.stats as S
 import helpers.projection as PJ
 
+# Season-scoped READ default — see helpers/seasons.DEFAULT. A bare
+# season="Current" names an EMPTY partition for the months between a rollover
+# and the first game of the new year, so any caller without a season picker to
+# pass one from read nothing over a full database.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 
 GAME_MIN     = 32.0     # HS regulation
 TEAM_MIN     = GAME_MIN * 5       # 160 player-minutes to allocate
@@ -91,13 +97,14 @@ def _observed_line(team_id, gids, events=None):
     }
 
 
-def build_context(team_id, gender=None, game_ids=None, season="Current"):
+def build_context(team_id, gender=None, game_ids=None, season=SEAS_DEFAULT):
     """Assemble everything project_minutes / optimize_minutes need, in one pass.
 
     Returns a ctx dict, or {"gated": reason} when the team has too few tracked
     games to project a rotation. `season` scopes the stat table + signature miner
     to the season the `game_ids` belong to (a rolled-over prod is not 'Current').
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     # When no explicit game_ids (own team / open archive → entitlement returns
     # None = unrestricted), resolve the team's tracked games FOR `season` — NOT
     # via _team_game_ids, which answers for the DEFAULT season and so reads zero
@@ -553,7 +560,7 @@ def _rebalance(minutes, ctx, rotation):
 
 
 def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=400,
-                     season="Current", max_rotation=MAX_ROTATION, objective=None):
+                     season=SEAS_DEFAULT, max_rotation=MAX_ROTATION, objective=None):
     """Search a minutes allocation that maximizes the team's objective.
 
     Constrained 2-minute-swap hill-climb from an observed-minutes seed. Returns
@@ -615,7 +622,7 @@ def optimize_minutes(team_id, gender=None, game_ids=None, ctx=None, max_iters=40
 # ══════════════════════════════════════════════════════════════════════════════
 
 def project_team_current(team_id, gender=None, game_ids=None, ctx=None,
-                         season="Current"):
+                         season=SEAS_DEFAULT):
     """Project the CURRENT roster's team rating from its optimized allocation and
     a win probability vs the average tracked team. Not a next-season claim — it
     becomes the year-to-year engine unchanged once identity sees a 2nd season."""

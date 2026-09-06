@@ -82,7 +82,21 @@ ok(isinstance(TR.tracked_ratings(gender="F", season="2099-2100"), dict),
 print("rollover SQL partitions seasons")
 execute("UPDATE games SET season=? WHERE season='Current'", ("2025-2026",))
 execute("INSERT OR REPLACE INTO app_settings (key,value) VALUES ('active_season','2026-2027')")
-ok(len(TA.team_game_log(A)) == 0, "after rollover the new (empty) season has no games for A")
+# CHANGED 2026-09-05. This line used to assert `team_game_log(A) == 0` — "after
+# rollover the new (empty) season has no games for A". That was the TRAP being
+# tested as if it were the contract: for the two or three months between a
+# rollover and the first game of the new year, every default read over a full
+# database returned nothing, and the pages with no season picker to pass one from
+# went blank. See helpers/seasons.DEFAULT and test_results_season_rollover.py.
+#
+# The contract now: an UNSPECIFIED season falls back to the last played season,
+# and an EXPLICIT 'Current' still means Current and still reads empty — which is
+# what the second assertion below pins, so the fallback can never quietly
+# swallow a deliberate choice.
+ok(len(TA.team_game_log(A)) == 1,
+   "after rollover the default read falls back to last season")
+ok(len(TA.team_game_log(A, season=SZ.ACTIVE)) == 0,
+   "but an explicit 'Current' still reads the new, empty season")
 ok(len(TA.team_game_log(A, season="2025-2026")) == 1, "last season archived intact")
 ok(SZ.active_label() == "2026-2027", "active label advanced")
 

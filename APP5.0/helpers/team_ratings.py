@@ -41,6 +41,15 @@ from __future__ import annotations
 from collections import defaultdict
 
 from database.db import query
+# The season-scoped READ default. See helpers/seasons.DEFAULT: a bare
+# season="Current" was a rollover trap — for the months between a rollover and
+# the first game of the new year it names an EMPTY partition, so every caller
+# without a season picker to pass one from read zero over a full database.
+# SEAS_DEFAULT means "resolve at call time", and resolves through the same
+# default_read_season() fallback the pickers have always used. An explicit
+# 'Current' is still honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 import helpers.stats as S
 
 
@@ -110,7 +119,7 @@ _safe = S._safe   # shared definition lives in helpers.stats
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _finished_games(gender=None, tracked_only=False, game_ids=None,
-                    season="Current"):
+                    season=SEAS_DEFAULT):
     """
     Finished games (both scores present) as neutral team-vs-team rows.
     Returns list of dicts: home_id, away_id, home_pts, away_pts, tracked.
@@ -122,6 +131,7 @@ def _finished_games(gender=None, tracked_only=False, game_ids=None,
     `season` is the season partition: default 'Current' (active season) so ratings
     never blend seasons; pass a label to view an archive, or None for all seasons.
     """
+    season = resolve_read_season(season)
     if game_ids is not None:
         game_ids = list(game_ids)
         if not game_ids:
@@ -350,7 +360,7 @@ def results_fingerprint():
 
 def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
                   reg=None, sos_weight=None, game_ids=None,
-                  season="Current", half_life=None):
+                  season=SEAS_DEFAULT, half_life=None):
     """
     Results-only power ratings for every team in `gender` (None = all).
     Returns {team_id: {...}} with, per team:
@@ -375,6 +385,10 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
         reg = DEFAULT_REG
     if sos_weight is None:
         sos_weight = DEFAULT_SOS_WEIGHT
+    # Resolve ONCE here: _finished_games would resolve its own copy, but
+    # _team_meta also takes `season` (it overlays the class a team PLAYED in
+    # that year) and would otherwise be handed the raw sentinel.
+    season = resolve_read_season(season)
     games = _finished_games(gender=gender, game_ids=game_ids, season=season)
     meta = _team_meta(gender=gender, season=season)
     tg = _per_team_games(games, half_life=half_life)
@@ -428,7 +442,7 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
 
 
 def form_ratings(gender=None, half_life=FORM_HALF_LIFE, game_ids=None,
-                 season="Current", **kw):
+                 season=SEAS_DEFAULT, **kw):
     """Recency-weighted "current form" ratings: the SAME results-only engine as
     score_ratings, but each team's games are exponentially decayed by recency
     (see FORM_HALF_LIFE), so Power / Rating read "how good is this team RIGHT NOW"
@@ -440,6 +454,7 @@ def form_ratings(gender=None, half_life=FORM_HALF_LIFE, game_ids=None,
     of work); form_ratings answers the different question of who is peaking now. A
     team's (Form Power − season Power) is the hot/cold signal.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return score_ratings(gender=gender, half_life=half_life, game_ids=game_ids,
                          season=season, **kw)
 
@@ -461,7 +476,7 @@ HYBRID_K_TRACKED = 6.0     # games-equivalent prior on the tracked-signal ramp:
                            # (2026-07-18 recal §10; adopt only on a T1/T6 win).
 
 
-def hybrid_ratings(gender=None, season="Current", game_ids=None,
+def hybrid_ratings(gender=None, season=SEAS_DEFAULT, game_ids=None,
                    k_tracked=None, scored=None, tracked=None):
     """score_ratings with each TRACKED team's Rating blended toward its
     possession-based tracked rating by tracked-games evidence.
@@ -473,6 +488,7 @@ def hybrid_ratings(gender=None, season="Current", game_ids=None,
     the field stays comparable. Pass precomputed `scored`/`tracked` to reuse
     cached engines. Returns the scored dict shape with Rating (and hybrid_w)
     updated on tracked teams."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if k_tracked is None:
         k_tracked = HYBRID_K_TRACKED
     if scored is None:
@@ -497,7 +513,7 @@ def hybrid_ratings(gender=None, season="Current", game_ids=None,
     return out
 
 
-def blended_ratings(gender=None, form_weight=0.0, game_ids=None, season="Current",
+def blended_ratings(gender=None, form_weight=0.0, game_ids=None, season=SEAS_DEFAULT,
                     **kw):
     """Season score_ratings blended toward form_ratings by `form_weight` in [0,1]:
     every points-scale field becomes (1-w)*season + w*form. This is the ONE dict a
@@ -513,6 +529,7 @@ def blended_ratings(gender=None, form_weight=0.0, game_ids=None, season="Current
     state) come straight from the season row; each blended row also carries
     `SeasonPower` / `FormPower` for a hot-cold display.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     w = max(0.0, min(1.0, form_weight))
     season_r = score_ratings(gender=gender, game_ids=game_ids, season=season, **kw)
     if w <= 0 or not season_r:
@@ -567,7 +584,7 @@ def _tracked_team_game_boxes(games):
 
 def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITERS,
                     reg=DEFAULT_REG, game_ids=None, sos_weight=DEFAULT_SOS_WEIGHT,
-                    season="Current"):
+                    season=SEAS_DEFAULT):
     """
     Advanced, possession-based power ratings over tracked games only.
     `game_ids` is the entitlement read-filter (see _finished_games): a League-wide
@@ -585,6 +602,7 @@ def tracked_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_IT
     Efficiency uses authoritative final scores for points and stats-engine
     possessions; shooting comes straight from the box.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     games = _finished_games(gender=gender, tracked_only=True, game_ids=game_ids,
                             season=season)
     meta = _team_meta(gender=gender, season=season)

@@ -16,6 +16,7 @@ from database import db
 import helpers.auth as AUTH
 import helpers.ossaa_sync as SYNC
 from tools.ossaa_import import build_plan_single, build_plan_crawl, season_window
+import helpers.ui as _uimod          # clear_data() — see its docstring
 
 _cfg, ACCENT = page_chrome("OSSAA Import")
 _lab_hero("OSSAA Import", phase="BUILD",
@@ -289,7 +290,7 @@ else:
                                "WHERE key='data_version'")
                 except Exception:
                     pass
-                st.cache_data.clear()
+                _uimod.clear_data()
                 if _done:
                     st.success(f"Folded {len(_done)} team(s) into “{_tl[keep_id]}”: "
                                + ", ".join(f"“{n}”" for n in _done) + ".")

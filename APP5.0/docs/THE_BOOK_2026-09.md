@@ -39,7 +39,8 @@ and deletions · §15 the rejected list
 
 **VI · The rulings** — §18 all fourteen answered, nothing blocked
 
-**VII · Reference** — §19 where everything is · §20 every number in one table
+**VII · Reference** — §19 where everything is · §20 every number in one table ·
+§21 the roadmap, September to next offseason
 
 ---
 ---
@@ -374,6 +375,23 @@ is a multiple of ten — verified, the distinct values are exactly
 You asked for something a single person can hold afloat across a season with
 little or no thought. That is a stronger constraint than "make it good", and it
 should be the tiebreaker on every item in this document.
+
+**And it has a date on it now.** You are training coaches in **October** — which
+is why everything here has to land in September:
+
+> *"This is why this is important to fix everything now, so I can fully focus on
+> this season instead of baby-sitting this all season."*
+
+That reframes the whole month. **September is not "improve the app"; it is
+"remove every reason you will have to open a page in anger between November and
+March".** Anything that fails that test can wait until next offseason — and two
+items in this document already have (§13.7 film timecodes, the Whiteboard).
+
+It also changes who the audience is. Every screen in here has, until now, been
+read by exactly one person who already knows what every number means. **In
+October it acquires four or five readers who do not**, which is what makes §10
+(numbers published without their sample) and §18 Q12 (an abbreviation meaning two
+things) go from tidy-ups to launch blockers.
 
 It implies four rules:
 
@@ -710,6 +728,76 @@ logged but NOT their own team                37
 cannot be read by them** as a Paid Solo coach. This is the largest gating number
 in the document, and it grew as tracking grew: it was 14 of 43 on the local copy.
 The pattern is a coach who scouts widely and is punished for it.
+
+### 9.2.1 · The two-email constraint, measured — it does not bite, and the reason matters
+
+You flagged that every tracked game to date was logged across **two separate
+emails**, and worried that an own-creation rule keyed on identity would strand
+half of it. **Measured on production, it does not:**
+
+```
+tracked_by = colbyl.farrar@gmail.com        48 of 63
+tracked_by = c.farrar@adairschools.org       0
+tracked_by empty (old desktop path)         15
+
+visibility under each rule, for this coach:
+  team membership only                      26 of 63
+  + own creation, ONE email                 63 of 63     <- already everything
+  + own creation, BOTH emails               63 of 63
+```
+
+Every attributed game carries the **gmail** address; the school address never
+wrote one, and the 15 unattributed games are all team-1 games that the team rule
+already covers. **So Q3 keyed on the signed-in email recovers 100% of the book
+today** — the two-email split is real in your workflow and invisible in the data,
+because the PWA writes whichever email owns the tracker token.
+
+**But build the broader rule anyway, because October breaks the narrow one.**
+Key own-creation on **every email that staffs any of the viewer's teams**, not on
+the single signed-in address:
+
+```sql
+tracked_by IN (SELECT coach_email FROM coach_teams WHERE team_id IN (:my_teams))
+```
+
+Three reasons, all of them arriving in October:
+
+1. **You will keep using two accounts.** The moment a game lands on the school
+   address, a one-email rule strands it.
+2. **Assistant coaches share a program.** `coach_teams` already has four people on
+   team 1. If K. Burns tracks a game, A. Klucevsek should see it — they are the
+   same staff. The `coach_teams` join gives that for free.
+3. **It matches Q3's own words.** *"If they are in the co-op and they track a
+   scout game, everyone gets it in the co-op."* Staff-level sharing is the same
+   idea one level down.
+
+**One thing to decide while implementing** (§18 Q3 did not cover it): does a Solo
+coach's scout game become visible to their **assistants**, or only to themselves?
+The `coach_teams` rule says assistants; a strict reading of *"they see it, nobody
+else does"* says only them. **Assistants is almost certainly what you want** —
+they are the same staff room — but it should be a decision, not an accident.
+
+### 9.2.2 · What October does to the pool
+
+Production today:
+
+```
+app_users        6, all plan='paid'  — 2 admins + 4 coaches
+coach_teams      5 people on team 1 (Adair Girls) · 1 on team 1755 (Sequoyah Boys)
+shares_pool=1    team 1 only
+pooled games     11 of 63
+team 1755        15 tracked games — ALL logged by colbyl.farrar@gmail.com
+```
+
+**Every tracked game in the book was created by one person.** The second pilot
+program has 15 tracked games and its coach logged none of them. That is the
+pre-October baseline, and it is what the training changes.
+
+The mechanical consequence is worth seeing before it happens: **once Brock starts
+logging Sequoyah's games on his own account, you stop seeing them** — you are not
+on `coach_teams` for 1755, and team 1755 is Solo. The co-op toggle on 1755 is the
+switch that keeps the league-wide view whole, and *"share to scout"* becomes a
+live conversation in October rather than a hypothetical.
 Turning the co-op on is the only way back, which inverts the pitch — share in
 order to read something nobody else contributed.
 
@@ -1306,6 +1394,24 @@ decides whether November is pleasant.
    season feed, with a link. Otherwise ten playoff games sit untagged and you find
    out in September, which is what happened.
 
+**One thing that stays manual, by decision:** the **OSSAA scraper**.
+
+> *"I am fine with the OSSAA scraper being run by me daily — it is a simple click
+> of a button every morning, little actual thought, and will sometimes be behind
+> on games that are actually tracked."*
+
+Good call, and worth writing down so nobody automates it later: an unattended
+scraper that bulk-writes teams and games into the shared league DB is exactly the
+job that needs a hand on it, and §14.1 shows why — the importer is the origin of
+both the duplicate-team and duplicate-game classes, and `merge_teams` decisions
+are not automatable.
+
+**The one thing it needs is a note on screen.** Because the scrape runs on your
+morning and a tracked game lands the night before, **the results board can be a
+day behind the play-by-play**, and no page says so. One line under the Rankings
+board — *"results synced through <date>; tracked games are live"* — costs nothing
+and stops a coach in October reporting a bug that is a schedule.
+
 **One thing to watch, not automate:** the droplet is 1 vCPU / 2 GB with no swap,
 and the constraint is CPU plus the global cache clear on live-game writes, not
 RAM. §11's `clear_data()` finding matters most on a Friday night with three games
@@ -1537,6 +1643,124 @@ value is in brackets.
 | duplicate teams (name + gender) | **6** | §8.8 |
 | engine entry points reaching a page | **853 of 898** | §1 |
 | suite | **290 pytest + 97 run_all**, green | §19 |
+
+---
+
+## 21 · The roadmap — September to next offseason
+
+§16 is the four-week schedule. This is the shape around it, because the real
+deadline is not the end of September — it is **the day you sit four coaches down
+in October** and the app stops being yours alone.
+
+```
+  SEP          OCT              NOV — MAR                 APR — JUN
+  ---------    -------------    ---------------------     -----------------
+  FIX          HAND OVER        RUN (frozen)              BUILD
+  4 blockers   train 4-5        one click a morning,      the things that
+  + the month  coaches,         one capacity glance,      needed a season
+  in §16       watch, log       a list not a branch       of real data
+```
+
+### Phase 0 · September — make it safe to hand over
+
+Everything in §16, with four items promoted to **blockers**. A blocker is
+something that, left alone, makes a new coach distrust the app in week one — and
+distrust does not get re-earned.
+
+| # | blocker | why it blocks October | § |
+|---|---|---|---|
+| **B1** | **No number without its sample** | Four new readers who do not already know the pools. "80th percentile" over ten teams and "0.6 rebounds a game is elite" are the two sentences that end trust fastest. | §10 |
+| **B2** | **The Free box score** | You are recruiting coaches. Today a Free account sees a scoreboard and a padlock where the box score should be — the one artefact every coach already understands. | §12.2 |
+| **B3** | **Own creation** (`tracked_by` in the read filter, joined through `coach_teams`) | 51% of the book is invisible to the person who typed it. In October there are five people on team 1 and the number gets worse, not better. | §9.2 |
+| **B4** | **One abbreviation, one meaning** (`SCE` / `ScEff`) | A coach taps the stat key to learn a column and is told the wrong metric. It is unfixable-by-explanation once four people have learned it wrong. | §18 Q12 |
+
+Everything else in §16 is a strong should. These four are the gate.
+
+**Definition of done for Phase 0** — walk it as a *new coach*, not as yourself:
+
+```
+[ ] a Free account can open a box score and read it
+[ ] every percentile on screen says what pool it is over
+[ ] no superlative fires on a sample that cannot support it
+[ ] no bare jersey number is rendered as a person's name
+[ ] the coach who tracked a game can read it, on either email
+[ ] a forfeit is not the league's best defence
+[ ] SCE means one thing everywhere, and the glossary agrees with the code
+[ ] the rollover, ANALYZE, rating-history and backup-verify timers are INSTALLED
+[ ] pytest is green (the three red tests in test_read_filter_empty_scope go green
+    when the empty-filter sweep lands — that is the signal, not a chore)
+[ ] Players cold render is under ~15 s
+```
+
+### Phase 1 · October — hand over, and let the training be the test
+
+The training session is the **best user research you will ever get for free**,
+and it happens exactly once. Do not spend it demonstrating; spend it watching.
+
+**Three things to instrument before the session** (all cheap, all disposable):
+
+1. **Which pages get opened, in what order.** You have `audit_log` and a
+   capacity panel; a page-view counter is a row. Your ordering instinct
+   (Overview → Scout → Insights) has never been checked against anyone else's.
+2. **Which empty states get hit.** Every empty state is a promise the app failed
+   to keep. §0.1's Lineup Creator was found this way and it will not be the last.
+3. **Whether the co-op toggle gets touched at all.** §0.2: six paid accounts,
+   **one** sharing team, 11 of 63 pooled. If nobody flips it after being shown it,
+   the pitch is wrong, not the coaches.
+
+**Three things to say out loud in the room**, because they are the app's real
+differentiators and none of them is self-evident from a screen:
+
+* *"Every number tells you how much data is behind it"* — after B1, this is true
+  and no competitor at this level can say it.
+* *"Wins over top-25 teams are counted as of the day you played them"* — the
+  point-in-time résumé. 71 of 102 teams get a different count than the naive
+  version. Nobody else does this.
+* *"Share to scout"* — and then show them the pooled view with their own team in
+  it. The co-op only sells with a screen, not a sentence.
+
+**What NOT to do in October: ship.** Every change after the training is a change
+four people have to re-learn. Write it down instead.
+
+### Phase 2 · November to March — run it, frozen
+
+The season is the point of all of this. The operating loop should be exactly:
+
+```
+every morning     one click     the OSSAA scrape (§17 — manual by decision)
+every game night  the phone     open, log, End Game. Nothing else.
+once a week       one glance    Settings → Coaches online & server capacity
+never             —            open a page in anger
+```
+
+Everything else runs on the timers installed in Phase 0. **The rule for the whole
+season is: findings go in a list, not a branch.** A mid-season deploy is a
+mid-season regression risk on the one thing you cannot re-run — the games.
+
+Two exceptions worth pre-agreeing, so the judgement call is already made:
+
+* **A wrong number on screen** is worth a hotfix. A missing feature is not.
+* **A tracker (PWA) bug** is worth a hotfix, because it costs data permanently.
+  A Streamlit reading bug can wait — the events are already safe.
+
+### Phase 3 · April to June — the builds that needed a season
+
+These are deferred on purpose, and each has a *reason it could not be done now*:
+
+| item | why it waits | § |
+|---|---|---|
+| **Per-official whistle profiles** | 11 officials now have ≥5 games, one has 9. Another season puts the busiest past 15 — and officials are career-long and never archived, so this compounds without any work. | §15 |
+| **The Synergy framing** (frequency × efficiency on one line) and the **defensive mirror** | Better designed against a season of coaches actually using play-type reads than against your own intuition. | §13.5–13.6 |
+| **The player view as one OOTP screen** | Needs Phase 1's answer to "which page do they open first". | §4, §14 |
+| **Setup's `st.tabs` → `_seg`** | Needs the AST sweep for cross-tab variable leaks, and it is a refactor with no coach-visible payoff — exactly the wrong shape for September. | §14 |
+| **In-stint fatigue, revisited** | Only with real on-floor minutes (`possession_secs` accumulated) instead of event counts. Two rejections on two books say do not attempt it before then. | §15 |
+| **The Whiteboard** | Revisit with usage data from a real season (Q10). | §14 |
+| **Development / progression reads** | `helpers/development.py` is built and needs **two tracked seasons** to mean anything. April is the first time it does. | §4 |
+
+**And one thing that arrives on its own:** next season's scorebook access takes
+players from ~11% named to ~90% and officials to ~70%. Every naming decision in
+this document was made assuming that — which is why §0.1 downgraded it from a
+project to a label helper.
 
 ---
 

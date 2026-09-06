@@ -706,6 +706,21 @@ html.is-wide .detail-grid {
 html.is-wide .detail-grid .sel-row { margin-bottom: 8px; }
 html.is-wide .detail-grid .flow-select { width: 100%; }
 
+/* Quick mode has ~190px spare in the right column. A sliding strip hides half
+   the roster behind a swipe; a wrapping grid puts every jersey one tap away. */
+html.is-wide #flow .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  overflow-x: visible;
+}
+html.is-wide #flow .chips .chip {
+  flex: 0 0 auto;
+  min-width: 64px;
+  min-height: 52px;
+  font-size: 1rem;
+}
+
 /* The override has to be able to put a big screen BACK to the phone column. */
 html.force-narrow .screen { max-width: 640px; padding: 12px; }
 html.force-narrow #screen-tracker { display: block; }

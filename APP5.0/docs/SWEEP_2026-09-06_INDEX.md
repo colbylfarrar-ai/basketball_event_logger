@@ -1,6 +1,6 @@
 # Sweep — 2026-09-06 · Index
 
-An eight-part audit of HoopTracks, run over one night. Read-only throughout:
+A ten-part audit of HoopTracks, run over one night. Read-only throughout:
 every measurement is against a `sqlite3.backup` copy of the live book, **the live
 book was never written to**, and **no application code was changed**. Branch
 `sweep-2026-09-06`, unmerged.
@@ -63,6 +63,7 @@ the one meeting the empty state. → Part 7 §1
 | 7 | `…_PART7_WARROOM_PLAYERS.md` | **War Room and Players.** The empty Lineup Creator, 486 nameless players, and why Matchup is the app's best surface. |
 | 8 | `…_PART8_IDEAS.md` | **What to build next.** Ranked across all parts, with four ideas measured and rejected. |
 | 9 | `…_PART9_CAPTURE.md` | **Capture quality and the write pages.** A denominator two surveys got wrong, the play-type PPP bias it causes, and the two pages that already solve problems other pages have. |
+| 10 | `…_PART10_GLOSSARY.md` | **The explanation layer.** The full metric census against `STAT_DEFS`, two abbreviations doing double duty, stated ranges measured against the book, and where the confidence system does not reach. |
 
 ---
 
@@ -94,6 +95,9 @@ Under two hours between them, none needing a ruling:
 * **Add `turnover_type` to `coverage.py`** — the honesty keystone gates three tags
   and not this one, and this one was switched off with ten games left in the
   season. (Part 9 §1.2)
+* **Two duplicate glossary abbreviations** — `Leverage` is defined twice for
+  unrelated concepts, and `SCE` means Self-Creation % in the glossary while the
+  data layer uses that key for Scoring Efficiency. (Part 10)
 * **`insights_deck._next_game`** gets the two guards `team_card._next_game`
   already has — the Insights masthead currently advertises a game nine months in
   the past. (Part 2 §1.1)
@@ -166,8 +170,6 @@ Two traps worth carrying forward:
 
 ## Still outstanding
 
-* **Part 9 — glossary and explainers.** Running at the time of writing. Part 8 §3
-  overlaps it and should be reconciled against it rather than merged blindly.
 * **OSSAA Import and the Whiteboard.** Not swept — the Whiteboard has one saved
   play in the book, which is a product question rather than an audit one. Setup,
   Settings, Input Hub, Game Tracker and Event Editor are covered in Part 9.

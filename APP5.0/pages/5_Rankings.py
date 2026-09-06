@@ -34,7 +34,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
-from helpers.settings_utils import get_setting
+from helpers.settings_utils import get_setting, default_team_name
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, style_fig as _style, q_label as _q_label,
                         AWAY, gender_radio, score_card, rank_chip, grid as _grid,
@@ -1133,7 +1133,15 @@ def _fx_team():
                 unsafe_allow_html=True)
 
     order = sorted(scored.keys(), key=lambda t: scored[t]["Rank"])
-    default_team = get_setting("default_team", "")
+    # Same ladder as the Team Dashboard's landing pick: this coach's own choice,
+    # then their own program, then the legacy global row. Reading the bare
+    # setting here opened the deep dive on a stranger's team for any coach who
+    # had never visited Settings.
+    try:
+        default_team = default_team_name(
+            team_id=(AUTH.current_user() or {}).get("team_id"))
+    except Exception:
+        default_team = get_setting("default_team", "")
     default_idx = next((i for i, t in enumerate(order)
                         if name_of[t] == default_team), 0)
     pick = st.selectbox(

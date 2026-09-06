@@ -229,6 +229,58 @@ def get_setting(key: str, default: str = "", email=None) -> str:
     return default if default else DEFAULTS.get(key, "")
 
 
+def get_user_setting(key: str, default: str = "", email=None) -> str:
+    """This coach's OWN value for a USER_SCOPED key — no global fall-through.
+
+    `get_setting` deliberately inherits the global row when a coach has no
+    override, which is right for a theme (a house accent is a sensible default
+    for everybody) and wrong for anything that names a team. Callers that need
+    "did THIS coach choose one" have to be able to ask without the inheritance
+    answering for them."""
+    email = _scope_email() if email is None else email
+    if not (email and key in USER_SCOPED):
+        return default
+    snap = _snapshot()
+    if snap is not None:
+        v = snap.get(_ukey(key, email))
+        return default if v is None else v
+    rows = query("SELECT value FROM app_settings WHERE key=?",
+                 (_ukey(key, email),))
+    return rows[0]["value"] if rows else default
+
+
+def default_team_name(email=None, team_id=None) -> str:
+    """The team a coach's pages should OPEN on, resolved in the order a new
+    coach needs. "" = no answer; the caller falls back to its own ordering.
+
+    The order, and why each step is where it is:
+
+      1. this coach's own stored choice — an explicit decision wins, always;
+      2. the team on their identity — they land on their own program without
+         ever visiting Settings;
+      3. the bare global row — a single-coach or local-dev install has no
+         per-user row and no identity team, and must not lose its default.
+
+    Step 2 existed in the Team Dashboard and could never run, because
+    `get_setting` had already inherited the global row on this coach's behalf
+    one line above it. Production carries such a row from the single-coach era
+    naming a program nobody signed in here coaches; every account today has an
+    override, so the only person it can strand is a coach signing in for the
+    first time — which is the whole of October.
+
+    `team_id` is passed in rather than read from `helpers.auth` here: settings
+    are imported by nearly everything and auth is not, and the caller already
+    holds the identity."""
+    chosen = get_user_setting("default_team", email=email)
+    if chosen:
+        return chosen
+    if team_id:
+        rows = query("SELECT name FROM teams WHERE id=?", (team_id,))
+        if rows and rows[0]["name"]:
+            return rows[0]["name"]
+    return get_setting("default_team", email="")
+
+
 def set_setting(key: str, value: str, email=None) -> None:
     email = _scope_email() if email is None else email
     execute(

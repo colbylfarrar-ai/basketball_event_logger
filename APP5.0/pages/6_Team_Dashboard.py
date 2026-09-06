@@ -37,7 +37,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from database.db import query, execute
-from helpers.settings_utils import get_setting
+from helpers.settings_utils import get_setting, default_team_name
 from helpers.box_score import render_box_score
 from helpers.ui import (page_chrome, page_header, masthead, rgb as _rgb,
                         style_fig as _style, q_label as _q_label, empty_state,
@@ -415,22 +415,18 @@ _glossary_key("eFG%", "TS%", "USG%", "ORtg", "DRtg", "NetRtg", "PPP", "TOV%",
 # Default team comes from Settings. Look up its league so the gender radio
 # opens on the right side — otherwise a Boys default is filtered out of the
 # (Girls-first) list and the default silently never applies.
-default_team = get_setting("default_team", "")
-# This page is now the app's LANDING page, so "which team" is the first thing it
-# has to answer and an unset setting must not drop a coach on whoever happens to
-# be ranked first. Fall back to the team on their own identity — the coach lands
-# on their own program without ever visiting Settings. The stored setting still
-# wins when present (an admin who has chosen a default keeps it), and an admin
-# with no team falls through to the ranking order exactly as before.
-if not default_team:
-    try:
-        _me = AUTH.current_user() or {}
-        _my_tid = _me.get("team_id")
-        if _my_tid:
-            _mt = query("SELECT name FROM teams WHERE id=?", (_my_tid,))
-            default_team = _mt[0]["name"] if _mt else ""
-    except Exception:
-        default_team = ""
+#
+# This page is the app's LANDING page, so "which team" is the first thing it has
+# to answer and an unset setting must not drop a coach on a stranger's program.
+# The ladder lives in settings_utils.default_team_name (own choice → own team →
+# the legacy global row) because it was written here first and could never run:
+# `get_setting` inherits the bare global row on a coach's behalf, so "fall back
+# to their own identity" was unreachable code from the day it was added.
+try:
+    default_team = default_team_name(
+        team_id=(AUTH.current_user() or {}).get("team_id"))
+except Exception:
+    default_team = get_setting("default_team", "")
 _dt_rows = query("SELECT gender FROM teams WHERE name=?", (default_team,)) \
     if default_team else []
 default_gender = _dt_rows[0]["gender"] if _dt_rows else "F"

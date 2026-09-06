@@ -47,9 +47,15 @@ _TMP = tempfile.mkdtemp(prefix="app5_readfilter_")
 os.environ["APP5_DATA_DIR"] = _TMP
 
 import pytest                                      # noqa: E402
+import database.db as DB                           # noqa: E402
 from database.db import execute                    # noqa: E402
 import helpers.player_edge as PE                   # noqa: E402
 import helpers.player_ratings as PR                # noqa: E402
+
+# The throwaway DB has to exist before the module-level seed below runs, and
+# pytest imports every test module during COLLECTION — so skipping this does not
+# fail one file, it aborts the whole suite with "no such table: teams".
+DB.initialize_database()
 
 
 @pytest.fixture(autouse=True)
@@ -166,21 +172,31 @@ def _seed():
 _T1, _P1, _GID = _seed()
 
 
-def test_edge_boards_honours_an_empty_scope():
-    """`edge_boards(game_ids=[])` must describe no players.
+def test_edge_boards_passes_an_empty_scope_through(monkeypatch):
+    """`edge_boards(game_ids=[])` must hand `[]` down, not `None`.
 
     This is the one widening conversion that lives inside an ENGINE
-    (`helpers/player_edge.py`), so every caller doing its own plumbing correctly
-    is still handed the whole league. `player_stat_table` one call below is
-    already right — it returns {} for an empty scope — which is exactly why this
-    survived: the layer that was fixed is not the layer that is wrong."""
-    unrestricted = PE.edge_boards(gender="F", game_ids=None)
-    empty = PE.edge_boards(gender="F", game_ids=[])
-    assert any(b["rows"] for b in unrestricted), \
-        "fixture produced no boards at all — the assertion below would be vacuous"
-    assert not any(b["rows"] for b in empty), \
-        ("an empty read-filter produced populated boards: "
-         + ", ".join(f"{b['key']}={len(b['rows'])}" for b in empty if b["rows"]))
+    (`helpers/player_edge.py:51`), so every caller doing its own plumbing
+    correctly is still handed the whole league. `player_stat_table` one call
+    below is already right — it returns {} for an empty scope — which is exactly
+    why this survived: the layer that was fixed is not the layer that is wrong.
+
+    Asserted with a spy rather than on the returned boards, deliberately. The
+    boards only populate at FGA >= 20 with a league shot-quality model behind
+    them, which a hermetic fixture cannot cheaply produce — and a behavioural
+    assertion that cannot fire is worse than none, because it reads as a guard.
+    The spy tests the defect itself and needs no data at all."""
+    seen = {}
+
+    def _spy(*a, **kw):
+        seen["game_ids"] = kw.get("game_ids", "<positional>")
+        return {}
+
+    monkeypatch.setattr(PE.PR, "player_stat_table", _spy)
+    PE.edge_boards(gender="F", game_ids=[])
+    assert seen["game_ids"] is not None, (
+        "edge_boards turned an empty scope into an unrestricted one before "
+        "player_stat_table could honour it")
 
 
 def test_rapm_memo_keys_an_empty_scope_apart_from_the_unrestricted_one():

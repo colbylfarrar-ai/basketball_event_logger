@@ -15,6 +15,10 @@ Three kinds:
              and they fail on state the script already advanced. These declare
              `RUN_AS_SCRIPT = True` at module level, because nothing about
              their shape distinguishes them from a real pytest module.
+
+A file whose tests live only in a `unittest.TestCase` counts as PYTEST unless
+it calls `unittest.main()` itself — see `_orphan_testcase`. Before 2026-09-06
+that shape fell through to SCRIPT and ran in neither suite.
 """
 import ast
 from pathlib import Path
@@ -40,9 +44,61 @@ def is_script_style(path: Path) -> bool:
                         for t in node.targets)
                 and getattr(node.value, "value", False) is True):
             return True
-    return not any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                   and n.name.startswith("test_")
-                   for n in tree.body)
+    if _has_module_level_tests(tree):
+        return False
+    # A TestCase that never calls unittest.main() ran NOWHERE — see
+    # _orphan_testcase below. pytest can collect it, so pytest gets it.
+    return not _orphan_testcase(tree)
+
+
+def _has_module_level_tests(tree) -> bool:
+    return any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name.startswith("test_")
+               for n in tree.body)
+
+
+def _calls_unittest_main(tree) -> bool:
+    """AST, not a substring search: the first cut of this looked for the exact
+    text `unittest.main()` and missed `unittest.main(verbosity=2)`, which would
+    have dragged test_turnover_types.py — a file that has always run correctly
+    as a script — into pytest for no reason."""
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "main"
+                and getattr(n.func.value, "id", "") == "unittest"):
+            return True
+    return False
+
+
+def _orphan_testcase(tree) -> bool:
+    """A `unittest.TestCase` file with no `unittest.main()` — tests that ran in
+    NEITHER suite.
+
+    Found 2026-09-06. The classifier only ever looked for module-level
+    `def test_*`, so a file whose tests live in a TestCase was routed to
+    run_all.py as a SCRIPT. run_all runs a script with
+    `python tracker/test_x.py` — and with no `unittest.main()` at the bottom
+    that process imports the module, seeds its throwaway DB, exits 0 and
+    reports PASS having executed none of its assertions. Meanwhile conftest.py
+    told pytest to ignore the file. Two green suites, and the nine tests
+    `test_results_season_rollover.py` shipped the night before had never run.
+
+    Deliberately narrow. A TestCase file that DOES call `unittest.main()` is
+    already running correctly under run_all in its own process, and its own
+    `APP5_DATA_DIR` redirect is safe there in a way it is not under collection
+    (that is the whole reason conftest.py splits the tree). Moving those would
+    be gratuitous risk for no coverage, so `unittest.main()` is read here as
+    what it is: an explicit "run me as a script" contract, the same role
+    RUN_AS_SCRIPT plays above.
+    """
+    has_case = any(
+        isinstance(n, ast.ClassDef)
+        and any(getattr(b, "attr", "") == "TestCase"
+                or getattr(b, "id", "") == "TestCase"
+                for b in n.bases)
+        for n in tree.body)
+    return has_case and not _calls_unittest_main(tree)
 
 
 def script_files(match: str = ""):

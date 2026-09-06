@@ -12,7 +12,7 @@ headline items and are bigger than polish.
 
 ## THE HEADLINE ITEM
 
-### 1 · Point-in-time résumé — rankings that remember
+### 1 · Point-in-time résumé — rankings that remember  ✅ BUILT 2026-09-06
 
 **This is the highest value-to-effort item in the app, and 80% of it is already
 built and already backfilled.**
@@ -124,7 +124,7 @@ and (only with a defensible derivation) `PTS_RULES` in `insights_severity.py` �
 `test_insights_severity.py` fails if a miner emits a metric with no section or no
 evidence destination.
 
-### 5 · The remaining `season="Current"` defaults
+### 5 · The remaining `season="Current"` defaults  ✅ DONE 2026-09-06
 
 ~25 latent ones in `helpers/dashboard/*`: `insights_tab`, `player_card`,
 `team_card`, `share_tab`, `analyze`, `insights_deck`.
@@ -144,7 +144,7 @@ Same conversion as the box score, but these are **page-level**, where the known
 failure mode is a body leaning on a name a sibling defined. **AST-sweep for
 cross-tab variable leaks before converting**, and do not run this one unattended.
 
-### 7 · `archetypes._choose_k` fits KMeans 60 times per call
+### 7 · `archetypes._choose_k` fits KMeans 60 times per call  ⚠️ PART-DONE 2026-09-06
 
 `k = 4..8` with `n_init=10`, then `_fit_kmeans` does 10 more, on ~100 players ×
 10 features. 2.5s inside `player_ratings._archetype_anchors`.
@@ -175,20 +175,32 @@ renders at tablet width.
 
 ## DELETIONS
 
-- `team_insights.keys_extra` — zero call sites, verified twice.
-- `development.project_rest_of_season` — zero call sites.
+- ~~`team_insights.keys_extra`~~ — **STRUCK 2026-09-06. Not dead.** "Zero call
+  sites" meant zero OUTSIDE its own module, which is true and misleading: it is
+  called by `team_extras` (`team_insights.py:1123`), which `insights_tab.py:357`
+  calls on every Insights render, and it is the only producer of the `keys`
+  extra that feeds `_t_keys` — a live generator in `_TEAM_GENERATORS`, with its
+  own tests in `test_insights_tiers.py`. Deleting it would have removed the
+  founder's own "four keys" read from the flagship.
+- ~~`development.project_rest_of_season`~~ — **STRUCK 2026-09-06. Not dead.**
+  Same shape: called by `player_development` (`development.py:283`), which
+  `helpers/dashboard/player_card.py:282` calls, and whose `rest_of_season` key
+  draws a whole metric block on the player card at `player_card.py:1450`.
+- The lesson for the next survey: "no call sites outside its own module" is not
+  evidence of death. Trace the in-module caller to a page before deleting.
 - `scout_notes` (0 rows, one consumer), `manual_player_box` (0 rows) — finish or
   drop.
-- `MARKETING.md` and `ML_LAYER_ROADMAP.md` still reference the Analytics Hub —
-  stale since 2026-09-05.
+- ~~`MARKETING.md` and `ML_LAYER_ROADMAP.md` still reference the Analytics Hub~~
+  — ✅ DONE 2026-09-06, both point at Rankings → Spotlight.
 - **Keep** `hockey_from_id` (100% NULL but by design — HAST is inert until
   tagged) and **keep** `charges.charge_rate_map` (a memory note calls it dead; it
   is consumed by `player_ratings`).
 
 ## QUICK WINS
 
-- **Spotlight cold is 38.8s**, essentially all `_intel`. Put it behind an opt-in
-  button, the way the Impact Lab gates its heavy three.
+- ~~**Spotlight cold is 38.8s**, essentially all `_intel`.~~ ✅ DONE 2026-09-06 —
+  gated behind a button, 24.9s → 14.3s here. And `_intel` is 60% of the view,
+  not all of it: 7.4s is Rankings page base that every view on that page pays.
 - **Scout is now the slowest view** — 11.7s cold / 3.4s warm. Nothing else is
   above 2.8 warm. Unprofiled.
 - **Hall of Fame calls `score_ratings` per season label in a loop** — likely slow,

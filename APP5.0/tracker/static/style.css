@@ -672,6 +672,26 @@ html.is-wide .tracker-cold {
   grid-column: 1 / -1;
 }
 
+/* Left column reads court -> caption -> subs -> score/clock. The score is a
+   check that the tracker has not drifted from the scoreboard, not something
+   read live, so it earns the bottom slot; the court earns the top one.
+   Subs opens between them, under the court and above the score. */
+html.is-wide .col-left > #court-wrap   { order: 1; }
+html.is-wide .col-left > #shot-caption { order: 2; }
+html.is-wide .col-left > #subs-panel   { order: 3; }
+html.is-wide .col-left > #track-head   { order: 4; }
+
+/* Sticky bought a pinned clock while the phone column scrolled. The wide hot
+   zone never scrolls, so it buys nothing here -- and once the cold band below
+   the fold is scrolled, a sticky header would detach and cover the court. */
+html.is-wide #track-head {
+  position: static;
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-bottom: 0;
+  border-top: 1px solid var(--edge);
+}
+
 /* The override has to be able to put a big screen BACK to the phone column. */
 html.force-narrow .screen { max-width: 640px; padding: 12px; }
 html.force-narrow #screen-tracker { display: block; }

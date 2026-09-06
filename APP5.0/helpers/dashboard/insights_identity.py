@@ -231,8 +231,15 @@ def _spacing_block(ctx, tids, fp):
                                     c.get("pct")), unsafe_allow_html=True)
 
 
-def render(ctx, *, axes, shot_diet_lines=None, ported=None, tids=(), fp=None):
-    """Section 1 — Who we are."""
+def render(ctx, *, axes, shot_diet_lines=None, shot_depth_note=None,
+           ported=None, tids=(), fp=None):
+    """Section 1 — Who we are.
+
+    `shot_depth_note` is the depth band's value clause, priced from the pool the
+    caller already holds. It arrives as a string rather than being computed here
+    because this module is a renderer and the shots are cached one level up —
+    and because the sentence it replaces was a typed-in 0.60 / 1.14 that matched
+    neither gender's book (THE BOOK §8.4)."""
     _dna_verdict(axes)
     if axes:
         BR._hdr("Team DNA — every axis against the field")
@@ -248,8 +255,10 @@ def render(ctx, *, axes, shot_diet_lines=None, ported=None, tids=(), fp=None):
 
     if shot_diet_lines:
         BR._hdr("Shot depth — where this offense actually lives",
-                "The 4-to-arc band is over a third of every shot in this "
-                "league at 0.60 points per shot against 1.14 at the rim.")
+                (f"The 4-to-arc band is {shot_depth_note}."
+                 if shot_depth_note else
+                 "The 4-to-arc band is the shot this league takes most and "
+                 "converts worst."))
         st.markdown(verdict_card(shot_diet_lines), unsafe_allow_html=True)
 
     scout = (ported or {}).get("selfscout")

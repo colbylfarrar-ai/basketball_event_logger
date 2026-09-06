@@ -643,6 +643,52 @@ def conversion_value(league, taxonomy="kind"):
     return r - f
 
 
+def depth_reference(shots=None, gender=None, game_ids=None, events=None,
+                    league=None):
+    """The numbers a depth CAPTION quotes — from this book, for this gender.
+
+    Returns {"share", "pps", "rim_pps", "gap", "n", "band_n"} over the depth
+    cut's two headline cells (the dead band and the rim), or None when either
+    cell is too thin to price. None is the useful half: a caption that cannot be
+    computed must be dropped, not rounded, because these two sentences are what
+    TEACH a coach what the dead band costs and they get read by people who
+    cannot check them.
+
+    It exists because the same quantity was typed into two captions as a
+    constant and the two disagreed with each other and with the book — 0.60/1.14
+    on the Insights identity header, 0.55/1.09 on the shot-diet reference, and
+    0.548/1.072 (girls) or 0.753/1.276 (boys) actually measured. The 0.55/1.09
+    pair is the GIRLS' number, which is how a boys team was told its rim was
+    worth 1.09 when it is worth 1.28.
+    """
+    good, bad = VERDICT_PAIR["band"]
+    if league is None:
+        league = league_table(gender=gender, game_ids=game_ids, events=events,
+                              shots=shots, taxonomy="band")
+    b, r = league[bad], league[good]
+    if b["pps"] is None or r["pps"] is None or b["share"] is None:
+        return None
+    return {"share": b["share"], "pps": b["pps"], "rim_pps": r["pps"],
+            "gap": r["pps"] - b["pps"], "n": league["_meta"]["located"],
+            "band_n": b["n"]}
+
+
+def depth_value_line(ref):
+    """`depth_reference` as the clause both captions share, or "" for None.
+
+    One builder rather than one sentence each, because the finding was not that
+    a number was stale — it was that two captions describing the same band could
+    hold different numbers at all. The sample rides along: a league constant
+    published without the pool behind it is the §10 finding, and this is a
+    league constant.
+    """
+    if not ref:
+        return ""
+    return (f"{ref['share'] * 100:.0f}% of every located shot in this book, at "
+            f"{ref['pps']:.2f} points a trip against {ref['rim_pps']:.2f} at "
+            f"the rim ({ref['n']:,} located shots)")
+
+
 def excess_floaters(d, league=None):
     """How many more floaters this unit took than a league-average diet would.
 

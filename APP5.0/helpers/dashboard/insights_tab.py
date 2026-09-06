@@ -481,6 +481,19 @@ def _shot_diet_lines(ctx):
             for ln in SK.verdict(team_id=tid, shots=shots, games=games)]
 
 
+def _shot_depth_note(ctx):
+    """The depth band's value clause for THIS league, or "" if it cannot be
+    priced.
+
+    Same pool as `_shot_diet_lines` — `_kind_shots` is cached, so this is a
+    second read of a list that has already been paid for, not a second walk of
+    the book."""
+    import helpers.shot_kinds as SK
+    shots = _kind_shots(ctx.gender, getattr(ctx, "season", "Current"),
+                        getattr(ctx, "season_gp", None))
+    return SK.depth_value_line(SK.depth_reference(shots=shots)) if shots else ""
+
+
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def _pts_ctx(gender, season, team_id, fp=None):
     """The league constants the points-per-game translator prices against.
@@ -694,6 +707,7 @@ def render(ctx):
         try:
             from helpers.dashboard import insights_identity as _ID
             _ID.render(sctx, axes=_axes, shot_diet_lines=_shot_diet_lines(ctx),
+                       shot_depth_note=_shot_depth_note(ctx),
                        ported=_plines, tids=_tids, fp=_fp)
         except Exception as _exc:
             st.caption(f"Who we are unavailable — "

@@ -181,11 +181,21 @@ def render(shots, team_id, *, games=None, key_prefix="sd", offense=True,
     with st.expander("The same shots cut by ANGLE (rim · floater · midrange · "
                      "corner 3 · above-break 3)", expanded=False):
         _cut(dk, "team", None)
+        # The floater/midrange pair is the EVIDENCE for the depth cut merging
+        # them, so it has to be this book's pair — the typed-in 0.57 / 0.50 was
+        # one gender's, and a boys team was being shown a girls-league argument
+        # for a taxonomy decision. `dk["league"]` is already computed above.
+        _lgk = dk.get("league") or {}
+        _fl, _md = (_lgk.get("floater") or {}).get("pps"), \
+                   (_lgk.get("mid") or {}).get("pps")
+        _same = (f" because they measured as the same shot ({_fl:.2f} and "
+                 f"{_md:.2f} points a trip)"
+                 if _fl is not None and _md is not None else
+                 " because they measured as the same shot")
         st.caption(
             "Same shots, different question. The depth cut merges the floater "
-            "and the midrange because they measured as the same shot (0.57 and "
-            "0.50 points a trip); this cut keeps them apart and splits the 3s "
-            "by ANGLE instead of by distance, which is the only place the "
+            f"and the midrange{_same}; this cut keeps them apart and splits the "
+            "3s by ANGLE instead of by distance, which is the only place the "
             "corner 3 — the most valuable 3 on the floor — is visible as its "
             "own thing. The model prices shots on this cut; the reads above "
             "use the other. Both are measured, neither is a rounding of the "
@@ -412,18 +422,29 @@ def render_concedes(shots, *, labels=None, own_side=True, league_shots=None,
             "left off. Located shots only.")
 
 
-def league_reference():
+def league_reference(shots=None):
     """The league kind table as a standalone caption block.
 
     Small, and worth showing wherever the diet is: the whole argument is that
     the 4-10 ft band is not a better shot than the midrange, and a coach only
     believes that when the two numbers sit next to each other.
+
+    `shots` is the same pool the block above was drawn from. The value clause
+    used to be a typed-in 0.55 / 1.09 — which is the GIRLS' pair, and was being
+    shown verbatim to boys teams whose rim returns 1.28. Pass the pool and the
+    sentence prices whichever league it is describing; pass nothing and the
+    clause is dropped rather than guessed at.
     """
+    ref = SK.depth_reference(shots=shots) if shots else None
+    value = SK.depth_value_line(ref)
     return (
-        "Depth cut: 0–4 ft · 4 ft–arc · a 3 at the arc · a 3 from 23+. The 4 ft "
-        "line is where this league's efficiency actually falls off (2–4 ft "
-        "shoots 56%, 4–6 ft shoots 32%), and past it a 2 does not recover — "
-        "which is why everything from 4 ft to the arc is one band. It is 37% of "
-        "every shot taken in this league at 0.55 points a trip, against 1.09 at "
-        "the rim. The angle cut underneath splits that band back into floater "
-        "and midrange, and splits the 3s into corner and above-break.")
+        f"Depth cut: 0–{SK.RIM_FT:.0f} ft · {SK.RIM_FT:.0f} ft–arc · a 3 at the "
+        f"arc · a 3 from {SK.DEEP_FT:.0f}+. The {SK.RIM_FT:.0f} ft line is where "
+        "this league's efficiency falls off a cliff, and past it a 2 does not "
+        "recover — which is why everything from there to the arc is one band."
+        # The cliff's own measurement (55.9% inside 4 ft against 31.9% just
+        # outside) lives on shot_kinds.RIM_FT, with the constant it set, rather
+        # than being retyped here where a recal cannot reach it.
+        + (f" It is {value}." if value else "")
+        + " The angle cut underneath splits that band back into floater and "
+        "midrange, and splits the 3s into corner and above-break.")

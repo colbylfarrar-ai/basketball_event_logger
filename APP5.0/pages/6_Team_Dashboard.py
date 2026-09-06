@@ -2152,7 +2152,8 @@ if _tdview == "Charts":
                               games=sum(1 for _g in bundle["game_log"]
                                         if _g["tracked"]) or None,
                               key_prefix="sd_off")
-                st.caption(DSDIET.league_reference())
+                st.caption(DSDIET.league_reference(
+                    _kind_pool(gender, season_pick)))
 
                 # ── floor-spacing index (located-shot x,y blend vs league) ────
                 _sp = _spacing(gender, team_id, _vis_key)

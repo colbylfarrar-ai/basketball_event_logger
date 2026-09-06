@@ -42,6 +42,15 @@ from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile
 from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
                            hot_zones as _hot_zones)
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+# The season-scoped READ default, same as the engine layer (helpers/seasons).
+# These are render wrappers and every page passes an explicit season, so a bare
+# season="Current" here was latent rather than live — but it is the identical
+# rollover trap: for the months between a New Season rollover and the first game
+# of the new year, 'Current' names an EMPTY partition, so the first caller that
+# forgets to pass one reads zero over a full database. SEAS_DEFAULT resolves at
+# call time through default_read_season(); an explicit 'Current' is still
+# honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 # ── shared ctx builder (Tier 2 item 13) ─────────────────────────────────────────
 # The heavy per-player feed set behind the card, cached HERE so the Players page,
@@ -115,13 +124,14 @@ def _ctx_set_profiles(g, vis=None):
     return PT.player_playtype_shot_profiles(game_ids=gids) if gids else {}
 
 
-def build_card_ctx(pid, gender, season="Current", season_gp=None, *,
+def build_card_ctx(pid, gender, season=SEAS_DEFAULT, season_gp=None, *,
                    P, rows, paid, accent, zsplits, zguard, hsplits=None,
                    vis=None):
     """Assemble the full render_card ctx for one player. The page supplies what
     it already has (its player row `P`, the ranked pool `rows`, the zone tables,
     theme + gate); every league-wide feed lookup happens here off the shared
     caches above."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     from types import SimpleNamespace
     arch = _ctx_archetypes(gender, vis).get(pid)
     return SimpleNamespace(
@@ -138,10 +148,11 @@ def build_card_ctx(pid, gender, season="Current", season_gp=None, *,
 
 
 @st.dialog("Player quick view", width="large")
-def quick_view(pid, gender, season="Current", season_gp=None, *,
+def quick_view(pid, gender, season=SEAS_DEFAULT, season_gp=None, *,
                P, rows, paid, accent, zsplits, zguard, hsplits=None, vis=None):
     """The full player card in a modal — one click from any roster/leaders table,
     no page switch. Same ctx builder as the two Profile tabs."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     ctx = build_card_ctx(
         pid, gender, season=season, season_gp=season_gp, P=P, rows=rows,
         paid=paid, accent=accent, zsplits=zsplits, zguard=zguard,
@@ -313,9 +324,10 @@ def _defended_located(pid, game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _war(gender, season="Current", game_ids=None):
+def _war(gender, season=SEAS_DEFAULT, game_ids=None):
     """HoopWAR per player {pid: {WAR, pts_added, ...}} — chains the cached RAPM
     solve through helpers/hoopwar.py. {} when RAPM or finished scores are absent."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.hoopwar as HW
     try:
         return HW.war_table(gender, rapm=_rapm(gender, game_ids),
@@ -326,9 +338,10 @@ def _war(gender, season="Current", game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _wpa(gender, season="Current"):
+def _wpa(gender, season=SEAS_DEFAULT):
     """Season WPA per player in both modes {scoring:{pid:...}, possession:{...}}.
     scoring → wpa + clutch_wpa; possession → off_wpa (OWA) + def_wpa (DWA)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.wpa as WP
     try:
         return {"scoring": WP.season_wpa(gender, mode="scoring", season=season),
@@ -338,10 +351,11 @@ def _wpa(gender, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _projection(gender, season="Current", game_ids=None):
+def _projection(gender, season=SEAS_DEFAULT, game_ids=None):
     """League-wide career player projection {pid: projection} (helpers.projection).
     Cached per gender/season like the other league fetchers; the projection is
     league-relative, so the prior + baseline are built over the whole pool once."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.player_ratings as _PR
     import helpers.projection as _PJ
     try:
@@ -359,7 +373,7 @@ def _projection(gender, season="Current", game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _insight_feed(gender, season="Current", game_ids=None):
+def _insight_feed(gender, season=SEAS_DEFAULT, game_ids=None):
     """League insight feed (helpers/insights.build_feed) for the card's "What
     the data says" lines — computed once per (gender, season), NOT per player;
     the card looks its pid up in the result. top=3 = the surface cap (the
@@ -369,6 +383,7 @@ def _insight_feed(gender, season="Current", game_ids=None):
     estimate to fire (raw on/off is teammate-confounded and measured
     unrepeatable on this book). `_rapm` is already cached per gender for the
     card's own impact block, so this costs one dict merge, not a second solve."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.insights as IN
     gids = (list(game_ids) if game_ids is not None
             else PT._tracked_game_ids(gender))
@@ -388,7 +403,7 @@ def _insight_feed(gender, season="Current", game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _game_rtg_bundle(gender, game_ids=None, season="Current"):
+def _game_rtg_bundle(gender, game_ids=None, season=SEAS_DEFAULT):
     """Per-game 0-10 player ratings for the gender's tracked pool, calibrated once
     so a player's game-log grades are mutually comparable. {game_id: {pid: {...}}}.
     Cached per gender/pool like the other league fetchers here.
@@ -397,6 +412,7 @@ def _game_rtg_bundle(gender, game_ids=None, season="Current"):
     Post-rollover the active-season sentinel ('Current') can hold zero tracked
     games (all data archived under a year label), which blanked every RTG — so an
     empty sentinel pool falls back to the gender's most recent tracked season."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.game_rating as _GR
     from database.db import query as _q
     if game_ids is not None:

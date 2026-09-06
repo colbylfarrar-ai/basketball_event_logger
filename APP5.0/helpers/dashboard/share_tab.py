@@ -21,6 +21,15 @@ import streamlit as st
 import helpers.social_cards as SCARD
 import helpers.settings_utils as SU
 import helpers.seasons as SEAS
+# The season-scoped READ default, same as the engine layer (helpers/seasons).
+# These are render wrappers and every page passes an explicit season, so a bare
+# season="Current" here was latent rather than live — but it is the identical
+# rollover trap: for the months between a New Season rollover and the first game
+# of the new year, 'Current' names an EMPTY partition, so the first caller that
+# forgets to pass one reads zero over a full database. SEAS_DEFAULT resolves at
+# call time through default_read_season(); an explicit 'Current' is still
+# honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 def _team_color(tid):
@@ -32,7 +41,8 @@ def _team_color(tid):
 # that season's games, ranks and player table (program-history posts).
 @st.cache_data(ttl=600, show_spinner=False)
 def _card_game(game_id, team_id, ca, cb, quarters, gender, title, bg,
-               logo_a, logo_b, season="Current"):
+               logo_a, logo_b, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return SCARD.game_result_png(game_id, team_id, color_a=ca, color_b=cb,
                                  show_quarters=quarters, gender=gender,
                                  title=title or None, bg=bg,
@@ -41,9 +51,10 @@ def _card_game(game_id, team_id, ca, cb, quarters, gender, title, bg,
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _card_game_manual(team_id, b_id, a_pts, b_pts, date, location, ca, cb,
-                      gender, title, bg, logo_a, logo_b, season="Current"):
+                      gender, title, bg, logo_a, logo_b, season=SEAS_DEFAULT):
     """Coach-typed final-score card — no DB game behind it (a scrimmage, a game
     from before tracking, a jamboree). Same template as the real game card."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return SCARD.game_result_png(
         0, team_id, color_a=ca, color_b=cb, gender=gender,
         title=title or None, bg=bg, logo_a=logo_a, logo_b=logo_b, season=season,
@@ -52,19 +63,22 @@ def _card_game_manual(team_id, b_id, a_pts, b_pts, date, location, ca, cb,
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_season(team_id, gender, bg, season="Current", accolades=()):
+def _card_season(team_id, gender, bg, season=SEAS_DEFAULT, accolades=()):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return SCARD.season_record_png(team_id, gender, bg=bg, season=season,
                                    accolades=list(accolades))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _card_games(team_id, gender, game_ids, title, bg, season="Current"):
+def _card_games(team_id, gender, game_ids, title, bg, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return SCARD.games_png(team_id, gender, game_ids=list(game_ids),
                            title=title or None, bg=bg, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _games(team_id, season="Current"):
+def _games(team_id, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return SCARD._team_games(team_id, season=season)
 
 

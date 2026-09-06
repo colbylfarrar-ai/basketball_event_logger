@@ -163,12 +163,23 @@ mode it belongs under the court. Keep `#track-head` first in `.col-left` in the
 DOM (phone order preserved by `display: contents`) and reorder visually in wide
 mode with flex `order`: court 1, caption 2, track-head 3.
 
-**`#subs-panel` is the one ordering hazard.** It currently sits between
-`#track-head` and `#court-wrap`, which is inside the range `.col-left` needs to
-wrap. It is a takeover panel, `hidden` by default, and belongs below the fold in
-wide mode. Moving it in the DOM changes where it opens on a phone. The
-implementation plan must resolve this explicitly and verify the phone layout is
-byte-identical before and after — see Risks.
+**No DOM reordering is needed.** The three groups are already contiguous ranges
+in `index.html`, so each can be wrapped where it stands:
+
+| Wrapper | DOM range (already contiguous) |
+|---|---|
+| `.col-left` | `#track-head`, `#subs-panel`, `#court-wrap`, `#shot-caption` |
+| `.col-right` | `#mode-row`, `#track-tip`, `#defense-bar`, `#playtype-bar`, `#flow-opts`, `#flow` |
+| `.tracker-cold` | `#to-row`, `#action-row`, `#sync-status`, `#coverage-badge`, `#pbp-toggle`, `#pbp` |
+
+`#subs-panel` therefore stays exactly where it is in the DOM and rides along in
+`.col-left`. In wide mode the flex `order` is court 1, caption 2, subs 3,
+track-head 4 — which puts the subs takeover under the court and above the score,
+which is where the founder asked for it.
+
+`#track-head` is `position: sticky; top: 0` today. Sticky must be turned off in
+wide mode: the hot zone never scrolls, so it buys nothing, and once the cold band
+below the fold is scrolled the header would detach and cover the court.
 
 ## Behaviour changes in `app.js`
 
@@ -213,10 +224,10 @@ Layout is not unit-testable; verify it in a real browser at the real size.
 
 ## Risks
 
-- **`#subs-panel` DOM move breaks the phone layout.** Highest risk in the change.
-  Verification step 7 is the gate. If the panel cannot be moved without shifting
-  the phone layout, leave it where it is and give it `order` + full-width
-  placement in wide mode instead.
+- **The wrappers change the phone layout.** `display: contents` should make them
+  invisible to layout in narrow mode, but a single missed media-query guard (a
+  `html:not(.force-narrow) .col-left` rule written outside `@media (min-width:768px)`,
+  say) would apply the flex column on a phone. Verification step 7 is the gate.
 - **Tag bars wrapping to a third line.** The budget assumes at most two lines per
   bar (label + select + up to five one-tap chips). A coach with five long defense
   preset names on a narrower-than-expected column could reach three lines and

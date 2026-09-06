@@ -182,105 +182,111 @@ try {
 
 <!-- Screen 3: Tracker -->
 <section id="screen-tracker" class="screen" hidden>
-  <header id="track-head">
-    <div id="score-line">
-      <span id="score-home-name" class="score-name"></span>
-      <span id="score-home" class="score-num">0</span>
-      <span class="score-sep">&ndash;</span>
-      <span id="score-away" class="score-num">0</span>
-      <span id="score-away-name" class="score-name"></span>
-    </div>
-    <div id="track-controls">
-      <div class="q-stepper">
-        <button id="q-minus" class="btn sq" aria-label="Previous period">&minus;</button>
-        <span id="q-label">Q1</span>
-        <button id="q-plus" class="btn sq" aria-label="Next period">+</button>
+  <div class="col-left">
+    <header id="track-head">
+      <div id="score-line">
+        <span id="score-home-name" class="score-name"></span>
+        <span id="score-home" class="score-num">0</span>
+        <span class="score-sep">&ndash;</span>
+        <span id="score-away" class="score-num">0</span>
+        <span id="score-away-name" class="score-name"></span>
       </div>
-      <span id="sync-badge" class="badge ok" title="Queued events">0</span>
-      <span id="net-dot2" class="dot"></span>
-      <button id="btn-subs" class="btn ghost">Subs</button>
-      <button id="btn-board" class="btn ghost">Board</button>
+      <div id="track-controls">
+        <div class="q-stepper">
+          <button id="q-minus" class="btn sq" aria-label="Previous period">&minus;</button>
+          <span id="q-label">Q1</span>
+          <button id="q-plus" class="btn sq" aria-label="Next period">+</button>
+        </div>
+        <span id="sync-badge" class="badge ok" title="Queued events">0</span>
+        <span id="net-dot2" class="dot"></span>
+        <button id="btn-subs" class="btn ghost">Subs</button>
+        <button id="btn-board" class="btn ghost">Board</button>
+      </div>
+      <!-- Clock folded into the sticky header (with score + quarter): the coach
+           keeps game time pinned while the court/flow scroll, instead of hunting
+           for it. Still the LAST thing updated after an event, and every event
+           stamps time = clockStr(), so a running clock keeps that accurate. -->
+      <div class="clock" aria-label="Game clock">
+        <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
+        <button id="clk-min-minus" class="btn sq" type="button" aria-label="Minute down">&minus;</button>
+        <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
+        <button id="clk-min-plus" class="btn sq" type="button" aria-label="Minute up">+</button>
+        <span class="clock-colon">:</span>
+        <button id="clk-sec-minus" class="btn sq" type="button" aria-label="Second down">&minus;</button>
+        <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
+        <button id="clk-sec-plus" class="btn sq" type="button" aria-label="Second up">+</button>
+      </div>
+    </header>
+
+    <!-- In-place subs: swap the on-court five without leaving the tracker, so minutes
+         and +/- (which key off the lineup snapshot) stay correct. -->
+    <div id="subs-panel" hidden></div>
+
+    <div id="court-wrap"></div>
+    <p id="shot-caption" class="caption"></p>
+  </div>
+
+  <div class="col-right">
+    <div id="mode-row">
+      <button class="btn mode active" data-mode="shot">SHOT</button>
+      <button class="btn mode" data-mode="ft">FT</button>
+      <button class="btn mode" data-mode="foul">FOUL</button>
+      <button class="btn mode" data-mode="tov">TOV</button>
     </div>
-    <!-- Clock folded into the sticky header (with score + quarter): the coach
-         keeps game time pinned while the court/flow scroll, instead of hunting
-         for it. Still the LAST thing updated after an event, and every event
-         stamps time = clockStr(), so a running clock keeps that accurate. -->
-    <div class="clock" aria-label="Game clock">
-      <button id="clk-toggle" class="btn sq clk-go" type="button" aria-label="Start clock">&#9654;</button>
-      <button id="clk-min-minus" class="btn sq" type="button" aria-label="Minute down">&minus;</button>
-      <input id="clock-min" type="number" min="0" max="20" value="8" inputmode="numeric" aria-label="Minutes">
-      <button id="clk-min-plus" class="btn sq" type="button" aria-label="Minute up">+</button>
-      <span class="clock-colon">:</span>
-      <button id="clk-sec-minus" class="btn sq" type="button" aria-label="Second down">&minus;</button>
-      <input id="clock-sec" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds">
-      <button id="clk-sec-plus" class="btn sq" type="button" aria-label="Second up">+</button>
+
+    <!-- One-time first-game hint (dismiss persists in localStorage) -->
+    <div id="track-tip" class="track-tip" hidden>
+      <span>👆 Tap the court to log a shot, then pick the shooter and make/miss. Switch to FT / FOUL / TOV above.</span>
+      <button id="track-tip-x" type="button" aria-label="Dismiss tip">✕</button>
     </div>
-  </header>
 
-  <!-- In-place subs: swap the on-court five without leaving the tracker, so minutes
-       and +/- (which key off the lineup snapshot) stay correct. -->
-  <div id="subs-panel" hidden></div>
+    <!-- Sticky "current defense" the opponent is in — set it once and every event
+         logged inherits it until you change it (a team stays in a D for stretches). -->
+    <div id="defense-bar"></div>
 
-  <div id="court-wrap"></div>
-  <p id="shot-caption" class="caption"></p>
+    <!-- Sticky "current set call" (play type) — the offense twin of the defense
+         bar: set it once and every shot, TURNOVER and FOUL logged inherits it.
+         Works in quick and detailed mode; the detailed shot flow's Play-type
+         chips override it per shot. -->
+    <div id="playtype-bar"></div>
 
-  <div id="mode-row">
-    <button class="btn mode active" data-mode="shot">SHOT</button>
-    <button class="btn mode" data-mode="ft">FT</button>
-    <button class="btn mode" data-mode="foul">FOUL</button>
-    <button class="btn mode" data-mode="tov">TOV</button>
+    <!-- Quick vs full-detail shot entry. Quick (default) = tap shooter + make/miss;
+         full adds assist / rebound / play-type rows on every shot. -->
+    <div id="flow-opts">
+      <button id="quick-toggle" class="btn ghost small" type="button"></button>
+    </div>
+
+    <div id="flow"></div>
   </div>
 
-  <!-- One-time first-game hint (dismiss persists in localStorage) -->
-  <div id="track-tip" class="track-tip" hidden>
-    <span>👆 Tap the court to log a shot, then pick the shooter and make/miss. Switch to FT / FOUL / TOV above.</span>
-    <button id="track-tip-x" type="button" aria-label="Dismiss tip">✕</button>
+  <div class="tracker-cold">
+    <!-- Timeout markers (game_timeouts): one tap per huddle so the after-timeout
+         read lights up. Online-only v1 — a rare event (~5/game), not queued. -->
+    <div id="to-row">
+      <button id="btn-to-home" class="btn ghost">TO Home</button>
+      <button id="btn-to-away" class="btn ghost">TO Away</button>
+      <button id="btn-to-undo" class="btn warn">Undo TO</button>
+    </div>
+
+    <div id="action-row">
+      <button id="btn-undo" class="btn warn">Undo</button>
+      <button id="btn-edit-log" class="btn ghost">Edit log</button>
+      <button id="btn-leave" class="btn ghost">← Leave (saved)</button>
+      <button id="btn-finish" class="btn danger">End game</button>
+    </div>
+
+    <p id="sync-status" class="status"></p>
+    <!-- live tag-coverage nudge (fed by /live payload; hidden until enough shots) -->
+    <p id="coverage-badge" class="status" style="display:none"
+       title="Share of tonight's events carrying the optional one-tap tags. Tag play type and defense (detailed mode) to unlock the play-type, scheme and shot-quality analytics for this game."></p>
+
+    <!-- Play-by-play collapses by default (the last ~10 events, capped): keeps the
+         long feed tail off the main logging scroll. Tap to expand. -->
+    <button id="pbp-toggle" class="pbp-h" type="button" aria-expanded="false" aria-controls="pbp">
+      <span class="pbp-caret" aria-hidden="true">&#9656;</span> Play-by-play
+    </button>
+    <ul id="pbp" class="pbp" hidden></ul>
   </div>
-
-  <!-- Sticky "current defense" the opponent is in — set it once and every event
-       logged inherits it until you change it (a team stays in a D for stretches). -->
-  <div id="defense-bar"></div>
-
-  <!-- Sticky "current set call" (play type) — the offense twin of the defense
-       bar: set it once and every shot, TURNOVER and FOUL logged inherits it.
-       Works in quick and detailed mode; the detailed shot flow's Play-type
-       chips override it per shot. -->
-  <div id="playtype-bar"></div>
-
-  <!-- Quick vs full-detail shot entry. Quick (default) = tap shooter + make/miss;
-       full adds assist / rebound / play-type rows on every shot. -->
-  <div id="flow-opts">
-    <button id="quick-toggle" class="btn ghost small" type="button"></button>
-  </div>
-
-  <div id="flow"></div>
-
-  <!-- Timeout markers (game_timeouts): one tap per huddle so the after-timeout
-       read lights up. Online-only v1 — a rare event (~5/game), not queued. -->
-  <div id="to-row">
-    <button id="btn-to-home" class="btn ghost">TO Home</button>
-    <button id="btn-to-away" class="btn ghost">TO Away</button>
-    <button id="btn-to-undo" class="btn warn">Undo TO</button>
-  </div>
-
-  <div id="action-row">
-    <button id="btn-undo" class="btn warn">Undo</button>
-    <button id="btn-edit-log" class="btn ghost">Edit log</button>
-    <button id="btn-leave" class="btn ghost">← Leave (saved)</button>
-    <button id="btn-finish" class="btn danger">End game</button>
-  </div>
-
-  <p id="sync-status" class="status"></p>
-  <!-- live tag-coverage nudge (fed by /live payload; hidden until enough shots) -->
-  <p id="coverage-badge" class="status" style="display:none"
-     title="Share of tonight's events carrying the optional one-tap tags. Tag play type and defense (detailed mode) to unlock the play-type, scheme and shot-quality analytics for this game."></p>
-
-  <!-- Play-by-play collapses by default (the last ~10 events, capped): keeps the
-       long feed tail off the main logging scroll. Tap to expand. -->
-  <button id="pbp-toggle" class="pbp-h" type="button" aria-expanded="false" aria-controls="pbp">
-    <span class="pbp-caret" aria-hidden="true">&#9656;</span> Play-by-play
-  </button>
-  <ul id="pbp" class="pbp" hidden></ul>
 </section>
 
 <!-- Screen 4: Event editor -->

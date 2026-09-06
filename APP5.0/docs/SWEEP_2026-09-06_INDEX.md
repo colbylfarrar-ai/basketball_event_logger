@@ -62,6 +62,7 @@ the one meeting the empty state. → Part 7 §1
 | 6 | `…_PART6_ENGINES.md` | **Engine inventory.** 898 entry points traced to a page or not, with three of its own findings retracted in place. |
 | 7 | `…_PART7_WARROOM_PLAYERS.md` | **War Room and Players.** The empty Lineup Creator, 486 nameless players, and why Matchup is the app's best surface. |
 | 8 | `…_PART8_IDEAS.md` | **What to build next.** Ranked across all parts, with four ideas measured and rejected. |
+| 9 | `…_PART9_CAPTURE.md` | **Capture quality and the write pages.** A denominator two surveys got wrong, the play-type PPP bias it causes, and the two pages that already solve problems other pages have. |
 
 ---
 
@@ -90,6 +91,9 @@ Under two hours between them, none needing a ruling:
 * **`ANALYZE` on the book** — never run, so the planner picks the 13,362-row
   season index over the 43-row tracked index on the app's hottest predicate.
   **1.55 ms → 0.04 ms**, at 74 call sites. (Part 5 §5b)
+* **Add `turnover_type` to `coverage.py`** — the honesty keystone gates three tags
+  and not this one, and this one was switched off with ten games left in the
+  season. (Part 9 §1.2)
 * **`insights_deck._next_game`** gets the two guards `team_card._next_game`
   already has — the Insights masthead currently advertises a game nine months in
   the past. (Part 2 §1.1)
@@ -124,6 +128,10 @@ Recorded here because each one changes what should be built:
 * **The memory note "fetch_events([]) returns everything"** — stale.
   `_game_filter` branches on `is None`; the risk moved up a layer to 35 caller
   sites. (Part 1 §5.4)
+* **Tag coverage was measured against the wrong denominator** in the QOL survey
+  and in this sweep's first pass. Free throws cannot carry `play_type` or
+  `defense` and are 14.5% of the book; measured per event type, shots are tagged
+  at 90% / 88%. (Part 9 §1)
 * **The session prompt's ENT inventory** ("77 sites across 16 files") — 19 files
   import it, and the list omits `tracker/api.py`, which is a **write** surface
   with its own identity assembly. (Part 1 §5.3)
@@ -160,9 +168,9 @@ Two traps worth carrying forward:
 
 * **Part 9 — glossary and explainers.** Running at the time of writing. Part 8 §3
   overlaps it and should be reconciled against it rather than merged blindly.
-* **Setup, Settings, Input Hub, Game Tracker, Event Editor, OSSAA Import,
-  Whiteboard.** Not swept. The Game Tracker is the app's only live write surface
-  and deserves its own part.
+* **OSSAA Import and the Whiteboard.** Not swept — the Whiteboard has one saved
+  play in the book, which is a product question rather than an audit one. Setup,
+  Settings, Input Hub, Game Tracker and Event Editor are covered in Part 9.
 * **Book B's Team Dashboard rows** in Part 1 §1 should be re-run — the fixture
   needed a repair (`players.archived`) that landed after that matrix.
 * **Nothing in Part 8 §1 has been prototyped**, so its effort estimates are

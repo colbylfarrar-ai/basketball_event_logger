@@ -220,18 +220,30 @@ def render(gender, *, paid=False, vis=None, accent="#4c8bf5", scored=None):
                 drew = True
                 _hdr("Tagging coverage — how complete is the capture?")
                 sig = cov["signals"]
-                cc = st.columns(3)
-                for col, key, lbl in ((cc[0], "play_type", "Play type"),
-                                      (cc[1], "defense", "Defense"),
-                                      (cc[2], "guarded_by", "Contested (guarded)")):
-                    s = sig[key]
-                    val = f"{s['pct']:.0f}%" if s["pct"] is not None else "—"
-                    col.markdown(_mini(lbl, val,
-                                       sub=f"{s['tagged']}/{s['total']} shots"),
-                                 unsafe_allow_html=True)
-                st.caption("Optional one-tap tags drive the play-type, defense and "
-                           "shot-quality views — the higher these are, the more "
-                           "those surfaces can be trusted. Tag in the Game Tracker.")
+                # Every signal coverage.py measures, and its own unit. The two
+                # newest were being pressed for a season with nothing on screen
+                # saying how completely — a partial sample that reads as a full
+                # one is the failure this panel exists to prevent, so a measured
+                # tag that is not listed here is a tag nobody can discount.
+                _rows = (("play_type", "Play type", "shots"),
+                         ("defense", "Defense", "shots"),
+                         ("guarded_by", "Contested (guarded)", "shots"),
+                         ("shot_created_by_id", "Set up by", "shots"),
+                         ("turnover_type", "Turnover kind", "turnovers"))
+                for _i in range(0, len(_rows), 3):
+                    cc = st.columns(3)
+                    for col, (key, lbl, unit) in zip(cc, _rows[_i:_i + 3]):
+                        s = sig[key]
+                        val = f"{s['pct']:.0f}%" if s["pct"] is not None else "—"
+                        col.markdown(
+                            _mini(lbl, val,
+                                  sub=f"{s['tagged']}/{s['total']} {unit}"),
+                            unsafe_allow_html=True)
+                st.caption("Optional one-tap tags drive the play-type, defense, "
+                           "shot-quality and giveaway views — the higher these "
+                           "are, the more those surfaces can be trusted. A tag "
+                           "at 50% is a half sample, not a half-finished chore. "
+                           "Tag in the Game Tracker.")
         except Exception:
             pass
 

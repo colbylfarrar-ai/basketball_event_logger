@@ -29,16 +29,27 @@ import helpers.court as court
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.seasons as SEAS
+# The season-scoped READ default, same as the engine layer (helpers/seasons).
+# These are render wrappers and every page passes an explicit season, so a bare
+# season="Current" here was latent rather than live — but it is the identical
+# rollover trap: for the months between a New Season rollover and the first game
+# of the new year, 'Current' names an EMPTY partition, so the first caller that
+# forgets to pass one reads zero over a full database. SEAS_DEFAULT resolves at
+# call time through default_read_season(); an explicit 'Current' is still
+# honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _table(g, mg, gids=None, season="Current"):
+def _table(g, mg, gids=None, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return PR.player_stat_table(game_ids=(set(gids) if gids else None),
                                 gender=g, min_games=mg, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _clusters(g, mg, vis=None, season="Current"):
+def _clusters(g, mg, vis=None, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return AR.cluster_players(_table(g, mg, vis, season))["players"]
 
 
@@ -54,12 +65,13 @@ def _shot_model(approx, vis=None):
     return S.distance_make_model(shots=_mapped(approx, vis=vis))
 
 
-def render(season="Current"):
+def render(season=SEAS_DEFAULT):
     """Draw the analytics playground (gender/min-games scope + 4 tabs).
 
     `season` scopes the whole pool: the active season keeps the entitlement
     gates; a PAST season is an open archive (founder rule) — everyone reads
     that season's tracked pool at full depth."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     st.caption("⚙️ Power-user tool — unfiltered access to every stat, nothing "
                "dumbed down. Filter the table, build any scatter, correlate "
                "anything, and map shots.")

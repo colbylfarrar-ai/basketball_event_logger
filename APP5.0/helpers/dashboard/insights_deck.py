@@ -32,6 +32,15 @@ import helpers.insights_severity as SEV
 from database.db import query
 from helpers.cards import pctile_bar
 from helpers.dashboard import insights_brief as BR
+# The season-scoped READ default, same as the engine layer (helpers/seasons).
+# These are render wrappers and every page passes an explicit season, so a bare
+# season="Current" here was latent rather than live — but it is the identical
+# rollover trap: for the months between a New Season rollover and the first game
+# of the new year, 'Current' names an EMPTY partition, so the first caller that
+# forgets to pass one reads zero over a full database. SEAS_DEFAULT resolves at
+# call time through default_read_season(); an explicit 'Current' is still
+# honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 #: session-state key holding the deck's control selections, so every section
@@ -122,8 +131,9 @@ def _standing(gender, season, team_id, fp=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _next_game(team_id, season="Current"):
+def _next_game(team_id, season=SEAS_DEFAULT):
     """(opponent name, date, home?) for the next UNPLAYED game, or None."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     rows = query(
         "SELECT g.date, g.team1_id t1, g.team2_id t2, "
         "       t1.name n1, t2.name n2 "
@@ -160,7 +170,7 @@ def _by_date(tids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _opp_halves(gender, team_id, tids, season="Current", fp=None):
+def _opp_halves(gender, team_id, tids, season=SEAS_DEFAULT, fp=None):
     """({game ids vs the top half}, {vs the bottom half}) by tracked net rating.
 
     Used by the opponent control. Computed here rather than post-filtering a
@@ -168,6 +178,7 @@ def _opp_halves(gender, team_id, tids, season="Current", fp=None):
     LESS work — which is the whole reason the controls are allowed to exist on
     a 1 vCPU box.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.team_ratings as TR
     if not tids:
         return (), ()

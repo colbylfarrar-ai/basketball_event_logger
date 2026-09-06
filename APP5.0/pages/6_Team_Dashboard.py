@@ -107,6 +107,7 @@ import helpers.dashboard.share_tab as DSHARE
 import helpers.breakdown as BR
 import helpers.situational as SIT
 import helpers.seasons as SEAS
+import helpers.resume as RES
 
 _cfg, ACCENT = page_chrome("Team Dashboard")
 # Re-read per run AFTER page_chrome so the viewer's colorblind-safe pair lands
@@ -1811,6 +1812,11 @@ _players_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
 _sched_ctx = SimpleNamespace(bundle=bundle, rec=rec, log=log, scored=scored,
                              tracked=tracked, team_id=team_id,
                              GOOD=GOOD, BAD=BAD, style=_style,
+                             # gender + season ride in for the point-in-time
+                             # opponent rank (helpers/resume) — the schedule
+                             # rows resolve "#6 going in" against the saved
+                             # board for the week before each game.
+                             gender=gender, season=season_pick,
                              is_current=_is_cur_season)
 
 
@@ -5060,6 +5066,90 @@ def _fx_chadv():
                 f"<span style='color:{GOOD if t['won'] else BAD};font-weight:700'>"
                 f"{'WON' if t['won'] else 'LOST'} by {abs(t['margin'])}</span>"
                 f"</div>", unsafe_allow_html=True)
+
+        # ── quality wins, counted at the time ────────────────────────────────
+        # The résumé line every product gets wrong. "Wins vs top-25" is
+        # universally computed against TODAY's board, which is a different
+        # claim from the one a coach is making: measured on this book, rank
+        # movement from 2025-12-14 to 2026-03-14 has a median of 68 places and
+        # only 11 of December's top 25 were still top 25 in March, so 71 of the
+        # 102 teams with any quality win get a different count depending on
+        # which board you ask. CANUTE has three at the time and none today;
+        # Grind Prep has none at the time and three today.
+        #
+        # The at-the-time number is the product. Today's number is drawn beside
+        # it as the argument for the feature, not as an alternative answer.
+        # Sits under Strength of Schedule because `sos["quality_wins"]` two rows
+        # up is the naive version and the two must be visibly reconciled rather
+        # than left to disagree silently on the same screen.
+        st.markdown("<div class='lab-hdr'>Quality wins — counted at the time"
+                    "</div>", unsafe_allow_html=True)
+        _qn = st.selectbox("Top-N cutoff", [10, 25, 50],
+                           index=1, key="adv_qw_n",
+                           help="A win counts when the opponent was ranked "
+                                "inside this cutoff ON THE DAY, not today.")
+        _qw = RES.quality_wins(log, gender, season=season_pick, top_n=_qn,
+                               rank_now={t2: r2.get("Rank")
+                                         for t2, r2 in scored.items()})
+        if not _qw["has_history"]:
+            st.info(
+                f"No saved rating history for **{season_pick}** yet, so there "
+                f"is no board to count against. Rankings → 🕘 Rating history → "
+                f"**Rebuild rating history** reconstructs it weekly from the "
+                f"games that were finished at the time.")
+        else:
+            _qc = st.columns(3)
+            _qc[0].metric(f"vs top-{_qn} at the time", _qw["n_then"],
+                          help="Wins over a team ranked inside the cutoff on "
+                               "the saved board for the week before the game.")
+            _qc[1].metric(f"vs top-{_qn} on today's board", _qw["n_now"],
+                          help="The same wins scored against the CURRENT "
+                               "rankings — the number most products publish.")
+            _qc[2].metric("Difference", f"{_qw['n_then'] - _qw['n_now']:+d}",
+                          help="Positive = the résumé is better than today's "
+                               "board makes it look.")
+            if _qw["wins"]:
+                st.dataframe(pd.DataFrame([{
+                    "Date": w["date"],
+                    "": w["site"],
+                    "Opponent": f"#{w['rank_then']} {w['opp']}",
+                    "Rk now": (f"#{w['rank_now']}" if w["rank_now"] else "—"),
+                    "Result": f"W {w['pf']}-{w['pa']}",
+                    "Board": w["as_of"],
+                } for w in _qw["wins"]]), hide_index=True, width="stretch",
+                    height=min(320, 60 + 35 * len(_qw["wins"])),
+                    column_config={
+                        "Board": st.column_config.TextColumn(
+                            "Board", help="The saved board this rank came "
+                                          "from — the week before the game."),
+                    })
+            else:
+                st.caption(f"No wins over a then-top-{_qn} opponent.")
+            _qlines = []
+            for w in _qw["then_only"]:
+                _qlines.append(
+                    f"**{w['opp']}** was **#{w['rank_then']}** on "
+                    f"{w['as_of']} and is "
+                    + (f"**#{w['rank_now']}** today"
+                       if w["rank_now"] else "unranked today")
+                    + " — a win today's board does not credit.")
+            for w in _qw["now_only"]:
+                _qlines.append(
+                    f"**{w['opp']}** is **#{w['rank_now']}** today but was "
+                    + (f"**#{w['rank_then']}** on {w['as_of']}"
+                       if w["rank_then"] else "not yet ranked")
+                    + " — today's board credits a win that was not one at "
+                      "the time.")
+            for _ql in _qlines[:6]:
+                st.markdown(f"- {_ql}")
+            if _qw["unresolved"]:
+                st.caption(
+                    f"{_qw['unresolved']} win"
+                    f"{'s' if _qw['unresolved'] != 1 else ''} could not be "
+                    f"scored at the time — played before the first saved "
+                    f"board, or against an opponent with too few games to be "
+                    f"ranked then. Those are left out rather than guessed.")
+            st.caption(RES.CAVEAT)
 
         st.markdown("<div class='lab-hdr'>Form & Streaks</div>",
                     unsafe_allow_html=True)

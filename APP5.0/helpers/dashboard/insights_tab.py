@@ -50,6 +50,15 @@ import helpers.insights_team as INT
 import helpers.playtypes as PT
 import helpers.wpa as WPA
 from helpers.cards import dense_table, conf_dot, verdict_card
+# The season-scoped READ default, same as the engine layer (helpers/seasons).
+# These are render wrappers and every page passes an explicit season, so a bare
+# season="Current" here was latent rather than live — but it is the identical
+# rollover trap: for the months between a New Season rollover and the first game
+# of the new year, 'Current' names an EMPTY partition, so the first caller that
+# forgets to pass one reads zero over a full database. SEAS_DEFAULT resolves at
+# call time through default_read_season(); an explicit 'Current' is still
+# honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 def _b(t):
@@ -243,12 +252,13 @@ def _data_fp(gids=None):
 # spinner messages make a cold engine run look like loading, not a hang.
 @st.cache_data(ttl=6 * 3600,
                show_spinner="Scoring the league (fresh data — one-time crunch)…")
-def _league(gender, season="Current", season_gp=None, fp=None):
+def _league(gender, season=SEAS_DEFAULT, season_gp=None, fp=None):
     """League table + insight feed + role splits + win-impact + guarded cliffs,
     computed once per gender (the team view filters this to its own players, so the
     z-scores stay league-relative). `season`/`season_gp` scope the whole pass to
     one season — the gender's season tracked game ids (season_gp) drive the table +
     events, so an archive roster's players are actually in the pool."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     gids = list(season_gp) if season_gp is not None else PT._tracked_game_ids(gender)
     table = PR.player_stat_table(
         gender=gender, min_games=1,
@@ -327,7 +337,7 @@ def _league(gender, season="Current", season_gp=None, fp=None):
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner="Reading the team's tendencies…")
-def _team_feed(gender, season="Current", team_id=None, tids=None, fp=None,
+def _team_feed(gender, season=SEAS_DEFAULT, team_id=None, tids=None, fp=None,
                season_gp=None):
     """League-wide team insight feed (z-scored vs the tracked field) — the tab
     shows only the selected team's lines. The per-team extras (lineup / matchup
@@ -339,6 +349,7 @@ def _team_feed(gender, season="Current", team_id=None, tids=None, fp=None,
     the contest rate). Without it those generators fall back to comparing this
     team against only the opponents on its own schedule.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.team_insights as TIN
     try:
         extras = None
@@ -358,9 +369,10 @@ def _team_feed(gender, season="Current", team_id=None, tids=None, fp=None,
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
-def _strength(gender, team_id, tids, season="Current", fp=None):
+def _strength(gender, team_id, tids, season=SEAS_DEFAULT, fp=None):
     """Opponent-strength offense split for this team (top vs bottom half of the
     league), cached per (gender, team, visible games, season)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return INT.strength_splits(team_id, gender=gender,
                                game_ids=list(tids) if tids else None,
                                season=season)
@@ -432,7 +444,7 @@ def _split_rows(pa, pb, la, lb):
 
 @st.fragment
 @st.cache_data(ttl=600, show_spinner=False)
-def _kind_shots(gender, season="Current", season_gp=None):
+def _kind_shots(gender, season=SEAS_DEFAULT, season_gp=None):
     """Mapped shots for the tracked pool — the shot-diet feed.
 
     Pool-wide on purpose: shot_kinds computes the team's diet and the league
@@ -445,6 +457,7 @@ def _kind_shots(gender, season="Current", season_gp=None):
     rendering nothing. `_tracked_game_ids` returns [] on a freshly rolled-over
     season, which is precisely when that would bite.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     gids = (list(season_gp) if season_gp is not None
             else PT._tracked_game_ids(gender))
     return S.mapped_shots(events=S.fetch_events(gids)) if gids else []

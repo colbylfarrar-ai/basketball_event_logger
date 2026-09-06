@@ -164,6 +164,29 @@ def _fit_kmeans(X, k, seed=7):
     return _kmeans(X, k, seed=seed)
 
 
+#: Memo for _choose_k, keyed on the MATRIX CONTENT. Bounded and insertion-
+#: ordered so it behaves as a small LRU rather than growing for the life of a
+#: worker; 32 entries covers every distinct matrix a page builds several times
+#: over (measured max was 4 distinct matrices in one Players render).
+_K_CACHE: "dict[tuple, int]" = {}
+_K_CACHE_MAX = 32
+
+
+def _matrix_fp(X, kmin, kmax, seed):
+    """Content fingerprint for the memo.
+
+    SHAPE IS NOT ENOUGH and that is not hypothetical: one Players render built
+    two different (242, 13) matrices — the same pool at two different scopes —
+    that chose k=4 and k=5. A shape-keyed memo would have handed one of them
+    the other's taxonomy. blake2b over the raw bytes, plus the search bounds and
+    seed, which are part of the answer.
+    """
+    import hashlib
+    a = np.ascontiguousarray(X)
+    return (a.shape, a.dtype.str, kmin, kmax, seed,
+            hashlib.blake2b(a.tobytes(), digest_size=16).digest())
+
+
 def _choose_k(X, kmin=4, kmax=8, seed=7):
     """Pick k by the highest mean silhouette score (sklearn). Falls back to the
     _suggest_k heuristic without sklearn or on a sample too thin to score.
@@ -172,10 +195,35 @@ def _choose_k(X, kmin=4, kmax=8, seed=7):
     smallest k (one big split scores highest), but a 2-3 group split is too coarse
     for a role taxonomy — the two-way profiles (Offensive Engine / Defensive Anchor
     / Flamethrower) only resolve once the field is cut a bit finer — so we explore
-    4-8 and take the best within that usable range. kmax is capped at n-1 below."""
+    4-8 and take the best within that usable range. kmax is capped at n-1 below.
+
+    MEMOIZED on the matrix content (2026-09-06). This is a pure function of X and
+    the three bounds, and pages call it repeatedly on the SAME matrix: 13 calls
+    over 4 distinct matrices in one Players render, 6 over 2 on the Team
+    Dashboard's Insights view. Each repeat was a fresh five-k silhouette sweep at
+    ~0.16 s.
+
+    `n_init` deliberately stays at 10. Roadmap item 7 proposed dropping it to 3
+    and the gate the house rules require FAILED: over 12 real matrices from this
+    book (both genders × min_games 1-3, on both the anchors feature set and the
+    clustering one) the chosen k moved in 5 of them, including the
+    `player_ratings._archetype_anchors` path at F/min_games=3 (k 5 → 4). k feeds
+    the archetype taxonomy and therefore the team prior, so a k that moves is a
+    model change, not a speed-up. See docs/OVERNIGHT_2026-09-06.md for the table.
+
+    Worth recording because the roadmap's premise was wrong: `_choose_k` does not
+    cost 2.5 s. Measured on the live book, the FIRST call in a process is ~2.2 s
+    and every call after it is ~0.10 s — that 2.2 s is sklearn/BLAS thread-pool
+    warm-up, which the first KMeans fit pays whatever n_init is, and which no
+    memo and no n_init can remove. What memoization removes is the repeats, which
+    is a real ~1.4 s off a Players render and ~0.5 s off Insights.
+    """
     n = X.shape[0]
     if not _HAVE_SKLEARN or n < 5:
         return _suggest_k(n)
+    fp = _matrix_fp(X, kmin, kmax, seed)
+    if fp in _K_CACHE:
+        return _K_CACHE[fp]
     best_k, best_s = None, -1.0
     for k in range(kmin, min(kmax, n - 1) + 1):
         try:
@@ -188,7 +236,12 @@ def _choose_k(X, kmin=4, kmax=8, seed=7):
             continue
         if s > best_s:
             best_k, best_s = k, s
-    return best_k or _suggest_k(n)
+    out = best_k or _suggest_k(n)
+    if len(_K_CACHE) >= _K_CACHE_MAX:
+        # drop the oldest entry — dicts preserve insertion order
+        _K_CACHE.pop(next(iter(_K_CACHE)), None)
+    _K_CACHE[fp] = out
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════

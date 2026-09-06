@@ -64,6 +64,7 @@ import helpers.wpa as WPA
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.seasons as SEAS
+import helpers.resume as RES
 
 _cfg, ACCENT = page_chrome("Rankings")
 
@@ -332,18 +333,48 @@ gender = gender_radio()
 # same rule the Team Dashboard follows. season_pick is a module global the page
 # helpers read.
 _season_opts = SEAS.season_options()
-if len(_season_opts) > 1:
-    # Default to the newest season that HAS games: post-rollover the active
-    # season is empty, and opening on it shows a blank page over a full DB.
-    _slbl = st.selectbox(
-        "Season", [l for _v, l in _season_opts], key="rk_season",
-        index=SEAS.default_read_season_index(_season_opts),
-        help="View a past season's rankings. Past seasons are an open archive — "
-             "free, full depth, to everyone.")
-    season_pick = next(v for v, l in _season_opts if l == _slbl)
-else:
-    season_pick = SEAS.ACTIVE
+_scol, _wcol = st.columns(2)
+with _scol:
+    if len(_season_opts) > 1:
+        # Default to the newest season that HAS games: post-rollover the active
+        # season is empty, and opening on it shows a blank page over a full DB.
+        _slbl = st.selectbox(
+            "Season", [l for _v, l in _season_opts], key="rk_season",
+            index=SEAS.default_read_season_index(_season_opts),
+            help="View a past season's rankings. Past seasons are an open "
+                 "archive — free, full depth, to everyone.")
+        season_pick = next(v for v, l in _season_opts if l == _slbl)
+    else:
+        season_pick = SEAS.ACTIVE
 _is_cur_season = SEAS.is_current(season_pick)
+
+# ── the week picker: the board as it STOOD, not as it reads now ──────────────
+# A pure read of `rating_snapshots` (helpers/resume) — no rating solve at all,
+# which is why this is FASTER than the live board rather than slower: measured
+# 0.002 s against 0.176 s for TR.score_ratings on the same book.
+#
+# Only days that actually exist are offered. A day with no rows would render an
+# empty board, and on screen a league with no teams in it is indistinguishable
+# from a broken page.
+#
+# The picker drives the Overview RANKINGS TABLE and nothing else, deliberately.
+# The leaderboards, signature metrics, tracked possession views and the league
+# lab are all live-engine aggregations over the season's whole game pool; there
+# is no reconstruction of them in the snapshot table and inventing one would be
+# a much bigger claim than this feature makes. The banner below says so out loud
+# rather than leaving a coach to infer which numbers moved.
+_ASOF_LIVE = "Current (live)"
+_snap_days = RES.snapshot_days(gender, season_pick)
+asof_day = None
+with _wcol:
+    if _snap_days:
+        _asof_lbl = st.selectbox(
+            "Board as of", [_ASOF_LIVE] + list(reversed(_snap_days)),
+            key="rk_asof",
+            help="Re-render the rankings table as it stood on a past week, "
+                 "straight from the saved boards. Faster than the live board — "
+                 "it is a table read, not a rating solve.")
+        asof_day = None if _asof_lbl == _ASOF_LIVE else _asof_lbl
 _uimod.declare_scope(gender, season_pick)   # scope cache to this pool (batch #6a)
 
 @st.cache_resource(show_spinner=False)
@@ -509,6 +540,40 @@ def _rank_moves(g, season="Current"):
         return {}
 
 
+# ── the archived board (week picker — helpers/resume) ────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _board_asof(g, day, season="Current"):
+    """One snapshot day's board. `ttl` rather than `cache_resource` because a
+    Rebuild can rewrite a day's rows and the page must not serve a board the
+    coach just regenerated."""
+    return RES.board_as_of(g, day, season=season)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _record_asof(g, day, season="Current"):
+    """{team_id: (w, l)} over the games FINISHED on or before `day`.
+
+    The snapshot table stores rank and rating but not a record, and an "as it
+    stood" board that carries today's W-L is telling two different dates at
+    once. This is a plain scan of the season's finished games with a date
+    filter — no engine, no rating solve, so it keeps the week picker's whole
+    point (a table read is cheaper than the live board)."""
+    w, l = {}, {}
+    for r in query(
+            """SELECT g.team1_id, g.team2_id, g.home_score, g.away_score
+               FROM games g JOIN teams t ON t.id = g.team1_id
+               WHERE g.season=? AND t.gender=? AND g.date IS NOT NULL
+                 AND g.date <= ?
+                 AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL""",
+            (season, g, day)):
+        hw = r["home_score"] > r["away_score"]
+        win, los = ((r["team1_id"], r["team2_id"]) if hw
+                    else (r["team2_id"], r["team1_id"]))
+        w[win] = w.get(win, 0) + 1
+        l[los] = l.get(los, 0) + 1
+    return {t: (w.get(t, 0), l.get(t, 0)) for t in set(w) | set(l)}
+
+
 if _is_cur_season:
     _snap_today(gender, RH._today())
 
@@ -667,6 +732,14 @@ if _view == "Overview":
         "from final scores and who-beat-who, opponent-adjusted with a class "
         "bridge. **Power** is 0-100 (50 = league average, +10 per std dev); "
         "**Rating** is points vs an average team on a neutral floor.")
+
+    if asof_day:
+        st.info(
+            f"📅 **Rankings table shows the board as it stood on "
+            f"{asof_day}.** Everything else on this page — the leaders, "
+            f"signature metrics and the league views — stays current, because "
+            f"only the board itself was saved that day.")
+        st.caption(RES.CAVEAT)
 
     # ── League pulse (DEMOTED to a one-line caption) ─────────────────────────
     # League-wide counts are context, not decisions — a thin caption instead of a
@@ -845,6 +918,73 @@ if _view == "Overview":
 
         st.markdown("<div class='section-hdr'>Rankings table</div>",
                     unsafe_allow_html=True)
+    if asof_day and ov_rows:
+        # ── the archived board ───────────────────────────────────────────────
+        # A pure read of the saved board plus a dated record scan. The live
+        # table below is skipped entirely, not merely hidden: the whole promise
+        # of the week picker is that history costs LESS than today.
+        #
+        # Only the CLASS half of the page filter applies. The snapshot rows
+        # carry rank and rating and no games-played, so a min-games filter
+        # cannot be honoured against them — and quietly applying it to today's
+        # GP would filter a December board by a March sample.
+        _ab = _board_asof(gender, asof_day, season_pick)
+        _arec = _record_asof(gender, asof_day, season_pick)
+        _prev = [d for d in _snap_days if d < asof_day]
+        _pb = _board_asof(gender, _prev[-1], season_pick) if _prev else {}
+        _atids = [t for t in sorted(_ab, key=lambda t: _ab[t]["Rank"])
+                  if class_of.get(t, "N/A") in _SCOPE_LBLS]
+        if not _atids:
+            st.info(f"No teams on the {asof_day} board match the current Class "
+                    f"filter.")
+        else:
+            _arows = []
+            for t in _atids:
+                _w, _l = _arec.get(t, (0, 0))
+                _p = _pb.get(t, {}).get("Rank")
+                _arows.append({
+                    "Rank": _ab[t]["Rank"],
+                    "Δ Rk": (RH.arrow(_p - _ab[t]["Rank"]) if _p else ""),
+                    "Team": _ab[t]["name"],
+                    "Class": class_of.get(t, "N/A"),
+                    "W": _w, "L": _l,
+                    "Rating": round(_ab[t]["Rating"], 2),
+                    "Rank today": (rank_of.get(t) or None),
+                    "Moved": (RH.arrow(_ab[t]["Rank"] - rank_of[t])
+                              if rank_of.get(t) else ""),
+                })
+            _adf = pd.DataFrame(_arows)
+            st.dataframe(
+                _adf, hide_index=True, width="stretch",
+                height=min(720, 60 + 35 * len(_adf)),
+                column_config={
+                    "Δ Rk": st.column_config.TextColumn(
+                        "Δ Rk", help=f"Movement since the previous saved board"
+                                     f"{' (' + _prev[-1] + ')' if _prev else ''}."),
+                    "Rating": st.column_config.NumberColumn(
+                        "Rating", format="%.2f",
+                        help="SRS-style net rating as it stood that day."),
+                    "Rank today": st.column_config.NumberColumn(
+                        "Rank today",
+                        help="Where the team sits on the CURRENT board — the "
+                             "comparison that makes an old board worth reading."),
+                    "Moved": st.column_config.TextColumn(
+                        "Moved",
+                        help="Rank change from that day to today "
+                             "(▲ = climbed since)."),
+                })
+            st.caption(
+                f"The saved board for **{asof_day}** — {len(_ab)} teams, "
+                f"solved over exactly the games finished by that date. W-L is "
+                f"the record as of that day too. Teams below "
+                f"{RH.MIN_SNAPSHOT_GP} games played are not kept in the saved "
+                f"boards, so an archived board is shorter than the live one. "
+                f"Class filter applies; the min-games filter does not.")
+            st.download_button(
+                f"Board {asof_day} (CSV)", _adf.to_csv(index=False),
+                file_name=f"rankings_{gender}_{asof_day}.csv", mime="text/csv",
+                key="dl_asof")
+    elif ov_rows:
         df = pd.DataFrame(ov_rows)[[
             "Rank", "name", "class_lbl", "W", "L", "Power", "Rating",
             "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]].rename(
@@ -1150,13 +1290,26 @@ def _fx_team():
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("**Schedule & results**")
+        # The opponent chip now carries the rank they held GOING INTO the game
+        # (helpers/resume, resolved against the saved board for the week
+        # before), with today's rank kept alongside as its own column. It used
+        # to be today's rank inline, which reads as a claim about the game and
+        # is not one: on this book a team moves a median of 68 places between
+        # December and March, so "#4 Bixby" on a December row was describing a
+        # March team. `_team_results` names its opponent key `opp`, so the rows
+        # are adapted to the `opp_id` shape helpers/resume expects.
+        _then_rk = RES.opponent_ranks(
+            [{"game_id": g["game_id"], "date": g["date"], "opp_id": g["opp"]}
+             for g in results], gender, season=season_pick)
         sched = []
         for g in reversed(results):  # most recent first
             opp = g["opp"]
+            _chip = RES.rank_chip(_then_rk.get(g["game_id"]))
             sched.append({
                 "Date": g["date"],
                 "": g["site"],
-                "Opponent": f"#{rank_of.get(opp, '—')} {name_of.get(opp, '?')}",
+                "Opponent": f"{_chip} {name_of.get(opp, '?')}".strip(),
+                "Rk now": f"#{rank_of[opp]}" if rank_of.get(opp) else "—",
                 "Class": class_of.get(opp, "N/A"),
                 "Result": f"{'W' if g['won'] else 'L'} {g['pf']}-{g['pa']}",
                 "Tracked": "●" if g["tracked"] else "",
@@ -1165,6 +1318,12 @@ def _fx_team():
             st.dataframe(pd.DataFrame(sched), hide_index=True,
                          width="stretch",
                          height=min(520, 60 + 35 * len(sched)))
+            if any(RES.rank_chip(v) for v in _then_rk.values()):
+                st.caption("The **#** beside an opponent is the rank they held "
+                           "going into that game; **Rk now** is where they sit "
+                           "today. No number means no saved board existed "
+                           "before that game, or the opponent was not yet "
+                           "ranked.")
         else:
             st.info("No completed games.")
 

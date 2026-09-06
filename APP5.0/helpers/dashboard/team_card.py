@@ -24,34 +24,47 @@ from database.db import query
 from helpers.cards import tier as _tier
 import helpers.team_analytics as TA
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+# The season-scoped READ default, same as the engine layer (helpers/seasons).
+# These are render wrappers and every page passes an explicit season, so a bare
+# season="Current" here was latent rather than live — but it is the identical
+# rollover trap: for the months between a New Season rollover and the first game
+# of the new year, 'Current' names an EMPTY partition, so the first caller that
+# forgets to pass one reads zero over a full database. SEAS_DEFAULT resolves at
+# call time through default_read_season(); an explicit 'Current' is still
+# honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 # ── cached data the header needs beyond ctx ─────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
-def _glance(gender, team_id, season="Current"):
+def _glance(gender, team_id, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.insights_team as INT
     return INT.team_glance(gender, team_id, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _scored_pool(gender, season="Current"):
+def _scored_pool(gender, season=SEAS_DEFAULT):
     """League results-math ratings — the banner's Free-safe half (Power, rank,
     W/L/MOV/GP). Cached here so a page that draws only the banner doesn't have
     to import the Team Dashboard's own rating wrappers."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.team_ratings as TR
     return TR.score_ratings(gender=gender, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _tracked_pool(gender, season="Current"):
+def _tracked_pool(gender, season=SEAS_DEFAULT):
     """League tracked ratings — the banner's DEPTH half (tracked rank + GP).
     Never rendered without a tracked_gate answer; see render_for."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.team_ratings as TR
     return TR.tracked_ratings(gender=gender, season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _form(gender, season="Current"):
+def _form(gender, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.league_analytics as LA
     return LA.team_form_stats(gender=gender, season=season)
 
@@ -66,7 +79,8 @@ def _rest(team_id):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _adj_shoot(gender, season="Current"):
+def _adj_shoot(gender, season=SEAS_DEFAULT):
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.adj_efficiency as AE
     try:
         return AE.adjusted_shooting(gender, season=season)
@@ -88,9 +102,10 @@ def _ledger(team_id, game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _style_tags(gender, season="Current"):
+def _style_tags(gender, season=SEAS_DEFAULT):
     """League-wide team style archetypes (tracked plane) — one compute per
     gender; the banner shows only this team's tag."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.league_analytics as LA
     import helpers.archetypes as AR
     try:
@@ -101,10 +116,11 @@ def _style_tags(gender, season="Current"):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _next_game(team_id, season="Current"):
+def _next_game(team_id, season=SEAS_DEFAULT):
     """The next scheduled game (score-less, today or later) or None. A PAST season
     is over — there is no 'next game', so archive views get None (fixes past-season
     games showing under a prior season's 'Next')."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.seasons as _SEAS
     if not _SEAS.is_current(season):
         return None
@@ -287,7 +303,7 @@ def _banner_html(*, team_id, gender, season, power, rank, pool_n, wins, losses,
         f"{power if power is not None else '—'}</div></div></div></div>")
 
 
-def render_for(team_id, gender, season="Current", ident=None):
+def render_for(team_id, gender, season=SEAS_DEFAULT, ident=None):
     """Draw the banner as page chrome from just (team, gender, season).
 
     The Team Dashboard already holds `scored` / `tracked` / the resolved gate, so
@@ -303,6 +319,7 @@ def render_for(team_id, gender, season="Current", ident=None):
     ``entitlement.tracked_gate`` and this function asks it rather than deciding.
     Returns False (drawing nothing) when the team can't be resolved.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if not team_id:
         return False
     import helpers.team_ratings as TR

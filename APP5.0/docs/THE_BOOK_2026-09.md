@@ -9,9 +9,10 @@ Every number here was measured against a `sqlite3.backup` copy of the **local**
 book at `%LOCALAPPDATA%/APP5/analytics.db`. **Nothing was ever written to. No
 application code was changed.** Branch `sweep-2026-09-06`, unmerged.
 
-⚠️ **Read §0.2 before quoting any sample-size number.** The local book carries
-**43 tracked games; production carries 62.** It is a stale development copy, not
-the live book.
+✅ **Second revision, 2026-09-06 evening: production was pulled and every
+sample-dependent number re-measured against it.** 63 tracked games, 11,392
+events. `tools/pull_prod_snapshot.py` makes it one command from now on. §0.2
+lists what moved — two more findings retracted, one got much bigger.
 
 This document is the consolidation. The Parts are the working; this is the read.
 
@@ -36,7 +37,7 @@ and deletions · §15 the rejected list
 
 **V · The month** — §16 week by week · §17 the season autopilot
 
-**VI · The rulings** — §18 eleven answered, three newly open
+**VI · The rulings** — §18 all fourteen answered, nothing blocked
 
 **VII · Reference** — §19 where everything is · §20 every number in one table
 
@@ -142,43 +143,142 @@ list only teams with tracked data; and make the zero-games copy state the
 requirement (`needs 8 tracked games — this team has none tracked`) instead of
 issuing an instruction the coach cannot follow.
 
-## 0.2 · The audit ran on the wrong book
+## 0.2 · Production, pulled — and what moved
+
+The audit ran on `%LOCALAPPDATA%/APP5/analytics.db`, which turned out to be a
+development copy three months behind. **Production has now been pulled** —
+read-only, `.backup()` through a `mode=ro` URI, temp removed, `integrity_check`
+ok, 0 foreign-key violations — and every sample-dependent number re-measured.
+
+`tools/pull_prod_snapshot.py` does it in one command from here on, so this
+particular way of being wrong is closed.
 
 ```
-                      local copy            production
-tracked games              43                    62
-play-by-play events     7,731              (unmeasured)
-officials naming     description-style     "Unknown <n>"
+                        local copy        PRODUCTION
+tracked games                43               63
+play-by-play events       7,731           11,392
+players                     541              608
+officials                    70               79
+girls tracked pool     21 teams/35g     22 teams/43g/261 players
+boys  tracked pool      5 teams/8g      10 teams/20g/110 players
+officials naming     description-style   19 x "Unknown <n>", 0 description-style
+games in 'Current'            1               23   (next season's schedule started)
 ```
 
-`%LOCALAPPDATA%/APP5/analytics.db` is a **development copy lagging production by
-roughly three months of tracking.** The QOL survey flagged the same gap yesterday
-(*"Prod carries 62 tracked games to this snapshot's 44 — confirm there before
-shipping"*) and this audit inherited it without carrying the warning hard enough.
+### Two more retractions
 
-**What this does and does not invalidate:**
+**RETRACTED — `passing_chains` does not return an empty graph.** The original
+§12.5 called it "a complete, tested module producing nothing on every call",
+because `hockey_from_id` was NULL on 0 of 4,019 shots locally. **On production
+the tag is being pressed:** 317 shots across 19 games, and the module's own
+readiness check agrees —
 
-| unaffected — code is code | needs re-measuring on production |
-|---|---|
-| the 35 empty-read-filter sites | tracked pool sizes (21 girls / 5 boys) |
-| the six eager report builds | every percentile-quantization claim |
-| `_next_game`'s missing guards | the 117 forfeits |
-| the hardcoded shot-depth captions | officials sample (0 with ≥5 games) |
-| `default_team` resolution | the 486 unnamed players |
-| the Lineup Creator default | the shot-clock PPP split |
-| `season_wpa`'s missing parameter | the 4-ft cliff numbers |
-| the six lock ladders, `SCE`/`ScEff` | the play-type PPP bias |
-| `ANALYZE`, `clear_data()` | in-stint fatigue (rejected) |
+```
+hast_coverage() -> {'tagged': 317, 'made': 115, 'missed': 202,
+                    'games': 19, 'pairs': 220, 'regate_at': 50, 'ready': True}
+```
 
-**Every number in the right-hand column is a floor, not a value.** More games
-means bigger pools, which makes the percentile-honesty problem *smaller* and the
-"not enough sample" rejections *less certain* — the officials one in particular,
-where production's ceiling is roughly six games per official rather than four.
+`ready: True`. HAST and xA2 are live, not inert. **What survives is a smaller,
+different finding:** the module uses 317 hockey-tagged shots and discards the
+**3,978 shots that carry a plain `pass_from_id`** — 1,087 distinct passer→shooter
+edges, 89 of them at ten shots or more. The 2-node graph is **twelve times the
+sample** of the 3-node one and still unused. Making the hockey tag optional is
+now an enrichment, not a rescue.
 
-**Decide before the month starts: pull a production snapshot?** The recipe is in
-memory (`prod-db-for-analysis`), it needs one ssh, and re-running §20's
-right-hand column against it is about an hour. Several build / don't-build calls
-in §13 and §15 hinge on it.
+**CONFIRMED harder — the officials naming.** §0.1 retracted the hair-colour
+finding on your word; production confirms it outright. 79 officials, **19 named
+`Unknown <n>`, zero description-style.** `is_placeholder_name` is doing its job.
+
+### What got materially better
+
+| finding | local | production |
+|---|---|---|
+| boys percentile values possible | {0,20,40,60,80,100} | {0,10,20,…30,…90} |
+| officials with ≥5 games worked | **0** | **11** (one at 9) |
+| officials with ≥3 (the rating floor) | 20 of 70 | **34 of 79** |
+| play_type coverage, shots / turnovers | 90% / 63% | **93% / 74%** |
+| play-type PPP overstatement | +0.002 to +0.080 | **+0.002 to +0.055** |
+| hockey-assist tag | 0 of 4,019 | **317 of 6,002** |
+
+The officials row is the one that changes a decision. §15 rejected per-official
+profiles because *"zero officials have worked five tracked games"*. Eleven now
+have, one has nine, and `RATING_MIN_GAMES = 3` admits 34 of 79 rather than 20 of
+70. **It is still thin — nine games is not a whistle profile — but the rejection
+is now "wait one more season", not "the sampling regime is wrong".** Exactly as
+§15 predicted it would compound.
+
+### What got worse
+
+**Own-creation is now the largest gating number in this document.**
+
+```
+tracked games                                    63
+own-TEAM games (team 1)                          26
+games this coach LOGGED                          48
+logged but NOT their own team                    37
+  ...and not pooled either                       32      <- invisible to them
+```
+
+**32 of 63 tracked games — 51% of the book — were typed in by this coach and
+cannot be read by them** as a Paid Solo coach. It was 14 of 43. Q3's ruling
+(*"if the coach tracked it, they get to see it"*) is now unblocking half the
+book, not a third.
+
+**And the boys leaderboard is worse than the girls one.** §8.2's forfeit example
+was `Best defense (PA/G) 0.0 — Mercy Institute Girls, 1-0`. Production adds:
+
+```
+M  Best defense (PA/G)   1.00   Unity Academy Boys        0-3
+M  Point margin        +67.00   South Western Hieghts     1-0
+M  Strength of record   72.82   Bryant (Bryant, Arkansas) 1-0
+```
+
+**A team that lost all three of its games is the boys' best defence**, on 1.00
+points allowed per game — three forfeits recorded as 0–1 losses. Q2 fixes it.
+(Note also `South Western Hieghts` — a misspelling that has produced one of the
+six remaining duplicate-team collisions.)
+
+### What did not move at all
+
+Forfeits are **identical**: 123 games with a zero on one side, 19 at exactly 1–0,
+98 at exactly 2–0, 313 with a side under ten. All of it is 2025-2026 data that
+finished before either copy diverged.
+
+The **4-ft cliff** is stable to three decimals on the girls' side and moved on the
+boys': girls 4ft-arc **0.548** PPS against a rim of **1.072** (was 0.548 / 1.086);
+boys **0.753** against **1.276** (was 0.675 / 1.318). So `shot_diet.py`'s
+hardcoded *"0.55 a trip against 1.09 at the rim"* is now an almost exact match for
+the **girls'** numbers and out by 27% and 15% for the boys — §8.4 stands, and the
+diagnosis that it is one gender's numbers shown to everyone is confirmed.
+
+**The shot-clock read holds and sharpens** (§13.1, rewritten below).
+
+**The in-stint fatigue rejection holds.** Ten qualifying players, **seven still
+better late in a stint**, pooled delta **+0.025** the wrong way (was +0.058).
+Still no signal. Do not build it.
+
+**Referential integrity is perfect on production too** — `integrity_check` ok,
+zero foreign-key violations.
+
+### Two more local-copy artefacts, retracted
+
+**`turnover_type` was never abandoned.** Part 9 §1.2 found it switching off on
+2026-01-30 and staying off for the last ten games, and built an argument about
+habits failing mid-season on top of that. **On production it runs to 2026-03-14 —
+the last game of the year — at 53.5% coverage** (1,108 of 2,071), against 34.7% on
+the local copy. The tag was being pressed all along; the local book simply stopped
+receiving those games. **The recommendation survives for a different reason:**
+`coverage.py` still does not gate `turnover_type`, and 53.5% is still a
+partial sample that any live-vs-dead-ball split should disclose.
+
+**The co-op has coaches now.** The local copy had two accounts. Production has
+**six** — two admins and four coaches, **all six on `plan='paid'`**. But
+`teams.shares_pool = 1` on exactly **one** team, and **11 of 63 tracked games are
+pooled**. So the pilot has six paying accounts and a pool one team deep. That is
+not a bug, it is the state of the business, and it is the number §7's
+"the co-op is the business" claim actually rests on today. Q3's ruling — a coach
+in the co-op sharing their scout games with the whole co-op — is the lever that
+moves it.
 
 ## 0.3 · Rulings received
 
@@ -198,10 +298,15 @@ short version.
 | 9 | Film timecodes **not worth it**. | §13.7 deleted |
 | 10 | Whiteboard — **revisit next offseason**; no coach has had hands on it in season. | parked |
 
-**Three things are still open**, raised by the answers rather than settled by
-them, and they are §18's new tail: the `SCE` / `ScEff` three-way naming
-collision, whether same-day rematches are possible (blocks the `UNIQUE` index),
-and whether to pull the production snapshot.
+**And the three that were open are now closed too:**
+
+| Q | ruling | effect |
+|---|---|---|
+| 12 | **`SCE` = Self-Created %** (shots with no pass-from and no set-up-by). **`ScEff` = points scored / points possible**, splittable by 2s, 3s and all. | the glossary is right and the CODE is wrong — §18 Q12 |
+| 13 | **No same-day rematches.** Teams play once per day. | `UNIQUE` index unblocked — §18 Q13 |
+| 14 | **Pull production.** Done — §0.2, and `tools/pull_prod_snapshot.py` makes it repeatable. | every sample number re-measured |
+
+**Nothing in this document is blocked on a decision any more.**
 
 ---
 ---
@@ -239,35 +344,30 @@ codebase          130 helper modules · 62,245 lines in helpers/ · 15 pages
                   898 public entry points, 853 reaching a page
                   290 pytest + 97 run_all script tests, both green
 
-the book *        13,363 games · 12,648 finished · 43 tracked
-                  7,731 play-by-play events · 77,309 lineup snapshots
-                  1,448 teams · 541 players · 70 officials
-                  13,793 rating snapshots over 18 weekly boards
-                  13.4 MB, no wasted pages
+the book          13,383 games · 12,647 finished · 63 tracked
+                  11,392 play-by-play events
+                  1,448 teams · 608 players · 79 officials
+                  17.3 MB · integrity ok · 0 FK violations
 
-the tracked pool  girls   21 teams · 35 games · 242 players
-                  boys     5 teams ·  8 games ·  59 players
-                  6 teams have >=5 tracked games. 1 has >=10.
+the tracked pool  girls   22 teams · 43 games · 261 players
+                  boys    10 teams · 20 games · 110 players
 
 capture quality   shot x/y      100% on every tracked game but three
-                  play_type      90% of shots, 63% of turnovers and fouls
-                  defense        88% of shots, 89% of turnovers
-                  guarded_by     72% (NULL means uncontested — a value)
-                  officials     100% of fouls name one
-                  turnover_type  on until 2026-01-30, off after
-                  hockey_from    0 of 4,019 — never pressed
+                  play_type      93% of shots, 74% of turnovers and fouls
+                  defense        92% of shots, 92% of turnovers
+                  officials     100% of 1,659 fouls name one
+                  hockey_from    317 of 6,002 shots, 19 games — now live
 
 infrastructure    1 vCPU / 2 GB no-swap droplet, litestream replicating
                   a FastAPI courtside PWA (3,166 lines of JS) + Streamlit app
 
-* the LOCAL copy. Production carries 62 tracked games, not 43 — see §0.2.
-  Everything under "the book", "the tracked pool" and "capture quality" is a
-  floor, and the real pools are larger.
+PRODUCTION, pulled 2026-09-06 evening. Earlier drafts used a local copy at
+  43 tracked games; §0.2 lists everything that moved.
 ```
 
-**Read the tracked-pool line twice** — then read §0.2, because it is measured on
-the wrong book and the real numbers are bigger. Everything in §10 comes from it,
-and bigger pools make that problem smaller, not different.
+**Read the tracked-pool line twice.** Ten boys teams means every boys percentile
+is a multiple of ten — verified, the distinct values are exactly
+{0,10,20,…90}. Everything in §10 comes from that.
 
 ## 3 · The constraint that should decide everything
 
@@ -327,7 +427,7 @@ the Team Dashboard's Roster view, the Players page, a quick-view dialog and the
 Insights deck's player lines — four surfaces sharing `player_card.py` and
 disagreeing about what belongs where. Consolidating is §14.
 
-*The names.* Part 7 §2: **486 of 541 players have no name**, only a jersey
+*The names.* **539 of 608 players have no name** on production, only a jersey
 number, and seven of the top twelve players in the league render as bare
 integers. The league's rebounding leader is "12". This is correct capture — you
 do not know the opponent's roster — and catastrophic display. **OOTP with
@@ -469,7 +569,14 @@ Best defense (PA/G)   0.0   Mercy Institute Girls   N/A · 1-0
 ```
 
 That is game 25891, a 1–0 walkover, published as the best defensive team in
-Oklahoma girls' basketball.
+Oklahoma girls' basketball. **The boys' side is worse:**
+
+```
+M  Best defense (PA/G)   1.00   Unity Academy Boys   0-3
+```
+
+A team that **lost all three of its games** is the boys' best defence, on one
+point allowed per game — three forfeits recorded as 0–1 losses.
 
 **Fix:** a forfeit marker set on import from the 1–0 / 2–0 signature (safe on this
 book — 98 games at exactly 2–0 and no genuine 2-point games), counted in W-L only,
@@ -478,8 +585,9 @@ the detection rule** (§18 Q2).
 
 ### 8.2 · The one-game leaderboards
 
-169 of 704 rated girls teams have played **exactly one game**; 224 have fewer
-than five. `_MIN_GP` defaults to **1**. So four of the five Team-leader cards and
+On production, **168 of 703 rated girls teams and 210 of 748 boys teams have
+played exactly one game**; 223 and 266 respectively have fewer than five.
+`_MIN_GP` defaults to **1**. So four of the five Team-leader cards and
 the top Signature card belong to 1-0 teams. The slider exists and is applied
 correctly — the default is the bug. Hall of Fame already does this right, with
 the floor stated in the heading (`min 10 games`, `min 25 games`).
@@ -591,16 +699,17 @@ Your ruling: *Paid gets own-team depth **and own creation of tracked data**.*
 which decides what to **share**, never what its author may **read**.
 
 ```
-tracked games                                43
-own-TEAM games                               24
-games this coach LOGGED                      28
-logged but NOT their own team                19
-  ...and not pooled either                   14      <- invisible to them
+tracked games                                63
+own-TEAM games (team 1)                      26
+games this coach LOGGED                      48
+logged but NOT their own team                37
+  ...and not pooled either                   32      <- invisible to them
 ```
 
-**14 of 43 tracked games — a third of the book — were typed in by this coach and
-cannot be read by them** as a Paid Solo coach. Eight are ADAIR Boys: the same
-person tracks that team, is not rostered on it, and cannot read their own work.
+**32 of 63 tracked games — 51% of the book — were typed in by this coach and
+cannot be read by them** as a Paid Solo coach. This is the largest gating number
+in the document, and it grew as tracking grew: it was 14 of 43 on the local copy.
+The pattern is a coach who scouts widely and is punished for it.
 Turning the co-op on is the only way back, which inverts the pitch — share in
 order to read something nobody else contributed.
 
@@ -816,13 +925,28 @@ team:
   close-game share. A coach deciding who to trust late has that computed and
   hidden.
 
-### 12.5 · The passing graph is one `continue` away (½ session)
+### 12.5 · The passing graph uses 317 passes and throws away 3,978 (½ session)
 
-`passing_chains.py` is complete and tested and returns nothing on every call,
-because every entry point drops rows with a NULL hockey tag — and that tag is
-NULL on **0 of 4,019 shots**. The 2-node passer→shooter edge it does not need is
-fully captured: **2,678 shots, 780 edges, 54 at ≥10 shots, 29 of them team 1's.**
-Make the hockey tag optional.
+*Rewritten — the original claim that `passing_chains` returns nothing was a
+local-copy artefact (§0.2).*
+
+The module works on production. `hast_coverage()` reports **317 tagged shots
+across 19 games, 220 pairs, `ready: True`** — so HAST and xA2 are live, not inert.
+
+But every entry point still drops any row without a hockey tag, and the **2-node
+passer→shooter edge is twelve times the sample**:
+
+```
+shots carrying a plain pass_from_id      3,978
+distinct passer -> shooter edges         1,087
+edges with >= 10 shots                      89
+shots carrying the hockey tag              317
+```
+
+89 edges at ten shots or more is a readable connection matrix for several
+rotations, not just one. Making the hockey tag **optional** — 3-node chains when
+present, the 2-node graph always — turns a 317-shot feature into a 3,978-shot one
+for the cost of a conditional.
 
 ### 12.6 · The play-type axis nobody passes (½ session)
 
@@ -841,23 +965,32 @@ Same for quality wins on the Hall of Fame.
 ### 13.1 · Shot-clock state ★ — the best unbuilt read in the app (1 session)
 
 `possession_secs` is non-NULL on 100% of rows and is read in twelve files —
-**only ever as a mean**. Bucketed over 5,341 clean possessions:
+**only ever as a mean**. Bucketed on production (n = 7,856 clean possessions):
 
 ```
-early (<7s)    n=1,385    PPP 0.731
-mid (7-15s)    n=2,213    PPP 0.570
-late (16-35s)  n=1,755    PPP 0.597
+early (<7s)     n=2,001    PPP 0.742
+mid   (7-15s)   n=3,286    PPP 0.600
+late  (16-35s)  n=2,569    PPP 0.603
 ```
 
-**The middle of the shot clock is worse than the end of it.** Nobody expects
-that. It survives both gates:
+**Getting into offence early is worth +0.14 points per possession, and nothing
+after the first seven seconds differs at all.** That is a cleaner read than the
+local copy gave (which had mid below late and suggested "the middle is worst") —
+with 47% more possessions, mid and late converge to within 0.003 and the whole
+effect lives in the early band.
 
-* split-half by alternating game date — early 0.727 (n=737) vs 0.735 (n=648);
-* excluding every transition possession — early still 0.674 vs mid 0.566 and late
-  0.597 (transition is 39.0% of early, 21.5% of mid, 1.1% of late).
+It survives the obvious confound. Excluding every `play_type='transition'` row:
 
-Build it as a `_t_clock` generator on the `_t_quarter` template, section
-*Why we win / why we lose*, evidence destination `("Charts", "Situational")`.
+```
+early  n=1,320  PPP 0.711        mid  n=2,676  PPP 0.603    late  n=2,546  PPP 0.605
+```
+
+So it is **not just fast breaks** — early half-court offence is still worth +0.11
+over everything later. That is the coachable version: *hunt the first good look;
+after seven seconds the possession is worth the same whenever you shoot it.*
+
+Build it as a `_t_clock` generator on the `_t_quarter` template, section *Why we
+win / why we lose*, evidence destination `("Charts", "Situational")`.
 
 ### 13.2 · Quarter reads ×5 — the only item needing new engine code (1 session)
 
@@ -877,11 +1010,12 @@ points/game"*). The gap is the other five, against a Charts → Quarters tab wit
 ### 13.3 · The 4-foot cliff, as a plan rather than a read (½ session)
 
 ```
-band          girls share   girls PPS    boys share   boys PPS
-rim 0-4ft        25.8%        1.086        29.6%       1.318
-4ft-arc          35.3%        0.548        32.3%       0.675
-arc 3            21.3%        0.828        26.0%       1.088
-deep 3           11.7%        0.772        12.0%       1.281
+band          girls share   girls PPS    boys share   boys PPS     (production)
+rim 0-4ft        25.2%        1.072        28.0%       1.276
+4ft-arc          35.8%        0.548        35.0%       0.753
+arc 3            22.0%        0.811        25.7%       0.951
+deep 3           12.3%        0.745        11.3%       1.125
+                 3,990 located shots        1,980 located shots
 ```
 
 A girls' team moving one shot a game from the dead band to the rim gains **0.54
@@ -892,8 +1026,10 @@ target: *"you take 88 from that band; a league-average diet at your volume is
 
 ### 13.4 · Contest × set call (½ session)
 
-The contest is worth **0.337 PPS** league-wide (contested 0.745 on n=2,891,
-uncontested 1.082 on n=1,128) — independently reproducing the 0.34 on record.
+The contest is worth **0.324 PPS** league-wide on production — contested 0.773
+on n=4,599 (34.2% FG), uncontested 1.098 on n=1,403 (46.9% FG). It reproduced at
+0.337 on the local copy and 0.34 is already on record, so this is now three
+independent measurements landing within 0.02.
 Open-look rate by set call varies four-fold. Both halves exist
 (`playtypes.py:698` counts `open`; `breakdown.py` does four factors per tag); the
 **cross** is unbuilt. Flag `offscreen` (n=132) and `duckin` (n=137) rather than
@@ -1020,8 +1156,13 @@ POOLED (10 players, equal weight)   early n=665 PPP 0.747   late n=890 PPP 0.806
 him, he's tired" read would be invented. Revisit only with real on-floor minutes
 (`possession_secs` accumulated, not event counts) and a bigger book.
 
-**Per-official whistle profiles — the sample does not exist**, *and the rating
-itself is reviewed and closed.* Q8: the founder has looked at the composite and
+**Per-official whistle profiles — the sample is arriving, and the rating itself
+is reviewed and closed.** *Updated on production:* the local copy showed **zero**
+officials with five games worked; production has **eleven**, one at nine, and
+`RATING_MIN_GAMES = 3` now admits 34 of 79 rather than 20 of 70. Nine games is
+still not a whistle profile, but the verdict moves from *"the sampling regime is
+wrong"* to **"wait one more season"** — which is exactly what this section
+predicted would happen, since officials are career-long and never archived. Q8: the founder has looked at the composite and
 is happy with it, so Part 3 §3's `volume` finding (the published rating
 correlates −0.81 with fouls per game) is now a **record of a known trade-off**,
 not a proposal. Re-open it only if the prod snapshot changes the picture. 70 officials,
@@ -1117,11 +1258,12 @@ unable to read the games they typed in themselves.*
 |---|---|---|---|
 | Mon | **Forfeits** (Q2) — a zero on one side is a forfeit; **counts in W-L, out of SOS** and every margin engine | 1–2 sessions | 8.1 |
 | Tue | `season_wpa` takes `game_ids`; the 23 engine-layer season defaults | 1 session | 9.5 |
-| Tue | Merge the 13 duplicate teams; resolve the 9 duplicate games; flip `games.id=4`; fix the `#4` jersey | ½ session | 8.8 |
+| Tue | Resolve the **8 duplicate game pairs** (4 same-orientation, 4 mirrored) and the 6 duplicate teams; flip `games.id=4`; fix the `#4` jersey | ½ session | 8.8 |
+| Tue | **`UNIQUE` index on the normalised matchup** (Q13) — must follow the dedup | 1 hr | 18 Q13 |
+| Thu | **`SCE` → `ScEff` key rename; `SelfCr%` → `SCE`** (Q12) — now unblocked | ½ session | 18 Q12 |
 | Wed | **§17 — install the timers.** Rollover, `ANALYZE`, rating-history rebuild, backup verification | ½ session | 17 |
 | Wed | Surface the retag-coverage count on the schedule + season feed | ½ session | 17 |
 | Thu | The player view consolidated into one screen | 1 session | 14 |
-| Thu | `SCE` / `ScEff` rename — **only once Q12 is answered** | ½ session | 10 |
 | Fri | Deletions, the stale banners, and the decision-record for what stays buried | ½ session | 14 |
 
 **Deferred past September, deliberately:** Setup's `st.tabs` conversion (needs
@@ -1180,9 +1322,9 @@ retag prompt (#6).
 ---
 ---
 
-# VI · THE RULINGS, AND WHAT IS STILL OPEN
+# VI · THE RULINGS
 
-## 18 · Eleven answered, three newly open
+## 18 · All fourteen answered
 
 ### Answered — and what each one settled
 
@@ -1237,34 +1379,77 @@ changes the picture.
 **Q10 · Whiteboard: revisit next offseason.** *"No coach has had their hands on
 this in season."* The right reason to defer — usage data over speculation.
 
-### Still open — three, and two of them are new
+### Answered — the last three
 
-**Q12 · What do `SCE` and `ScEff` actually mean?** Three definitions are in play
-and no two agree (the table in §10). The code says `SCE` is an alias of `ScEff`
-and both are a point-weighted make rate; the glossary says `SCE` is
-Self-Creation %; you say `SCE` is Shot Created % and `ScEff` is Shot Created
-**Efficiency**, which the shipped `ScEff` is not — it has nothing to do with shot
-creation. Pick the meanings and I will rename across all six sites. **Until this
-is answered the "move it to all" work cannot start**, because it would propagate
-whichever definition happened to be nearest.
+**Q12 · `SCE` and `ScEff`.**
 
-Concretely, you have three columns and need three names: the point-weighted make
-rate `(2·2PM+3·3PM)/(2·2PA+3·3PA)`; the share of a player's shots they created
-off the dribble; and — if you want it — the efficiency *on* those self-created
-shots, which is a fourth thing nothing currently computes.
+> *"SCE is self created %, which is the % of shots with a NULL pass-from or
+> set-up-by field. ScEff is shot created efficiency, or points scored / total
+> points possible — this can be for 2s, 3s and all shots. 2s would be
+> (2PM × 2) / (2PA × 2)."*
 
-**Q13 · Are legitimate same-day rematches possible?** This blocks
-`UNIQUE(date, team1_id, team2_id)` on `games`, which would turn the whole
-duplicate class from *repairable* into *impossible*. A tournament playing the
-same pairing twice in one day would violate a strict constraint; if that happens
-in Oklahoma the index needs a third discriminator or has to stay partial.
+**That settles it, and it says the glossary is right and the code is wrong.**
 
-**Q14 · Pull a production snapshot?** §0.2: the audit ran on a local copy with
-43 tracked games against production's 62, and several build / don't-build calls
-depend on the real sample. One ssh, about an hour to re-run §20's right-hand
-column. **My recommendation: yes, before week 2** — the percentile-honesty work
-is calibrated against pool sizes, and doing it against the wrong pool sizes is
-the one way that week goes wrong.
+* **`SCE` = Self-Created %** — which is what `STAT_DEFS` already says, and what
+  `player_ratings` already computes, **under a different key** (`SelfCr%`, from
+  `shots_self`). One caveat to check while renaming: the ruling defines it as
+  *no pass-from **and** no set-up-by*; confirm `shots_self` tests both fields, not
+  just `pass_from_id`.
+* **`ScEff` = points scored / points possible** — which is **exactly** what
+  `stats.scoring_efficiency` computes today:
+  `(2·2PM + 3·3PM) / (2·2PA + 3·3PA)`. The formula is correct and shipping.
+* **The bug is the data key.** `stats.scoring_efficiency`'s own docstring admits
+  it: *"the canonical name for what the profile/team code has long called SCE"*.
+  So `defenses.py:162`, `box_score.py:751`, `insights_tab.py:438` and
+  `6_Team_Dashboard.py:2571/3285` all carry **`ScEff`'s number under the key
+  `SCE`** — the one abbreviation the ruling reserves for something else.
+
+**The fix, now unblocked:** rename the data key `SCE` → `ScEff` at those six
+sites, promote `SelfCr%` → `SCE`, and delete the glossary's *"NOT the same as
+SCE"* warning, which only existed because of the collision. Half a session,
+mechanical, and it makes *"done on some, needs to move to all"* safe to do.
+
+**Two additions worth taking while you are in there:**
+
+1. **The 2s / 3s split.** The ruling says ScEff *"can be for 2s, 3s, and all
+   shots"* and only "all" ships. `ScEff-2` = `(2PM·2)/(2PA·2)`, which is just
+   2P%, and `ScEff-3` = 3P% — so the split is only interesting as the
+   **decomposition**: it shows *which* half of the shot diet is costing the
+   overall number. Worth one row, not three columns.
+2. **One naming flag, then I will drop it.** "Shot Created Efficiency" will be
+   read as a sibling of "Self-Created %" forever, and the metric has nothing to
+   do with shot creation — it is points captured against the shot-value ceiling.
+   **"Shot Efficiency" or "Scoring Efficiency" would cost one word and stop the
+   confusion recurring.** Your call; the formula is settled either way.
+
+**Q13 · Same-day rematches: no.** *"Teams only play once per day."* That
+unblocks the index, with one wrinkle worth knowing before it is written.
+Production carries **8 duplicate pairs, and only half of them the obvious index
+would catch**:
+
+```
+same orientation  (date, t1, t2) identical      4 pairs
+mirrored          home/away swapped             4 pairs
+```
+
+`UNIQUE(date, team1_id, team2_id)` catches the first four and **misses the
+mirrored four entirely** — which is exactly the case `game_dedup.py` was written
+for and the one `merge_teams` keeps producing. The constraint that actually
+closes the class is on the **normalised pair**:
+
+```sql
+CREATE UNIQUE INDEX ux_games_matchup ON games (
+    date, MIN(team1_id, team2_id), MAX(team1_id, team2_id));
+```
+
+SQLite supports expression indexes, so this is one statement — **after** the 8
+pairs are resolved, because the index cannot be created while they exist.
+
+**Q14 · Production snapshot: pulled.** §0.2 has what moved.
+`tools/pull_prod_snapshot.py` makes it one command, reads through a `mode=ro`
+URI, uses `.backup()` rather than `cp` (the live book is WAL), removes its own
+temp file even on failure, and verifies `integrity_check` locally before anyone
+trusts the copy.
 
 ---
 ---
@@ -1315,33 +1500,41 @@ silently discards `ta_team`.
 
 ## 20 · Every number, one table
 
-⚠️ Rows marked † were measured on the **local** book (43 tracked games) and are
-**floors** — production has 62. See §0.2 before quoting one.
+**All measured against production**, pulled 2026-09-06 evening (63 tracked games,
+11,392 events). Where a figure moved from the earlier local-copy draft, the old
+value is in brackets.
 
 | quantity | value | where |
 |---|---|---|
 | free-solo surfaces identical to admin | **20 of 24** | §9.1 |
-| forfeit-shaped finished games † | **117** (1–0 or 2–0) | §8.1 |
-| girls teams with exactly one game † | **169 of 704** | §8.2 |
-| tracked teams — girls / boys † | **21 / 5** | §10 |
-| boys percentile values possible † | **{10,30,50,70,90}** | §10 |
-| players with no name † | **486 of 541** | §4 |
-| tracked games this coach logged but cannot read † | **14 of 43** | §9.2 |
+| forfeit-shaped finished games | **117** (19 at 1–0, 98 at 2–0) | §8.1 |
+| one-game teams — girls / boys | **168 of 703 / 210 of 748** | §8.2 |
+| tracked teams — girls / boys | **22 / 10** [21 / 5] | §10 |
+| tracked games — girls / boys | **43 / 20** [35 / 8] | §2 |
+| boys percentile values possible | **{0,10,20…90}** [{0,20…}] | §10 |
+| players with no name | **539 of 608** [486 of 541] | §4 |
+| tracked games this coach logged but cannot read | **32 of 63** [14 of 43] | §9.2 |
+| co-op: paying accounts / sharing teams / pooled games | **6 / 1 / 11 of 63** | §0.2 |
 | eager report builds | **6** | §11 |
 | Players page cold | **56.6 s**, 43 s of it one figure | §11 |
 | `ANALYZE` win on the hottest predicate | **1.55 ms → 0.04 ms**, 74 sites | §11 |
 | caller sites widening an empty read-filter | **35** (4 unreachable-by-caller) | §8.7 |
-| `season_wpa` pool vs entitled pool † | **43 vs 11** | §9.5 |
-| shot-clock PPP — early / mid / late † | **0.731 / 0.570 / 0.597** (n=5,341) | §13.1 |
-| 4ft-arc vs rim, girls † | **0.548 vs 1.086** PPS | §13.3 |
-| contest value † | **0.337 PPS** | §13.4 |
-| passer→shooter edges captured † | **780** (54 at ≥10 shots) | §12.5 |
-| `hockey_from_id` tagged † | **0 of 4,019** | §12.5 |
-| play_type coverage — shots / turnovers † | **90% / 63%** | §10, Part 9 |
-| play-type PPP overstatement † | **+0.002 to +0.080** | Part 9 §1.1 |
-| officials with a publishable sample † | **0 of 70** | §15 |
-| in-stint fatigue effect † | **+0.058 the wrong way** | §15 |
-| duplicate teams / games † | **13 / 9** | §8.8 |
+| `season_wpa` pool vs entitled pool | **63 vs 11** [43 vs 11] | §9.5 |
+| shot-clock PPP — early / mid / late | **0.742 / 0.600 / 0.603** (n=7,856) | §13.1 |
+| …excluding transition | **0.711 / 0.603 / 0.605** | §13.1 |
+| 4ft-arc vs rim — girls | **0.548 vs 1.072** PPS | §13.3 |
+| 4ft-arc vs rim — boys | **0.753 vs 1.276** PPS | §13.3 |
+| contest value | **0.324 PPS** (n=6,002) | §13.4 |
+| passer→shooter edges captured | **1,087** (89 at ≥10 shots) | §12.5 |
+| `hockey_from_id` tagged | **317 of 6,002**, 19 games, `ready: True` | §12.5 |
+| play_type coverage — shots / turnovers | **93% / 74%** [90% / 63%] | §10 |
+| play-type PPP overstatement | **+0.002 to +0.055** [+0.002 to +0.080] | Part 9 |
+| `turnover_type` coverage | **53.5%**, tagged to the final game | §0.2 |
+| officials — total / ≥3 games / ≥5 games | **79 / 34 / 11** [70 / 20 / 0] | §15 |
+| fouls carrying an official | **1,659 of 1,659** | §15 |
+| in-stint fatigue effect | **+0.025 the wrong way**, 7 of 10 better late | §15 |
+| duplicate game pairs — same / mirrored | **4 / 4** | §18 Q13 |
+| duplicate teams (name + gender) | **6** | §8.8 |
 | engine entry points reaching a page | **853 of 898** | §1 |
 | suite | **290 pytest + 97 run_all**, green | §19 |
 
@@ -1354,11 +1547,18 @@ the reliability discipline is better than the market's, and the co-op is a real
 idea. What is between you and the product you described is a month of gating,
 labelling and wiring.
 
-The rulings made it shorter. Two of the loudest findings in the first draft were
-mine misreading your product — the open archive is the funnel, not a leak, and
-the hair-colour officials were never in production. What is left is smaller,
-clearer, and almost entirely unblocked: one naming decision (Q12), one tournament
-question (Q13), and one snapshot to pull (Q14).
+The rulings and the production pull made it shorter. **Four of the loudest
+findings in the first draft did not survive:** the open archive is the funnel and
+not a leak; the hair-colour officials were never in production; `passing_chains`
+is not returning an empty graph; and `turnover_type` was never abandoned. Three
+of those four were the same mistake — auditing a development copy and calling it
+the live book — and `tools/pull_prod_snapshot.py` closes that door.
+
+**What got bigger is more interesting than what got retracted.** Own-creation now
+strands **32 of 63 tracked games** from the coach who typed them in. The officials
+sample went from *impossible* to *one more season*. The boys' leaderboard crowns a
+**0–3 team as the best defence**. And nothing in this document is blocked on a
+decision any more — all fourteen questions are answered.
 
 **If you only do three things in September:** the Free box score, the percentile
 honesty pass, and the eager-report fix. The first makes the product sellable, the

@@ -132,18 +132,31 @@ def _standing(gender, season, team_id, fp=None):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _next_game(team_id, season=SEAS_DEFAULT):
-    """(opponent name, date, home?) for the next UNPLAYED game, or None."""
+    """(opponent name, date, home?) for the next UNPLAYED game, or None.
+
+    Both guards below are team_card._next_game's, and they are here because this
+    is the same question asked twice: a PAST season is over, so it has no next
+    game, and "next" means today or later. Without them an unscored row on a
+    finished season rendered as the masthead's fixture — "next: at Salina Girls
+    2025-12-05" on a season that ended in March, above an Overview card that
+    correctly showed nothing.
+    """
     season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
+    import helpers.seasons as _SEAS
+    if not _SEAS.is_current(season):
+        return None
+    from datetime import datetime
     rows = query(
         "SELECT g.date, g.team1_id t1, g.team2_id t2, "
         "       t1.name n1, t2.name n2 "
         "FROM games g "
         "JOIN teams t1 ON t1.id = g.team1_id "
         "JOIN teams t2 ON t2.id = g.team2_id "
-        "WHERE (g.team1_id = ? OR g.team2_id = ?) AND g.season = ? "
+        "WHERE (g.team1_id = ? OR g.team2_id = ?) AND g.season = 'Current' "
         "  AND (g.home_score IS NULL OR g.away_score IS NULL) "
+        "  AND g.date >= ? "
         "ORDER BY g.date ASC LIMIT 1",
-        (team_id, team_id, season))
+        (team_id, team_id, datetime.now().strftime("%Y-%m-%d")))
     if not rows:
         return None
     r = rows[0]

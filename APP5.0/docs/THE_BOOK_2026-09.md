@@ -2,15 +2,25 @@
 ### One read for September 2026. Everything the sweep found, everything it suggests, and every question it needs you to answer.
 
 Written 2026-09-06 after a ten-part read-only audit (`SWEEP_2026-09-06_INDEX.md`
-and Parts 1–10). Every number here was measured against a `sqlite3.backup` copy
-of the live book. **The live book was never written to. No application code was
-changed.** Branch `sweep-2026-09-06`, unmerged.
+and Parts 1–10). **Revised the same day after founder review** — §0 lists what
+changed, and three findings were retracted or downgraded.
+
+Every number here was measured against a `sqlite3.backup` copy of the **local**
+book at `%LOCALAPPDATA%/APP5/analytics.db`. **Nothing was ever written to. No
+application code was changed.** Branch `sweep-2026-09-06`, unmerged.
+
+⚠️ **Read §0.2 before quoting any sample-size number.** The local book carries
+**43 tracked games; production carries 62.** It is a stale development copy, not
+the live book.
 
 This document is the consolidation. The Parts are the working; this is the read.
 
 ---
 
 # CONTENTS
+
+**0 · What changed after founder review** — §0.1 retractions · §0.2 the wrong
+book · §0.3 rulings received
 
 **I · Where you actually are** — §1 the verdict · §2 the app by the numbers ·
 §3 the constraint that should decide everything
@@ -26,9 +36,172 @@ and deletions · §15 the rejected list
 
 **V · The month** — §16 week by week · §17 the season autopilot
 
-**VI · Questions for you** — §18 eleven rulings, costed
+**VI · The rulings** — §18 eleven answered, three newly open
 
 **VII · Reference** — §19 where everything is · §20 every number in one table
+
+---
+---
+
+# 0 · WHAT CHANGED AFTER FOUNDER REVIEW
+
+The audit ran cold, on a stale copy, without the capture history. Four things
+came back that change the reading. They sit at the top rather than woven in,
+because two of them were among the loudest findings in the original draft.
+
+## 0.1 · Two retractions, a downgrade and a sharpening
+
+### RETRACTED — "Free sees the paid product" is not a bug, it is the funnel
+
+The original §9.1 called the offseason archive hole the headline commercial
+finding. **The founder's ruling makes it deliberate:**
+
+> *"Give away last season, sell this one. Old data is only meaningful to a point
+> — sell the right-now current depth, let someone else use outdated information.
+> High schoolers change so much year to year that old data is important, but not
+> the end-all-be-all."*
+>
+> *"The past gating is the dangle. Dangle last season's almost-irrelevant data at
+> a coach and they must think: what if I had that now, in season."*
+
+That is a coherent product position and it is what the code already implements.
+The "four-month window where the archive is the product" is not a hole — it is
+the demo running at full volume in the month coaches arrive.
+
+**What survives, and it is now the actual finding: the dangle is incomplete.**
+Three page-level gates do not honour the archive rule while the War Room does, so
+a Free coach in the offseason gets the Insights deck, the War Room and the whole
+Players page — and is hard-stopped out of the Officiating Lab. On Rankings →
+Team the page contradicts itself, hiding the tracked rank in the header while
+rendering the full tracked deep dive below it. **The fix flips from "close the
+hole" to "make the dangle total", which is cheaper and better.**
+
+*One tension in the answers: Q1 chose the rolling window (last season closes when
+the new one tips off); Q11 chose "give away last season, sell this one" (last
+season stays open forever). **Q11 wins** — it is the product position, and it
+means no window predicate is needed at all. The rule is simply past = open,
+current = gated, applied without exception.*
+
+### RETRACTED — the officials named after hair colour are not in production
+
+The original §10 and Part 3 §4 led with `BEST SHARED CREW 55 · White Bald` and
+called it "the single most embarrassing thing in the sweep".
+
+**It is not in the live book.** Production officials are named `Unknown <n>`,
+which `is_placeholder_name` already matches and already sorts below every named
+official. The 13 description-named rows (`Bald Bald`, `White Bald`, `3rd W Hair`,
+`Hefty`…) exist **only in the stale local copy** the audit ran against — verified
+by re-snapshotting it: 0 `Unknown` rows, 13 description rows.
+
+**So the placeholder detector is working and the widening I proposed is
+unnecessary.** What remains is a one-line note: if a description-style name is
+ever typed again, `^unknown` will not catch it. Worth a vocabulary widen someday,
+not a session.
+
+### DOWNGRADED — the 486 unnamed players are a capture-era artefact that fixes itself
+
+The original §4 said "OOTP with unnamed players is not OOTP" and treated naming
+as a project. The founder's context changes the trajectory entirely:
+
+> *"This is information thrown in over three or four months from May/June to now.
+> I did not have access to a book in a game to give names, which is why most teams
+> have placeholder information. Next season I, and the other coaches, WILL have
+> access to the scorebook for every game — roughly 90% player coverage and 70%
+> officials."*
+
+So: **the display fix (`player_label()`) is still worth doing this month**, because
+today's screens still render `REBOUNDING 80.7 · 12`. But there is no data project
+behind it, no import to build, and no rollover decision to agonise over. Scouting
+will keep producing some unnamed players — scouted teams that never play a
+pilot-program team — so the label helper earns its keep permanently.
+
+**And it removes an item:** whether the OSSAA importer could name players was
+listed as an open hour of work. It cannot, and it no longer matters.
+
+### SHARPENED — the War Room Lineup Creator
+
+The founder's instinct was right and it makes the fix better. There **is** an
+8-game requirement: `lineup_projection.MIN_TEAM_GAMES = 8`, and the engine
+returns a proper message carrying the count — `"only 3 tracked games (need 8)"`.
+
+But the empty state I hit fires **before** the engine runs. `9_War_Room.py:1304`
+tests whether the team has any *rated players at all*, and the picker defaults to
+the league's #1 team, which has **zero** tracked games. Two distinct states, and
+only one of them speaks:
+
+```
+0 tracked games    -> "No rated players on this team yet. Track a game for them
+                       first."        <- what a coach sees, and it is bad advice:
+                                         nobody can track another program's games
+1-7 tracked games  -> "only N tracked games (need 8)"   <- correct, and never seen,
+                                                           because of the default
+```
+
+**The fix is three lines, not two:** default the picker to the viewer's own team;
+list only teams with tracked data; and make the zero-games copy state the
+requirement (`needs 8 tracked games — this team has none tracked`) instead of
+issuing an instruction the coach cannot follow.
+
+## 0.2 · The audit ran on the wrong book
+
+```
+                      local copy            production
+tracked games              43                    62
+play-by-play events     7,731              (unmeasured)
+officials naming     description-style     "Unknown <n>"
+```
+
+`%LOCALAPPDATA%/APP5/analytics.db` is a **development copy lagging production by
+roughly three months of tracking.** The QOL survey flagged the same gap yesterday
+(*"Prod carries 62 tracked games to this snapshot's 44 — confirm there before
+shipping"*) and this audit inherited it without carrying the warning hard enough.
+
+**What this does and does not invalidate:**
+
+| unaffected — code is code | needs re-measuring on production |
+|---|---|
+| the 35 empty-read-filter sites | tracked pool sizes (21 girls / 5 boys) |
+| the six eager report builds | every percentile-quantization claim |
+| `_next_game`'s missing guards | the 117 forfeits |
+| the hardcoded shot-depth captions | officials sample (0 with ≥5 games) |
+| `default_team` resolution | the 486 unnamed players |
+| the Lineup Creator default | the shot-clock PPP split |
+| `season_wpa`'s missing parameter | the 4-ft cliff numbers |
+| the six lock ladders, `SCE`/`ScEff` | the play-type PPP bias |
+| `ANALYZE`, `clear_data()` | in-stint fatigue (rejected) |
+
+**Every number in the right-hand column is a floor, not a value.** More games
+means bigger pools, which makes the percentile-honesty problem *smaller* and the
+"not enough sample" rejections *less certain* — the officials one in particular,
+where production's ceiling is roughly six games per official rather than four.
+
+**Decide before the month starts: pull a production snapshot?** The recipe is in
+memory (`prod-db-for-analysis`), it needs one ssh, and re-running §20's
+right-hand column against it is about an hour. Several build / don't-build calls
+in §13 and §15 hinge on it.
+
+## 0.3 · Rulings received
+
+All eleven answered. §18 carries each answer and what it settles; this is the
+short version.
+
+| Q | ruling | effect |
+|---|---|---|
+| 1 + 11 | **Give away last season, sell this one.** No window. | §9.1 retracted; becomes "make the dangle total" |
+| 2 | **A zero on one side = forfeit.** Out of SOS, in W-L. | §8.1 unblocked |
+| 3 | **If the coach tracked it, they see it.** Solo → private to them; co-op → the whole co-op gets it. Survives leaving. Empty `tracked_by` → leave open. | §9.2 unblocked, and more generous than proposed |
+| 4 | Percentile floor **10**. | §10 unblocked |
+| 5 | Rankings min games **5**. | §8.2 unblocked |
+| 6 | **Both gates, and disclose.** Transparency over silence. | §10 unblocked |
+| 7 | Leave the names — the scorebook fixes it next season; the Input Hub already consolidates players. | downgraded to display-only |
+| 8 | **Officials rating reviewed — no change.** | Part 3 §3 becomes a record, not a proposal |
+| 9 | Film timecodes **not worth it**. | §13.7 deleted |
+| 10 | Whiteboard — **revisit next offseason**; no coach has had hands on it in season. | parked |
+
+**Three things are still open**, raised by the answers rather than settled by
+them, and they are §18's new tail: the `SCE` / `ScEff` three-way naming
+collision, whether same-day rematches are possible (blocks the `UNIQUE` index),
+and whether to pull the production snapshot.
 
 ---
 ---
@@ -66,7 +239,7 @@ codebase          130 helper modules · 62,245 lines in helpers/ · 15 pages
                   898 public entry points, 853 reaching a page
                   290 pytest + 97 run_all script tests, both green
 
-the book          13,363 games · 12,648 finished · 43 tracked
+the book *        13,363 games · 12,648 finished · 43 tracked
                   7,731 play-by-play events · 77,309 lineup snapshots
                   1,448 teams · 541 players · 70 officials
                   13,793 rating snapshots over 18 weekly boards
@@ -86,9 +259,15 @@ capture quality   shot x/y      100% on every tracked game but three
 
 infrastructure    1 vCPU / 2 GB no-swap droplet, litestream replicating
                   a FastAPI courtside PWA (3,166 lines of JS) + Streamlit app
+
+* the LOCAL copy. Production carries 62 tracked games, not 43 — see §0.2.
+  Everything under "the book", "the tracked pool" and "capture quality" is a
+  floor, and the real pools are larger.
 ```
 
-**Read the tracked-pool line twice.** Everything in §10 comes from it.
+**Read the tracked-pool line twice** — then read §0.2, because it is measured on
+the wrong book and the real numbers are bigger. Everything in §10 comes from it,
+and bigger pools make that problem smaller, not different.
 
 ## 3 · The constraint that should decide everything
 
@@ -345,6 +524,12 @@ Lineup Creator's team picker is ranked and defaults to index 0. The #1 team has
 no tracked data; **21 of 704 options produce anything**; the first that works is
 #22. It is Paid-gated, so the coach paying for it meets the empty state.
 
+The engine behind it is fine and has a proper gate —
+`lineup_projection.MIN_TEAM_GAMES = 8`, returning `"only 3 tracked games (need
+8)"`. That message is **never seen**, because `9_War_Room.py:1304` short-circuits
+on "no rated players at all" first and the default lands on a zero-game team.
+See §0.1 for the three-line fix.
+
 ### 8.7 · The empty read-filter class
 
 `stats._game_filter` was fixed to treat `None` and `[]` differently. **35 caller
@@ -368,22 +553,36 @@ and **fails on `main`**.
 
 ## 9 · Gating
 
-### 9.1 · The offseason hole
+### 9.1 · The dangle, and the three places it stops — *reframed, see §0.1*
 
 `default_read_season()` = `2025-2026`. `_is_past_season()` calls that PAST. Every
 archive-bypassed read gate returns `None` = unrestricted. Rendered persona by
 persona, **a free-solo coach is byte-identical to admin on 20 of 24 surfaces**,
 including the whole 202,706-character Players page.
 
-The open-archive rule is right and was written assuming a live season sits beside
-the archive. Between a rollover and the first game of the new year the archive
-**is** the product — a four-month window that covers October.
+**That is the intended product**, per the ruling: give away last season, sell
+this one. The measurement stands; the alarm was mine and it is withdrawn.
 
-Three closes, ascending: a **rolling window** (archive opens when the new season
-tips off or on 1 December, whichever first — one predicate); gate on "does a live
-season exist yet"; or a **depth-tiered archive** (past seasons open at box level,
-tracked depth still Paid). The first is cheap and correct; the third is the right
-long-term product and is a real project.
+**The finding is that the dangle stops in three places and nobody decided that.**
+`pages/8_Officials.py:219`, `pages/14_Hall_of_Fame.py:504` and
+`pages/6_Team_Dashboard.py:6038` hard-stop Free with no archive bypass, while
+`pages/9_War_Room.py:256` guards correctly with
+`if _is_cur_season and not has_paid_plan`. So a Free coach browsing last season
+gets the Insights deck, the whole War Room and the Players page — and is locked
+out of the Officiating Lab, the Hall of Fame's tracked block, and Projection.
+
+Worse, one screen contradicts itself. On Rankings → Team,
+`can_see_team_tracked` (`:1161`, no archive bypass) hides the tracked rank in the
+header while `tracked_gate` (`:1405`, bypassed) renders the full tracked deep
+dive immediately below it. Compare prints a literal
+**"The tracked four-factor & efficiency compare is Paid"** (with a padlock) over
+data the rule says is free.
+
+**The fix, now that no window is needed:** give `can_see_team_tracked` and
+`can_see_game_tracked` the `season` parameter and the same `_is_past_season`
+bypass the other four gates have, then make the three page-level stops copy the
+War Room's guard. Half a session, and `lock_reason()` (§14) makes it one site
+instead of six.
 
 ### 9.2 · Provenance never enters the read filter
 
@@ -446,8 +645,8 @@ numbers whose sample it does not disclose.**
 | Insights, THE FIVE | *"elite on the offensive glass (0.6 OREB/g)"* | 0.6 rebounds a game |
 | Rankings leaders | `Best defense (PA/G) 0.0` | a **1–0 forfeit** |
 | Officiating Lab | `MOST LENIENT 0.0 · Mike Gaskins` | **one foul, total** |
-| Officiating Lab | `BEST SHARED CREW 55 · White Bald` | **a hair colour** |
-| Players superlatives | `REBOUNDING 80.7 · 12` | **a jersey number** |
+| ~~Officiating Lab~~ | ~~`BEST SHARED CREW 55 · White Bald`~~ | **RETRACTED — local copy only, see §0.1** |
+| Players superlatives | `REBOUNDING 80.7 · 12` | **a jersey number** (fixes itself next season — §0.1) |
 
 The mechanism is now identified: **`cards.pctile_bar` — the app's most-reused
 explanation primitive, 13+ call sites — has no pool-size parameter at all**, so a
@@ -463,8 +662,10 @@ Four rules fix all seven:
    elite in basketball, not first in a five-team sample.
 3. **Hero cards need a minimum sample**, and one card per subject so one player
    cannot fill seven of eight slots.
-4. **Never render a placeholder as a name** — not a jersey number, not "White
-   Bald", not "Bald Bald".
+4. **Never render a placeholder as a name** — not a jersey number. (`Unknown <n>`
+   is already handled in production; the description-style names were a local
+   artefact.) The jersey-number case is permanent, because scouting will keep
+   producing players nobody has a book for.
 
 `reliability.MEASURED` and `cards.conf_dot` already exist. The machinery is built
 and not wired to the places that need it most.
@@ -474,12 +675,32 @@ off by 7–15 points on a book that shoots 34.7%; `VPS`'s "~1.0 breaks even" is
 actually the **75th percentile** against a median of 0.67. `OVERALL`'s ladder, by
 contrast, matches — which is why each had to be measured.
 
-**Plus two abbreviation collisions.** `Leverage` is defined twice in `STAT_DEFS`
-for unrelated concepts. And `SCE` is worse: the glossary defines it as
-Self-Creation % (and the `ScEff` entry explicitly warns *"NOT the same as SCE"*)
-while `defenses.py`, `box_score.py`, `insights_tab.py` and the Team Dashboard all
-use the key `SCE` to carry **Scoring Efficiency**. Tap the stat key on the
-Players page and you learn the wrong metric from the app's own glossary.
+**Plus two abbreviation collisions, and the second one is a three-way.**
+
+`Leverage` is defined twice in `STAT_DEFS` for unrelated concepts — the
+officials' game-worth blend and the win-probability Leverage Index. Exact-match
+lookup takes the first; the only current call site happens to want that one, so
+it is right today by luck.
+
+`SCE` / `ScEff` is worse, because **three different definitions are in play and
+no two agree**:
+
+| source | `SCE` means | `ScEff` means |
+|---|---|---|
+| **the code** | an alias of `ScEff` — the same number (`stats.scoring_efficiency`'s docstring says so outright: *"the canonical name for what the profile/team code has long called SCE"*). Self-creation lives in a separate `SelfCr%` column. | point-weighted make rate: `(2·2PM + 3·3PM) / (2·2PA + 3·3PA)` |
+| **the glossary** | Self-Creation % — and the `ScEff` entry explicitly warns *"NOT the same as SCE / Self-Creation %"* | Scoring Efficiency (matches the code) |
+| **the founder** | Shot Created % | Shot Created **Efficiency** |
+
+So the glossary's `SCE` entry contradicts the code, and the founder's `ScEff`
+matches neither — the shipped `ScEff` has nothing to do with shot creation at
+all. Tap the stat key on the Players page and you decode a scoring-efficiency
+column as self-creation.
+
+**This needs a ruling before it can be made consistent** (§18 Q12), and the
+founder's *"done on some, needs to move to all"* is the right instinct applied to
+a name that has not been settled yet. Once it is, it is one rename across the
+glossary, `player_ratings`, `defenses`, `box_score`, `insights_tab` and the Team
+Dashboard — mechanical, but only after the words mean one thing.
 
 ## 11 · Performance
 
@@ -689,13 +910,12 @@ them together.
 `defenses.py` already does the offensive engine's work on the `defense` tag. Put
 them on one screen with a flip, the way Synergy does, instead of two tabs.
 
-### 13.7 · Film timecodes — the cheap InStat step (1 day)
+### 13.7 · ~~Film timecodes~~ — **DROPPED** (Q9)
 
-A `film_offset` field on `games` (wall-clock at tip) plus the existing quarter +
-clock on every event yields a scrub timecode on any play-by-play row and on every
-Insights evidence line. No storage, no pipeline. *"Q3 4:12 — the 12-0 run starts
-here"* next to a number a coach is already reading is most of what clip linking
-is for.
+A `film_offset` field plus the quarter+clock already on every event would have
+given a scrub timecode beside any number, for about a day of work. **Ruled not
+worth the effort.** Recorded so it is not re-proposed; the InStat half of §6
+stays out of scope.
 
 ### 13.8 · Rotation, honestly (½ session)
 
@@ -775,6 +995,10 @@ Three findings:
 `TAB 7 — INSIGHTS` sits above `if _tdview == "Lab"`), and the module docstring
 listing five tabs where there are ten.
 
+**Park, do not touch:** the **Whiteboard**. One saved play in the book, and the
+reason is not the feature — *"no coach has had their hands on this in season."*
+Revisit next offseason with usage data instead of guessing now (Q10).
+
 **Convert:** `pages/11_Setup.py:79` is the last `st.tabs` on a heavy page, and
 it runs a **1,448-row editable dataframe** and a 500-row games table on every
 rerun regardless of which tab is open. The `_seg` conversion is the fix and it
@@ -796,7 +1020,11 @@ POOLED (10 players, equal weight)   early n=665 PPP 0.747   late n=890 PPP 0.806
 him, he's tired" read would be invented. Revisit only with real on-floor minutes
 (`possession_secs` accumulated, not event counts) and a bigger book.
 
-**Per-official whistle profiles — the sample does not exist.** 70 officials,
+**Per-official whistle profiles — the sample does not exist**, *and the rating
+itself is reviewed and closed.* Q8: the founder has looked at the composite and
+is happy with it, so Part 3 §3's `volume` finding (the published rating
+correlates −0.81 with fouls per game) is now a **record of a known trade-off**,
+not a proposal. Re-open it only if the prod snapshot changes the picture. 70 officials,
 1,115 fouls, 100% attributed, and the busiest has worked 4–5 games. 135 official
 pairs exist and 4 have been seen three or more times. This is a **wait**, not a
 fix: officials are career-long and never archived at rollover, so three seasons
@@ -822,8 +1050,12 @@ home/neutral splits (`games.neutral` constant 0), rebound location.
 
 ## 16 · Week by week
 
-Sequenced so the commercially-urgent work lands before October, the rulings
-unblock the second half, and nothing depends on you remembering anything.
+**Re-sequenced after the rulings.** Every ruling except three is in, so almost
+nothing is blocked now — the plan moves from "wait for decisions" to "ship in
+value order". The three still open (§18 Q12–Q14) touch week 4 only.
+
+Sequenced so the commercially-urgent work lands before October and nothing
+depends on you remembering anything.
 
 ### Week 1 — the funnel, and the free hours
 
@@ -846,18 +1078,23 @@ unblock the second half, and nothing depends on you remembering anything.
 **End of week 1 the app is measurably faster, stops publishing hair colours and
 jersey numbers as names, and has a real free tier.**
 
-### Week 2 — honesty, then the offseason ruling
+### Week 2 — honesty, and finish the dangle
 
-*Goal: every number on screen discloses its sample. Then close the gate.*
+*Goal: every number discloses its sample, and last season is open everywhere with
+no exceptions.*
 
 | | item | effort | §|
 |---|---|---|---|
-| Mon–Tue | Percentile pool honesty — `pctile_bar` gains a pool arg; floor below ~10; superlative gates | 1 session | 10 |
-| Tue | Hall of Fame's stated-floor pattern onto Rankings / Players / Officials | ½ session | 8.2 |
-| Wed | Officials: placeholder names, `rated_games` floor, sample chips | 1 session | 10 |
-| Thu | **The offseason archive ruling** → implement (one predicate if rolling window) | ½ session | 9.1 |
-| Thu | `lock_reason()` — retire six copies of the ladder | ½ session | 14 |
-| Fri | `can_see_*_tracked` get the archive bypass; the three page-level gates match the War Room | ½ session | 9.4 |
+| Mon–Tue | Percentile pool honesty — `pctile_bar` gains a pool arg, **floor 10** (Q4), **both gates + disclose** (Q6) | 1 session | 10 |
+| Tue | Hall of Fame's stated-floor pattern onto Rankings / Players / Officials; **Rankings `_MIN_GP` default 5** (Q5) | ½ session | 8.2 |
+| Wed | Officials: `rated_games` floor, sample chips. *(Placeholder names dropped — §0.1.)* | ½ session | 10 |
+| Wed–Thu | **Make the dangle total** — `can_see_*_tracked` take `season` and bypass; Officials / Hall of Fame / Projection copy the War Room's guard | ½ session | 9.1 |
+| Thu | `lock_reason()` — retire six copies of the ladder, and the above becomes one site | ½ session | 14 |
+| Fri | **Own-creation entitlement** (Q3) — `tracked_by` joins the read filter: tracked-by-you is yours, and if you are co-op it is the co-op's | 1 session | 9.2 |
+
+*Q3 moved forward from week 4: it is unblocked, it is the ruling that most
+changes what a paying coach sees, and it is the one that stops a coach being
+unable to read the games they typed in themselves.*
 
 ### Week 3 — the reads
 
@@ -874,22 +1111,25 @@ jersey numbers as names, and has a real free tier.**
 
 ### Week 4 — correctness, consolidation, and the season switch
 
-*Goal: the book is clean and the app can run without you.*
+*Goal: the book is clean and the app runs without you.*
 
 | | item | effort | §|
 |---|---|---|---|
-| Mon | **The forfeit ruling** → marker + exclusion from margin engines | 1–2 sessions | 8.1 |
-| Tue | **Own-creation entitlement** (`tracked_by` in the read filter) | 1 session | 9.2 |
-| Wed | `season_wpa` takes `game_ids`; the 23 engine-layer season defaults | 1 session | 9.5 |
-| Wed | Merge the 13 duplicate teams; resolve the 9 duplicate games; flip `games.id=4`; fix the `#4` jersey | ½ session | 8.8 |
-| Thu | **§17 — install the timers.** Rollover, backup verification, `ANALYZE` | ½ session | 17 |
+| Mon | **Forfeits** (Q2) — a zero on one side is a forfeit; **counts in W-L, out of SOS** and every margin engine | 1–2 sessions | 8.1 |
+| Tue | `season_wpa` takes `game_ids`; the 23 engine-layer season defaults | 1 session | 9.5 |
+| Tue | Merge the 13 duplicate teams; resolve the 9 duplicate games; flip `games.id=4`; fix the `#4` jersey | ½ session | 8.8 |
+| Wed | **§17 — install the timers.** Rollover, `ANALYZE`, rating-history rebuild, backup verification | ½ session | 17 |
+| Wed | Surface the retag-coverage count on the schedule + season feed | ½ session | 17 |
 | Thu | The player view consolidated into one screen | 1 session | 14 |
+| Thu | `SCE` / `ScEff` rename — **only once Q12 is answered** | ½ session | 10 |
 | Fri | Deletions, the stale banners, and the decision-record for what stays buried | ½ session | 14 |
 
 **Deferred past September, deliberately:** Setup's `st.tabs` conversion (needs
-the AST sweep), the depth-tiered archive, film timecodes, the Synergy framing and
-the defensive mirror. All of them are better done when the season is running and
-you can see what you actually reach for.
+the AST sweep), the Synergy framing (§13.5) and the defensive mirror (§13.6).
+All three are better done once the season is running and you can see what you
+actually reach for. **Film timecodes are dropped, not deferred** (Q9). **The
+Whiteboard is parked until next offseason** (Q10). **The depth-tiered archive is
+off the table entirely** — Q11 settled that last season is given away whole.
 
 ## 17 · The season autopilot — what must run without you
 
@@ -940,108 +1180,91 @@ retag prompt (#6).
 ---
 ---
 
-# VI · QUESTIONS FOR YOU
+# VI · THE RULINGS, AND WHAT IS STILL OPEN
 
-Eleven rulings. Each has a cost either way; none of them is mine to make.
+## 18 · Eleven answered, three newly open
 
-### Q1 · The offseason archive regime *(blocks all of §9)*
+### Answered — and what each one settled
 
-Today the archive is 100% of the product for four months a year, and Free sees
-everything.
+**Q1 + Q11 · What Free is for.** *"Give away last season, sell this one."* No
+window, no depth tier, no offseason special case. The rule is **past = open,
+current = gated, applied without exception** — which is what the code does, minus
+the three page-level stops that do not honour it. Q1's rolling window is
+withdrawn as inconsistent with Q11; Q11 is the product position and it wins.
+**Settles:** §9.1 (retracted and reframed), §9.3, §12.2's shape.
 
-* **A · Rolling window** — the previous season opens when the new one tips off,
-  or on 1 December, whichever comes first. One predicate. Costs nothing, keeps
-  the funnel argument, and a coach can read the rule on a pricing page.
-* **B · Gate on "does a live season exist"** — simpler, but shuts the archive for
-  the whole offseason and loses the funnel.
-* **C · Depth-tiered archive** — past seasons open at *box* level to everyone,
-  tracked depth stays Paid. Best product, most work, touches every bypass site.
+**Q2 · Forfeits.** A zero on one side is a forfeit. **Counts in W-L. Out of
+strength of schedule** — and by the same logic out of PPG, points allowed, MOV,
+Pythagorean, Luck and the Power rating, all of which are margin math. The 313
+games with a side under 10 points stay **reported, not classified**.
+**Settles:** §8.1.
 
-**My recommendation: A now, C as a Q1-2027 project.**
+**Q3 · Own creation — and it is more generous than I proposed.**
 
-### Q2 · The forfeit detection rule *(blocks §8.1)*
+> *"If the coach tracked it, they get to see it. If they track a scout game, they
+> see it, nobody else does. If they are in the co-op and they track a scout game,
+> everyone gets it in the co-op. Yes it survives leaving a program, because a
+> coach leaves at the end of the year meaning everyone will see it after they
+> leave anyway. Leave them, because no game as of now for last season should be
+> gated at all."*
 
-Is `1–0 / 2–0 / a zero on one side` a safe automatic classification on your book?
-98 games sit at exactly 2–0 and there are no genuine 2-point games, so I believe
-it is — but 313 games have a side under 10 points and those must be **reported,
-not auto-classified**. Also: should a forfeit count in strength of schedule at
-all, or only in W-L?
+That is a clean rule with no exceptions to remember, and it is exactly the co-op
+pitch: **track it and it is yours; share and it is everyone's.** It replaces the
+current team-membership test, under which **14 of 43 tracked games this coach
+typed in themselves are invisible to them**. Empty `tracked_by` needs no
+attribution — those are all last-season games and last season is open.
+**Settles:** §9.2.
 
-### Q3 · Own-creation entitlement *(blocks §9.2)*
+**Q4 · Percentile floor: 10.** Below ten in the pool, show the rank.
+**Q5 · Rankings minimum games: 5**, with the leader cards carrying their own
+floor so dropping the slider cannot crown a forfeit.
+**Q6 · Both gates, and disclose.** Pool-size gate *and* absolute gate on
+superlatives, and say which is biting rather than silently withholding —
+transparency over silence. **Settles:** §10.
 
-Three sub-questions:
-* Does own-creation extend to the game **view** (`can_see_game_tracked`), or only
-  to aggregates? *(I'd say yes — it is their work.)*
-* Does it survive the coach leaving the program? `tracked_by` is an email.
-  *(I'd say yes, and say so out loud.)*
-* The **15 games with an empty `tracked_by`** (the old desktop path) — attribute
-  them to anyone, or leave them to the team rule? *(I'd say leave them.)*
+**Q7 · Names.** Leave them; the scorebook closes the gap next season (~90%
+players, ~70% officials), and the Input Hub already consolidates players. The
+display fix stands because scouting will keep producing unnamed players forever.
+**Settles:** §4's second gap, downgraded (§0.1).
 
-### Q4 · The percentile floor
+**Q8 · Officials rating: reviewed, no change.** Part 3 §3's `volume` finding —
+the published rating correlating −0.81 with fouls per game — becomes a **record
+of a known trade-off**, not a proposal. Re-open only if the production snapshot
+changes the picture.
 
-Below how many tracked teams does a percentile become a rank? I suggest **10**.
-At 5 the boys side quantizes to {10,30,50,70,90}; at 21 the girls side is
-tolerable.
+**Q9 · Film timecodes: not worth the effort.** §13.7 deleted.
 
-### Q5 · The Rankings minimum-games default
+**Q10 · Whiteboard: revisit next offseason.** *"No coach has had their hands on
+this in season."* The right reason to defer — usage data over speculation.
 
-`_MIN_GP` currently defaults to 1 over a pool that is 24% one-game teams. I
-suggest **5**, matching `MIN_SNAPSHOT_GP`, with the leader cards carrying their
-own independent floor so a coach who drops the slider to look up an opponent
-still does not see a forfeit crowned.
+### Still open — three, and two of them are new
 
-### Q6 · Superlative language
+**Q12 · What do `SCE` and `ScEff` actually mean?** Three definitions are in play
+and no two agree (the table in §10). The code says `SCE` is an alias of `ScEff`
+and both are a point-weighted make rate; the glossary says `SCE` is
+Self-Creation %; you say `SCE` is Shot Created % and `ScEff` is Shot Created
+**Efficiency**, which the shipped `ScEff` is not — it has nothing to do with shot
+creation. Pick the meanings and I will rename across all six sites. **Until this
+is answered the "move it to all" work cannot start**, because it would propagate
+whichever definition happened to be nearest.
 
-"Elite" currently means "first in a five-team sample". Do you want an absolute
-gate per generator (e.g. OREB/g must clear a real threshold), or a pool-size gate
-(no adjectives below N teams), or both? *(I'd do both — they fail differently.)*
+Concretely, you have three columns and need three names: the point-weighted make
+rate `(2·2PM+3·3PM)/(2·2PA+3·3PA)`; the share of a player's shots they created
+off the dribble; and — if you want it — the efficiency *on* those self-created
+shots, which is a fourth thing nothing currently computes.
 
-### Q7 · The 486 unnamed players
+**Q13 · Are legitimate same-day rematches possible?** This blocks
+`UNIQUE(date, team1_id, team2_id)` on `games`, which would turn the whole
+duplicate class from *repairable* into *impossible*. A tournament playing the
+same pairing twice in one day would violate a strict constraint; if that happens
+in Oklahoma the index needs a third discriminator or has to stay partial.
 
-Display is settled — `player_label()`. The open question is the data. Options:
-* leave them as numbers forever (they are opponents; you will never know);
-* name them opportunistically when you play a team twice;
-* let a coach name opponent players from the Event Editor during retag;
-* **do not carry unnamed opponents forward at rollover** — currently 221 players
-  carry, most of them integers.
-
-Related: should unnamed players appear in **league superlative cards** at all?
-Same question as placeholder-named officials, and it should get the same answer.
-
-### Q8 · The Officials rating
-
-Roadmap item 8 is already done; what remains is that `volume` (25% of the
-composite) is a raw per-game call count with no game adjustment, and the
-published rating correlates **−0.81 with fouls per game** on a page whose
-docstring says FPG carries no goodness sign. Three options:
-* partial pace and team foul-drawing rate out of `volume` *(needs a walk-forward
-  gate and this book cannot support it — prod's 62 games might)*;
-* drop `volume`, leaving share and worst-game;
-* score **distance from a normal split** rather than signed deviation, which is
-  what the rating claims to measure and retires `CREDIT_FACTOR` entirely.
-
-*(I'd take the third. It also fixes the quietest official being ranked first.)*
-
-### Q9 · Film timecodes
-
-Worth a day? It is the only realistic step toward the InStat half of your vision,
-and it needs one new field and a wall-clock note at tip-off. Say no and I will
-stop suggesting it.
-
-### Q10 · The Whiteboard
-
-One saved play in the book. It is a well-built 300-line component with a
-print-to-SVG path and an embed on the scout sheet. Is it a feature you want, a
-feature you forgot, or a feature to retire? *(It costs nothing to keep; it costs
-attention to maintain.)*
-
-### Q11 · What "Free" is actually for
-
-Under your ruling Free is box-score-derived, excluding implied possessions. That
-is a clean line. The commercial question is whether Free is **a funnel** (give
-away last season entirely, sell this season) or **a floor** (give away box scores
-forever, sell depth always). Q1 is really this question wearing a technical hat,
-and answering it settles §9.1, §9.3 and half of §12.2.
+**Q14 · Pull a production snapshot?** §0.2: the audit ran on a local copy with
+43 tracked games against production's 62, and several build / don't-build calls
+depend on the real sample. One ssh, about an hour to re-run §20's right-hand
+column. **My recommendation: yes, before week 2** — the percentile-honesty work
+is calibrated against pool sizes, and doing it against the wrong pool sizes is
+the one way that week goes wrong.
 
 ---
 ---
@@ -1092,30 +1315,33 @@ silently discards `ta_team`.
 
 ## 20 · Every number, one table
 
+⚠️ Rows marked † were measured on the **local** book (43 tracked games) and are
+**floors** — production has 62. See §0.2 before quoting one.
+
 | quantity | value | where |
 |---|---|---|
 | free-solo surfaces identical to admin | **20 of 24** | §9.1 |
-| forfeit-shaped finished games | **117** (1–0 or 2–0) | §8.1 |
-| girls teams with exactly one game | **169 of 704** | §8.2 |
-| tracked teams — girls / boys | **21 / 5** | §10 |
-| boys percentile values possible | **{10,30,50,70,90}** | §10 |
-| players with no name | **486 of 541** | §4 |
-| tracked games this coach logged but cannot read | **14 of 43** | §9.2 |
+| forfeit-shaped finished games † | **117** (1–0 or 2–0) | §8.1 |
+| girls teams with exactly one game † | **169 of 704** | §8.2 |
+| tracked teams — girls / boys † | **21 / 5** | §10 |
+| boys percentile values possible † | **{10,30,50,70,90}** | §10 |
+| players with no name † | **486 of 541** | §4 |
+| tracked games this coach logged but cannot read † | **14 of 43** | §9.2 |
 | eager report builds | **6** | §11 |
 | Players page cold | **56.6 s**, 43 s of it one figure | §11 |
 | `ANALYZE` win on the hottest predicate | **1.55 ms → 0.04 ms**, 74 sites | §11 |
 | caller sites widening an empty read-filter | **35** (4 unreachable-by-caller) | §8.7 |
-| `season_wpa` pool vs entitled pool | **43 vs 11** | §9.5 |
-| shot-clock PPP — early / mid / late | **0.731 / 0.570 / 0.597** (n=5,341) | §13.1 |
-| 4ft-arc vs rim, girls | **0.548 vs 1.086** PPS | §13.3 |
-| contest value | **0.337 PPS** | §13.4 |
-| passer→shooter edges captured | **780** (54 at ≥10 shots) | §12.5 |
-| `hockey_from_id` tagged | **0 of 4,019** | §12.5 |
-| play_type coverage — shots / turnovers | **90% / 63%** | §10, Part 9 |
-| play-type PPP overstatement | **+0.002 to +0.080** | Part 9 §1.1 |
-| officials with a publishable sample | **0 of 70** | §15 |
-| in-stint fatigue effect | **+0.058 the wrong way** | §15 |
-| duplicate teams / games | **13 / 9** | §8.8 |
+| `season_wpa` pool vs entitled pool † | **43 vs 11** | §9.5 |
+| shot-clock PPP — early / mid / late † | **0.731 / 0.570 / 0.597** (n=5,341) | §13.1 |
+| 4ft-arc vs rim, girls † | **0.548 vs 1.086** PPS | §13.3 |
+| contest value † | **0.337 PPS** | §13.4 |
+| passer→shooter edges captured † | **780** (54 at ≥10 shots) | §12.5 |
+| `hockey_from_id` tagged † | **0 of 4,019** | §12.5 |
+| play_type coverage — shots / turnovers † | **90% / 63%** | §10, Part 9 |
+| play-type PPP overstatement † | **+0.002 to +0.080** | Part 9 §1.1 |
+| officials with a publishable sample † | **0 of 70** | §15 |
+| in-stint fatigue effect † | **+0.058 the wrong way** | §15 |
+| duplicate teams / games † | **13 / 9** | §8.8 |
 | engine entry points reaching a page | **853 of 898** | §1 |
 | suite | **290 pytest + 97 run_all**, green | §19 |
 
@@ -1126,8 +1352,13 @@ silently discards `ta_team`.
 The honest summary is that you have built the hard part. The engines are good,
 the reliability discipline is better than the market's, and the co-op is a real
 idea. What is between you and the product you described is a month of gating,
-labelling and wiring — plus two decisions (Q1 and Q11) that are really the same
-decision about what you are selling.
+labelling and wiring.
+
+The rulings made it shorter. Two of the loudest findings in the first draft were
+mine misreading your product — the open archive is the funnel, not a leak, and
+the hair-colour officials were never in production. What is left is smaller,
+clearer, and almost entirely unblocked: one naming decision (Q12), one tournament
+question (Q13), and one snapshot to pull (Q14).
 
 **If you only do three things in September:** the Free box score, the percentile
 honesty pass, and the eager-report fix. The first makes the product sellable, the

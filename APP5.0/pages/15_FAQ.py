@@ -16,6 +16,7 @@ import streamlit as st
 from helpers.ui import page_chrome, page_header
 import helpers.auth as AUTH
 import helpers.faq as FAQ
+import helpers.ui as _uimod          # clear_data() — see its docstring
 
 _cfg, ACCENT = page_chrome("FAQ")
 
@@ -40,7 +41,7 @@ if _is_admin:
                  help="Pulls the Doc immediately instead of waiting out the "
                       "6-hour cache."):
         _force = 1
-        st.cache_data.clear()
+        _uimod.clear_data()
 
 _data, _sections = _faq_bundle(_force)
 

@@ -22,6 +22,12 @@ from __future__ import annotations
 import datetime
 from collections import defaultdict
 
+# Season-scoped READ default — see helpers/seasons.DEFAULT. A bare
+# season="Current" names an EMPTY partition for the months between a rollover
+# and the first game of the new year, so any caller without a season picker to
+# pass one from read nothing over a full database.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 WEEK_DAYS = 7
 
 
@@ -107,9 +113,10 @@ def compose_awards(games, boxes, meta, *, gei_fn=None, riser=None):
             "riser": riser_out}
 
 
-def weekly_awards(gender, season="Current", game_ids=None):
+def weekly_awards(gender, season=SEAS_DEFAULT, game_ids=None):
     """DB assembly for the Hub. `game_ids` = tracked-visibility filter
     (None = unrestricted). Every piece degrades to None on its own."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     from database.db import query
     import helpers.stats as S
     import helpers.seasons as SEAS

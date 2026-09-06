@@ -30,6 +30,15 @@ from __future__ import annotations
 from collections import defaultdict
 
 from database.db import query
+# The season-scoped READ default. See helpers/seasons.DEFAULT: a bare
+# season="Current" was a rollover trap — for the months between a rollover and
+# the first game of the new year it names an EMPTY partition, so every caller
+# without a season picker to pass one from read zero over a full database.
+# SEAS_DEFAULT means "resolve at call time", and resolves through the same
+# default_read_season() fallback the pickers have always used. An explicit
+# 'Current' is still honoured literally, and None still means every season.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 import helpers.stats as S
 import helpers.team_ratings as TR
 
@@ -46,9 +55,10 @@ _safe = S._safe   # shared definition lives in helpers.stats
 #  RESULTS FETCH  (every finished game, oldest first, per team)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _finished_rows(gender=None, season="Current"):
+def _finished_rows(gender=None, season=SEAS_DEFAULT):
     """Finished games for a gender (both scores present), oldest first.
     `season` partitions to the active season by default (pass None for all)."""
+    season = resolve_read_season(season)
     clause = "WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL"
     params = []
     if gender:
@@ -68,12 +78,13 @@ def _finished_rows(gender=None, season="Current"):
     )
 
 
-def per_team_results(gender=None, rows=None, season="Current"):
+def per_team_results(gender=None, rows=None, season=SEAS_DEFAULT):
     """
     {team_id: [ {game_id, date, opp, pf, pa, margin, won, tracked}, ... ]} with
     each team's completed games oldest-first (team1 = home). One game contributes
     a row to each side. `season` partitions to the active season by default.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if rows is None:
         rows = _finished_rows(gender, season)
     out = defaultdict(list)
@@ -151,7 +162,7 @@ def _longest(results):
 #  RESULTS-ONLY TEAM PACK  (Pythagoras, luck, volatility, clutch, momentum)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP, season="Current"):
+def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP, season=SEAS_DEFAULT):
     """
     A rich, results-only stat pack for EVERY team in the league (needs final
     scores only, so it covers the whole field). Per team:
@@ -179,6 +190,7 @@ def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP, season="Current")
                       (None for teams with < 2 close games)
       Momentum        recent-vs-season form (mom_delta), scaled
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if results is None:
         results = per_team_results(gender, season=season)
     raw = {}
@@ -259,7 +271,7 @@ def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP, season="Current")
 #  WIN NETWORK  (who beat whom — directed edges for a node-link graph)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def win_network(gender=None, rows=None, scored=None, season="Current"):
+def win_network(gender=None, rows=None, scored=None, season=SEAS_DEFAULT):
     """
     The league's results as a directed graph: an edge winner → loser for each
     head-to-head result (count = how many times). Returns
@@ -268,6 +280,7 @@ def win_network(gender=None, rows=None, scored=None, season="Current"):
     Only teams that have played are included. `scored` (a score_ratings dict)
     supplies power / rank / name when given.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if rows is None:
         rows = _finished_rows(gender, season)
     if scored is None:
@@ -310,7 +323,7 @@ def win_network(gender=None, rows=None, scored=None, season="Current"):
 #  TRACKED STAT PACK  (one box pass → every per-team advanced number)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def team_tracked_pack(gender=None, tracked=None, game_ids=None, season="Current"):
+def team_tracked_pack(gender=None, tracked=None, game_ids=None, season=SEAS_DEFAULT):
     """
     Assemble the per-team advanced stat bundle from tracked games ONCE, so every
     chart that needs possession / shooting / quarter data reads the same numbers.
@@ -336,6 +349,7 @@ def team_tracked_pack(gender=None, tracked=None, game_ids=None, season="Current"
       fga_pg, tpa_pg, poss_pg, Pace, PPP, oPPP, ORtg, DRtg, NetRtg,
       stl_r, blk_r   (steals / blocks per 100 opponent possessions)
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if tracked is None:
         tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids, season=season)
     games = TR._finished_games(gender=gender, tracked_only=True, game_ids=game_ids,
@@ -574,7 +588,7 @@ def _fmt_cell(val, ndigits, pct):
 
 
 def team_stat_table(gender=None, tracked=None, pack=None, form=None,
-                    game_ids=None, season="Current"):
+                    game_ids=None, season=SEAS_DEFAULT):
     """
     The team analog of player_ratings.player_stat_table: ONE flat row per TRACKED
     team holding every team stat (power, efficiency, shooting on both ends,
@@ -594,6 +608,7 @@ def team_stat_table(gender=None, tracked=None, pack=None, form=None,
     are pre-rounded and percents pre-scaled to 0-100 — the grid does no
     formatting. None = undefined for this sample (never coerced to 0).
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if tracked is None:
         tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids, season=season)
     if pack is None:
@@ -721,7 +736,7 @@ def team_style_tags(game_ids=None):
     return out
 
 
-def team_style_pack(gender=None, tracked=None, game_ids=None, season="Current"):
+def team_style_pack(gender=None, tracked=None, game_ids=None, season=SEAS_DEFAULT):
     """
     The per-team STYLE bundle — the play-style / defensive-scheme twin of
     `team_tracked_pack`, assembled ONCE so every cross-team style chart reads the
@@ -749,6 +764,7 @@ def team_style_pack(gender=None, tracked=None, game_ids=None, season="Current"):
     has an empty dict — never a zero — so an untagged team drops out of a chart
     rather than plotting as the league's worst.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if tracked is None:
         tracked = TR.tracked_ratings(gender=gender, game_ids=game_ids, season=season)
     games = TR._finished_games(gender=gender, tracked_only=True, game_ids=game_ids,

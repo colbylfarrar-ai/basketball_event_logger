@@ -150,6 +150,61 @@ def _sync_external_writes():
     st.session_state["_dv_scopes"] = current
 
 
+def clear_data(game_id=None, scope=None):
+    """Say "data changed" after a Streamlit-side write. THE one entry point.
+
+    Two things happen, and the second is the one that was missing:
+
+    1. This session drops its cached reads (`st.cache_data.clear()`) plus the
+       cheap settings memo, so the page it reruns into shows the new row.
+
+    2. The cross-process version counters move (`game_events.bump_data_version`),
+       so OTHER sessions notice. This is the fix: until now only the phone
+       tracker's API bumped them. A desktop write — an Event Editor correction, a
+       score fixed in Setup, a player transferred in the Input Hub — cleared only
+       the WRITER's cache, so every other coach signed in kept serving the old
+       number until their own ttl=600 happened to lapse. A corrected score that
+       another coach cannot see for ten minutes is a wrong number on screen, not
+       a slow one.
+
+    Pass `game_id` (or an explicit `scope`) when the write belongs to one game,
+    so the bump lands on that (gender, season) pool and sessions viewing a
+    different pool keep their warm caches — the batch #6a scoping, now reachable
+    from the Streamlit side too. With neither, the write is treated as global
+    (roster / officials / rollover) and every session refreshes, which is the
+    safe direction.
+    """
+    st.cache_data.clear()
+    st.session_state.pop("_settings_snap", None)
+    try:
+        from helpers import game_events as _GE
+        _GE.bump_data_version(game_id=game_id, scope=scope)
+    except Exception:
+        pass          # a failed bump must never take a successful write down
+    # This session has, by definition, just seen the versions it wrote; record
+    # them so _sync_external_writes on the next run doesn't read its OWN bump as
+    # somebody else's write and clear a cache it just rebuilt.
+    try:
+        from database.db import query as _q
+        st.session_state["_dv_scopes"] = {
+            r["key"]: r["value"] for r in _q(
+                "SELECT key, value FROM app_settings WHERE key LIKE 'dv::%'")}
+    except Exception:
+        st.session_state.pop("_dv_scopes", None)
+
+
+def clear_settings():
+    """A PREFERENCE write (theme, display options) — drop the settings memo and
+    nothing else.
+
+    `st.cache_data.clear()` is process-global: it destroys all 251 cached
+    functions for every session on the box, and rebuilding the Team Dashboard
+    from cold measured 21s locally (60-90s on the 1 vCPU droplet). No display
+    preference can change the value of a possession rating, so a preference write
+    has no business paying that or making anyone else pay it."""
+    st.session_state.pop("_settings_snap", None)
+
+
 def declare_scope(gender=None, season=None):
     """Tell the cross-process cache gate which analytics pool THIS page is
     viewing so a live-game write to a DIFFERENT (gender, season) no longer

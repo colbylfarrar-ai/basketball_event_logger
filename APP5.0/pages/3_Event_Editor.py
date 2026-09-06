@@ -125,6 +125,7 @@ tov2key = {lbl: k for k, lbl in TOV.TURNOVER_TYPES}
 
 # ── score drift indicator ────────────────────────────────────────────────────
 from database.db import query as _q
+import helpers.ui as _uimod          # clear_data() — see its docstring
 
 live = EL.score_from_events(gid)
 sc_cols = st.columns([2, 2, 3])
@@ -144,7 +145,7 @@ if live is not None:
             st.warning("Stored score ≠ events. Recompute after your edits.")
         if st.button("↻ Recompute final score from events", key="ee_recompute"):
             EL.recompute_final_score(gid)
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.success(f"Final score set to {live[0]}–{live[1]} from the log.")
             st.rerun()
 
@@ -215,7 +216,7 @@ with st.expander("🔁 Fix a missed substitution — correct the on-court five")
         except ValueError as _ex:
             st.error(str(_ex))
         else:
-            st.cache_data.clear()
+            _uimod.clear_data()
             _out = sorted(set(_res["old_five"]) - set(_res["new_five"]))
             _in = sorted(set(_res["new_five"]) - set(_res["old_five"]))
             _names = lambda ids: ", ".join(pid2label.get(i, str(i)) for i in ids) or "—"
@@ -313,7 +314,7 @@ with st.expander("🛡️ Bulk-tag defense by team — set each side, then tweak
                                               only_blank=_only_blank,
                                               primary_team_id=_tid)
         if _total:
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.success(f"Tagged {_total} event{'s' if _total != 1 else ''}. "
                        "Tweak the exceptions in the grid below.")
             st.rerun()
@@ -355,7 +356,7 @@ with st.expander("🏷️ Bulk re-tag selected events — fix a stretch in one w
         _n = EL.bulk_retag(_rt_sel, _rt_field,
                            _rt_val2key[_rt_field].get(_rt_v))
         if _n:
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.success(f"Re-tagged {_n} event{'s' if _n != 1 else ''}.")
             st.rerun()
         else:
@@ -512,7 +513,7 @@ if st.button("💾 Save changes", type="primary", key="ee_save"):
                  "seconds 00–59 (e.g. 8:04): " + "; ".join(bad_times)
                  + ". Fix those rows and save again.")
     if updated or deleted:
-        st.cache_data.clear()
+        _uimod.clear_data()
         _flash.insert(0, ("success",
                           f"Saved — {updated} edited, {deleted} deleted. "
                           "Recompute the final score above if it drifted."))
@@ -631,7 +632,7 @@ else:
                     ("success", "Shot location updated — zone and 2/3 "
                                 "re-derived. Recompute the final score above "
                                 "if the drift banner appears.")]
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.rerun()
             if sv2.button("Discard tap", key="ee_fix_discard"):
                 st.session_state.pop(_fx_key, None)
@@ -760,5 +761,5 @@ if ins_go:
                            "minutes/+/- follow whatever the adjacent event "
                            "had."))
         st.session_state["ee_flash"] = _flash
-        st.cache_data.clear()
+        _uimod.clear_data()
         st.rerun()

@@ -19,6 +19,32 @@ from database.db import query, execute
 ACTIVE = "Current"            # the active-season sentinel stored on rows
 DEFAULT_LABEL = "2025-2026"   # fallback display name if app_settings unset
 
+#: "Resolve the read season at CALL time" — the default for season-scoped READ
+#: engines, distinct from both ACTIVE ('Current', meaning literally this season)
+#: and None (meaning every season, a documented value on several signatures).
+#:
+#: Why a third value exists at all: `season="Current"` as a bare default is a
+#: rollover trap. For the two or three months between a rollover and the first
+#: game of the new year, 'Current' holds nothing, so every caller that had no
+#: season picker to pass one from read ZERO over a full database — the power
+#: board, the schedule projections, the predictor. Callers WITH a picker were
+#: fine, because the pickers already default through `default_read_season()`.
+#: This sentinel gives the picker-less callers the same fallback.
+#:
+#: It is a string, not an object(), so it survives st.cache_data key hashing.
+DEFAULT = "__default__"
+
+
+def resolve_read_season(season):
+    """Resolve the DEFAULT sentinel to the season a READ should actually scope
+    to; pass every other value through untouched.
+
+    The pass-through is the important half: an EXPLICIT 'Current' still means
+    Current and still reads empty right after a rollover, because a coach who
+    picks the new season has to see the new season rather than last year's
+    numbers wearing this year's label. Only an unspecified season falls back."""
+    return default_read_season() if season == DEFAULT else season
+
 # Bio fields copied forward when a returning player is carried into the new season
 # (identity_id is set separately to the person key; availability resets to Active).
 _CARRY_COLS = ("team_id", "name", "number", "height", "wingspan", "weight",

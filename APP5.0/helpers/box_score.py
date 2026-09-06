@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from database.db import query
-from helpers.ui import team_color, glossary_key
+from helpers.ui import team_color, glossary_key, seg as _ui_seg
 import helpers.cards as CARDS
 import helpers.stats as S
 import helpers.win_probability as WP
@@ -214,6 +214,24 @@ def _game_ratings_fp(gender, season, _fp):
     return GR.season_game_ratings(game_ids=gids or None)
 
 
+@st.cache_resource(show_spinner=False)
+def _player_quality_fp(game_id, _fp):
+    """{pid: OVERALL} for the lineup opponent adjustment, cached on the results
+    fingerprint. lineups.unit_ratings auto-fetches this when it is omitted, and
+    that fetch is a full player_stat_table over the game's whole SEASON pool —
+    the single most expensive thing a box score did (5.0s of the Lineups
+    section's 5.5s), recomputed on every open even though the answer is
+    identical for every game in the season.
+
+    Keyed on game_id only because player_quality resolves the game to its
+    season's league-wide pool internally, so two games in one season resolve to
+    the same table; the fingerprint is what actually invalidates it.
+    cache_resource for the same reason as the two ratings wrappers above — it
+    survives the app's cache_data.clear(), and this recomputes only when a
+    score moves."""
+    return LU.player_quality(game_ids=[game_id])
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _tracked_ratings_cached(gender, vis_key):
     """Possession (NetRtg) league rating behind the header's tracked rank, cached
@@ -403,12 +421,26 @@ def render_box_score(game_id: int):
         f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
         key=f"bs{game_id}_recap")
 
-    tabs = st.tabs(["Overview", "Flow", "Shooting", "Quarters",
-                    "Lineups", "Box Score", "Four Factors", "Play Types",
-                    "Defense"])
+    # LAZY SECTIONS, not st.tabs (2026-09-05). Under st.tabs every one of these
+    # nine bodies ran on every render — a coach opening one box score paid for
+    # all nine, which profiled at 10.7s of the Schedule view's 10.8s
+    # (_tab_lineups alone was 5.5s, nearly all of it lineups.player_quality).
+    # Now only the chosen body runs.
+    #
+    # The conversion is safe here in a way a page-level one is not: every body is
+    # ALREADY a closure function defined against shared state computed ABOVE this
+    # line, so no body can be leaning on a name a sibling body defined. The defs
+    # below still all execute (they are cheap); only the CALL is now gated.
+    _SECTIONS = ["Overview", "Flow", "Shooting", "Quarters",
+                 "Lineups", "Box Score", "Four Factors", "Play Types",
+                 "Defense"]
+    _open = _ui_seg("Section", _SECTIONS, default="Overview",
+                    key=f"bs{game_id}_section", label_visibility="collapsed")
+    if _open not in _SECTIONS:              # segmented_control allows a deselect
+        _open = "Overview"
 
     # Each tab body is a @st.fragment so its widgets (team/player pickers,
-    # lineup sliders, …) rerun only that tab instead of rebuilding all seven.
+    # lineup sliders, …) rerun only that section instead of the whole box score.
     # All shared game state above is captured by closure.
 
     # ════════════════════════════════════════════════════════════════════════
@@ -562,7 +594,7 @@ def render_box_score(game_id: int):
                 f"{r['points']}-0 run" for r in _runs[:3])
             st.caption(f"🔥 **Biggest runs:** {_rtxt}")
 
-    with tabs[0]:
+    if _open == "Overview":
         _tab_overview()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -732,7 +764,7 @@ def render_box_score(game_id: int):
             st.dataframe(df, hide_index=True, width="stretch", column_config=plcfg,
                          key=f"bs{game_id}_plen_{tid}")
 
-    with tabs[1]:
+    if _open == "Flow":
         _tab_flow()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1061,7 +1093,7 @@ def render_box_score(game_id: int):
             _style(cfig, 320)
             st.plotly_chart(cfig, width="stretch", key=f"bs{game_id}_contested")
 
-    with tabs[2]:
+    if _open == "Shooting":
         _tab_shooting()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1154,7 +1186,7 @@ def render_box_score(game_id: int):
                 _style(lf, 250)
                 st.plotly_chart(lf, width="stretch", key=f"bs{game_id}_q_paceline")
 
-    with tabs[3]:
+    if _open == "Quarters":
         _tab_quarters()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1173,7 +1205,9 @@ def render_box_score(game_id: int):
         with lc2:
             mp = st.slider("Min possessions", 1, 12, 3, key=f"bs{game_id}_lu_mp")
 
-        units = LU.unit_ratings(tid, [game_id], events=events, min_poss=mp)
+        units = LU.unit_ratings(tid, [game_id], events=events, min_poss=mp,
+                                quality=_player_quality_fp(
+                                    game_id, TR.results_fingerprint()))
         st.markdown("**Five-man units**")
         if not units:
             st.info("No unit cleared the possession threshold — lower the minimum.")
@@ -1304,7 +1338,7 @@ def render_box_score(game_id: int):
                        "Minutes from the elapsed clock between events — more "
                        "complete than the possession-seconds estimate.")
 
-    with tabs[4]:
+    if _open == "Lineups":
         _tab_lineups()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1406,7 +1440,7 @@ def render_box_score(game_id: int):
             file_name=f"maxpreps_box_{game_id}_{t1name}_vs_{t2name}.csv",
             mime="text/csv", key=f"dl_maxpreps_{game_id}")
 
-    with tabs[5]:
+    if _open == "Box Score":
         _tab_box()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1470,7 +1504,7 @@ def render_box_score(game_id: int):
                    "shot chain). The delta vs actual PPP is shot-making beyond the "
                    "factors.")
 
-    with tabs[6]:
+    if _open == "Four Factors":
         _tab_factors()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1643,7 +1677,7 @@ def render_box_score(game_id: int):
                              width="stretch", column_config=_rcfg,
                              key=f"bs{game_id}_pt_feeders_{tid}")
 
-    with tabs[7]:
+    if _open == "Play Types":
         _tab_playtypes()
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1815,7 +1849,7 @@ def render_box_score(game_id: int):
                 st.dataframe(ddf, hide_index=True, width="stretch",
                              key=f"bs{game_id}_def_disrupt_{tid}")
 
-    with tabs[8]:
+    if _open == "Defense":
         _tab_defense()
 
     st.caption("Recomputed from game_events. Box/advanced formulas in helpers/stats.py; "

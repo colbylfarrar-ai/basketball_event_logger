@@ -355,6 +355,7 @@ _paid_view = ENT.has_paid_plan(_ident)
 #    input widget (manual logging, corrections, floor, notes, quick-add) lives
 #    behind the Log & fix view so the bench screen can't fat-finger the log. ──
 from helpers.ui import seg as _seg_ui
+import helpers.ui as _uimod          # clear_data() — see its docstring
 _V_LIVE, _V_LOG = "📺 Live", "✏️ Log & fix"
 _gt_view = _seg_ui("View", [_V_LIVE, _V_LOG], key="gt_view",
                    label_visibility="collapsed") or _V_LIVE
@@ -438,8 +439,7 @@ def _confirm_end(game_id, t1name, t2name):
     c1, c2 = st.columns(2)
     if c1.button("End game", type="primary", width="stretch", key="dlg_end_yes"):
         GE.finish_game(game_id)
-        GE.bump_data_version(game_id)
-        st.cache_data.clear()
+        _uimod.clear_data(game_id)
         st.rerun()
     if c2.button("Cancel", width="stretch", key="dlg_end_no"):
         st.rerun()
@@ -453,8 +453,7 @@ def _confirm_reopen(game_id):
     c1, c2 = st.columns(2)
     if c1.button("Reopen", type="primary", width="stretch", key="dlg_reo_yes"):
         GE.reopen_game(game_id)
-        GE.bump_data_version(game_id)
-        st.cache_data.clear()
+        _uimod.clear_data(game_id)
         st.rerun()
     if c2.button("Cancel", width="stretch", key="dlg_reo_no"):
         st.rerun()
@@ -1042,7 +1041,7 @@ def _render_command_center():
             # Shared undo path (helpers.game_events): reverses +/- over the
             # event's lineup snapshot, then deletes (cascade clears
             # game_event_lineup).
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.rerun(scope="app")
 
 if _gt_view == _V_LIVE:
@@ -1507,7 +1506,7 @@ with st.expander("＋ Quick Add Player / Official"):
                 st.session_state.pop("_players_orig", None)
                 st.session_state.pop("_qa_players_orig", None)
                 st.session_state.pop("qa_players_editor", None)
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.rerun()
             else:
                 st.warning("Fill in at least one player row.")
@@ -1539,7 +1538,7 @@ with st.expander("＋ Quick Add Player / Official"):
                     execute("UPDATE players SET handedness=? WHERE id=?",
                             ("left" if r["handedness"] == "left" else "right", int(r["id"])))
                 st.session_state.pop("_players_orig", None)
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.success("Shooting hands saved.")
                 st.rerun()
 
@@ -1577,7 +1576,7 @@ with st.expander("＋ Quick Add Player / Official"):
                 st.success(f"Added {saved} official(s).")
                 st.session_state.pop("_qa_officials_orig", None)
                 st.session_state.pop("qa_officials_editor", None)
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.rerun()
             else:
                 st.warning("Fill in at least one official row.")

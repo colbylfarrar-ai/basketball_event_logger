@@ -22,6 +22,7 @@ from helpers.settings_utils import (
 )
 from helpers.ui import page_chrome, page_header, team_color
 import helpers.auth as AUTH
+import helpers.ui as _uimod          # clear_data() — see its docstring
 
 _cfg, _ = page_chrome("Settings")
 
@@ -315,7 +316,7 @@ else:
                       f"{_cr['created_at']}")
             if _c2.button("Accept", key=f"cr_ok_{_cr['id']}", type="primary"):
                 CR.accept(_cr["id"], _me["email"])
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.rerun()
             if _c3.button("Reject", key=f"cr_no_{_cr['id']}"):
                 CR.reject(_cr["id"], _me["email"])
@@ -583,7 +584,7 @@ else:
                         GD.clear_override(_d["key"])
                     else:
                         GD.set_override(_d["key"], _pick)
-                    st.cache_data.clear()
+                    _uimod.clear_data()
                     st.rerun()
                 st.divider()
     st.divider()

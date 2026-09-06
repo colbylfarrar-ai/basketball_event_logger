@@ -17,6 +17,12 @@ import helpers.stats as S
 import helpers.playtypes as PT
 import helpers.team_ratings as TR
 
+# Season-scoped READ default — see helpers/seasons.DEFAULT. A bare
+# season="Current" names an EMPTY partition for the months between a rollover
+# and the first game of the new year, so any caller without a season picker to
+# pass one from read nothing over a full database.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 MIN_SPLIT_SHOTS = 15        # a side needs this many shots before its split is shown
 
 # ── "Team at a glance" — the stats a team is most DEFINED by ───────────────────
@@ -47,13 +53,14 @@ _GAME_TYPE_ORDER = {"Regular": 0, "District": 1, "Rivalry": 2, "Tournament": 3,
                     "Showcase": 4, "Playoff": 5}
 
 
-def team_by_game_type(team_id, gender=None, season="Current"):
+def team_by_game_type(team_id, gender=None, season=SEAS_DEFAULT):
     """How the team plays by GAME TYPE (Regular / District / Playoff / …). Per
     type: record (W-L) + avg margin from every played game, plus — for the TRACKED
     games of that type — efficiency (off/def points-per-possession, eFG%/opp eFG%,
     pace) and shot mix (rim / 3-point attempt rate). Returns a list ordered
     Regular→Playoff; [] when the team has no played games. Tracked-only fields are
     None when a type has no tracked game."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.team_analytics as TA          # lazy — avoids an import cycle
     from collections import defaultdict
     gs = query(
@@ -114,13 +121,14 @@ def team_by_game_type(team_id, gender=None, season="Current"):
     return out
 
 
-def team_glance(gender, team_id, n=6, season="Current"):
+def team_glance(gender, team_id, n=6, season=SEAS_DEFAULT):
     """The 4-8 stats this team is MOST distinctive on vs the league — a quick
     identity fingerprint. Percentile-ranks the team on each curated stat, keeps
     the single most-extreme stat per category (so the read stays diverse), and
     returns them most-distinctive first: [{label, value, pct, tag, good, dist}].
     Empty when the team isn't in the tracked table. `season` scopes the field to
     one season (archive views)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.league_analytics as LA        # lazy — avoids an import cycle
     row = query("SELECT name FROM teams WHERE id=?", (team_id,))
     if not row:
@@ -661,7 +669,7 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
 
 
 def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=None,
-                    season="Current"):
+                    season=SEAS_DEFAULT):
     """The team's own-offense profile split by OPPONENT STRENGTH (top vs bottom
     half of the league by Power rank).
 

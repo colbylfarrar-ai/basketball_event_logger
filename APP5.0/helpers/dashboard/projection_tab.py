@@ -26,6 +26,85 @@ from helpers.ui import empty_state
 import helpers.lineup_projection as LP
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  CACHED ENGINE LAYER
+# ══════════════════════════════════════════════════════════════════════════════
+# The engines below (lineup_projection, rotation_schedule) are Streamlit-free by
+# design and carry no caching of their own — the dashboard layer is where that
+# belongs, exactly as insights_tab / player_card / team_card already do it. This
+# module was the one that never got it: a warm Projection view was re-running
+# build_context + optimize_minutes + suggest_rotation on EVERY rerun, ~6.8s and
+# 208 SQL round-trips, so the view cost the same warm as it did cold.
+#
+# The keys are PRIMITIVES ONLY (team_id / gender / season / a tuple of game ids /
+# the two controls). The ctx dict is deliberately NOT a parameter anywhere: it is
+# large and nested, hashing it would cost more than it saves, and every consumer
+# can rebuild it through _ctx() for free once that call is memoized. So each
+# wrapper takes the key, calls _ctx() itself, and the chain collapses to one
+# build per (team, pool) per TTL.
+#
+# 6h TTL matches the other expensive dashboard wrappers; a data write clears it
+# through the normal cache-clear path.
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Reading the rotation plan…")
+def _ctx(team_id, gender, season, gids):
+    """LP.build_context memoized on the pool. `gids` is a tuple (or None) so the
+    key is hashable; the engine still wants a list."""
+    return LP.build_context(team_id, gender=gender,
+                            game_ids=(list(gids) if gids is not None else None),
+                            season=season)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _team_current(team_id, gender, season, gids):
+    """LP.project_team_current — the three headline metrics."""
+    return LP.project_team_current(team_id, ctx=_ctx(team_id, gender, season, gids))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Optimizing the rotation…")
+def _opt(team_id, gender, season, gids, objective, max_rotation):
+    """LP.optimize_minutes — the hill-climb. `objective` and `max_rotation` are
+    the two user controls, so they ride in the key rather than being applied
+    after: a changed control does different work, not more work."""
+    return LP.optimize_minutes(team_id, ctx=_ctx(team_id, gender, season, gids),
+                               max_rotation=max_rotation, objective=objective)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _lineup(team_id, gender, season, gids, five):
+    """LP.project_lineup for one five. `five` is a tuple for the key."""
+    ctxp = _ctx(team_id, gender, season, gids)
+    return LP.project_lineup(team_id, list(five), ctxp,
+                             game_ids=ctxp.get("game_ids"))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _sched(team_id, gender, season, gids, objective, max_rotation):
+    """RS.suggest_rotation — the minute-by-minute schedule. Rebuilds ctx and opt
+    from their own caches rather than taking them as (unhashable) arguments."""
+    import helpers.rotation_schedule as RS
+    ctxp = _ctx(team_id, gender, season, gids)
+    opt = _opt(team_id, gender, season, gids, objective, max_rotation)
+    return RS.suggest_rotation(team_id, ctxp, opt, game_ids=ctxp.get("game_ids"))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _star(team_id, gids):
+    """rotation_plan.star_coverage — the stagger note."""
+    import helpers.rotation_plan as RP
+    return RP.star_coverage(team_id, game_ids=(list(gids) if gids is not None
+                                               else None))
+
+
+def _key(ctx):
+    """(team_id, gender, season, gids) — the cache key every wrapper above takes,
+    read off the page ctx once. `game_ids` becomes a sorted tuple so an
+    equivalent pool in a different order is the same key, not a second entry."""
+    gids = getattr(ctx, "game_ids", None)
+    return (ctx.team_id, ctx.gender, getattr(ctx, "season", "Current"),
+            (tuple(sorted(gids)) if gids is not None else None))
+
+
 def _pct(v):
     return f"{v * 100:.1f}%" if v is not None else "—"
 
@@ -50,10 +129,7 @@ def _build(ctx):
     # NOTE: no early has_tracked gate — a rolled-over season with 0 tracked
     # games can still project from the newest archived season (build_context's
     # career fallback). Only a team with no usable sample ANY season is gated.
-    gids = list(ctx.game_ids) if getattr(ctx, "game_ids", None) is not None else None
-    season = getattr(ctx, "season", "Current")
-    ctxp = LP.build_context(ctx.team_id, gender=ctx.gender, game_ids=gids,
-                            season=season)
+    ctxp = _ctx(*_key(ctx))
     if ctxp.get("gated"):
         if not getattr(ctx, "has_tracked", False):
             empty_state("No tracked games yet",
@@ -69,10 +145,11 @@ def _build(ctx):
     return ctxp
 
 
-def _headline(tid, ctxp, opt, force=None):
-    """The three headline metrics + the thin-sample caption (both depths)."""
+def _headline(key, ctxp, opt, force=None):
+    """The three headline metrics + the thin-sample caption (both depths).
+    `key` is the _key(ctx) tuple, so the team projection comes off its cache."""
     proj = opt["projection"]
-    tc = LP.project_team_current(tid, ctx=ctxp)
+    tc = _team_current(*key)
     c1, c2, c3 = st.columns(3)
     c1.metric("Projected Net /100", f"{tc['net']:+.1f}",
               help="vs the average tracked team (clamped, directional)")
@@ -112,7 +189,7 @@ def _rotation_table(opt, ctxp, names):
     st.markdown(dense_table(mrows), unsafe_allow_html=True)
 
 
-def _suggested_rotation(tid, ctxp, opt, names, deep=False):
+def _suggested_rotation(key, ctxp, opt, names, objective, max_rotation, deep=False):
     """The Suggested Rotation — the optimizer's minutes laid across the clock as
     preset fives, drawn with the same stint-chart language as the box score's
     rotation timeline so a coach reads the plan the way they read the game.
@@ -130,9 +207,9 @@ def _suggested_rotation(tid, ctxp, opt, names, deep=False):
         "floor time so far. Totals match the recommendation exactly — a plan "
         "you can't run isn't a plan.")
 
+    tid = key[0]
     try:
-        sched = RS.suggest_rotation(tid, ctxp, opt,
-                                    game_ids=ctxp.get("game_ids"))
+        sched = _sched(*key, objective, max_rotation)
     except Exception:
         st.caption("Couldn't build a schedule from these minutes.")
         return
@@ -224,14 +301,13 @@ def _suggested_rotation(tid, ctxp, opt, names, deep=False):
                        "that's a roster gap, not a scheduling one.")
 
 
-def _star_note(tid, ctxp):
+def _star_note(key, ctxp):
     # use the ctx-resolved, season-scoped game ids (gids may be None for an open
     # archive / own team — star_coverage would otherwise read the 'Current' season)
     if ctxp.get("career_note"):
         return   # last season's stagger read may name departed players — skip
     try:
-        import helpers.rotation_plan as RP
-        sc = RP.star_coverage(tid, game_ids=ctxp.get("game_ids"))
+        sc = _star(key[0], key[3])
         if sc.get("note"):
             st.info("🔄 " + sc["note"])
     except Exception:
@@ -271,17 +347,18 @@ def render(ctx):
                           "(your win/loss signature). Best 5 = the five with the "
                           "best chance to win in general (highest-impact players).")
         _force = {"Signature stats": None, "Best 5": "value"}.get(_pick)
-    opt = LP.optimize_minutes(tid, ctx=ctxp, objective=_force)
+    _k = _key(ctx)
+    opt = _opt(*_k, _force, LP.MAX_ROTATION)
     names = {p: ctxp["players"][p]["name"] for p in opt["minutes"]}
 
-    _headline(tid, ctxp, opt, force=_force)
+    _headline(_k, ctxp, opt, force=_force)
     _rotation_table(opt, ctxp, names)
-    _suggested_rotation(tid, ctxp, opt, names)
+    _suggested_rotation(_k, ctxp, opt, names, _force, LP.MAX_ROTATION)
 
     # ── the best five + its give-and-take vs the season line ─────────────────
     top5 = sorted(opt["minutes"], key=lambda p: -opt["minutes"][p])[:5]
     if len(top5) == 5:
-        lp = LP.project_lineup(tid, top5, ctxp, game_ids=ctxp.get("game_ids"))
+        lp = _lineup(*_k, tuple(top5))
         hit, tot = LP.goals_hit(lp["line"], ctxp.get("goals", []))
         edges = LP.compare_lines(lp["line"], ctxp["observed_line"])
         gains = [e for e in edges if e["good"]][:2]
@@ -301,7 +378,7 @@ def render(ctx):
             st.caption(f"Blended with {lp['obs_unit_poss']:.0f} observed possessions "
                        "together — chemistry the sum-of-parts misses.")
 
-    _star_note(tid, ctxp)
+    _star_note(_k, ctxp)
 
     # ── the hand-off: the deep controls live in the War Room ─────────────────
     try:
@@ -351,11 +428,12 @@ def render_deep(ctx):
     force = {"Best 5": "value", "Best net": "net",
              "Signature stats": None}.get(pick)
 
-    opt = LP.optimize_minutes(tid, ctx=ctxp, max_rotation=rot, objective=force)
+    _k = _key(ctx)
+    opt = _opt(*_k, force, rot)
     proj = opt["projection"]
     names = {p: ctxp["players"][p]["name"] for p in opt["minutes"]}
 
-    _headline(tid, ctxp, opt, force=force)
+    _headline(_k, ctxp, opt, force=force)
 
     # ── signature goals: does the recommended lineup hit them? ───────────────
     if opt["objective_kind"] == "signature" and opt["signature_goals"]:
@@ -379,7 +457,7 @@ def render_deep(ctx):
             st.markdown(dense_table(rows), unsafe_allow_html=True)
 
     _rotation_table(opt, ctxp, names)
-    _suggested_rotation(tid, ctxp, opt, names, deep=True)
+    _suggested_rotation(_k, ctxp, opt, names, force, rot, deep=True)
 
     # ── what-if: coach sets the minutes, sees the projected difference ────────
     with st.expander("🎛️ Try your own minutes — see the difference"):
@@ -427,4 +505,4 @@ def render_deep(ctx):
             if wrows:
                 st.markdown(dense_table(wrows), unsafe_allow_html=True)
 
-    _star_note(tid, ctxp)
+    _star_note(_k, ctxp)

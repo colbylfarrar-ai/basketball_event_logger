@@ -12,6 +12,7 @@ import helpers.seasons as SZ
 import helpers.auth as AUTH
 import helpers.change_requests as CR
 import helpers.officials as OFF
+import helpers.ui as _uimod          # clear_data() — see its docstring
 
 _cfg, ACCENT = page_chrome("Input Hub")
 _me = AUTH.current_user()
@@ -276,7 +277,7 @@ if _is_admin:
                   f"{_n} returning player(s) forward (identity-linked); seniors graduated. "
                   "Add any transfers-in on the Players tab + link them under Returning "
                   "players.")
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.rerun()
 
     # ── Returning players: link this season's roster to last season's identities ──
@@ -334,7 +335,7 @@ if _is_admin:
                         else:
                             IDN.link(pid, int(v))
                             _linked += 1
-                    st.cache_data.clear()
+                    _uimod.clear_data()
                     flash("success", f"Linked {_linked} returning player(s) to last season.")
                     st.rerun()
 
@@ -363,7 +364,7 @@ if _is_admin:
                                 label_visibility="collapsed")
                             if xc[2].button("Link", key=f"xfer_link_{h['identity_key']}"):
                                 IDN.link(_tgt, h["identity_key"])
-                                st.cache_data.clear()
+                                _uimod.clear_data()
                                 flash("success", f"Linked transfer {h['name']}.")
                                 st.rerun()
                         else:
@@ -458,7 +459,7 @@ if _hubview == "Teams":
         else:
             flash("success", "Saved!")
             invalidate("_teams_orig", "teams_editor")
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.rerun()
 
     # ── Retroactive class — fix a team's class for a PAST season ──────────────
@@ -491,7 +492,7 @@ if _hubview == "Teams":
                             (_rc_team["id"], _rc_season, _rc_class))
                     flash("success",
                           f"{_rc_team['name']} recorded as {_rc_class} in {_rc_season}.")
-                    st.cache_data.clear()
+                    _uimod.clear_data()
                     st.rerun()
 
 
@@ -626,7 +627,7 @@ if _hubview == "Players":
                           f"team's {SZ.active_label() if _is_cur_roster else roster_season} "
                           "roster.")
                 invalidate("_players_orig", "players_editor")
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.rerun()
 
         # Explicit delete — the data_editor's row-delete needs a keyboard Delete key
@@ -649,7 +650,7 @@ if _hubview == "Players":
                         flash("success", f"{pick} archived (tracked history kept)."
                               if outcome == "archived" else f"{pick} deleted.")
                     invalidate("_players_orig", "players_editor")
-                    st.cache_data.clear()
+                    _uimod.clear_data()
                     st.rerun()
 
         # ── Import a whole roster at once — CSV upload or pasted block. Engine
@@ -728,7 +729,7 @@ if _hubview == "Players":
                                 if "grad_year" in p["changes"]:
                                     IDN.propagate_person_fields(p["pid"])
                         invalidate("_players_orig", "players_editor")
-                        st.cache_data.clear()
+                        _uimod.clear_data()
                         flash("success",
                               f"Roster imported — added {_radd}, updated {_rupd}"
                               + (f", skipped {_rskp} already-rostered" if _rskp
@@ -748,7 +749,7 @@ if _hubview == "Players":
                 if st.button("Run sync", key="idn_sync_btn"):
                     import helpers.identity as IDN
                     _n = IDN.sync_person_fields()
-                    st.cache_data.clear()
+                    _uimod.clear_data()
                     flash("success", f"Synced {_n} past-season player row(s).")
                     st.rerun()
 
@@ -785,7 +786,7 @@ if _hubview == "Players":
                         execute("UPDATE players SET team_id=? WHERE id=?",
                                 (tm[_xdest], _xopts[_xpick]))
                         invalidate("_players_orig", "players_editor")
-                        st.cache_data.clear()
+                        _uimod.clear_data()
                         flash("success", f"Transferred {_xpick} to {_xdest}.")
                         st.rerun()
 
@@ -924,7 +925,7 @@ if _hubview == "Games":
                 # Same games table as the Team Schedule tab — drop its cached
                 # editor frame too so it can't save stale rows back over this edit.
                 invalidate("_games_orig", "games_editor", "_sched_orig", "sched_editor")
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.rerun()
 
 
@@ -1045,7 +1046,7 @@ if _hubview == "Team Schedule":
             else:
                 flash("success", "Saved!")
                 invalidate("_sched_orig", "sched_editor", "_games_orig", "games_editor")
-                st.cache_data.clear()
+                _uimod.clear_data()
                 st.rerun()
 
 
@@ -1100,7 +1101,7 @@ if _hubview == "Officials":
         else:
             flash("success", "Saved!")
             invalidate("_officials_orig", "officials_editor")
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.rerun()
 
 

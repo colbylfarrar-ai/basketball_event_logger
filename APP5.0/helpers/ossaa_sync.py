@@ -22,6 +22,7 @@ import re
 import sqlite3
 
 from database import db
+import helpers.game_dedup as GD
 
 # Tokens dropped when comparing a school's "identity" words (so "Riverside
 # Eagles" and "RIVERSIDE Boys" still share the token RIVERSIDE).
@@ -175,7 +176,29 @@ def merge_teams(keep_id, dupe_id) -> dict:
             db.execute("UPDATE app_settings SET key=? WHERE key=?", (newkey, key))
 
     db.execute("DELETE FROM teams WHERE id=?", (dupe_id,))
-    return {"moved": moved, "keep": k[0]["name"], "dupe": d[0]["name"]}
+
+    # Collapse any game rows the merge just turned into duplicates of each other.
+    #
+    # The loop above leans on `UPDATE OR IGNORE` and then deletes "whatever
+    # couldn't move (UNIQUE collision vs the keeper)". That reasoning holds for
+    # coach_teams and the rest, which DO carry unique constraints — but `games`
+    # has none on the matchup, so nothing collides, every row moves, and any game
+    # the dupe and the keeper both had on file survives as TWO rows under the
+    # keeper. Both carry a score, so both feed the results-only ratings and the
+    # result is counted twice in W/L, SOS and Rating.
+    #
+    # This is where the nine duplicates in the 2026-09-05 book came from — seven
+    # of them against out-of-state opponents, which are exactly the teams most
+    # likely to have been created twice under name variants and then merged.
+    # Scoped to the keeper's own games so a merge can never reach past itself,
+    # and GD refuses to drop a row carrying events.
+    kept_ids = {r["id"] for r in db.query(
+        "SELECT id FROM games WHERE team1_id=? OR team2_id=?",
+        (keep_id, keep_id))}
+    collapsed = GD.collapse_result_duplicates(game_ids=kept_ids)
+    return {"moved": moved, "keep": k[0]["name"], "dupe": d[0]["name"],
+            "games_collapsed": collapsed["deleted"],
+            "games_needing_review": collapsed["refused"]}
 
 
 def reconcile(plan) -> dict:

@@ -21,6 +21,7 @@ import helpers.manual_box as MB
 import helpers.seasons as SZ
 import helpers.identity as IDN
 import helpers.officials as OFF
+import helpers.ui as _uimod          # clear_data() — see its docstring
 
 _cfg, ACCENT = page_chrome("Setup")
 
@@ -237,7 +238,7 @@ with t_games:
             for r in grows:
                 execute("UPDATE games SET game_type=? WHERE id=?",
                         (_bulk, int(r["id"])))
-            st.cache_data.clear()
+            _uimod.clear_data()
             st.success(f"Set {len(grows)} game(s) to {_bulk}.")
             st.rerun()
         ed = st.data_editor(

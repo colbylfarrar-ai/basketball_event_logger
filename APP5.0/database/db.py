@@ -561,12 +561,12 @@ def _run_init(db_path):
                    class   TEXT    NOT NULL,
                    PRIMARY KEY (team_id, season)
                )""",
-            # RESERVED (nullable, unused): a foul-KIND tag (offensive/rebounding)
-            # was trialed 2026-07-11 and reverted — the founder liked it in
-            # theory, not in practice. The column stays for schema parity with
-            # prod (which already ran this ALTER) and a trivial future re-add; no
-            # code reads or writes it.
-            "ALTER TABLE game_events     ADD COLUMN foul_type TEXT",
+            # (game_events.foul_type was ADDed here on 2026-07-11 and RETIRED on
+            # 2026-09-05 — see mig_drop_foul_type_v1 below. It was trialed,
+            # reverted, and then sat NULL on every one of the book's fouls for a
+            # full season with no reader and no writer anywhere in the tree. A
+            # column the schema promises and the app never keeps is worse than no
+            # column, so it is gone rather than reserved.)
             # Public "fan link" live viewer (helpers/public_feed.py). is_public
             # is the ONLY gate the unauthenticated feed checks; share_token is
             # the unguessable URL slug (minted once when the coach first flips
@@ -914,6 +914,41 @@ def _run_init(db_path):
         except sqlite3.Error as exc:
             conn.rollback()
             skipped.append(("mig_officials_state_unique_v1",
+                            f"{type(exc).__name__}: {exc}"))
+
+        # One-time: retire game_events.foul_type. Added 2026-07-11 for a foul-KIND
+        # tag that was trialed and reverted, it then sat NULL on all 1,115 fouls in
+        # the live book for a full season with zero readers and zero writers — the
+        # ADD COLUMN above was the ONLY mention of it in the tree. Founder ruling
+        # 2026-09-05: delete rather than reserve. Prod already ran the ADD, so the
+        # column has to be dropped rather than merely un-declared.
+        #
+        # Guarded on the column actually being present (a DB created from today's
+        # schema never had it) AND on it being empty — a non-NULL value would mean
+        # someone wired it after all, and a migration does not get to destroy data
+        # it was not told about. DROP COLUMN needs SQLite 3.35+; older engines fail
+        # into `skipped` and simply keep the dead column, which is harmless.
+        try:
+            done = conn.execute(
+                "SELECT value FROM app_settings "
+                "WHERE key='mig_drop_foul_type_v1'").fetchone()
+            if not done:
+                cols = [c[1] for c in conn.execute(
+                    "PRAGMA table_info('game_events')").fetchall()]
+                if "foul_type" in cols:
+                    used = conn.execute("SELECT COUNT(*) FROM game_events "
+                                        "WHERE foul_type IS NOT NULL").fetchone()[0]
+                    if used:
+                        raise sqlite3.Error(
+                            f"{used} rows carry a foul_type — not dropping")
+                    conn.execute("ALTER TABLE game_events DROP COLUMN foul_type")
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_settings (key, value) "
+                    "VALUES ('mig_drop_foul_type_v1','1')")
+                conn.commit()
+        except sqlite3.Error as exc:
+            conn.rollback()
+            skipped.append(("mig_drop_foul_type_v1",
                             f"{type(exc).__name__}: {exc}"))
 
         conn.commit()

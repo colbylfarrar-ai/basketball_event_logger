@@ -47,6 +47,12 @@ from collections import defaultdict
 import helpers.stats as S
 from helpers.lineups import _event_floor
 
+# Season-scoped READ default — see helpers/seasons.DEFAULT. A bare
+# season="Current" names an EMPTY partition for the months between a rollover
+# and the first game of the new year, so any caller without a season picker to
+# pass one from read nothing over a full database.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 #: A player needs this much floor time before her rate enters the Gini, or a
 #: two-minute cameo with one basket swings the whole team's number.
 MIN_FLOOR_EVENTS = 60
@@ -185,7 +191,7 @@ def team_concentration(game_ids=None, events=None, floor=None, team_id=None,
     }
 
 
-def league_context(gender=None, season="Current", game_ids=None, events=None,
+def league_context(gender=None, season=SEAS_DEFAULT, game_ids=None, events=None,
                    floor=None):
     """{team_id: concentration} for every tracked team, plus each team's
     percentile within the pool under the key `pct`.
@@ -193,6 +199,7 @@ def league_context(gender=None, season="Current", game_ids=None, events=None,
     An absolute Gini is unreadable without this. 0.42 is meaningless on its own;
     "more concentrated than 80% of the league" is a sentence.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.seasons as SEAS
     if game_ids is None:
         game_ids = sorted(SEAS.game_pool(season, gender=gender,

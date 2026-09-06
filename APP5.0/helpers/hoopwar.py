@@ -45,17 +45,24 @@ from __future__ import annotations
 from database.db import query
 from helpers.league_analytics import PYTHAG_EXP
 
+# Season-scoped READ default — see helpers/seasons.DEFAULT. A bare
+# season="Current" names an EMPTY partition for the months between a rollover
+# and the first game of the new year, so any caller without a season picker to
+# pass one from read nothing over a full database.
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+
 # Replacement level, points per 100 possessions below a league-average player.
 # HS bench dropoff is steeper than pro, but the RAPM pool only contains rostered
 # rotation players — −3.0/100 is the conservative, documented anchor (tunable).
 REPLACEMENT_PTS100 = -3.0
 
 
-def league_ppg(gender=None, season="Current"):
+def league_ppg(gender=None, season=SEAS_DEFAULT):
     """Average points per TEAM per game over finished games of `season` (both
     scores present). None when no finished games exist. `season` defaults to the
     active season; an archive view passes its label so HoopWAR's points-per-win
     scale isn't computed off an empty current season."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     sql = ("SELECT AVG((g.home_score + g.away_score) / 2.0) p FROM games g "
            "JOIN teams t ON t.id = g.team1_id "
            "WHERE g.season=? AND g.home_score IS NOT NULL "
@@ -75,7 +82,7 @@ def wins_per_point(ppg, exp=PYTHAG_EXP):
     return exp / (4.0 * ppg)
 
 
-def war_table(gender=None, rapm=None, game_ids=None, season="Current"):
+def war_table(gender=None, rapm=None, game_ids=None, season=SEAS_DEFAULT):
     """HoopWAR for every player the RAPM pool can rate.
 
     `rapm` — pass a cached compute_rapm() result to skip re-solving the ridge
@@ -86,6 +93,7 @@ def war_table(gender=None, rapm=None, game_ids=None, season="Current"):
     points-per-win league baseline (so an archive still computes when the current
     season is empty).
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if rapm is None:
         import helpers.rapm as RP
         if game_ids is None:

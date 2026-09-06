@@ -23,19 +23,33 @@ Team Dashboard, same harness, same book, before → after (seconds):
 
 | view | cold before | cold after | warm before | warm after |
 |---|---:|---:|---:|---:|
-| **Overview** (default) | 32.93 | **21.06** | 1.31 | 1.39 |
-| Schedule | 9.35 | **2.84** | 7.43 | **2.38** |
-| Projection | 6.88 | **6.13** | 6.31 | **1.08** |
-| Insights | 17.59 | 20.50 | 1.24 | **1.05** |
-| Scout | 14.19 | 13.99 | 3.25 | 3.84 |
+| **Overview** (default) | 32.93 | **20.70** | 1.31 | 1.28 |
+| Insights | 17.59 | 17.99 | 1.24 | **1.06** |
+| Scout | 14.19 | **11.73** | 3.25 | 3.42 |
+| **Schedule** | 9.35 | **3.34** | 7.43 | **2.80** |
+| **Projection** | 6.88 | **6.69** | 6.31 | **1.21** |
+| Roster | 2.09 | 1.77 | 1.41 | 1.95 |
+| Charts / Lab / Share / Glossary | ~1.2 | ~1.4 | ~1.1 | ~1.2 |
 
-The two views that never cached now cache: **Projection 6.31 → 1.08 s warm**,
-**Schedule 7.43 → 2.38 s**. The page's whole cold cost falls **32.9 → 21.1 s**,
-because the box score stopped rendering all nine of its tabs in order to show
-one. On the 1 vCPU droplet that is roughly a minute off the first load.
+The two views that never cached now cache: **Projection 6.31 → 1.21 s warm**,
+**Schedule 7.43 → 2.80 s** (cold 9.35 → 3.34). The page's whole cold cost falls
+**32.9 → 20.7 s**, because the box score stopped rendering all nine of its tabs
+in order to show one. On the 1 vCPU droplet that is roughly a minute off the
+first load.
 
-Insights cold moved the wrong way by ~3 s and warm improved slightly; both are
-inside the run-to-run noise of this harness and nothing on that path changed.
+No view raised an exception, and every view's rendered character count is
+unchanged except Schedule (53,505 → 47,923), which is the box score now drawing
+one section instead of nine — the intended change, not a loss.
+
+Every Insights section is still 1.0-1.6 s warm; the deck was already fast and
+nothing on its path was touched.
+
+**A measurement note worth keeping:** an earlier pass of this table was taken
+while `run_all` and `pytest` were running concurrently and every number was
+inflated 2-3× (Scout read 15.63 s warm against a 3.25 s baseline). On a 1 vCPU
+box that contention is the same shape as the production constraint — but it is
+not a code regression, and a timing run on this machine is only trustworthy with
+nothing else running.
 
 ---
 
@@ -174,8 +188,7 @@ the other one.
 - `pytest tracker/` — **258 passed, 0 failed.** Baseline was 241/242; the delta is
   the 9 new tests plus the previously data-dependent charge failure, which does
   not reproduce against the hermetic temp DBs.
-- `tracker/run_all.py` — walking its 98 script-style files; see the session
-  summary for the final count.
+- `tracker/run_all.py` — **98 passed, 0 failed, 0 timeout.**
 - The two halves are disjoint by design (`tracker/_test_kinds.py`). Run both —
   `run_all` green is half the tree.
 
@@ -208,7 +221,8 @@ Ranked by value. All deliberately not built tonight.
 6. **Spotlight cold is 38.8 s**, essentially all `_intel` (`player_stat_table` at
    `min_games=2` + RAPM + the team feed). Opt-in and cached, but the first click
    is slow.
-7. **Scout is the next slowest view** at ~3.3 s warm; nothing else is above 2.4.
+7. **Scout is the next slowest view** at 3.4 s warm and 11.7 s cold; nothing
+   else is above 2.8 warm.
 8. **`_finished_games` applies no dedup**, so results-only ratings would
    double-count any future duplicate exactly as they did these nine. Item 1 is the
    better fix; this is the belt to its braces.

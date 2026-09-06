@@ -41,16 +41,32 @@ function periodLenFor(q) { return q > 4 ? otMin() : periodMin(); }
    measures tablet-wide, an iPad in a Split View pane measures phone-narrow —
    and a coach who gets the wrong layout mid-game would have no way out. So the
    detection is a CSS media query and this is the override on top of it. */
-const WIDE_MIN_PX = 768;
+const WIDE_QUERY = '(min-width: 768px)';
+// Held in a const on purpose: a MediaQueryList that nothing references can be
+// garbage-collected along with its listener, and the layout then stops
+// reacting to rotation.
+const WIDE_MQ = window.matchMedia(WIDE_QUERY);
 function wideMode() {
   const v = lsGet(LS.wideMode, 'auto');
   return (v === 'on' || v === 'off') ? v : 'auto';
 }
-function applyWideMode() {
+
+function wideActive() {
   const m = wideMode();
+  if (m === 'on') return true;
+  if (m === 'off') return false;
+  return WIDE_MQ.matches;
+}
+
+function applyWideMode() {
   const r = document.documentElement;
+  const m = wideMode();
+  // force-wide / force-narrow stay on the element: they are what the Bench
+  // setup selector reflects, and .screen max-width still keys off them.
   r.classList.toggle('force-wide', m === 'on');
   r.classList.toggle('force-narrow', m === 'off');
+  // is-wide is the single class every tablet layout rule uses.
+  r.classList.toggle('is-wide', wideActive());
 }
 
 function $(id) { return document.getElementById(id); }
@@ -3073,6 +3089,8 @@ async function applyGuestMode() {
 async function init() {
   bindUI();
   applyWideMode();          // before first paint, so the layout never flips
+  // An iPad rotated mid-game, or dragged out of Split View, changes the answer.
+  WIDE_MQ.addEventListener('change', applyWideMode);
   await applyGuestMode();
   updateNetUI();
 

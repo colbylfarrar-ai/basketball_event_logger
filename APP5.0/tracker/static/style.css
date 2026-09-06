@@ -637,47 +637,18 @@ button {
    the logging pad sit SIDE BY SIDE, so the shot chart is big and the flow,
    mode row and action row never push each other off screen.
 
-   Detection is this media query; `.force-wide` / `.force-narrow` on <html> are
-   the coach's override from Bench setup, because a query alone guesses wrong
-   in both directions -- a phone in landscape measures wide, an iPad in a Split
-   View pane measures narrow -- and being stuck in the wrong layout mid-game
-   would be worse than either default. */
-@media (min-width: 768px) {
-  html:not(.force-narrow) .screen { max-width: 1180px; padding: 16px; }
-  html:not(.force-narrow) #screen-tracker:not([hidden]) { display: grid; }
-}
-html.force-wide .screen { max-width: 1180px; padding: 16px; }
-html.force-wide #screen-tracker:not([hidden]) { display: grid; }
-
-html.force-wide #screen-tracker,
-html:not(.force-narrow) #screen-tracker {
+   `html.is-wide` is the single switch for every rule below. app.js computes it
+   from the viewport query AND the coach's Bench-setup override, because a query
+   alone guesses wrong in both directions -- a phone in landscape measures wide,
+   an iPad in a Split View pane measures narrow -- and being stuck in the wrong
+   layout mid-game would be worse than either default. */
+html.is-wide .screen { max-width: 1180px; padding: 16px; }
+html.is-wide #screen-tracker:not([hidden]) { display: grid; }
+html.is-wide #screen-tracker {
   grid-template-columns: minmax(300px, 1.05fr) minmax(320px, 1fr);
   column-gap: 16px;
   align-items: start;
 }
-
-/* Full-width bands: the header carries score, period and clock, and the subs
-   panel is a takeover -- neither belongs in a column. */
-#screen-tracker > #track-head,
-#screen-tracker > #subs-panel,
-#screen-tracker > #track-tip { grid-column: 1 / -1; }
-
-/* Left column: the court and the shot-mode row that drives it. */
-#screen-tracker > #court-wrap,
-#screen-tracker > #shot-caption,
-#screen-tracker > #mode-row { grid-column: 1; }
-
-/* Right column: every tag, the event flow, and the action rows. */
-#screen-tracker > #defense-bar,
-#screen-tracker > #playtype-bar,
-#screen-tracker > #flow-opts,
-#screen-tracker > #flow,
-#screen-tracker > #to-row,
-#screen-tracker > #action-row,
-#screen-tracker > #sync-status,
-#screen-tracker > #coverage-badge,
-#screen-tracker > #pbp-toggle,
-#screen-tracker > #pbp { grid-column: 2; }
 
 /* The override has to be able to put a big screen BACK to the phone column. */
 html.force-narrow .screen { max-width: 640px; padding: 12px; }

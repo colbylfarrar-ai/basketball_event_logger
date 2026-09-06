@@ -19,7 +19,21 @@ from helpers.box_score import render_box_score
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.predictor as PRED
+import helpers.resume as RES
 import helpers.team_ratings as TR
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _rank_hist(g, season):
+    """Every saved board for this league in one read: {day: {team_id: rank}}.
+
+    Cached because the schedule and the upcoming table both resolve against it
+    and the Résumé view wants the same dict — one query per (gender, season)
+    per rerun window instead of one per row."""
+    try:
+        return RES.rank_history(g, season=season)
+    except Exception:
+        return {}
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -103,8 +117,9 @@ def render(ctx):
                        "is against this team's own season margin.")
 
     st.markdown("<div class='lab-hdr'>Schedule</div>", unsafe_allow_html=True)
-    st.caption("Opponent ranking (everything / tracked when possible), opponent "
-               "record & class, the model's projected score, and the result. "
+    st.caption("Opponent ranking — **Rk @** is where they stood GOING INTO the "
+               "game, **Opp Rk** where they stand today — plus opponent record "
+               "& class, the model's projected score, and the result. "
                "Projected score uses opponent-adjusted ratings with home court "
                "applied to the actual venue.")
     any_film = any((g.get("video_url") or "").strip() for g in ctx.log)
@@ -112,6 +127,18 @@ def render(ctx):
     # an opponent the viewer is entitled to (own-team, or league-wide + that team
     # pooled). Free/solo viewers see "—" and the column is dropped entirely below.
     _viewer = AUTH.current_user()
+    # The opponent's rank GOING INTO each game, from the saved weekly boards.
+    # "beat #6 Broken Bow" is the line a coach actually says, and until now the
+    # column could only show where that opponent sits TODAY — which on this book
+    # moves a median of 68 places over three months, so the number on a December
+    # row was routinely describing a March team. Empty when there is no saved
+    # board before the game (pre-first-snapshot, or an opponent under the
+    # snapshot floor); an honest blank beats a rank borrowed from the wrong day.
+    _hist = _rank_hist(getattr(ctx, "gender", None),
+                       getattr(ctx, "season", None))
+    _then = RES.opponent_ranks(ctx.log, getattr(ctx, "gender", None),
+                               season=getattr(ctx, "season", None),
+                               history=_hist) if _hist else {}
     sched_rows = []
     for g in ctx.log:
         oid = g["opp_id"]
@@ -126,6 +153,7 @@ def render(ctx):
         row = {
             "Date": g["date"], "": g["site"], "Opponent": g["opp"],
             "Cls": g["opp_class"],
+            "Rk @": RES.rank_chip(_then.get(g["game_id"])) or "—",
             "Opp Rk": f"#{ovr}" if ovr else "—",
             "Trk Rk": f"#{trk_rk}" if trk_rk else "—",
             "Opp Rec": (f"{o_sc.get('W', 0)}-{o_sc.get('L', 0)}"
@@ -143,7 +171,21 @@ def render(ctx):
     if not any(r["Trk Rk"] != "—" for r in sched_rows):
         for r in sched_rows:
             r.pop("Trk Rk", None)
+    # Same rule for the at-the-time rank: a book with no rating history yet
+    # (nobody has pressed Rebuild, or the season is too young) would otherwise
+    # grow a column of dashes advertising a feature that has no data behind it.
+    _any_then = any(r.get("Rk @", "—") != "—" for r in sched_rows)
+    if not _any_then:
+        for r in sched_rows:
+            r.pop("Rk @", None)
     sched_cfg = {}
+    if _any_then:
+        sched_cfg["Rk @"] = st.column_config.TextColumn(
+            "Rk @", width="small",
+            help="The opponent's league rank GOING INTO this game, from the "
+                 "saved board for the week before it — not where they sit "
+                 "today. Blank where no board had been saved yet, or the "
+                 "opponent had too few games to be ranked at the time.")
     if any_film:
         sched_cfg["Film"] = st.column_config.LinkColumn(
             "Film", display_text="▶ Watch", width="small",

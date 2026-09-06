@@ -85,10 +85,10 @@ Track a game on your phone — no camera, no WiFi needed — and HoopTracks turn
 
 | Feature | What it does | Why a coach cares |
 |---|---|---|
-| ★ Analytics Hub | One-screen season snapshot: KPIs, power landscape, luck distribution, leaders with sparklines, Game of the Season (excitement index), live search. | Everything that matters at a glance the moment you open the app. |
+| ★ Rankings → Spotlight | League snapshot on demand: tagging coverage, the weekly awards digest, the risers strip, Game of the Season (excitement index), auto-mined league reads and Notables. | Everything happening across the league in one place — opened when you want it, not paid for on arrival. |
 | ★ Team Dashboard (6 tabs) | Overview, Players, Schedule, Charts, Scout, and a Lab tab (RAPM, lineups, play types, correlations). | The entire team playbook on one page — overview to advanced labs. |
 | ★ Player Analytics Lab (7 tabs) | Leaders, Ratings, Shot Lab, Compare, Player Profile, Lab (badges/archetypes/similarity), Glossary. | Full player lab: ratings, shot charts, archetypes, peer comparison. |
-| ★ Rankings / Power Rankings | Overview, Team deep-dive, Compare, Tracked (possession ratings), Team Charts, League lab — district standings, composites, percentile bars. | League power structure with standings and advanced composites. |
+| ★ Rankings / Power Rankings | Overview (with a week picker that re-renders the board as it stood on any past week), Compare, Team deep-dive, Tracked (possession ratings), League landscape, Spotlight — district standings, composites, percentile bars. | League power structure with standings and advanced composites — and the board as it looked when the games were played, not only as it reads today. |
 | ★ Composite team indices | League-relative Dominance, Consistency, Clutch, Momentum, Luck (all 0-100). | See not just who wins, but how — blowout, clutch, hot, lucky. |
 | ★ Shot charts & heat maps | Zone maps and tap-captured hexbin/scatter with FG% by zone; league/team/player scope. | Where you shoot and make; opponent personnel tendencies. |
 | ★ Schedule page + calendar | Month grid with game-load dots, Game of the Day, Upset Alert, Day's Leaders, embedded film widget. | All games at a glance; drill into any day's results and highlights. |

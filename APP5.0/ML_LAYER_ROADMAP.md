@@ -119,7 +119,9 @@ LLM-shell investment).
     existing 480/240 win-prob clock; guarded, live games only).
   - Box-prior RAPM toggle → `pages/6_Team_Dashboard.py` Impact Lab (`_rapm(g, box_prior=…)`).
   - Self-scout predictability → `helpers/dashboard/scout_tab.py` (Self-scout framing).
-  - Tagging-coverage strip → `pages/0_Analytics_Hub.py` (league-wide, Co-op-gated).
+  - Tagging-coverage strip → **Rankings → Spotlight** (`helpers/league_spotlight.py`,
+    league-wide, Co-op-gated). Was `pages/0_Analytics_Hub.py` until that page was
+    cut on 2026-09-05; every entitlement gate moved across verbatim.
 ## Tier 2 — in progress
 
 - **Exploit Matrix + defensive plan (cross-team bridge) — SHIPPED ✅:** `helpers/exploit.py`

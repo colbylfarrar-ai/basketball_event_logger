@@ -191,3 +191,112 @@ def duplicate_matchups() -> list[dict]:
         })
     out.sort(key=lambda d: d["date"], reverse=True)
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RESULT-ROW DUPLICATES  (the same real game entered TWICE, not tracked twice)
+# ══════════════════════════════════════════════════════════════════════════════
+# Everything above answers "two coaches tracked one game — whose events do we
+# show?" and only ever looks at `tracked=1`. This is a different question with a
+# different answer: the OSSAA book had nine matchups sitting in `games` twice on
+# 2026-09-05, all untracked, so `duplicate_matchups()` could not see them and no
+# read-path dedup applied. Both rows carried a score, so BOTH fed the results-only
+# power ratings — every one of those results counted twice in W/L, SOS and Rating.
+#
+# Root cause is `ossaa_sync.merge_teams`, not the importer. The importer's guard
+# checks both home/away orientations and is sound. `merge_teams` reassigns the
+# dupe team's rows with `UPDATE OR IGNORE` and then deletes what "couldn't move
+# (UNIQUE collision vs the keeper)" — but `games` has no unique constraint on the
+# matchup, so nothing ever collides, every row moves, and any game the two teams
+# both had on file becomes two rows under the keeper. That is why seven of the
+# nine involve an out-of-state opponent: those are the teams most likely to have
+# been created twice under name variants and then merged.
+#
+# The survivor rule is deliberately NOT the detail-density rule above. There we
+# are picking the better TRACK of one game; here we are picking which imported
+# ROW to keep, and the priorities are about not destroying anything:
+#     1. a tracked row always beats an untracked one   (never delete a game log)
+#     2. more events                                    (same reason)
+#     3. has a score                                    (a NULL-score twin is the copy)
+#     4. has a location                                 (the fuller import record)
+#     5. lowest id                                      (stable; the original wins)
+
+def result_duplicate_groups(season=None) -> list[dict]:
+    """Matchups with more than one `games` row, tracked or not.
+
+    Returns ``[{key, date, rows: [{id, tracked, events, has_score, location,
+    home_score, away_score, team1_id, team2_id}], keep, drop}]`` — `keep` is the
+    survivor under the rule above and `drop` is everything else. Read-only; the
+    caller decides whether to act. `season` scopes to one label (None = all).
+    """
+    clause, params = "", ()
+    if season is not None:
+        clause, params = "WHERE season = ?", (season,)
+    rows = query(f"SELECT id, date, team1_id, team2_id, tracked, home_score, "
+                 f"away_score, location, season FROM games {clause}", params)
+    groups: dict[str, list] = {}
+    for r in rows:
+        groups.setdefault(
+            matchup_key(r["date"], r["team1_id"], r["team2_id"]), []).append(r)
+    dups = {k: v for k, v in groups.items() if len(v) > 1}
+    if not dups:
+        return []
+    ev = {int(r["game_id"]): r["n"] for r in query(
+        "SELECT game_id, COUNT(*) AS n FROM game_events GROUP BY game_id")}
+
+    def _rank(r):
+        return (1 if r["tracked"] else 0,
+                ev.get(r["id"], 0),
+                1 if r["home_score"] is not None else 0,
+                1 if (r["location"] or "").strip() else 0,
+                -r["id"])                       # lowest id last => highest rank
+
+    out = []
+    for key, members in dups.items():
+        ordered = sorted(members, key=_rank, reverse=True)
+        out.append({
+            "key": key, "date": ordered[0]["date"],
+            "rows": [{"id": r["id"], "tracked": bool(r["tracked"]),
+                      "events": ev.get(r["id"], 0),
+                      "has_score": r["home_score"] is not None,
+                      "location": (r["location"] or "").strip(),
+                      "home_score": r["home_score"], "away_score": r["away_score"],
+                      "team1_id": r["team1_id"], "team2_id": r["team2_id"],
+                      "season": r["season"]}
+                     for r in ordered],
+            "keep": ordered[0]["id"],
+            "drop": [r["id"] for r in ordered[1:]],
+        })
+    out.sort(key=lambda d: d["date"], reverse=True)
+    return out
+
+
+def collapse_result_duplicates(game_ids=None, season=None) -> dict:
+    """DELETE the losing rows of every result-duplicate group. Returns
+    ``{'groups': n, 'deleted': [ids], 'kept': [ids], 'refused': [ids]}``.
+
+    Refuses to delete a row that carries EVENTS — a game log is never collateral
+    of a de-dup, and a duplicate where both sides have events is a genuine
+    double-TRACK, which is the other function's problem and the admin
+    resolve-duplicates UI's decision. `game_ids`, when given, restricts the sweep
+    to groups every one of whose rows is in that set (so a targeted repair cannot
+    reach past what the caller inspected).
+    """
+    want = None if game_ids is None else {int(g) for g in game_ids}
+    deleted, kept, refused, n = [], [], [], 0
+    for grp in result_duplicate_groups(season=season):
+        ids = [r["id"] for r in grp["rows"]]
+        if want is not None and not set(ids) <= want:
+            continue
+        losers = [r for r in grp["rows"] if r["id"] in grp["drop"]]
+        if any(r["events"] for r in losers):
+            refused.extend(r["id"] for r in losers if r["events"])
+            losers = [r for r in losers if not r["events"]]
+            if not losers:
+                continue
+        n += 1
+        kept.append(grp["keep"])
+        for r in losers:
+            execute("DELETE FROM games WHERE id=?", (r["id"],))
+            deleted.append(r["id"])
+    return {"groups": n, "deleted": deleted, "kept": kept, "refused": refused}

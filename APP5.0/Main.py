@@ -3,8 +3,8 @@ Main.py — multipage ROUTER for APP5.0 (st.navigation entrypoint).
 
 The frame around every page: sets the page config ONCE, then defines a grouped,
 sectioned sidebar (Analyze · Build · Plan & scout) via st.navigation and runs the
-selected page. The executive dashboard that used to live here now lives in
-pages/0_Analytics_Hub.py (the `default` page).
+selected page. Team Dashboard is the `default` page — the coach's own team is
+what the app opens on.
 
 Why a router: st.navigation gives real sidebar SECTIONS + per-page icons the auto
 pages/ discovery can't. Per the Streamlit docs, once st.navigation runs the app
@@ -80,13 +80,15 @@ _NAV = {
         # office shows you your program first; the league is a place you go.
         # Team Dashboard resolves the team from the default_team setting and
         # falls back to the coach's identity team, so this lands somewhere
-        # personal without any setup. Analytics Hub keeps its own entry and
-        # every bit of its depth — nothing was consolidated away, the landing
-        # page just changed.
+        # personal without any setup.
         st.Page("pages/6_Team_Dashboard.py", title="Team Dashboard",
                 icon=":material/groups:", default=True),
-        st.Page("pages/0_Analytics_Hub.py", title="Analytics Hub",
-                icon=":material/dashboard:"),
+        # Analytics Hub was CUT on 2026-09-05. Nine of its fourteen sections
+        # restated Rankings or Players, and its "Jump in" block was a stale copy
+        # of this very sidebar. The five that were genuinely its own moved to
+        # Rankings → Spotlight (helpers/league_spotlight.py), so nothing a coach
+        # could only get there was lost — there is just one league page now
+        # instead of two that disagreed about which was the league page.
         st.Page("pages/5_Rankings.py", title="Rankings",
                 icon=":material/leaderboard:"),
         st.Page("pages/7_Players.py", title="Players",
@@ -117,9 +119,9 @@ _NAV = {
     # Settings and FAQ sat under "Plan & scout", which is where a coach goes to
     # prepare for an opponent — neither page has anything to do with that. They
     # are the app's own controls, so they get their own section at the bottom.
-    # Nothing else moved and no page was removed: every one of the sixteen still
-    # has its own entry, because Officials, Whiteboard, Rankings and the FAQ all
-    # carry real depth a coach needs.
+    # Officials, Whiteboard, Rankings and the FAQ all keep their own entry,
+    # because each carries real depth a coach needs. (Analytics Hub is the one
+    # page ever removed — see the note above; its unique content is on Rankings.)
     "Settings & Help": [
         st.Page("pages/12_Settings.py", title="Settings",
                 icon=":material/tune:"),

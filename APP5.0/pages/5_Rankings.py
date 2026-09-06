@@ -553,7 +553,7 @@ with st.expander("🕘 Rating history", expanded=False):
                    f"{RH.BACKFILL_MIN_GAMES} finished games, where a rating is "
                    f"the sample arriving rather than anything a team did."
                    if _bf["skipped"] else ""))
-            st.cache_data.clear()
+            _uimod.clear_data()
         else:
             st.info("Nothing to rebuild — no finished games in this season.")
 
@@ -634,8 +634,13 @@ st.caption(("State / " if _RK_MULTI_ST else "")
 # Compare promoted to #2 (the real opponent-prep tool); Team Charts + League
 # folded into one "League landscape" view (both render the same possession pack)
 # with an inner lazy Section selector so only the chosen sub-view computes.
+# "Spotlight" (2026-09-05) is the Analytics Hub's inheritance. That page was cut
+# because nine of its fourteen sections restated this one; the five that did not
+# — tagging coverage, the weekly awards digest, the risers strip, the game of the
+# season and the auto-mined league reads, plus Notables — moved here, which is
+# where league content belonged all along. helpers/league_spotlight.py owns them.
 _RK_VIEWS = ["Overview", "Compare", "Team", "Tracked", "League landscape",
-             "Glossary"]
+             "Spotlight", "Glossary"]
 _view = _rkseg("View", _RK_VIEWS, default="Overview", key="rk_view") or "Overview"
 # one stat key for the whole page's dense tables (Overview / Tracked / Lab)
 _glossary_key("Power", "SOS", "ORtg", "DRtg", "NetRtg", "PPP", "Pace",
@@ -3240,6 +3245,21 @@ def _fx_evr():
 # runs (st.tabs would compute both bodies — segmented keeps it lazy). Each
 # sub-view keeps its ORIGINAL gating: Team Charts behind _paid_pool_lock,
 # League (_fx_evr) ungated as before.
+if _view == "Spotlight":
+    import helpers.league_spotlight as _LS
+    st.caption("What the league looks like this week — capture health, the "
+               "weekly awards, the biggest board movers, the season's best "
+               "game, and what the miner found on its own.")
+    # Same gate the Hub applied: the cross-team, event-derived strips put several
+    # teams in ONE view, so they need Paid AND league-wide (the MULTI-TEAM rule),
+    # not merely Paid. _VIS is the page's already-resolved read-filter.
+    _ls_ident = AUTH.current_user()
+    _ls_paid = (ENT.has_paid_plan(_ls_ident) and ENT.viewer_is_league_wide(_ls_ident))
+    _LS.render(gender, paid=_ls_paid,
+               vis=(None if _VIS is None else tuple(sorted(_VIS))),
+               accent=ACCENT, scored=scored)
+
+
 if _view == "League landscape":
     _ll = _rkseg("Section", ["Team Charts", "League Lab"],
                  default="Team Charts", key="rk_ll_section") or "Team Charts"

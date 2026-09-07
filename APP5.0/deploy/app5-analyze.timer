@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the APP5 query-planner statistics once a day
+
+[Timer]
+# 03:40, ten minutes after the rollover check, so the two maintenance writes
+# never contend for the same writer lock. Persistent=true → a box that was off
+# overnight still refreshes on the next boot.
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

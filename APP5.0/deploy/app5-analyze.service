@@ -1,0 +1,19 @@
+[Unit]
+Description=APP5 query-planner statistics (ANALYZE the book)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5/APP5.0
+Environment=APP5_DATA_DIR=/var/lib/app5
+# ~0.1s on a 17 MB book, and it is the difference between the planner searching
+# idx_games_season (13,362 rows) and idx_games_tracked (63) on the predicate
+# that appears at 74 sites. A WRITE, which is why it is a nightly timer rather
+# than a step in initialize_database() — see tools/analyze_book.py.
+ExecStart=/home/app5/app5/APP5.0/.venv/bin/python tools/analyze_book.py
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5

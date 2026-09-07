@@ -249,6 +249,29 @@ sudo -u app5 litestream restore -config /etc/litestream.yml /var/lib/app5/analyt
 sudo systemctl start app5-litestream app5-web app5-tracker
 ```
 
+## 8b. Maintenance timers
+
+`deploy/` carries systemd unit + timer pairs for the jobs that must not depend
+on anybody remembering them in January. **They ship in the repo and are not
+installed on the droplet** — installing each one is a `sudo` step someone has to
+take, and until it is taken the job simply never runs.
+
+```bash
+sudo cp ~/app5/APP5.0/deploy/app5-analyze.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now app5-analyze.timer
+systemctl list-timers 'app5-*'            # confirm the next elapse
+```
+
+| timer | what it does | why it cannot be manual |
+|---|---|---|
+| `app5-analyze` | `ANALYZE` — refreshes the query planner's statistics (~0.1 s) | Without it the planner searches a 13,362-row index instead of a 63-row one on the predicate 74 sites share. |
+| `app5-season-rollover` | rolls the active season at the Oct 1 boundary | Everything scoped to `season='Current'` is wrong from Oct 1 until someone presses the button. |
+| `app5-ossaa-refresh`, `app5-living-recal` | see their unit files | — |
+
+Same shape for each: copy the pair, `daemon-reload`, `enable --now`. All are
+idempotent and all no-op on a run with nothing to do, so a double install or an
+extra run costs nothing.
+
 ## 9. Cold-start the Coaches' Co-op (GTM, not code)
 
 The co-op is **Solo by default**, so on day one the shared pool is empty and

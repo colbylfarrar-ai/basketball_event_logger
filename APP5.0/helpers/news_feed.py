@@ -124,12 +124,53 @@ def _result_notes(g, *, big_win=15, close=3):
     return notes
 
 
+def attach_reports(items):
+    """Attach `postgame.game_report` bullets to every TRACKED result item.
+
+    The module docstring has always said "`postgame` generates a game report",
+    and the feed has never carried one — the read reached the box score and the
+    Game Tracker and nowhere a coach browses a season.
+
+    Events for every tracked game in the batch are fetched ONCE and sliced per
+    game rather than letting `game_report` fetch its own. A 26-game season is
+    otherwise 26 round trips to build one screen, and prod is a single vCPU.
+    Fails soft: a report that cannot be built leaves the item exactly as it was.
+    """
+    gids = [it["game_id"] for it in items
+            if it.get("kind") == "result" and it.get("tracked")]
+    if not gids:
+        return items
+    try:
+        import helpers.postgame as PG
+        import helpers.stats as S
+        ev = S.fetch_events(gids)
+        by_game = {}
+        for e in ev:
+            by_game.setdefault(e["game_id"], []).append(e)
+        for it in items:
+            if it.get("kind") != "result" or not it.get("tracked"):
+                continue
+            rows = by_game.get(it["game_id"])
+            if not rows:
+                continue
+            bullets = PG.game_report(it["game_id"], events=rows)
+            if bullets:
+                it["report"] = bullets
+    except Exception:
+        pass
+    return items
+
+
 def feed(team_id, gender, season=SEAS.ACTIVE, limit=40, system="score",
-         with_movement=True):
+         with_movement=True, with_report=False):
     """The team's season, newest first: [{kind, date, ...}].
 
     Every item carries `date` and `kind`; renderers switch on `kind` rather
     than parsing text, so a new item type is additive.
+
+    `with_report=True` attaches the post-game read to tracked results (see
+    `attach_reports`). Off by default because it costs an event pass, so a
+    caller that only needs headlines does not pay for prose it will not draw.
     """
     items = []
     for g in team_games(team_id, season=season):
@@ -148,7 +189,9 @@ def feed(team_id, gender, season=SEAS.ACTIVE, limit=40, system="score",
     order = {k: i for i, k in enumerate(KINDS)}
     items.sort(key=lambda it: (it["date"], -order.get(it["kind"], 9)),
                reverse=True)
-    return items[:limit] if limit else items
+    items = items[:limit] if limit else items
+    # after the cut, so a 40-item limit never pays for the season's tail
+    return attach_reports(items) if with_report else items
 
 
 def movement_sentence(it):

@@ -54,7 +54,8 @@ def render(ctx, *, limit=24, season=None, heading="Season feed"):
     gender = getattr(ctx, "gender", None)
 
     try:
-        items = NF.feed(tid, gender, season=season, limit=limit)
+        items = NF.feed(tid, gender, season=season, limit=limit,
+                        with_report=True)
         summ = NF.summary(tid, gender, season=season)
     except Exception:
         return
@@ -96,6 +97,14 @@ def render(ctx, *, limit=24, season=None, heading="Season feed"):
                 body += (f"<div style='color:var(--subtext);font-size:12px;"
                          f"margin-top:2px'>"
                          f"{html.escape(' · '.join(it['notes']))}</div>")
+            # the post-game read — what actually happened, not just the score.
+            # `game_report` writes markdown bold, so strip the ** rather than
+            # escaping it into literal asterisks in an HTML row.
+            if it.get("report"):
+                _read = " ".join(it["report"])
+                _read = html.escape(_read).replace("**", "")
+                body += (f"<div style='color:var(--subtext);font-size:12px;"
+                         f"margin-top:4px;line-height:1.45'>{_read}</div>")
         else:
             accent = _UP if it["d_rating"] >= 0 else _DOWN
             body = (f"<div style='color:var(--subtext);font-size:13px'>"

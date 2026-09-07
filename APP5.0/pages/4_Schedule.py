@@ -192,6 +192,20 @@ def _tratings(g):
     return TR.tracked_ratings(gender=g)
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _postgame_read(game_id):
+    """The plain-English account of one tracked game, as markdown bullets.
+
+    Cached for six hours because a finished game's report never changes. Any
+    failure is an absent paragraph, never a broken schedule.
+    """
+    try:
+        import helpers.postgame as PG
+        return PG.game_report(game_id)
+    except Exception:
+        return []
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _player_meta():
     return {r["id"]: (r["name"], r["team"]) for r in query(
@@ -479,6 +493,17 @@ def _day_section():
     </div>
     """, unsafe_allow_html=True)
 
+    # ── the post-game read ───────────────────────────────────────────────────
+    # THE BOOK 12.1: `postgame.game_report` writes a plain-English account of
+    # every tracked game and reached two surfaces, neither of them this one —
+    # the Schedule page carried 22 labels and not one sentence. One game a day
+    # gets it here (the marquee), so the cost is a single event pass.
+    if gotd["tracked"]:
+        for _b in _postgame_read(gotd["id"]):
+            st.markdown(f"<div style='color:var(--subtext);font-size:13px;"
+                        f"margin:2px 0 0 2px'>{_b}</div>",
+                        unsafe_allow_html=True)
+
     if gotd["tracked"]:
         with st.expander("Full report — Game of the Day"):
             _lazy_box(gotd["id"], f"sched_box_gotd_{gotd['id']}")
@@ -601,6 +626,16 @@ def _day_section():
              (g['t1'], hs_s, t1_win, _chip(g['team1_id']))],
             footer=f"{meta}{tracked_badge}", style_names=True),
             unsafe_allow_html=True)
+
+        # THE BOOK 12.1 — the sentence under the score. This page carried 22
+        # labels and not one of them said what happened in any game on it.
+        # Only tracked games have the events to say anything, and a day holds a
+        # handful of them, so the cost is bounded and each report is cached.
+        if g["tracked"]:
+            for _b in _postgame_read(g["id"]):
+                st.markdown(f"<div style='color:var(--subtext);font-size:13px;"
+                            f"margin:2px 0 0 2px'>{_b}</div>",
+                            unsafe_allow_html=True)
 
         if g["tracked"]:
             with st.expander(f"Box score — {g['t2']} @ {g['t1']}"):

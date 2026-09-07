@@ -194,6 +194,33 @@ def render(ctx):
                  height=min(680, 60 + 35 * len(sched_rows)),
                  column_config=sched_cfg)
 
+    # ── post-game read (THE BOOK 12.1) ───────────────────────────────────────
+    # The table above is thirteen columns of numbers and no sentence about any
+    # of the games in it. `postgame.game_report` has written that sentence all
+    # along and reached only the box score. One game at a time, chosen — a
+    # season's worth eagerly would be one event pass per row on a single vCPU.
+    _trk = [g for g in ctx.log if g.get("tracked")]
+    if _trk:
+        st.markdown("<div class='lab-hdr'>Post-game read</div>",
+                    unsafe_allow_html=True)
+        _opts = {f"{g['date']} {g['site']} {g['opp']} "
+                 f"({'W' if g['won'] else 'L'} {g['pf']}-{g['pa']})":
+                 g["game_id"] for g in reversed(_trk)}
+        _pick = st.selectbox("Game", list(_opts), key="sched_pg_pick",
+                             label_visibility="collapsed")
+        try:
+            import helpers.postgame as PG
+            _bul = PG.game_report(_opts[_pick])
+        except Exception:
+            _bul = []
+        if _bul:
+            for _b in _bul:
+                st.markdown("- " + _b)
+            st.caption("Auto-generated from the four-factors, RATING and runs "
+                       "engines — the same numbers as the tabs above.")
+        else:
+            st.caption("No events logged for that game yet.")
+
     # ── upcoming games — the model's pre-game read, for weekly prep ──────────
     # Date floor: a past game whose score never got entered must not lead the
     # "Upcoming" list. (Dates are ISO-normalised in the DB.) Today's games

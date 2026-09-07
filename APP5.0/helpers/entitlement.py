@@ -215,6 +215,15 @@ def own_created_game_ids(ident: dict | None, season=SEAS_DEFAULT) -> set[int]:
     decided what its author may READ. On production that left 32 of 63 tracked
     games invisible to the person who typed them in.
     """
+    # Moderation outranks authorship. A pool-banned coach is forced Solo and
+    # gets the suspension notice rather than depth; own-creation must not become
+    # the way around that, and gating it HERE means all four call sites inherit
+    # the rule instead of each remembering it. (Q3 did not rule on ban ×
+    # own-creation — whether a ban revokes READING your own tracked work or only
+    # SHARING it is an open question, and this is the conservative reading:
+    # the existing moderation contract is tested and stays as it was.)
+    if is_pool_banned(ident):
+        return set()
     emails = staff_emails(ident)
     if not emails:
         return set()

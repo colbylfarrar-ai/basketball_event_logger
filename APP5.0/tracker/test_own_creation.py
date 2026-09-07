@@ -198,6 +198,25 @@ def test_a_game_the_coach_logged_opens_its_own_depth():
         in_pool=0, game_id=_G["strangers"])
 
 
+def test_a_banned_coach_does_not_get_their_scouting_back():
+    """Moderation outranks authorship.
+
+    A pool-banned coach is forced Solo and `tracked_gate` hands them a
+    suspension notice. Own-creation must not become the way around that — the
+    first version of this rule sat above the ban branch and turned the notice
+    into full depth, which `tracker/test_entitlement.py` caught.
+
+    Q3 did not rule on ban x own-creation. Whether a ban revokes READING your
+    own tracked work or only SHARING it is a real question; this is the
+    conservative answer, and it keeps the moderation contract that already had a
+    test around it."""
+    banned = _ident(HEAD, [_G["mine"]])
+    banned["pool_banned"] = 1
+    assert ENT.own_created_game_ids(banned, "Current") == set()
+    visible, msg = ENT.tracked_gate(banned, _G["them"], True, season="Current")
+    assert not visible and "suspend" in (msg or "").lower(), msg
+
+
 def test_an_unattributed_game_is_not_claimed_by_anyone():
     """Q3: empty `tracked_by` needs no attribution. It must not match a viewer
     whose staff list happens to contain an empty string."""

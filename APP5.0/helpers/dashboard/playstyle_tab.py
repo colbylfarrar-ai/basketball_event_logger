@@ -240,7 +240,7 @@ def _render_fingerprint(ctx, g, tid, off, nrows, prof):
             "TO%": _pctv(nb.get("TO%")),
             "eFG%": f"{p.get('eFG', 0) * 100:.0f}%",
             "OREB%": _pctv(fb.get("OREB%")),
-            "ScEff": f"{p.get('SCE', 0) * 100:.0f}%",
+            "ScEff": f"{p.get('ScEff', 0) * 100:.0f}%",
             "3PA%": f"{p['3PA_rate'] * 100:.0f}%",
             "Rim%": f"{p['rim_rate'] * 100:.0f}%",
             "Assisted%": f"{p['ast_rate'] * 100:.0f}%",
@@ -420,7 +420,7 @@ def render(ctx):
             "FG%": f"{r['FG%'] * 100:.0f}%",
             "3P%": f"{r.get('3P%', 0) * 100:.0f}%",
             "eFG%": f"{r.get('eFG', 0) * 100:.0f}%",
-            "ScEff": f"{r.get('SCE', 0) * 100:.0f}%",
+            "ScEff": f"{r.get('ScEff', 0) * 100:.0f}%",
             "Tier": r["tier"],
         } for r in nrows]), unsafe_allow_html=True)
         st.caption("PPP = points/possession (turnover possessions included once "
@@ -691,7 +691,7 @@ def render(ctx):
         if pr_sets:
             for k, c in sorted(pr_sets.items(), key=lambda kv: -kv[1]["poss"]):
                 val = (f"{c['PPP']:.2f} PPP · {c['FG%'] * 100:.0f}% FG · "
-                       f"{c.get('SCE', 0) * 100:.0f}% ScEff · {c['poss']} poss")
+                       f"{c.get('ScEff', 0) * 100:.0f}% ScEff · {c['poss']} poss")
                 st.markdown(_pctile_or_thin(_PTL.get(k, k), val, c.get("pct"),
                                             n=c.get("pool_n")),
                             unsafe_allow_html=True)

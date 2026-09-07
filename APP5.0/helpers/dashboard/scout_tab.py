@@ -619,7 +619,7 @@ def render(ctx):
             row = prow_by_name.get(p["name"])
             archlbl = sc_arch.get(row["_pid"]) if row else None
             usg = row.get("USG%") if row else None
-            selfcr = row.get("SelfCr%") if row else None
+            selfcr = row.get("SCE") if row else None
             q4 = row.get("Q4PPG") if row else None
             extra = []
             if usg is not None:

@@ -649,13 +649,13 @@ def _g_rebound(row, pools, d):
 
 
 def _g_selfcreate(row, pools, d):
-    """Shot-creation independence (SelfCr%): makes their own off the dribble vs
+    """Shot-creation independence (SCE): makes their own off the dribble vs
     lives off the catch — the 'deny the ball' vs 'deny the pass' read."""
-    sc = _num(row, "SelfCr%")
+    sc = _num(row, "SCE")
     fga = _num(row, "FGA") or 0
     if sc is None or fga < tier_gate(22, _num(row, "GP") or 0, 8):
         return None
-    z = _z(sc, pools.get("SelfCr%"))
+    z = _z(sc, pools.get("SCE"))
     if abs(z) < MIN_Z:
         return None
     if z >= 0:
@@ -1427,7 +1427,7 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
         "PerimDef": col(lambda p, r: _num(r, "PerimDef")),
         "OREBrtg": col(lambda p, r: _num(r, "OREBrtg")),
         "DREBrtg": col(lambda p, r: _num(r, "DREBrtg")),
-        "SelfCr%": col(lambda p, r: _num(r, "SelfCr%")),
+        "SCE": col(lambda p, r: _num(r, "SCE")),
         "AST%": col(lambda p, r: _num(r, "AST%")),
         "STOCKS/32": col(lambda p, r: _num(r, "STOCKS/32")),
         "Near_FG%": col(lambda p, r: _num(r, "Near_FG%")),

@@ -96,8 +96,8 @@ def edge_boards(gender=None, game_ids=None, season="Current"):
          "signed": [], "pct": ["Q4 %"]},
         {"key": "creators", "title": "Shot creators",
          "caption": "Self-created shot share — low assist dependency (FGA ≥ 20)",
-         "rows": _rank(table, "SelfCr%", "FGA", 20, cols=[
-             ("Player", "name"), ("Team", "team"), ("Self-cr%", "SelfCr%"),
+         "rows": _rank(table, "SCE", "FGA", 20, cols=[
+             ("Player", "name"), ("Team", "team"), ("Self-cr%", "SCE"),
              ("FGA", "FGA")]),
          "signed": [], "pct": ["Self-cr%"]},
         {"key": "efficient", "title": "Efficient at volume",

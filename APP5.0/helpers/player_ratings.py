@@ -2061,7 +2061,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
             "RimFGA%": _pct(_safe(rim_a, fga)) if has_fga else None,
             "MidFGA%": _pct(_safe(mid_a, fga)) if has_fga else None,
             # ── shot independence ───────────────────────────────────
-            "SelfCr%": _pct(_safe(self_a, fga)) if has_fga else None,
+            "SCE": _pct(_safe(self_a, fga)) if has_fga else None,
             "Astd%":   _pct(_safe(astd_a, fga)) if has_fga else None,
             # ── shot-creation source mix (shares of the player's total SC) ──
             # SC = own shots (SC_shoot) + passes into shots (SC_pass) + screens
@@ -2131,7 +2131,7 @@ EVENT_DERIVED_STATS = frozenset({
     "RimDef", "PerimDef", "OREBrtg", "DREBrtg", "AST%", "Impact",
     "PassFG%", "PassxFG%", "PassOpen%",
     # shot-creation / usage / impact (lineups, minutes, possessions, events)
-    "SC", "SC/G", "SCShot%", "SCPass%", "SCCreated%", "SelfCr%", "Astd%",
+    "SC", "SC/G", "SCShot%", "SCPass%", "SCCreated%", "SCE", "Astd%",
     "USG%", "MIN", "MPG", "+/-", "+/-/G", "STOCKS/32",
     # on-court rate stats (need game_event_lineup)
     "Guarded%", "REB%", "OREB%", "DREB%", "DSHOT%", "defFGA",

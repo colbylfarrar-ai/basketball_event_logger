@@ -105,10 +105,10 @@ def team_defenses(team_id, gender=None, game_ids=None, events=None, offense=True
     Self-contained: with no events it does one tracked-game pass for the gender
     (same scoping as playtypes). A possession is a shot OR a tagged turnover, so
     poss = FGA + tagged TOV and PPP is a true per-possession rate (mirrors
-    playtypes.team_named_playtypes). Shot-mix rates (FG%/eFG/SCE/3P%) stay on
+    playtypes.team_named_playtypes). Shot-mix rates (FG%/eFG/ScEff/3P%) stay on
     the FGA denominator; TO% = TOV / poss.
 
-    Returns {'rows':[{key,label,family,poss,FGA,TOV,TO%,FGM,PPP,FG%,eFG,SCE,3P%,
+    Returns {'rows':[{key,label,family,poss,FGA,TOV,TO%,FGM,PPP,FG%,eFG,ScEff,3P%,
     2P%,3PA,share}],'total_tagged','untagged'}. Rows are only the schemes
     actually present, sorted by possessions (volume). Unknown/legacy labels fold
     into 'other'."""
@@ -159,7 +159,7 @@ def team_defenses(team_id, gender=None, game_ids=None, events=None, offense=True
             "TO%": _safe(c["TOV"], poss),
             "PPP": _safe(c["PTS"], poss), "FG%": _safe(c["FGM"], c["FGA"]),
             "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
-            "SCE": _safe(c["PTS"], _2pa * 2 + c["FG3A"] * 3),
+            "ScEff": _safe(c["PTS"], _2pa * 2 + c["FG3A"] * 3),
             "3P%": _safe(c["FG3M"], c["FG3A"]), "2P%": _safe(_2pm, _2pa),
             "3PA": c["FG3A"], "share": _safe(poss, total_poss),
         })
@@ -172,7 +172,7 @@ def team_defense_families(team_id, gender=None, game_ids=None, events=None,
                           offense=True):
     """team_defenses collapsed to the man/zone/press/trap/junk/scramble FAMILIES —
     the first-order read ("they're a zone team", "they press a third of trips").
-    Returns {'rows':[{family,label,poss,FGM,PPP,FG%,eFG,SCE,share}],'total_tagged'},
+    Returns {'rows':[{family,label,poss,FGM,PPP,FG%,eFG,ScEff,share}],'total_tagged'},
     sorted by possessions."""
     if events is None:
         gids = game_ids if game_ids is not None else PT._tracked_game_ids(gender)
@@ -199,7 +199,7 @@ def team_defense_families(team_id, gender=None, game_ids=None, events=None,
             continue
         rows.append({
             "family": fam, "label": lbl, "poss": a["FGA"], "FGM": a["FGM"],
-            "PPP": a["PPS"], "FG%": a["FG%"], "eFG": a["eFG"], "SCE": a["SCE"],
+            "PPP": a["PPS"], "FG%": a["FG%"], "eFG": a["eFG"], "ScEff": a["ScEff"],
             "share": _safe(a["FGA"], tagged)})
     rows.sort(key=lambda r: -r["poss"])
     return {"rows": rows, "total_tagged": tagged}

@@ -533,8 +533,8 @@ def _raw_offense(chosen, league_eff, team_sc_per_a=None):
         e = w * e + (1.0 - w) * league_eff
         eff_each.append(e)
         eff_sum += s * e
-        # usage-weighted SelfCr% kept only for the "off the dribble" display line
-        selfcr += s * ((r.get("SelfCr%") or 0.0) / 100.0)
+        # usage-weighted SCE kept only for the "off the dribble" display line
+        selfcr += s * ((r.get("SCE") or 0.0) / 100.0)
 
     # ── shot-creation factor (SC/A normalised to the team average) ──────────
     unit_sc  = sum(float(r.get("SC")  or 0.0) for r in chosen)
@@ -720,7 +720,7 @@ def lineup_prediction(player_rows, pids, ctx, team_id, opp_id=None):
             "off_pts100": round(100.0 * s * e, 1),   # this player's slice of ORtg
             "scoring_eff": round(e, 3),              # points / possession used
             "def_z": round(dz, 2),                   # defensive goodness (z)
-            "self_cr": r.get("SelfCr%"),
+            "self_cr": r.get("SCE"),
             "reliable": (r.get("FGA") or 0) >= LINEUP_RELIABLE_FGA,
         })
     contrib.sort(key=lambda c: c["off_pts100"], reverse=True)
@@ -839,7 +839,7 @@ def agg_shots(shots):
     tpm = sum(1 for s in shots if s["shot_type"] == 3 and s["shot_result"] == "make")
     twa, twm = fga - tpa, fgm - tpm
     pts = twm * 2 + tpm * 3
-    # SCE = (FG points) / max FG points possible = PTS / (2PA*2 + 3PA*3). For a
+    # ScEff = (FG points) / max FG points possible = PTS / (2PA*2 + 3PA*3). For a
     # shot list there are no free throws, so the "- FT" term is 0.
     sce_denom = twa * 2 + tpa * 3
     return {
@@ -847,7 +847,7 @@ def agg_shots(shots):
         "2PA": twa, "2PM": twm, "2P%": _safe(twm, twa),
         "3PA": tpa, "3PM": tpm, "3P%": _safe(tpm, tpa),
         "PTS": pts, "eFG": _safe(fgm + 0.5 * tpm, fga), "PPS": _safe(pts, fga),
-        "SCE": _safe(pts, sce_denom),
+        "ScEff": _safe(pts, sce_denom),
     }
 
 
@@ -1037,7 +1037,7 @@ def possession_length_splits(team_id, game_ids=None, events=None):
     """
     The team's own shots bucketed by the possession length (possession_secs) of
     the shot event. Returns
-      [{label, FGA, FGM, FG%, 3P%, 2P%, PTS, PPS, PPP, SCE, AST%,
+      [{label, FGA, FGM, FG%, 3P%, 2P%, PTS, PPS, PPP, ScEff, AST%,
         self, pass, screen, both}, …]
     plus an 'Untimed' bucket for the ~16% of events with possession_secs = 0.
     PPP here == PPS (a shot ends the possession, so possessions == FGA).

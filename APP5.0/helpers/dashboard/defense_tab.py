@@ -493,7 +493,7 @@ def render(ctx):
             "FG%": f"{r['FG%'] * 100:.0f}%",
             "3P%": f"{r.get('3P%', 0) * 100:.0f}%",
             "eFG%": f"{r.get('eFG', 0) * 100:.0f}%",
-            "ScEff": f"{r.get('SCE', 0) * 100:.0f}%",
+            "ScEff": f"{r.get('ScEff', 0) * 100:.0f}%",
             "Tier": r["tier"],
         } for r in drows]), unsafe_allow_html=True)
         st.caption("Poss = shots + tagged turnovers · PPP = points/possession · "

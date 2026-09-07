@@ -111,7 +111,7 @@ def player_card_html(player_id, gender=None, table=None):
 
     # Impact & signature strip — the invented/impact tiles the on-screen card leads
     # with, so the printout carries the same headline advanced read.
-    _selfcr = r.get("SelfCr%")
+    _selfcr = r.get("SCE")
     _passpct = (100 - _selfcr) if _selfcr is not None else None
     try:
         import helpers.spacing as SP
@@ -122,7 +122,7 @@ def player_card_html(player_id, gender=None, table=None):
         _kpi("MIN/G", g("MPG")), _kpi("+/-", g("+/-", "{:+.0f}")),
         _kpi("EFF", g("EFF", "{:.0f}")), _kpi("VPS", g("VPS", "{:.2f}")),
         _kpi("2-WAY", g("2WAY", "{:.0f}")), _kpi("SMOE", g("SMOE", "{:+.2f}")),
-        _kpi("SELF-CR%", g("SelfCr%", "{:.0f}")),
+        _kpi("SELF-CR%", g("SCE", "{:.0f}")),
         _kpi("PASS%", f"{_passpct:.0f}" if _passpct is not None else "—"),
         _kpi("SPACING", f"{_space:.0f}" if _space is not None else "—"),
         # the profile's Signature defense splits (FG% allowed at the rim / arc)

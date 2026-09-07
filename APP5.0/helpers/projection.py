@@ -69,7 +69,7 @@ _STAT_SPECS = [
     ("SMOE",     "SMOE",     _fga,                             False),
     ("ScEff",    "ScEff",    _fga,                             False),
     # creation / playmaking
-    ("SelfCr%",  "SelfCr%",  _fga,                             False),
+    ("SCE",  "SCE",  _fga,                             False),
     ("PassFG%",  "PassFG%",  lambda r: r.get("PotAST") or 0,   False),
     ("AST%",     "AST%",     lambda r: (r.get("PotAST") or 0) or (r.get("MIN") or 0), False),
     # ball security / free throws

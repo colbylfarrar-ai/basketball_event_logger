@@ -99,7 +99,7 @@ BADGES = [
      "stat": "PaintPTS", "gate": ("PaintA", 10),
      "desc": "Dominates scoring inside."},
     {"key": "self_creator", "name": "Self-Creator", "emoji": "", "cat": "Scoring",
-     "stat": "SelfCr%", "gate": ("FGA", 20),
+     "stat": "SCE", "gate": ("FGA", 20),
      "desc": "Generates their own shot — low assist dependency."},
     {"key": "closer", "name": "Closer", "emoji": "", "cat": "Scoring",
      "stat": "Q4PPG", "gate": ("FGA", 15),

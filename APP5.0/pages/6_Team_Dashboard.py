@@ -147,7 +147,7 @@ PLAYER_LEADER_GROUPS = [
         ("Pts responsible for /g", "PRF/G", "f1"),
         ("SC Shot %", "SCShot%", "pct"), ("SC Pass %", "SCPass%", "pct"),
         ("SC Created %", "SCCreated%", "pct"),
-        ("Self-created %", "SelfCr%", "pct"), ("Assisted %", "Astd%", "pct"),
+        ("Self-created %", "SCE", "pct"), ("Assisted %", "Astd%", "pct"),
     ]),
     ("Rebounding", [
         ("Rebounds / game", "RPG", "f1"), ("OREB / game", "OREB/G", "f1"),
@@ -255,7 +255,7 @@ def _shot_row(name, a, ppf=1.0, ftpf=0.0):
         "3PA": a["3PA"], "3P%": _pctf(a["3P%"]) if a["3PA"] else "—",
         "eFG%": _pctf(a["eFG"]) if a["FGA"] else "—",
         "PPP": f"{ppp:.2f}" if ppp is not None else "—",
-        "ScEff": f"{a['SCE']:.3f}" if a["FGA"] else "—",
+        "ScEff": f"{a['ScEff']:.3f}" if a["FGA"] else "—",
         "PTS": a["PTS"],
     }
 
@@ -2069,7 +2069,7 @@ if _tdview == "Charts":
                     "3P%": _pctf(r["3P%"]) if r["3PA"] else "—",
                     "PPP": (f"{_ppp(r, ppf, ftpf):.2f}"
                             if _ppp(r, ppf, ftpf) is not None else "—"),
-                    "ScEff": f"{r['SCE']:.3f}",
+                    "ScEff": f"{r['ScEff']:.3f}",
                     "AST%": _pctf(r["AST%"]),
                 } for r in plen])
                 lc, rc = st.columns([1, 1])
@@ -2568,8 +2568,8 @@ if _tdview == "Charts":
                 with cc3:
                     st.markdown("**ScEff by creation type** (2s vs 3s)")
                     st.plotly_chart(_crt_fig(
-                        lambda a: a["SCE"], "ScEff",
-                        text_fn=lambda a: f"{a['SCE']:.2f}" if a["FGA"] else "—"),
+                        lambda a: a["ScEff"], "ScEff",
+                        text_fn=lambda a: f"{a['ScEff']:.2f}" if a["FGA"] else "—"),
                         width="stretch", key="sh_crb_sce")
                 with cc4:
                     st.markdown("**Points / shot by creation type** (2s vs 3s)")
@@ -3282,7 +3282,7 @@ if _tdview == "Charts":
                                    f"{_tp.get('PPP') or 0:.2f}")
                     _ssm[1].metric(f"PPP vs bottom half ({_ss['bottom_games']}g)",
                                    f"{_bt.get('PPP') or 0:.2f}")
-                    _SS_CATS = [("eFG%", "eFG"), ("ScEff", "SCE"),
+                    _SS_CATS = [("eFG%", "eFG"), ("ScEff", "ScEff"),
                                 ("3PA rate", "3PA_rate"), ("Rim rate", "rim_rate"),
                                 ("Assisted", "ast_rate"), ("Open looks", "open_rate")]
                     ssf = go.Figure()

@@ -341,7 +341,7 @@ def team_tracked_pack(gender=None, tracked=None, game_ids=None, season=SEAS_DEFA
       name_of, class_of  label maps
 
     `ts` keys (the analytic surface used across the page):
-      TS, eFG, oeFG, FGpct, oFGpct, TPpct, oTPpct, FTpct, PPS, SCE,
+      TS, eFG, oeFG, FGpct, oFGpct, TPpct, oTPpct, FTpct, PPS, ScEff,
       TOVpct, FTr, TPAr, ORBpct, DRBpct, REBpct,
       paint_pg, paint_share, three_share, ft_share, paint3_pg,
       ast_pg, tov_pg, ast_to, ast_per_fgm, Astpct,
@@ -435,7 +435,7 @@ def team_tracked_pack(gender=None, tracked=None, game_ids=None, season=SEAS_DEFA
             "FGpct": S.fg_pct(o) * 100, "oFGpct": S.fg_pct(d) * 100,
             "TPpct": S.fg3_pct(o) * 100, "oTPpct": S.fg3_pct(d) * 100,
             "FTpct": S.ft_pct(o) * 100,
-            "PPS": S.pps(o), "SCE": S.shot_efficiency(o),
+            "PPS": S.pps(o), "ScEff": S.shot_efficiency(o),
             "TOVpct": S.tov_pct(o), "FTr": S.ftr(o), "TPAr": S.three_par(o) * 100,
             "ORBpct": 100 * S._safe(o["ORB"], o["ORB"] + d["DRB"]),
             "DRBpct": 100 * S._safe(o["DRB"], o["DRB"] + d["ORB"]),
@@ -508,7 +508,7 @@ _TEAM_STAT_SPEC = [
     ("PPP",       "ts",     "PPP",         3),
     ("Opp PPP",   "ts",     "oPPP",        3),
     ("PPS",       "ts",     "PPS",         2),
-    ("SCE",       "ts",     "SCE",         1),
+    ("ScEff",       "ts",     "ScEff",         1),
     # shooting — offense
     ("eFG%",      "ts",     "eFG",         1),
     ("TS%",       "ts",     "TS",          1),

@@ -224,7 +224,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
             notes.append("deny threes — close out high")
         if (r.get("RimFGA%") or 0) >= 45:
             notes.append("force jumper — wall the rim")
-        if (r.get("SelfCr%") or 0) >= 55:
+        if (r.get("SCE") or 0) >= 55:
             notes.append("self-creator — make someone else beat you")
         if (r.get("APG") or 0) >= 3:
             notes.append("primary creator — pressure & deny")

@@ -917,7 +917,7 @@ def render_box_score(game_id: int):
             "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
             "2P%": st.column_config.NumberColumn("2P%", format="%.0f%%"),
             "3P%": st.column_config.NumberColumn("3P%", format="%.0f%%"),
-            "SCE": st.column_config.NumberColumn("ScEff", format="%.0f%%"),
+            "ScEff": st.column_config.NumberColumn("ScEff", format="%.0f%%"),
             "AST%": st.column_config.NumberColumn("AST%", format="%.0f%%"),
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
         }
@@ -926,7 +926,7 @@ def render_box_score(game_id: int):
             df = pd.DataFrame([{
                 "Bucket": r["label"], "PPP": round(r["PPP"], 2), "FGA": r["FGA"],
                 "FG%": round(100 * r["FG%"], 0), "2P%": round(100 * r["2P%"], 0),
-                "3P%": round(100 * r["3P%"], 0), "SCE": round(100 * r["SCE"], 0),
+                "3P%": round(100 * r["3P%"], 0), "ScEff": round(100 * r["ScEff"], 0),
                 "AST%": round(100 * r["AST%"], 0), "Self": r["self"], "Pass": r["pass"],
                 "Screen": r["screen"], "Both": r["both"]} for r in rows])
             st.markdown(f"*{nm}*")
@@ -981,7 +981,7 @@ def render_box_score(game_id: int):
         cbcfg = {c: st.column_config.NumberColumn(c, format="%.0f%%")
                  for c in ("FG%", "2P%", "3P%", "eFG%")}
         cbcfg["PPP"] = st.column_config.NumberColumn("PPP", format="%.2f")
-        cbcfg["SCE"] = st.column_config.NumberColumn("ScEff", format="%.0f%%")
+        cbcfg["ScEff"] = st.column_config.NumberColumn("ScEff", format="%.0f%%")
         for tid, nm in [(t1id, t1name), (t2id, t2name)]:
             cb = TA.creation_breakdown(tid, [game_id], events=events)
             df = pd.DataFrame([{
@@ -989,7 +989,7 @@ def render_box_score(game_id: int):
                 "FG%": round(100*cb[k]["FG%"], 0), "2PM": cb[k]["2PM"], "2PA": cb[k]["2PA"],
                 "2P%": round(100*cb[k]["2P%"], 0), "3PM": cb[k]["3PM"], "3PA": cb[k]["3PA"],
                 "3P%": round(100*cb[k]["3P%"], 0), "eFG%": round(100*cb[k]["eFG"], 0),
-                "PPP": round(cb[k]["PPS"], 2), "SCE": round(100*cb[k]["SCE"], 0),
+                "PPP": round(cb[k]["PPS"], 2), "ScEff": round(100*cb[k]["ScEff"], 0),
                 "PTS": cb[k]["PTS"]} for k in ("self", "pass", "created", "both", "total")])
             st.markdown(f"*{nm}*")
             st.dataframe(df, hide_index=True, width="stretch", column_config=cbcfg,

@@ -179,7 +179,7 @@ STAT_GROUPS = [
         ("xPPS", "Expected pts / shot", "f2", True, "FGA", 10),
     ]),
     ("Shot creation & location", [
-        ("SelfCr%", "Self-created shot %", "pct", True, "FGA", 12),
+        ("SCE", "Self-created shot %", "pct", True, "FGA", 12),
         ("Astd%", "Assisted shot %", "pct", True, "FGA", 12),
         ("RimFGA%", "Rim shot share", "pct", True, "FGA", 12),
         ("MidFGA%", "Mid-range share", "pct", True, "FGA", 12),
@@ -1408,7 +1408,7 @@ def _fx_cmp():
             ("Guarded%", "pct", True), ("DSHOT%", "pct", False),
             ("+/-", "int", True), ("EFF", "int", True), ("FIC", "f1", True),
             ("PRF", "int", True), ("ShotRating", "f1", True),
-            ("SMOE", "spp", True), ("SelfCr%", "pct", True),
+            ("SMOE", "spp", True), ("SCE", "pct", True),
             ("RimFGA%", "pct", True), ("Q4PPG", "f1", True),
             ("STOCKS/32", "f1", True), ("DD", "int", True),
             ("bestPTS", "int", True), ("PTSsd", "f1", False),

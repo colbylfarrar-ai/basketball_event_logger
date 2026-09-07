@@ -38,8 +38,8 @@ DEFAULT_FEATURES = [
     "OREB/G", "DREB/G",
     # shot-creation SOURCE mix (shares of own shots): self-made vs assisted (pass
     # into the shot) vs screen-assist (freed a teammate). Splits the old single
-    # SelfCr% so centroids resolve Self-Creator vs Spot-Up vs Screen Setter.
-    "SelfCr%", "SCPass%", "SCCreated%",
+    # SCE so centroids resolve Self-Creator vs Spot-Up vs Screen Setter.
+    "SCE", "SCPass%", "SCCreated%",
     # two-way QUALITY composites (0-100). SPG/BPG alone barely represent defense,
     # so a group never separated on "good D / bad O" vs "good O / bad D". Adding the
     # OFFENSE/DEFENSE ratings lets k-means find those two-way profiles, and lets the
@@ -58,7 +58,7 @@ _AXES = {
     "rebounding":  ["RPG", "DREB/G", "OREB/G"],
     "steals":      ["SPG"],
     "blocks":      ["BPG"],
-    "creation":    ["SelfCr%"],     # self-made (off the dribble, no pass/screen)
+    "creation":    ["SCE"],     # self-made (off the dribble, no pass/screen)
     "spot_up":     ["SCPass%"],     # assisted — catch-and-shoot / drive-and-kick
     "screen_assist": ["SCCreated%"],  # frees shooters by screening (connector big)
     # two-way QUALITY axes — the OFFENSE/DEFENSE composites. Read separately from

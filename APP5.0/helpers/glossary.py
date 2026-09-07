@@ -70,8 +70,7 @@ STAT_DEFS = [
     ("ScEff", "Scoring Efficiency", "Shooting", "(2·2PM + 3·3PM) / (2·2PA + 3·3PA)",
      "Field-goal points scored vs the MAX if every attempt had fallen at its shot "
      "value — a point-weighted make rate that rewards converting the harder, "
-     "higher-value shots. Free throws excluded. NOT the same as SCE / "
-     "Self-Creation %.",
+     "higher-value shots. Free throws excluded.",
      "Higher = you're capturing more of the points your shots could yield; "
      "100% would mean making everything.", True),
     ("AdjeFG%", "Adjusted eFG%",  "Shooting",
@@ -177,9 +176,11 @@ STAT_DEFS = [
      "lower-variance running mate to plus/minus; no new tracking.",
      "Steadier than +/- on a short book — who tilts the shot count when they play.",
      True),
-    ("SCE",   "Self-Creation %",  "Playmaking", "self-created shots / FGA",
-     "Share of a player's own shots they created off the dribble (no pass into "
-     "the shot).", "Higher = shot-maker who doesn't need setup.", False),
+    ("SCE",   "Self-Creation %",  "Playmaking",
+     "shots with no pass-from AND no set-up-by / FGA",
+     "Share of a player's own shots they created themselves — nobody passed "
+     "them into it and nobody screened them into it.",
+     "Higher = shot-maker who doesn't need setup.", False),
 
     # ── Rebounding rates ──────────────────────────────────────────────────────
     ("OREB%", "Off. Rebound %",   "Rebounding", "OREB / (OREB + opp DREB) on floor",
@@ -570,7 +571,7 @@ STAT_DEFS = [
      "The share of a player's win-probability added that came in swingy, "
      "high-leverage situations (Leverage Index >= 1.5). A real 'hits the big "
      "shots' number.", "Higher = shows up when it matters most.", True),
-    ("Leverage", "Leverage Index", "Advanced",
+    ("Leverage Index", "Leverage Index", "Advanced",
      "how much a basket would swing win prob, vs average",
      "How decisive the moment is — how far a single basket would move the win "
      "probability, normalized so the game's average moment = 1.0.",

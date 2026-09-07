@@ -720,7 +720,7 @@ def render_card(ctx):
                         "the team's Power prior with the player's archetype "
                         "mean; tag more games to grow evidence and keep more "
                         "of the raw number.")
-            _selfcr = P.get("SelfCr%")
+            _selfcr = P.get("SCE")
             _passpct = (100 - _selfcr) if _selfcr is not None else None
             # Paint FG% reads off the shot chart, AST:TO lives in Per game —
             # their pills became the DEFENSE splits (FG% allowed rim / arc).
@@ -926,7 +926,7 @@ def render_card(ctx):
             ("SMOE", _fmt(P["SMOE"], "spp"), "shot-making vs exp.", "#00e5ff"),
             ("Q4 PPG", _fmt(P["Q4PPG"], "f1"),
              f"{_fmt(P['Q4%'], 'pct')} of points", "#ff7b72"),
-            ("SELF-CR%", _fmt(P["SelfCr%"], "pct"), "shot independence", "#d2a8ff"),
+            ("SELF-CR%", _fmt(P["SCE"], "pct"), "shot independence", "#d2a8ff"),
             ("STOCKS/32", _fmt(P["STOCKS/32"], "f1"), "defensive disruption", "var(--good)"),
             ("DOM-SIDE%", f"{_dom_share*100:.0f}%" if _dom_share is not None else "—",
              "strong-hand shot share", "#f0a500"),
@@ -1755,7 +1755,7 @@ def render_card(ctx):
             _PJ_LABELS = {
                 "eFG%": "Effective FG%", "TS%": "True shooting", "3P%": "Three-point %",
                 "SMOE": "Shot-making v exp", "ScEff": "Scoring eff",
-                "SelfCr%": "Self-creation %", "PassFG%": "Passing FG%", "AST%": "Assist %",
+                "SCE": "Self-creation %", "PassFG%": "Passing FG%", "AST%": "Assist %",
                 "TOV%": "Ball security", "FTR": "FT rate",
                 "OREB%": "Off. rebound %", "DREB%": "Def. rebound %",
                 "RimDFG%": "Rim D (allowed)", "PerimDFG%": "Perimeter D (allowed)"}

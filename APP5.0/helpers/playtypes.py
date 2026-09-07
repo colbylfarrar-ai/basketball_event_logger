@@ -339,10 +339,10 @@ def team_named_playtypes(team_id, gender=None, game_ids=None, events=None,
             "key": key, "label": label, "poss": poss, "FGM": c["FGM"],
             "PPP": _safe(c["PTS"], poss), "FG%": _safe(c["FGM"], c["FGA"]),
             "TOV": c["TOV"], "TO%": _safe(c["TOV"], poss), "FD": c["FD"],
-            # eFG weights 3s; SCE = FG points / max possible (rewards shot
+            # eFG weights 3s; ScEff = FG points / max possible (rewards shot
             # selection AND making); 2P%/3P% split the mix.
             "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
-            "SCE": _safe(c["PTS"], _2pa * 2 + c["FG3A"] * 3),
+            "ScEff": _safe(c["PTS"], _2pa * 2 + c["FG3A"] * 3),
             "3P%": _safe(c["FG3M"], c["FG3A"]), "2P%": _safe(_2pm, _2pa),
             "3PA": c["FG3A"], "share": _safe(poss, total_poss),
         })
@@ -404,7 +404,7 @@ def player_named_playtypes(game_ids=None, events=None):
                       "TO%": _safe(c["TOV"], c["FGA"] + c["TOV"]),
                       "FD": c["FD"],
                       "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
-                      "SCE": _safe(c["PTS"],
+                      "ScEff": _safe(c["PTS"],
                                    (c["FGA"] - c["FG3A"]) * 2 + c["FG3A"] * 3),
                       "3P%": _safe(c["FG3M"], c["FG3A"])}
                   for k, c in d.items()
@@ -721,7 +721,7 @@ def _profile_fin(p, key=None, label=None):
         "key": key, "label": label, "poss": fga, "FGM": p["FGM"],
         "PPP": _safe(p["PTS"], fga), "FG%": _safe(p["FGM"], fga),
         "eFG": _safe(p["FGM"] + 0.5 * p["FG3M"], fga),
-        "SCE": _safe(p["PTS"], (fga - p["FG3A"]) * 2 + p["FG3A"] * 3),
+        "ScEff": _safe(p["PTS"], (fga - p["FG3A"]) * 2 + p["FG3A"] * 3),
         "3PA_rate": _safe(p["FG3A"], fga),
         # finishing splits INSIDE the cell — FG% at the rim / from three vs this
         # scheme or set (None when that shot type never happened here).

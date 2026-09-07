@@ -35,7 +35,7 @@ from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
                         style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
                         gender_radio, grid as _grid, glossary_key as _glossary_key)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
-                           pctile_bar as _pctile_bar,
+                           pctile_bar as _pctile_bar, pctile_n as _pctile_n,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
                            gauge_dial as _gauge, team_short as _team_short, bar_h)
 from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
@@ -1391,7 +1391,9 @@ def _fx_cmp():
             html = f"<div style='font-weight:700;color:#c9d1d9;margin-bottom:8px'>{P['name']}</div>"
             for key, lbl, fmt, lb in PCT_STATS:
                 p = _pctile(P.get(key), key, rows, lower_better=lb)
-                html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p)
+                # Per-STAT pool, not len(rows) — see cards.pctile_n (B1).
+                html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p,
+                                    n=_pctile_n(key, rows))
             col.markdown(html, unsafe_allow_html=True)
 
         # stat-by-stat table with edge marker

@@ -241,6 +241,10 @@ def team_defense_percentiles(team_id, gender=None, game_ids=None, events=None,
         pct = TA.percentile(r["PPP"], pool, higher_better=offense) if ranked else None
         tier_label, tier_color = _tier(pct)
         rows.append({**r, "pct": pct, "tier": tier_label, "color": tier_color,
+                     # The pool the percentile was ranked against, carried so a
+                     # renderer can state it (B1) instead of publishing an
+                     # eight-team rank as though it were a league percentile.
+                     "pool_n": len(pool),
                      "lg_ppp": (sum(pool) / len(pool)) if pool else None})
     return {"rows": rows, "total_tagged": td["total_tagged"],
             "untagged": td["untagged"], "offense": offense}
@@ -489,7 +493,8 @@ def league_defense_leaders(gender=None, game_ids=None, events=None, offense=Fals
             tier_label, tier_color = _tier(pct)
             leaders.append({"team_id": tid, "PPP": cell["PPP"], "FG%": cell["FG%"],
                             "poss": cell["poss"], "share": cell["share"],
-                            "pct": pct, "tier": tier_label, "color": tier_color})
+                            "pct": pct, "pool_n": len(pool),
+                            "tier": tier_label, "color": tier_color})
         # offense -> highest PPP first; defense -> lowest allowed first
         leaders.sort(key=lambda x: x["PPP"], reverse=offense)
         if leaders:
@@ -553,6 +558,7 @@ def player_defenses_faced(gender=None, game_ids=None, events=None,
                 "FG%": _safe(c["FGM"], c["FGA"]),
                 "eFG": _safe(c["FGM"] + 0.5 * c["FG3M"], c["FGA"]),
                 "share": _safe(c["FGA"], tot), "pct": pct,
+                "pool_n": len(pool),
                 "tier": tier_label, "color": tier_color,
                 "lg_ppp": (sum(pool) / len(pool)) if pool else None}
         out[pid] = row

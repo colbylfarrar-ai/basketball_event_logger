@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+import helpers.cards as CARDS
 import helpers.stats as S
 from helpers.cards import dense_table, pctile_bar, verdict_card
 from helpers.dashboard import insights_brief as BR
@@ -58,11 +59,17 @@ def _landscape(gender, season, fp=None):
 
 
 def _dna_verdict(axes):
-    """The plain-word read the percentiles support, before the charts."""
+    """The plain-word read the percentiles support, before the charts.
+
+    The sentence carries the field size for the same reason the bars do (B1):
+    "Offense sits at the 80th league percentile" over ten tracked teams is a
+    sentence about nine other teams, and the prose is the half a coach quotes
+    back. `n` is per-axis, so the pool is named on the line it belongs to."""
     if not axes:
         return
-    by = {label: p for label, p, _v in axes}
-    o, d = by.get("Offense"), by.get("Defense")
+    by = {label: (p, n) for label, p, _v, n in axes}
+    (o, on), (d, dn) = by.get("Offense", (None, None)), \
+        by.get("Defense", (None, None))
     lines = []
     if o is not None and d is not None:
         bal = ("a real two-way team" if o >= 65 and d >= 65 else
@@ -70,21 +77,36 @@ def _dna_verdict(axes):
                "the defense carries it" if d - o >= 25 else
                "below the league bar on both ends" if o <= 35 and d <= 35 else
                "a balanced profile")
+        # Same rule as cards.pctile_bar: under the floor a percentile is not a
+        # statement, so the rank is what gets said out loud.
         lines.append((
             "Identity", None,
-            f"Offense sits at the <b>{_ord(o)}</b> league percentile, defense "
-            f"at the <b>{_ord(d)}</b> — {bal}."))
-    skills = [(lbl, p) for lbl, p, _v in axes
+            f"Offense sits {_stand(o, on)}, defense {_stand(d, dn)} — {bal}."))
+    skills = [(lbl, p, n) for lbl, p, _v, n in axes
               if lbl not in ("Offense", "Defense") and p is not None]
     if skills:
         skills.sort(key=lambda a: a[1])
         lines.append((
             "Sharpest / softest", None,
-            f"Sharpest tool: <b>{skills[-1][0]}</b> ({_ord(skills[-1][1])} "
-            f"percentile). Biggest gap: <b>{skills[0][0]}</b> "
-            f"({_ord(skills[0][1])}) — the axis a scout will aim at."))
+            f"Sharpest tool: <b>{skills[-1][0]}</b> "
+            f"({_stand(skills[-1][1], skills[-1][2])}). Biggest gap: "
+            f"<b>{skills[0][0]}</b> ({_stand(skills[0][1], skills[0][2])}) — "
+            f"the axis a scout will aim at."))
     if lines:
         st.markdown(verdict_card(lines), unsafe_allow_html=True)
+
+
+def _stand(p, n):
+    """"at the 80th of 22" / "2nd of 5" — a standing that names its field.
+
+    Mirrors cards.pctile_bar's two renderings so a coach reading the sentence
+    and the bar beside it is told the same thing twice, not two things once."""
+    if p is None:
+        return "unranked"
+    if n and n < CARDS.POOL_FLOOR:
+        rk = CARDS.rank_from_pctile(p, n)
+        return f"<b>{_ord(rk)}</b> of {n} tracked"
+    return f"at the <b>{_ord(p)}</b> percentile" + (f" of {n}" if n else "")
 
 
 def _quadrant(ctx, fp):
@@ -226,9 +248,13 @@ def _spacing_block(ctx, tids, fp):
                      unsafe_allow_html=True)
     import helpers.spacing as SP
     for i, c in enumerate(sp["components"], start=1):
-        # SP.fmt_component, not a blanket *100 — Floor width is a stdev in FEET
+        # SP.fmt_component, not a blanket *100 — Floor width is a stdev in FEET.
+        # pool_n is the QUALIFIED team count the percentile ranked against, not
+        # the tracked-team count — spacing gates on MIN_SHOTS located FGA, so
+        # the two differ and only one of them is the pool.
         cols[i].markdown(pctile_bar(c["label"], SP.fmt_component(c),
-                                    c.get("pct")), unsafe_allow_html=True)
+                                    c.get("pct"), n=sp.get("pool_n")),
+                         unsafe_allow_html=True)
 
 
 def render(ctx, *, axes, shot_diet_lines=None, shot_depth_note=None,
@@ -244,8 +270,8 @@ def render(ctx, *, axes, shot_diet_lines=None, shot_depth_note=None,
     if axes:
         BR._hdr("Team DNA — every axis against the field")
         cols = st.columns(4)
-        for i, (label, pct, val) in enumerate(axes):
-            cols[i % 4].markdown(pctile_bar(label, val, pct),
+        for i, (label, pct, val, n) in enumerate(axes):
+            cols[i % 4].markdown(pctile_bar(label, val, pct, n=n),
                                  unsafe_allow_html=True)
 
     _quadrant(ctx, fp)

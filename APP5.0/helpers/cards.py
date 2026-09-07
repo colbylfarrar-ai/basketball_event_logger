@@ -86,6 +86,17 @@ def pctile(val, key, pool, lower_better=False):
     return round(100 - p) if lower_better else round(p)
 
 
+def pctile_n(key, pool):
+    """How many rows in `pool` actually carry `key` — the pool `pctile` ranked
+    against, and therefore the number a bar has to state (B1).
+
+    Counted rather than taken as `len(pool)` because it is not the same on every
+    stat: a player with no logged minutes drops out of the MIN/G pool and not
+    the PPG one, and a bar that names the wrong pool is worse than one that
+    names none."""
+    return sum(1 for r in pool if r.get(key) is not None)
+
+
 def pctile_color(p):
     """Percentile (0-100) → quartile colour (player palette). Reads the
     semantic pair at call time so the colorblind-safe swap reaches every
@@ -98,15 +109,79 @@ def pctile_color(p):
             else "#f0a500" if p >= 25 else _bad())
 
 
-def pctile_bar(label, value_str, p):
-    """One percentile-bar row of HTML (uses the .pl-pct-* classes)."""
-    c = pctile_color(p)
-    w = 0 if p is None else max(2, min(100, p))
-    rank = _ORD(p) or "—"
+#: Pool size below which a PERCENTILE is not a statement about anything and the
+#: RANK is shown instead (founder ruling Q4). One constant, named once, because
+#: the Officiating Lab currently runs three different sample floors on a single
+#: screen and nobody can tell which one is biting.
+POOL_FLOOR = 10
+
+
+def rank_from_pctile(p, n):
+    """1-based rank implied by a percentile over a pool of `n`, or None.
+
+    `stats.percentile` is `100 * (count strictly below) / n`, so the count below
+    is recoverable exactly and the rank is `n - below`. Ties share a rank — the
+    competition convention, and the honest one: three teams on the same DRtg
+    are all second, and pretending an order exists between them would be
+    inventing precision the pool cannot carry.
+
+    `cards.pctile` uses the MIDRANK convention instead (`below + 0.5 * equal`),
+    so a rank recovered from one of its percentiles lands in the MIDDLE of a tie
+    group rather than at its top. That is the same claim, made about a tie, and
+    it is the reason this returns a position rather than a medal — but it is
+    worth knowing before quoting one of these to a coach who is counting.
+    """
+    if p is None or not n:
+        return None
+    below = int(round(float(p) * n / 100.0))
+    return max(1, min(n, n - below))
+
+
+def pctile_bar(label, value_str, p, n=None):
+    """One percentile-bar row of HTML (uses the .pl-pct-* classes).
+
+    `n` is the size of the pool the percentile was computed over, and it is the
+    whole point of this signature. Without it a percentile from five tracked
+    teams renders identically to one from 748, which is how "DRtg 96.1 · 80th
+    pct · elite defense" came to mean *second of five* on screen.
+
+    Three renderings, and which one you get is a statement in itself:
+
+        n >= POOL_FLOOR   "80th of 22"  — a percentile, and its pool
+        0 < n < FLOOR     "2nd of 5"    — the rank, because a percentile from
+                                          five observations is not a fact (Q4),
+                                          and drawn in a neutral colour so the
+                                          eye does not read a five-team ranking
+                                          as an achievement (Q6: disclose which
+                                          gate is biting rather than withhold)
+        n is None         "80th"        — the pre-B1 shape, kept legal only so a
+                                          missed call site degrades to today's
+                                          output instead of raising inside a
+                                          page's try/except and printing
+                                          "unavailable". The gate against that
+                                          is a static test, which fails at test
+                                          time rather than quietly at render.
+
+    The FILL is drawn from the rank in the small-pool case too, so the bar
+    encodes exactly what the text beside it says and no more.
+    """
+    thin = n is not None and 0 < n < POOL_FLOOR
+    rk = rank_from_pctile(p, n) if thin else None
+    if thin and rk is not None:
+        # A neutral track: the position is real, the "elite" colour is not.
+        c = "#8b949e"
+        w = max(2, min(100, round(100 * (n - rk + 1) / n)))
+        badge = f"{_ORD(rk)} of {n}"
+    else:
+        c = pctile_color(p)
+        w = 0 if p is None else max(2, min(100, p))
+        badge = _ORD(p) or "—"
+        if p is not None and n:
+            badge = f"{badge} of {n}"
     return (f"<div class='pl-pct'><div class='pl-pct-top'>"
             f"<span class='pl-pct-lbl'>{html.escape(str(label))}</span>"
             f"<span class='pl-pct-val'>{html.escape(str(value_str))} · "
-            f"<span style='color:{c}'>{rank}</span></span></div>"
+            f"<span style='color:{c}'>{badge}</span></span></div>"
             f"<div class='pl-pct-track'><div class='pl-pct-fill' "
             f"style='width:{w}%;background:{c}'></div></div></div>")
 

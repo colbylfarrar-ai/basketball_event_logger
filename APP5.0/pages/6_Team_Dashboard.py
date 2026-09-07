@@ -2169,8 +2169,11 @@ if _tdview == "Charts":
                     with _spb:
                         _sph = ""
                         for _c in _sp["components"]:
+                            # pool_n, not the tracked-team count: spacing only
+                            # ranks teams that clear MIN_SHOTS located FGA.
                             _sph += _pctile_bar(_c["label"],
-                                                SPACE.fmt_component(_c), _c["pct"])
+                                                SPACE.fmt_component(_c),
+                                                _c["pct"], n=_sp.get("pool_n"))
                         st.markdown(_sph, unsafe_allow_html=True)
                     st.caption(_sp["note"] + f"  ·  {_sp['n']} located shots over a "
                                f"{_sp['pool_n']}-team pool.")

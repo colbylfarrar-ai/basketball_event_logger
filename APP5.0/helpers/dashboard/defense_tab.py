@@ -54,16 +54,21 @@ _FAM_COLOR = {
 _DEF_LABEL = {k: l for k, l, _f in DEF.DEFENSES}
 
 
-def _pctile_or_thin(label, value_str, pct):
+def _pctile_or_thin(label, value_str, pct, n=None):
     """Percentile bar, or the 'thin sample' row when pct is None (mirrors
-    playstyle_tab so the two tabs read identically)."""
+    playstyle_tab so the two tabs read identically).
+
+    `n` is the pool the percentile was ranked against — `defenses.py` carries it
+    out as `pool_n` on every row. A scheme pool is much smaller than the team
+    pool (only teams that ran that scheme enough times qualify), which is
+    exactly why the bar has to say which one it means (B1)."""
     if pct is None:
         return (f"<div class='pl-pct'><div class='pl-pct-top'>"
                 f"<span class='pl-pct-lbl'>{label}</span>"
                 f"<span class='pl-pct-val'>{value_str} · "
                 f"<span style='color:#8b949e'>thin sample</span>"
                 f"</span></div></div>")
-    return pctile_bar(label, value_str, round(pct))
+    return pctile_bar(label, value_str, round(pct), n=n)
 
 
 def _howline(pr):
@@ -476,7 +481,8 @@ def render(ctx):
         for r in drows:
             val = (f"{r['PPP']:.2f} PPP · {r['FG%'] * 100:.0f}% FG · "
                    f"{r['poss']} poss")
-            st.markdown(_pctile_or_thin(r["label"], val, r["pct"]),
+            st.markdown(_pctile_or_thin(r["label"], val, r["pct"],
+                                        n=r.get("pool_n")),
                         unsafe_allow_html=True)
         st.markdown(dense_table([{
             "Defense": r["label"], "Poss": r["poss"],
@@ -757,7 +763,8 @@ def render(ctx):
         row = pdf.get(pid, {})
         for k, c in sorted(row.items(), key=lambda kv: -kv[1]["poss"]):
             val = (f"{c['PPP']:.2f} PPP · {c['FG%'] * 100:.0f}% FG · {c['poss']} poss")
-            st.markdown(_pctile_or_thin(c["label"], val, c.get("pct")),
+            st.markdown(_pctile_or_thin(c["label"], val, c.get("pct"),
+                                        n=c.get("pool_n")),
                         unsafe_allow_html=True)
         st.caption("Each scorer's PPP vs each scheme thrown at them, ranked vs the "
                    "league pool of players on that scheme. Higher = handles it well.")

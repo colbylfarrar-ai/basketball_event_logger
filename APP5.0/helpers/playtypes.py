@@ -219,6 +219,10 @@ def team_playtype_percentiles(team_id, gender=None, game_ids=None, events=None,
             "blurb": blurb, "poss": cell["poss"], "PPP": cell["PPP"],
             "FG%": cell["FG%"], "eFG": cell["eFG"], "share": cell["share"],
             "pct": pct, "tier": tier_label, "color": tier_color,
+            # The pool this percentile was ranked against, carried so a renderer
+            # can state it (B1). A per-ACTION pool is much smaller than the team
+            # pool — only teams that ran it enough times qualify.
+            "pool_n": len(pool),
             "lg_ppp": (sum(pool) / len(pool)) if pool else None,
         })
     return {"rows": rows, "total": pt["total"], "offense": offense}
@@ -566,6 +570,7 @@ def team_named_playtype_percentiles(team_id, gender=None, game_ids=None,
         pct = TA.percentile(r["PPP"], pool, higher_better=offense) if ranked else None
         tier_label, tier_color = _tier(pct)
         rows.append({**r, "pct": pct, "tier": tier_label, "color": tier_color,
+                     "pool_n": len(pool),
                      "lg_ppp": (sum(pool) / len(pool)) if pool else None})
     return {"rows": rows, "total_tagged": named["total_tagged"],
             "untagged": named["untagged"], "offense": offense}
@@ -600,7 +605,8 @@ def player_named_playtype_percentiles(gender=None, game_ids=None, events=None,
             pct = TA.percentile(c["PPP"], pool, higher_better=True) if ranked else None
             tier_label, tier_color = _tier(pct)
             row[key] = {**c, "share": _safe(c["poss"], tot_poss),
-                        "pct": pct, "tier": tier_label, "color": tier_color,
+                        "pct": pct, "pool_n": len(pool),
+                        "tier": tier_label, "color": tier_color,
                         "lg_ppp": (sum(pool) / len(pool)) if pool else None}
         out[pid] = row
     return out
@@ -639,7 +645,8 @@ def league_named_playtype_leaders(gender=None, game_ids=None, events=None,
             tier_label, tier_color = _tier(pct)
             leaders.append({"team_id": tid, "PPP": cell["PPP"], "FG%": cell["FG%"],
                             "poss": cell["poss"], "share": cell["share"],
-                            "pct": pct, "tier": tier_label, "color": tier_color})
+                            "pct": pct, "pool_n": len(pool),
+                            "tier": tier_label, "color": tier_color})
         leaders.sort(key=lambda x: x["PPP"], reverse=offense)
         if leaders:
             out[key] = {"label": label,

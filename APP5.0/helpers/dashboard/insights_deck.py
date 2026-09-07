@@ -69,7 +69,12 @@ def _formula(gender, season, team_id, fp=None):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _dna_axes(gender, season, team_id, fp=None):
-    """Lab's eight DNA axes as [(label, percentile, value_str)].
+    """Lab's eight DNA axes as [(label, percentile, value_str, pool size)].
+
+    The pool size travels WITH the percentile rather than being looked up by the
+    renderer, because it is not the same number on every axis — a team missing a
+    DRtg drops out of that pool and not the others — and a bar that states the
+    wrong pool is worse than one that states none (B1, THE BOOK §10).
 
     Same eight axes and the same percentile direction as the radar on
     Lab → Advanced (`6_Team_Dashboard.py`), deliberately: two surfaces showing
@@ -92,9 +97,12 @@ def _dna_axes(gender, season, team_id, fp=None):
     defp = {k: [v["def"][k] for v in lff.values()] for k in ("eFG", "TOV")}
 
     def pc(val, pool, hb=True):
-        return TA.percentile(val, pool, higher_better=hb)
+        """(percentile, pool size) — counted over the same non-null values the
+        percentile is computed from, so the two can never disagree."""
+        vals = [v for v in pool if v is not None]
+        return TA.percentile(val, vals, higher_better=hb), len(vals)
 
-    return [
+    rows = [
         ("Offense", pc(mine.get("ORtg"), pool_o, True),
          f"{mine.get('ORtg') or 0:.0f} ORtg"),
         ("Defense", pc(mine.get("DRtg"), pool_d, False),
@@ -112,6 +120,7 @@ def _dna_axes(gender, season, team_id, fp=None):
         ("Shot defense", pc(ff["def"]["eFG"], defp["eFG"], False),
          f"{ff['def']['eFG'] * 100:.0f}% opp eFG"),
     ]
+    return [(lbl, p, val, n) for lbl, (p, n), val in rows]
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -360,8 +369,8 @@ def _dna_rail(ctx, gender, season, team_id, fp):
     if not axes:
         return []
     cols = st.columns(4)
-    for i, (label, pct, val) in enumerate(axes):
-        cols[i % 4].markdown(pctile_bar(label, val, pct),
+    for i, (label, pct, val, n) in enumerate(axes):
+        cols[i % 4].markdown(pctile_bar(label, val, pct, n=n),
                              unsafe_allow_html=True)
     return axes
 

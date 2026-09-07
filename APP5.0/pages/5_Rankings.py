@@ -234,11 +234,32 @@ def _pctile_color(pct):
     return BAD
 
 
-def _pctile_bar(label, val_txt, pct):
-    """One HTML percentile bar row (reuses the global .pctile-* classes)."""
+def _pctile_bar(label, val_txt, pct, n=None):
+    """One HTML percentile bar row (reuses the global .pctile-* classes).
+
+    Rankings keeps its own bar because the CSS is the board's, not the player
+    card's — but it follows cards.pctile_bar's rules exactly, and `n` is the
+    pool the percentile was computed over. Below cards.POOL_FLOOR the RANK is
+    shown instead, in a neutral colour, because a percentile drawn from nine
+    teams is not a statement about the state (B1, founder ruling Q4)."""
+    thin = n is not None and 0 < n < CD.POOL_FLOOR
+    rk = CD.rank_from_pctile(pct, n) if thin else None
+    if rk is not None:
+        clr = "#8b949e"
+        width = max(2, min(100, round(100 * (n - rk + 1) / n)))
+        rank_txt = f"{_ORD(rk)} of {n}"
+        return (
+            f"<div class='pctile-row'><div class='pctile-label-row'>"
+            f"<span class='pctile-stat'>{label}</span>"
+            f"<span><span class='pctile-val'>{val_txt}</span> "
+            f"<span class='pctile-rank' style='color:{clr}'>{rank_txt}</span>"
+            f"</span></div><div class='pctile-track'>"
+            f"<div class='pctile-fill' style='width:{width}%;background:{clr}'>"
+            f"</div></div></div>")
     clr = _pctile_color(pct)
     width = 0 if pct is None else max(2, pct)
-    rank_txt = "—" if pct is None else f"{_ORD(pct)}"
+    rank_txt = ("—" if pct is None
+                else f"{_ORD(pct)} of {n}" if n else f"{_ORD(pct)}")
     return (
         f"<div class='pctile-row'><div class='pctile-label-row'>"
         f"<span class='pctile-stat'>{label}</span>"
@@ -1290,10 +1311,13 @@ def _fx_team():
     ]
     pc1, pc2 = st.columns(2)
     for i, (lbl, val, pool, hib, fmt) in enumerate(prof):
+        # The pool is counted the same way percentile() counts it — non-null
+        # only — so the number on screen is the number it was ranked against.
+        _pool_n = sum(1 for v in pool if v is not None)
         pct = LA.percentile(val, pool, higher_better=hib)
         txt = "—" if val is None else fmt.format(val)
         (pc1 if i % 2 == 0 else pc2).markdown(
-            _pctile_bar(lbl, txt, pct), unsafe_allow_html=True)
+            _pctile_bar(lbl, txt, pct, n=_pool_n), unsafe_allow_html=True)
 
     c1, c2 = st.columns([3, 2])
     with c1:

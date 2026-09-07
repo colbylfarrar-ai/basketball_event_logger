@@ -37,6 +37,7 @@ import helpers.shrinkage as SH
 from helpers.ui import empty_state, rgb as _rgb, style_fig as _style
 from helpers import ui as _uit  # theme-reactive tokens — read at call time
 from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile_bar,
+                           pctile_n as _pctile_n,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
                            gauge_dial, scoring_donut as _donut, verdict_card)
 from helpers.court import (shot_chart as _shot_chart, shot_map as _shot_map,
@@ -839,7 +840,10 @@ def render_card(ctx):
             _html = ""
             for _key, _lbl, _fm, _lb in _chunk:
                 _p = _pctile(P.get(_key), _key, rows, lower_better=_lb)
-                _html += _pctile_bar(_lbl, _fmt(P.get(_key), _fm), _p)
+                # Per-STAT pool, not len(rows): a player with no logged minutes
+                # is out of the MIN/G pool and in the PPG one (B1).
+                _html += _pctile_bar(_lbl, _fmt(P.get(_key), _fm), _p,
+                                     n=_pctile_n(_key, rows))
             _gpc[_ci].markdown(_html, unsafe_allow_html=True)
 
     # ── impact tiles + "why this OVERALL" (ratings live as bars in the grid) ──
@@ -1365,7 +1369,8 @@ def render_card(ctx):
                 _v = f"{c['PPP']:.2f} PPP · {c['FG%']*100:.0f}% · {c['poss']} poss"
                 if c.get("pct") is None:
                     _v += " · thin sample"
-                html += _pctile_bar(_lbl, _v, c.get("pct"))
+                html += _pctile_bar(_lbl, _v, c.get("pct"),
+                                    n=c.get("pool_n"))
                 _hl = _howline((_setprof or {}).get(_k)) if _setprof else ""
                 if _hl:
                     html += ("<div style='font-size:11px;color:var(--subtext);"
@@ -1682,7 +1687,8 @@ def render_card(ctx):
             html = ""
             for key, lbl, fmt, lb in chunk:
                 p = _pctile(P.get(key), key, rows, lower_better=lb)
-                html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p)
+                html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p,
+                                    n=_pctile_n(key, rows))
             pcol[ci].markdown(html, unsafe_allow_html=True)
 
     # ── League ranking (rides on OVERALL → Paid) ──────────────────────────────

@@ -21,6 +21,7 @@ from __future__ import annotations
 import streamlit as st
 
 from database.db import query
+import helpers.cards as CARDS
 from helpers.cards import tier as _tier
 import helpers.team_analytics as TA
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
@@ -37,6 +38,21 @@ from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 # ── cached data the header needs beyond ctx ─────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
+def _glance_standing(item):
+    """"91st of 22" / "2nd of 5" for one glance tile.
+
+    The strip used to print a bare "80th pct" beside a tag like "elite defense",
+    which over ten tracked boys teams is a sentence about nine other teams. Same
+    two renderings as cards.pctile_bar, so the tile and the bars a coach sees on
+    the next screen make the same kind of claim (B1, THE BOOK §10)."""
+    p, n = item.get("pct"), item.get("pool_n")
+    if p is None:
+        return "—"
+    if n and n < CARDS.POOL_FLOOR:
+        return f"{_ORD(CARDS.rank_from_pctile(p, n))} of {n} tracked"
+    return f"{_ORD(p)} pct" + (f" of {n}" if n else "")
+
+
 def _glance(gender, team_id, season=SEAS_DEFAULT):
     season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.insights_team as INT
@@ -429,7 +445,7 @@ def render_header(ctx):
                     f"<div style='font-size:18px;font-weight:700;color:var(--text)'>"
                     f"{_gt['value']}</div>"
                     f"<div style='font-size:11px;color:{_clr};font-weight:600'>"
-                    f"{_ORD(_gt['pct'])} pct</div>"
+                    f"{_glance_standing(_gt)}</div>"
                     f"<div style='font-size:11px;color:var(--subtext);margin-top:2px'>"
                     f"{_gt['tag']}</div></div>")
             st.markdown(

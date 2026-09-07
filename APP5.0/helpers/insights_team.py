@@ -49,6 +49,30 @@ _GLANCE_SPEC = [
 ]
 
 
+#: Percentile points away from the middle before a glance TAG is allowed to
+#: fire. The strip's heading promises "the stats this team is MOST distinctive
+#: on", and the tag used to fire on `pct >= 50` — so the median team was told it
+#: had a "high-powered offense" and a 60th-percentile defence over ten tracked
+#: teams read as "elite defense" (measured, Sequoyah Boys, ORtg pct 50 dist 0.0).
+#:
+#: 20 = outside the middle 40% of the field, top or bottom 30%. It is a DISPLAY
+#: gate on a word, not a model constant: no absolute basketball anchor is set
+#: here (what DRtg is elite in points per 100 rather than against 22 tracked
+#: teams is a measured number, and the recal gates own it). What this fixes is
+#: the case where the app had no distinctiveness requirement at all.
+MIN_GLANCE_DIST = 20
+
+
+def _glance_tag(pct, hi_tag, lo_tag):
+    """The tag a percentile has earned, or None when it has earned neither.
+
+    Split out from `team_glance` so the rule is testable on its own and so the
+    two halves — which tag, and whether any tag — cannot drift apart."""
+    if pct is None or abs(pct - 50) < MIN_GLANCE_DIST:
+        return None
+    return hi_tag if pct >= 50 else lo_tag
+
+
 _GAME_TYPE_ORDER = {"Regular": 0, "District": 1, "Rivalry": 2, "Tournament": 3,
                     "Showcase": 4, "Playoff": 5}
 
@@ -149,9 +173,16 @@ def team_glance(gender, team_id, n=6, season=SEAS_DEFAULT):
         pct = S.percentile(myv, pool, higher_better=(True if hb is None else hb))
         if pct is None:
             continue
+        tag = _glance_tag(round(pct), hi_tag, lo_tag)
+        if tag is None:
+            continue          # not distinctive — the strip's one promise
         item = {"label": label, "value": myv, "pct": round(pct),
                 "dist": abs(pct - 50),
-                "tag": (hi_tag if pct >= 50 else lo_tag),
+                # The pool the percentile was ranked against, carried so a
+                # renderer can state it (Q6 — disclose). A tag over 22 tracked
+                # teams and one over 748 are different claims.
+                "pool_n": len(pool),
+                "tag": tag,
                 "good": (None if hb is None else pct >= 50)}
         if cat not in by_cat or item["dist"] > by_cat[cat]["dist"]:
             by_cat[cat] = item

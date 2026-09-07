@@ -605,6 +605,19 @@ def _g_rebound(row, pools, d):
     z = zo if off_side else zd
     if abs(z) < MIN_Z:
         return None
+    # The gate above is on TOTAL rebounds, and this sentence is about ONE side.
+    # A player can clear it on defensive boards and then be called elite on the
+    # offensive glass off three of them — measured on production, girls: three
+    # defensive rebounds over two games producing "closes possessions", and
+    # three offensive rebounds producing "second-chance machine". The evidence
+    # in the sentence's own parenthesis contradicted the sentence.
+    #
+    # Same gate, applied to the quantity actually being claimed — no new
+    # constant, because the question is not "how many rebounds is elite" but
+    # "which pile did we count".
+    side_reb = (_num(row, "OREB") if off_side else _num(row, "DREB")) or 0
+    if side_reb < tier_gate(12, gp, 5):
+        return None
     opg, dpg = _num(row, "OREB/G") or 0, _num(row, "DREB/G") or 0
     if off_side:
         if z >= 0:
@@ -627,8 +640,12 @@ def _g_rebound(row, pools, d):
     # at league PPP, while a defensive rebound is the expected end of the
     # opponent's possession and cannot. insights_severity tags only the
     # offensive side, and needs to be told which this is rather than guessing.
+    # `n` is the SIDE's own count, not the combined total, so the sample a
+    # renderer discloses is the sample the sentence is about. Reporting 181
+    # rebounds behind a claim resting on 43 of them is the same defect as the
+    # gate above, one layer up.
     return {"text": txt, "score": abs(z), "z": z, "metric": "Rebounding",
-            "n": int(reb), "side": ("off" if off_side else "def")}
+            "n": int(side_reb), "side": ("off" if off_side else "def")}
 
 
 def _g_selfcreate(row, pools, d):

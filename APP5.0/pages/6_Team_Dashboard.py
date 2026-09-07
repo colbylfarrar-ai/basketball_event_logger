@@ -6037,7 +6037,9 @@ if _tdview == "Insights":
 if _tdview == "Projection":
     DPROJ.render(SimpleNamespace(
         team_id=team_id, gender=gender, has_tracked=has_tracked,
-        is_paid=ENT.has_paid_plan(AUTH.current_user()),
+        # archive-aware: a past season is open, so Projection stops hard-locking
+        # Free out of a season the rest of the app already gives them.
+        is_paid=ENT.paid_or_open_archive(AUTH.current_user(), season_pick),
         game_ids=(list(_vis) if _vis is not None else None),
         season=season_pick, players=players))
 

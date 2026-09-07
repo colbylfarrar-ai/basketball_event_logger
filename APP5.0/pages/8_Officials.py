@@ -218,7 +218,12 @@ if gender and _off_season:
 # named ref (who called what, when, vs which team) — event-derived analytics, no
 # box-only view exists here. Plan-level gate (individual/official data is
 # pool-agnostic, per the gating taxonomy), so lock the whole page for Free.
-if not ENT.has_paid_plan(AUTH.current_user()):
+# A PAST season is an open archive, the same guard the War Room already had —
+# this page hard-stopped Free on last season while the War Room let them in.
+# `_off_season is None` is the CAREER view, which spans the current season too,
+# so it stays gated: the archive opens, this season does not.
+if not ENT.paid_or_open_archive(AUTH.current_user(),
+                                _off_season if _off_season else SEAS.ACTIVE):
     with hc1:
         page_header("Officiating Lab",
                     sub=f"{gender_lbl} league · whistle rates, home/away lean, "

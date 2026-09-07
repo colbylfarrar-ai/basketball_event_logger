@@ -531,15 +531,10 @@ def render_box_score(game_id: int):
         _render_box_tables(game_id, g, boxes, [(t2id, t2name), (t1id, t1name)],
                            FREE_BOX_COLS)
 
-        _gident = AUTH.current_user()
-        if not ENT.has_paid_plan(_gident):
-            st.info(ENT.MSG_PAID)
-        elif ENT.is_pool_banned(_gident):
-            st.info(ENT.MSG_POOL_BANNED)
-        elif not ENT.viewer_is_league_wide(_gident):
-            st.info(ENT.MSG_COOP_INVITE)
-        else:
-            st.info(ENT.MSG_NOT_SHARED)
+        # One ladder (entitlement.lock_reason) — this is a GAME surface, so own
+        # team and own creation pass and an unshared team gets the neutral note.
+        st.info(ENT.lock_reason(AUTH.current_user(), t1id, g.get("season"),
+                                scope="team") or ENT.MSG_NOT_SHARED)
         # Name what is behind the lock rather than only that there is one — a
         # coach who can see the box already knows what a box score is, so the
         # difference is the only thing worth saying.

@@ -254,7 +254,7 @@ if not scored:
 # inside, the tracked-possession projection and lineup chemistry add per-team /
 # pool checks (see below). A PAST season bypasses it — open archive, so anyone
 # can replay history ("what were our title odds last year").
-if _is_cur_season and not ENT.has_paid_plan(AUTH.current_user()):
+if not ENT.paid_or_open_archive(AUTH.current_user(), season_pick):
     empty_state(
         "The War Room is a Paid feature",
         "Monte-Carlo matchups, season and bracket simulations, and the lineup "
@@ -488,7 +488,10 @@ def _render_proj_statline(pred, ctx, table, key):
 _wr_ident = AUTH.current_user()
 # a PAST season is an open archive → the co-op (league-wide) gate opens too
 _wr_league_wide = True if not _is_cur_season else ENT.viewer_is_league_wide(_wr_ident)
-_WR_LOCK = (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_wr_ident) else ENT.MSG_COOP_INVITE)
+# One ladder (entitlement.lock_reason), POOL scope. Only read when
+# _wr_league_wide is False, which a past season already rules out.
+_WR_LOCK = (ENT.lock_reason(_wr_ident, season=season_pick, scope="pool")
+            or ENT.MSG_COOP_INVITE)
 
 # View switcher — seg + if-dispatch (the lazy-load contract): only the chosen
 # view computes, where st.tabs ran EVERY body each rerun. Lineups leads — it's

@@ -286,11 +286,23 @@ def team_has_pooled_tracked(team_id, season=SEAS_DEFAULT) -> bool:
     return bool(rows)
 
 
-def can_see_team_tracked(ident: dict | None, team_id, pool=None) -> bool:
+def can_see_team_tracked(ident: dict | None, team_id, pool=None, *,
+                         season=SEAS_DEFAULT) -> bool:
     """May this viewer see TRACKED depth for `team_id`? Paid AND (own team OR
     League-wide). The DATA read-filter decides WHICH games actually render — a
     non-pooled team just comes back empty/neutral, never a hard denial. `pool` is
-    accepted-but-ignored (legacy signature)."""
+    accepted-but-ignored (legacy signature).
+
+    A PAST season is an open archive, the same rule the other four read gates
+    already had. Without it Rankings → Team contradicted itself: this gate hid
+    the tracked rank in the header while `tracked_gate` rendered the full
+    tracked deep dive immediately below, and Compare printed a padlock over data
+    the app's own rule says is free.
+
+    `season` defaults to the read season, so a caller that passes nothing is
+    asking about the current one and gets the answer it always got."""
+    if _is_past_season(resolve_read_season(season)):
+        return True
     if not has_paid_plan(ident):
         return False
     if ident.get("role") == "admin":
@@ -301,12 +313,17 @@ def can_see_team_tracked(ident: dict | None, team_id, pool=None) -> bool:
 
 
 def can_see_game_tracked(ident: dict | None, team1_id, team2_id,
-                         pool=None, *, in_pool=None, game_id=None) -> bool:
+                         pool=None, *, in_pool=None, game_id=None,
+                         season=SEAS_DEFAULT) -> bool:
     """May this viewer open a tracked GAME's depth (it reveals both teams)? Paid
     AND (own team is in it OR (League-wide AND the game is pooled)). Pass `in_pool`
     for a specific game; without it, fall back to whether either team has any
     pooled tracked data (used where no single game is in scope, e.g. a matchup
-    projection drawn from both teams' tracked ratings)."""
+    projection drawn from both teams' tracked ratings).
+
+    Archive-bypassed for the same reason as its team-level twin above."""
+    if _is_past_season(resolve_read_season(season)):
+        return True
     if not has_paid_plan(ident):
         return False
     if ident.get("role") == "admin":
@@ -413,6 +430,72 @@ def team_visible_tracked_ids(ident: dict | None, team_id, season=SEAS_DEFAULT) -
     return GD.representative_game_ids(ids)
 
 
+def lock_reason(ident: dict | None, team_id=None, season=SEAS_DEFAULT, *,
+                scope="team", paid_msg=None):
+    """Why this viewer may not see tracked depth — None when they may.
+
+    THE one lock ladder. Six copies of it existed (box_score, Rankings, Players,
+    War Room, `tracked_gate` itself, and three page-level stops), which is six
+    places for one ruling to be applied five times — exactly what happened to
+    the archive bypass.
+
+    `scope` is the only axis the six copies genuinely differed on:
+
+      "team"  a team or game surface. Your own team passes, and so does a team
+              your own staff tracked (Q3 — their work, their read). A team that
+              has not shared gets the neutral not-shared note.
+      "pool"  a whole-league aggregate (Rankings, the Players page). Owning a
+              team does not buy you the league, so own-team does NOT pass; the
+              co-op does.
+
+    `paid_msg` lets a surface name what is behind its own lock. box_score is
+    right that a coach who can already see the box knows what a box score is, so
+    the difference is the only thing worth saying.
+
+    A PAST season is an open archive: any viewer, full depth, no gate. That is
+    the ruling — give away last season, sell this one.
+    """
+    season = resolve_read_season(season)
+    if _is_past_season(season):
+        return None
+    if not has_paid_plan(ident):
+        return paid_msg or MSG_PAID
+    if ident.get("role") == "admin":
+        return None
+    if scope == "team":
+        if team_id is not None and int(team_id) in _own_teams(ident):
+            return None                 # own team → always
+        # A team this viewer's own staff has tracked: their work, their read
+        # (Q3). Without this the gate answered "they haven't shared" over the
+        # viewer's own scouting — a neutral message, and the wrong one.
+        if team_id is not None and has_own_tracked_of(ident, team_id, season):
+            return None
+    # Paid coach reaching past their own team:
+    if not viewer_is_league_wide(ident):
+        # Moderation outranks the invite — a banned coach gets the suspension
+        # notice, not an invitation they cannot act on (B3).
+        return MSG_POOL_BANNED if is_pool_banned(ident) else MSG_COOP_INVITE
+    if scope != "team":
+        return None                     # co-op member, league-wide surface
+    if team_has_pooled_tracked(team_id):
+        return None
+    return MSG_NOT_SHARED               # their privacy choice — neutral
+
+
+def paid_or_open_archive(ident: dict | None, season=SEAS_DEFAULT) -> bool:
+    """Plan-level page entry, archive-aware — the War Room's guard, as a
+    function.
+
+    Three page-level stops (`8_Officials.py`, `14_Hall_of_Fame.py` and the Team
+    Dashboard's Projection tab) called `has_paid_plan` bare and so hard-stopped
+    Free on a PAST season, while the War Room guarded correctly. A Free coach
+    browsing last season got the Insights deck, the whole War Room and the
+    Players page — and was locked out of the Officiating Lab, the Hall of Fame's
+    tracked block and Projection. Nobody decided that.
+    """
+    return _is_past_season(resolve_read_season(season)) or has_paid_plan(ident)
+
+
 def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
                  season=SEAS_DEFAULT):
     """Resolve a team's tracked-depth visibility for the UI.
@@ -423,31 +506,13 @@ def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
                  (caller shows its own 'track a game' note). Otherwise one of the
                  three co-op messages: Paid feature / co-op INVITE / not-shared.
 
-    A PAST season is an open archive: any viewer sees full tracked depth, no Paid
-    / co-op gate (owner rule)."""
-    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
+    The ladder itself now lives in `lock_reason`; this keeps the (visible, msg)
+    shape its call sites read, and the "no data at all is not a lock" rule that
+    is genuinely its own."""
     if not raw_has_tracked:
         return False, None
-    if _is_past_season(season):
-        return True, None                    # past = open archive, full depth
-    if not has_paid_plan(ident):
-        return False, MSG_PAID
-    if ident.get("role") == "admin":
-        return True, None
-    if team_id is not None and int(team_id) in _own_teams(ident):
-        return True, None               # own team → always
-    # A team this viewer's own staff has tracked: their work, their read (Q3).
-    # Without this the gate answered "they haven't shared" over the viewer's own
-    # scouting — a neutral message, and the wrong one.
-    if team_id is not None and has_own_tracked_of(ident, team_id, season):
-        return True, None
-    # Paid coach scouting ANOTHER team:
-    if not viewer_is_league_wide(ident):
-        # a banned coach gets a suspension notice, not a co-op invite they can't act on
-        return False, (MSG_POOL_BANNED if is_pool_banned(ident) else MSG_COOP_INVITE)
-    if team_has_pooled_tracked(team_id):
-        return True, None
-    return False, MSG_NOT_SHARED        # their privacy choice — neutral
+    msg = lock_reason(ident, team_id, season, scope="team")
+    return msg is None, msg
 
 
 def free_demo_game_id(ident: dict | None) -> int | None:

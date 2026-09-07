@@ -72,9 +72,14 @@ _ident = AUTH.current_user()
 _HAS_PAID = ENT.has_paid_plan(_ident)
 _PAID = _HAS_PAID and ENT.viewer_is_league_wide(_ident)
 # Lock copy keyed to WHY: not paid → upgrade; paid-but-solo → co-op invite.
-_LOCK = (ENT.MSG_PAID if not _HAS_PAID
-         else ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_ident)
-         else ENT.MSG_COOP_INVITE)
+# One ladder (entitlement.lock_reason), POOL scope — this page is a whole-league
+# aggregate, so owning a team does not buy you the league. Pinned to the ACTIVE
+# season on purpose: `season_pick` is not resolved until the picker renders far
+# below, and the archive bypass here would replace the Paid copy with a co-op
+# invite for a Free coach on the CURRENT season. The page's own archive opening
+# runs through `_PAID` and the read filter, not through this string.
+_LOCK = (ENT.lock_reason(_ident, season=SEAS.ACTIVE, scope="pool")
+         or ENT.MSG_COOP_INVITE)
 RATING_COLS = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
 
 # Accent-tinted card glows (accent is dynamic, so these stay page-local). The
@@ -304,6 +309,9 @@ min_games = c2.slider("Minimum games played", 1, 16, 2, 1,
                       help="Players below this drop out of the pool. Higher "
                            "values cut small-sample noise but shrink the field. "
                            "Ratings are recomputed against whoever qualifies.")
+# State the floor, the way Hall of Fame does. Every board on this page is a
+# board OF something, and the floor is half of what it is a board of.
+c2.caption(f"Every leaderboard on this page is **{S.floor_note(min_games)[1:-1]}**.")
 
 # Season picker — view a past/archived season's player pool. Only appears once a
 # season has been rolled over; the active season is the default so the page is
@@ -589,7 +597,8 @@ with tab_lead:
 
     # ── new "invented metric" league superlatives (spotlight row) ────────────
     if _PAID:
-        st.markdown("<div class='pl-hdr'>League superlatives — the new metrics</div>",
+        st.markdown("<div class='pl-hdr'>League superlatives — the new metrics "
+                    f"{S.floor_note(min_games)}</div>",
                     unsafe_allow_html=True)
         vers_l = _leaders(rows, "VERSATILITY", n=1)
         smoe_l = _leaders(rows, "SMOE", n=1, qkey="FGA", qmin=15)

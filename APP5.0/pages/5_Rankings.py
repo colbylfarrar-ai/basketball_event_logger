@@ -77,17 +77,15 @@ def _paid_pool_lock():
 
     A PAST season is an open archive (last year's roster turned over) — no gate,
     so the whole league's tracked history is free to everyone."""
-    if not SEAS.is_current(season_pick):
-        return None
-    _ident = AUTH.current_user()
-    if not ENT.has_paid_plan(_ident):
-        return ("🔒 Tracked league analytics — possession ratings, four factors "
-                "and the advanced charts — are a **Paid** feature. Upgrade to "
-                "unlock.")
-    if not ENT.viewer_is_league_wide(_ident):
-        return (ENT.MSG_POOL_BANNED if ENT.is_pool_banned(_ident)
-                else ENT.MSG_COOP_INVITE)
-    return None
+    # One ladder (entitlement.lock_reason). A whole-league board is a POOL
+    # surface: owning a team does not buy you the league. The paid copy stays
+    # page-specific because naming what is behind the lock is the only part
+    # worth saying to a coach who can already see the rest.
+    return ENT.lock_reason(
+        AUTH.current_user(), season=season_pick, scope="pool",
+        paid_msg=("🔒 Tracked league analytics — possession ratings, four "
+                  "factors and the advanced charts — are a **Paid** feature. "
+                  "Upgrade to unlock."))
 
 
 def _archive_note():
@@ -705,13 +703,23 @@ else:
     _PICKED_STATES = _rk_states
 _PICKED_CLASSES = _rkf1.multiselect("Class", _rk_classes, default=_rk_classes,
                                     key="rk_class_page")
-_MIN_GP = (_rkf2.slider("Min games played", 1, int(_rk_maxgp), 1, key="rk_mingp_page")
+# Default 5, not 1 (Q5). On production 168 of 703 rated girls teams and 210 of
+# 748 boys teams have played exactly ONE game, so a floor of 1 put four of the
+# five Team-leader cards on 1-0 teams — and "Best defense (PA/G) 0.0" on a
+# forfeit. The slider still reaches 1; a coach who wants that can ask for it,
+# and the floor note below says which one is in force.
+_MIN_GP = (_rkf2.slider("Min games played", 1, int(_rk_maxgp),
+                        min(S.LEADERBOARD_MIN_GP, int(_rk_maxgp)),
+                        key="rk_mingp_page")
            if _rk_maxgp > 1 else 1)
 # ONE scope set every site tests: the class labels that survive both filters.
 _SCOPE_LBLS = {l for _s, _c, l in _rk_ctriples
                if l in _PICKED_CLASSES and _s in _PICKED_STATES}
 st.caption(("State / " if _RK_MULTI_ST else "")
-           + "Class / min-games scope every ranking view below.")
+           + "Class / min-games scope every ranking view below. "
+           + f"Every board here is **{S.floor_note(_MIN_GP)[1:-1]}** — the "
+             "Hall of Fame states its floors the same way, because a board "
+             "that hides its floor is asking you to assume one.")
 
 # Lazy-load: a "View" segmented_control instead of st.tabs, so only the chosen
 # view's heavy queries run each rerun (st.tabs computes every tab body). The

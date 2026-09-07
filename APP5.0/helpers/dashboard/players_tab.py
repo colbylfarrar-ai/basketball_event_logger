@@ -20,6 +20,7 @@ from helpers.ui import grid as _grid
 from helpers import ui as _uit  # theme-reactive HEAT/DIVERGE — read at call time
 import helpers.team_analytics as TA
 import helpers.player_ratings as PR
+from helpers.stats import player_label as _PLBL
 
 
 # Format precision per leaderboard `fmt` kind (pct values already sit on a 0-100
@@ -210,7 +211,7 @@ def render(ctx):
                          key=lambda p: p[cat], reverse=True)
             if srt:
                 cfig = go.Figure(go.Bar(
-                    x=[f"#{p['number']} {p['name']}" for p in srt],
+                    x=[_PLBL(p) for p in srt],
                     y=[p[cat] for p in srt], marker_color=ctx.ACCENT,
                     marker_line_width=0,
                     text=[f"{p[cat]:.0f}" for p in srt], textposition="auto"))
@@ -277,7 +278,7 @@ def render(ctx):
                     _ov = _hit.get("OVERALL")
                     _dc = st.columns(4)
                     _dc[0].markdown(
-                        _skpi("Selected", f"#{_hit['number']} {_hit['name']}"),
+                        _skpi("Selected", _PLBL(_hit)),
                         unsafe_allow_html=True)
                     _dc[1].markdown(
                         _skpi("Overall",
@@ -358,7 +359,7 @@ def render(ctx):
 
                 grid = []
                 for p in data["players"]:
-                    row = {"Player": f"#{p['number']} {p['name']}",
+                    row = {"Player": _PLBL(p),
                            "FGA": p["total_FGA"]}
                     for z in TA.ZONES:
                         bz = p["by_zone"][z]
@@ -422,8 +423,8 @@ def render(ctx):
             best = max(pool, key=lambda p: p[key])
             val = ctx.pctf(best[key] / 100) if fmt == "pct" else f"{best[key]:.1f}"
             with lcols[i % 3]:
-                st.metric(lbl, val, help=f"#{best['number']} {best['name']}")
-                st.caption(f"#{best['number']} {best['name']}")
+                st.metric(lbl, val, help=_PLBL(best))
+                st.caption(_PLBL(best))
 
         # ── volume vs efficiency + shot selection (tracked-only) ────────────
         if ctx.has_tracked:

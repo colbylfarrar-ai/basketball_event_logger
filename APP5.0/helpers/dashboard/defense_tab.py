@@ -41,6 +41,7 @@ import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
 import helpers.dashboard.shot_diet as _shot_diet
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import player_label as _PLBL
 
 
 # Identity palette per family for the distribution donut (kept separate from the
@@ -756,7 +757,7 @@ def render(ctx):
     if _roster:
         st.markdown("<div class='pl-hdr'>Per-player — how each scorer handles each "
                     "defense faced</div>", unsafe_allow_html=True)
-        _opts = {f"#{p.get('number')} {p.get('name')}": p.get("_pid")
+        _opts = {_PLBL(p): p.get("_pid")
                  for p in _roster}
         who = st.selectbox("Player", list(_opts), key="def_player_pick")
         pid = _opts.get(who)

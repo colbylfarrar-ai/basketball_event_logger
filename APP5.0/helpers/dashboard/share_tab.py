@@ -30,6 +30,7 @@ import helpers.seasons as SEAS
 # call time through default_read_season(); an explicit 'Current' is still
 # honoured literally, and None still means every season.
 from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+from helpers.stats import player_label as _PLBL
 
 
 def _team_color(tid):
@@ -278,7 +279,7 @@ def render(ctx):
         pc1, pc2 = st.columns([2, 2])
         _pid = pc1.selectbox("Player", [r["id"] for r in _roster],
                              format_func=lambda i: next(
-                                 f"#{r['number']} {r['name']}" for r in _roster
+                                 _PLBL(r) for r in _roster
                                  if r["id"] == i),
                              key="share_spot_pid")
         _mode_lbl = pc2.radio("Scope", ["Season", "Career", "One game",

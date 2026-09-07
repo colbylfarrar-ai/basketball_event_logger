@@ -113,6 +113,7 @@ _cfg, ACCENT = page_chrome("Team Dashboard")
 # Re-read per run AFTER page_chrome so the viewer's colorblind-safe pair lands
 import helpers.ui as _uimod
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import player_label as _PLBL
 GOOD = _uimod.GOOD
 BAD = _uimod.BAD
 BLUE = "#58a6ff"
@@ -346,7 +347,7 @@ def _player_leaderboards(players, spec, key_prefix, ncols=2):
             st.markdown(f"**{label}**")
             st.plotly_chart(
                 _leader_bar(pool, key,
-                            lambda r: f"#{r['number']} {r['name']}",
+                            lambda r: _PLBL(r),
                             lambda r, k=key: r[k], fmt_fn,
                             height=max(170, 24 * len(pool) + 40)),
                 width="stretch", key=f"{key_prefix}_{key}")
@@ -3053,7 +3054,7 @@ if _tdview == "Charts":
             st.markdown("<div class='lab-hdr'>Individual defense</div>",
                         unsafe_allow_html=True)
             oliver = TA.player_oliver_ratings(team_id, bundle["tracked_ids"])
-            pid_name = {p["_pid"]: f"#{p['number']} {p['name']}" for p in players}
+            pid_name = {p["_pid"]: _PLBL(p) for p in players}
             stk = sorted([p for p in players if p["STOCKS/G"] is not None],
                          key=lambda p: p["STOCKS/G"], reverse=True)[:8]
             dc1, dc2 = st.columns(2)
@@ -3138,7 +3139,7 @@ if _tdview == "Charts":
                     d = _mdiff.get(p["_pid"])
                     if d and d.get("shots_faced"):
                         _drows.append({
-                            "Defender": f"#{p['number']} {p['name']}",
+                            "Defender": _PLBL(p),
                             "Shots faced": int(d["shots_faced"]),
                             "Assignment difficulty": round(d.get("Difficulty100", 50)),
                         })
@@ -4825,7 +4826,7 @@ def _fx_playmaking():
                 top8 = scorers[:8]
                 bal = go.Figure(go.Bar(
                     x=[p["PTS"] / tot_pts * 100 for p in reversed(top8)],
-                    y=[f"#{p['number']} {p['name']}" for p in reversed(top8)],
+                    y=[_PLBL(p) for p in reversed(top8)],
                     orientation="h",
                     marker=dict(color=[p["PTS"] / tot_pts * 100
                                        for p in reversed(top8)],
@@ -5366,7 +5367,7 @@ if _tdview == "Lab":
         else:
             tids = bundle["tracked_ids"]
             my_pids = {p["_pid"] for p in players}
-            name_by = {p["_pid"]: f"#{p['number']} {p['name']}" for p in players}
+            name_by = {p["_pid"]: _PLBL(p) for p in players}
 
             # ── RAPM ────────────────────────────────────────────────────────
             st.markdown("<div class='lab-hdr'>RAPM — regularized adjusted +/− "
@@ -6066,7 +6067,7 @@ def _fx_chbld():
                     cols.append(kk)
         out = []
         for p in rows:
-            d = {"Label": f"#{p['number']} {p['name']}"}
+            d = {"Label": _PLBL(p)}
             for kk in cols:
                 vv = p.get(kk)
                 d[kk] = vv if _is_num(vv) else None

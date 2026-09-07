@@ -13,6 +13,7 @@ import helpers.auth as AUTH
 import helpers.change_requests as CR
 import helpers.officials as OFF
 import helpers.ui as _uimod          # clear_data() — see its docstring
+from helpers.stats import player_label as _PLBL
 
 _cfg, ACCENT = page_chrome("Input Hub")
 _me = AUTH.current_user()
@@ -324,7 +325,7 @@ if _is_admin:
                         _default = "__new__"
                     _idx = vals.index(_default) if _default in vals else 0
                     _choice[s["pid"]] = st.selectbox(
-                        f"#{s['number']} {s['name']}", vals, index=_idx,
+                        _PLBL(s), vals, index=_idx,
                         format_func=lambda v, _m=labmap: _m[v],
                         key=f"idn_{_idt['id']}_{s['pid']}")
                 if st.button("Save links", type="primary", key="idn_save"):
@@ -352,7 +353,7 @@ if _is_admin:
                 if not _hits:
                     st.caption("No archived players on other teams match that name.")
                 else:
-                    _cur_opts = {s["pid"]: f"#{s['number']} {s['name']}" for s in _sug}
+                    _cur_opts = {s["pid"]: _PLBL(s) for s in _sug}
                     for h in _hits:
                         xc = st.columns([3, 2, 1])
                         xc[0].caption(f"{h['name']} #{h['number']} · {h['team']} · "

@@ -40,6 +40,7 @@ from database.db import query
 import helpers.stats as S
 import helpers.trends as TRD
 import helpers.win_probability as WP
+from helpers.stats import player_label as _PLBL
 from helpers.ui import (mini_tile as _mini, spotlight as _spotlight,
                         wp_ribbon as _wp_ribbon, stat_help as _stat_help)
 
@@ -271,7 +272,7 @@ def render(gender, *, paid=False, vis=None, accent="#4c8bf5", scored=None):
             if aw["player"]:
                 p = aw["player"]
                 ac[0].markdown(
-                    _mini(f"#{p['number']} {p['name']}", f"GmSc {p['gs']:.0f}",
+                    _mini(_PLBL(p), f"GmSc {p['gs']:.0f}",
                           sub=f"Player of the week · {p['team']} · "
                               f"{p['pts']} pts in {p['gp']} gm"),
                     unsafe_allow_html=True)

@@ -34,6 +34,7 @@ import helpers.team_ratings as TR
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.hall_of_fame as HOF
+from helpers.stats import player_label as _PLBL
 
 _cfg, ACCENT = page_chrome("Hall of Fame")
 
@@ -277,7 +278,7 @@ if not sums:
 
 
 def _who(m):
-    return f"#{m['number']} {m['name']}"
+    return _PLBL(m)
 
 
 def _season_lbl(m):
@@ -468,7 +469,7 @@ with tab_single:
 
         def _sg_board(stat, key):
             _board([{
-                "Player": f"#{r['number']} {r['name']}", "Team": r["team"],
+                "Player": _PLBL(r), "Team": r["team"],
                 _sg_lbl[stat]: r["value"], "Matchup": r["matchup"],
                 "Date": r["date"], "Season": r["season"],
             } for r in _sg[stat]],

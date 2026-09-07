@@ -335,6 +335,56 @@ def ordinal(n):
     return f"{n}{suf}"
 
 
+# ── one label for a player, everywhere ──────────────────────────────────────────
+#: A name that is not a name. Scouting produces players nobody has a book for,
+#: and the row that comes back carries the jersey number in the `name` column —
+#: so a league leaderboard prints "12 · rebounding rate" and asks a coach to
+#: believe in a player called 12. `Unknown 7` is the same class wearing a coat.
+def _is_placeholder_name(name):
+    n = (name or "").strip()
+    return (not n) or n.isdigit() or n.lower().startswith("unknown")
+
+
+_LABEL_ROW_TEAM = object()      # "take the team off the row" — see player_label
+
+
+def player_label(row, *, team=_LABEL_ROW_TEAM, number=True):
+    """A player's display label: a real name, or `#12 · Kansas Girls`.
+
+    Two failures, one helper. Rendering `row["name"]` raw puts a naked jersey
+    number where a person's name belongs; building `f"#{number} {name}"` on the
+    same row renders `#12 12`. Roughly thirty sites do the second and the
+    Players page's superlative row did the first.
+
+    A placeholder name is replaced by the identification a coach can actually
+    use — the jersey, and the team it plays for. The jersey COLUMN wins over a
+    numeric name when the two disagree, because that is the one a coach can
+    check against a roster sheet.
+
+    Pass `team=""` where the caller already prints the team beside the label —
+    several leaderboards render `#3  <player>  ·  Kansas Girls` and would
+    otherwise say Kansas Girls twice.
+
+    Streamlit-free on purpose: the engine renders labels too (scout sheets,
+    printable reports), and a helper the engine cannot import gets copy-pasted.
+    """
+    name = str(row.get("name") or "").strip()
+    raw_num = row.get("number")
+    num = "" if raw_num in (None, "") else str(raw_num).strip()
+    if team is _LABEL_ROW_TEAM:
+        team = row.get("team") or row.get("team_name") or ""
+
+    if not _is_placeholder_name(name):
+        return f"#{num} {name}" if (number and num) else name
+
+    # placeholder: identify by jersey, falling back to a numeric name when the
+    # number column is the one that is missing.
+    jersey = num or (name if name.isdigit() else "")
+    tail = f" · {team}" if team else ""
+    return f"#{jersey}{tail}" if jersey else (f"Unnamed{tail}" if tail
+                                              else "Unnamed player")
+
+
 # ── player measurables formatting (single source for every printable sheet) ─────
 def fmt_height(inches):
     """Inches → feet-inches string (74 → 6'2\"); None / 0 / non-numeric → None."""

@@ -21,6 +21,7 @@ import helpers.entitlement as ENT
 import helpers.manual_box as MB
 import helpers.team_analytics as TA
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import player_label as _PLBL
 
 
 @st.fragment
@@ -131,7 +132,7 @@ def render(ctx):
         sl = sorted([p for p in ctx.players if p["PPG"] is not None],
                     key=lambda p: p["PPG"], reverse=True)[:7]
         st.plotly_chart(
-            ctx.leader_bar(sl, "PPG", lambda r: f"#{r['number']} {r['name']}",
+            ctx.leader_bar(sl, "PPG", lambda r: _PLBL(r),
                         lambda r: r["PPG"], lambda v: f"{v:.1f}",
                         color=ctx.ACCENT, height=260),
             width="stretch", key="ov_ppg")

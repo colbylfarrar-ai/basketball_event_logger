@@ -37,6 +37,7 @@ from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import player_label as _PLBL
 
 _PTL = dict(PT.NAMED_PLAY_TYPES)
 _ZL = TA.ZONE_LABELS
@@ -569,7 +570,7 @@ def render(ctx):
 
     # ══ §H — hand-off & inbounds feeder hubs ═════════════════════════════════
     feeders = ctx.feeders(g, tid, _off) or {}
-    _name_of = {p.get("_pid"): f"#{p.get('number')} {p.get('name')}"
+    _name_of = {p.get("_pid"): _PLBL(p)
                 for p in (ctx.players or [])}
     _fd_rows = []
     for k in ("dho", "blob", "slob"):
@@ -682,7 +683,7 @@ def render(ctx):
     if _roster:
         st.markdown("<div class='pl-hdr'>Per-player play style</div>",
                     unsafe_allow_html=True)
-        _opts = {f"#{p.get('number')} {p.get('name')}": p.get("_pid")
+        _opts = {_PLBL(p): p.get("_pid")
                  for p in _roster}
         who = st.selectbox("Player", list(_opts), key="ps_player_pick")
         pid = _opts.get(who)

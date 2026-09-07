@@ -27,6 +27,7 @@ import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.settings_utils as SU
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import player_label as _PLBL
 
 
 # Sections a coach can include / exclude on their scout sheet. Applies to BOTH
@@ -173,7 +174,7 @@ def _three_profile(ctx):
     be3_pct = ctx.brk["be3"] * 100
     three_p = sorted(three_p, key=lambda p: p["3PA"], reverse=True)
     return {"be3_pct": be3_pct, "players": [
-        {"label": f"#{p['number']} {p['name']}", "p3": p["3P%"] or 0,
+        {"label": _PLBL(p), "p3": p["3P%"] or 0,
          "att": p["3PA"], "above": (p["3P%"] or 0) >= be3_pct} for p in three_p]}
 
 
@@ -452,7 +453,7 @@ def render(ctx):
         _avail = {r["id"]: (r["availability"] or "Active") for r in query(
             "SELECT id, availability FROM players WHERE team_id=? AND archived=0",
             (ctx.team_id,))}
-        _names = {p["_pid"]: f"#{p['number']} {p['name']}" for p in ctx.players
+        _names = {p["_pid"]: _PLBL(p) for p in ctx.players
                   if p["_pid"] in _avail}
         _def_hide = sorted(pid for pid in _names
                            if _avail.get(pid, "Active")
@@ -561,14 +562,23 @@ def render(ctx):
                            "plays": _saved_plays_for_sheet()}
             st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                         unsafe_allow_html=True)
-            html_doc = SC.printable_html(sc, opp_label, hidden=_hidden,
-                                         extra=_extra_cold, compact=_compact)
-            from helpers.ui import pdf_or_html_download
-            pdf_or_html_download("Scout sheet", html_doc,
-                                 f"scout_{sc['name'].replace(' ', '_')}",
-                                 key="scout_dl_cold")
+            from helpers.ui import pdf_or_html_download, prepared_doc
+            _fp = (tuple(_hidden), _compact)
+            pdf_or_html_download(
+                "Scout sheet",
+                lambda: SC.printable_html(sc, opp_label, hidden=_hidden,
+                                          extra=_extra_cold, compact=_compact),
+                f"scout_{sc['name'].replace(' ', '_')}",
+                key="scout_dl_cold", fp=_fp)
             with st.expander("Preview printable sheet"):
-                components.html(html_doc, height=620, scrolling=True)
+                # An expander body runs whether or not it is open, so building
+                # a second copy here would pay back the whole cost the builder
+                # just saved. The preview shows what the download prepared.
+                html_doc = prepared_doc("scout_dl_cold", _fp)
+                if html_doc:
+                    components.html(html_doc, height=620, scrolling=True)
+                else:
+                    st.caption("Prepare the sheet above to preview it here.")
         return
 
     # ── group dividers (UI alignment with the profile/overview zone grammar):
@@ -873,7 +883,7 @@ def render(ctx):
             be3_pct = ctx.brk["be3"] * 100
             tp = go.Figure()
             tp.add_trace(go.Bar(
-                x=[f"#{p['number']} {p['name']}" for p in
+                x=[_PLBL(p) for p in
                    sorted(three_p, key=lambda p: p["3PA"], reverse=True)],
                 y=[p["3P%"] for p in
                    sorted(three_p, key=lambda p: p["3PA"], reverse=True)],
@@ -1414,11 +1424,20 @@ def render(ctx):
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)
-    html_doc = SC.printable_html(sc, opp_label, hidden=_hidden, extra=_extra,
-                                 compact=_compact)
-    from helpers.ui import pdf_or_html_download
-    pdf_or_html_download("Scout sheet", html_doc,
-                         f"scout_{sc['name'].replace(' ', '_')}",
-                         key="scout_dl")
+    from helpers.ui import pdf_or_html_download, prepared_doc
+    _fp = (tuple(_hidden), _compact)
+    pdf_or_html_download(
+        "Scout sheet",
+        lambda: SC.printable_html(sc, opp_label, hidden=_hidden, extra=_extra,
+                                  compact=_compact),
+        f"scout_{sc['name'].replace(' ', '_')}",
+        key="scout_dl", fp=_fp)
     with st.expander("Preview printable sheet"):
-        components.html(html_doc, height=620, scrolling=True)
+        # Same reason as the cold-start sheet above: the expander body runs
+        # even when closed, so the preview reads the prepared document rather
+        # than rendering its own.
+        html_doc = prepared_doc("scout_dl", _fp)
+        if html_doc:
+            components.html(html_doc, height=620, scrolling=True)
+        else:
+            st.caption("Prepare the sheet above to preview it here.")

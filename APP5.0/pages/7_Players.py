@@ -60,6 +60,7 @@ import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.seasons as SEAS
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import player_label as _PLBL
 
 _cfg, ACCENT = page_chrome("Players")
 # The Players page is a whole-league (multi-team) pool, so every tracked surface
@@ -247,7 +248,7 @@ GROUP_COLORS = {
 def _leader_bar(top, key, fmt, color=ACCENT, height=200):
     """Horizontal bar chart of a top-N leader list (#1 on top)."""
     seq = list(reversed(top))                      # plotly draws first at bottom
-    names = [f"{r['name']}<br><span style='font-size:9px;color:#8b949e'>"
+    names = [f"{_PLBL(r, team='')}<br><span style='font-size:9px;color:#8b949e'>"
              f"{_team_short(r['team'])}</span>" for r in seq]
     vals = [r[key] for r in seq]
     texts = [_fmt(v, fmt) for v in vals]
@@ -268,7 +269,7 @@ def _podium(top3, key, fmt):
             f"border:1px solid {c};border-radius:12px;padding:14px;"
             f"text-align:center'>"
             f"<div style='font-size:15px;font-weight:800;color:#f0f6fc;"
-            f"margin-top:4px'>{r['name']}</div>"
+            f"margin-top:4px'>{_PLBL(r)}</div>"
             f"<div style='font-size:11px;color:#8b949e'>"
             f"{_team_short(r['team'])} · {r['class']}</div>"
             f"<div style='font-size:26px;font-weight:800;color:{c};"
@@ -461,13 +462,13 @@ _ppg_lead = _leaders(rows, "PPG")[0]
 _ovr_lead = _leaders(rows, "OVERALL")[0]
 _teams_n = len({r["team_id"] for r in rows})
 _ovr_chip = (f"<span class='stat-chip'>OVR <b>{_ovr_lead['OVERALL']:.1f}</b> · "
-             f"{_ovr_lead['name']}</span>"
+             f"{_PLBL(_ovr_lead)}</span>"
              if _PAID and _ovr_lead["OVERALL"] is not None else "")
 st.markdown(
     "<div class='form-strip' style='margin:-6px 0 12px'>"
     f"<span class='stat-chip'><b>{len(rows)}</b> players</span>"
     f"<span class='stat-chip'><b>{_teams_n}</b> teams</span>"
-    f"<span class='stat-chip'>PPG <b>{_ppg_lead['PPG']:.1f}</b> · {_ppg_lead['name']}</span>"
+    f"<span class='stat-chip'>PPG <b>{_ppg_lead['PPG']:.1f}</b> · {_PLBL(_ppg_lead)}</span>"
     f"{_ovr_chip}"
     "</div>", unsafe_allow_html=True)
 
@@ -577,7 +578,7 @@ with tab_lead:
             f"<div style='font-size:10px;color:{hue};text-transform:uppercase;"
             f"letter-spacing:1.5px;font-weight:700'>Overall rating leader · {tier}</div>"
             f"<div style='font-size:24px;font-weight:900;color:#f0f6fc;margin:3px 0'>"
-            f"{ovr_lead['name']}</div>"
+            f"{_PLBL(ovr_lead)}</div>"
             f"<div style='font-size:13px;color:#8b949e'>{ovr_lead['team']} · "
             f"{ovr_lead['class']} · {ovr_lead['GP']} GP · {ovr_lead['PPG']:.1f} PTS · "
             f"{ovr_lead['RPG']:.1f} REB · {ovr_lead['APG']:.1f} AST</div></div>"
@@ -607,7 +608,7 @@ with tab_lead:
         for col, (ld, key, lbl, fmt, sub) in zip(sp, spots):
             if ld:
                 col.markdown(_spotlight(_fmt(ld[0][key], fmt), lbl,
-                                        f"{ld[0]['name']} · {sub}"),
+                                        f"{_PLBL(ld[0])} · {sub}"),
                              unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -615,11 +616,11 @@ with tab_lead:
     m[0].markdown(_glass("Players", len(rows), "in the qualified pool"),
                   unsafe_allow_html=True)
     m[1].markdown(_glass("Teams", teams_n, "represented"), unsafe_allow_html=True)
-    m[2].markdown(_glass("PPG leader", f"{ppg_lead['PPG']:.1f}", ppg_lead["name"],
+    m[2].markdown(_glass("PPG leader", f"{ppg_lead['PPG']:.1f}", _PLBL(ppg_lead),
                          ACCENT), unsafe_allow_html=True)
     if _PAID:
         m[3].markdown(_glass("OVERALL leader", f"{ovr_lead['OVERALL']:.1f}",
-                             ovr_lead["name"], "#56d4dd"), unsafe_allow_html=True)
+                             _PLBL(ovr_lead), "#56d4dd"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     lc, rc = st.columns(2)
@@ -644,7 +645,7 @@ with tab_lead:
                and r["DEFENSE"] is not None]
         deff = [r["DEFENSE"] for r in rows if r["OFFENSE"] is not None
                 and r["DEFENSE"] is not None]
-        names = [f"{r['name']} · {_team_short(r['team'])}" for r in rows
+        names = [f"{_PLBL(r, team='')} · {_team_short(r['team'])}" for r in rows
                  if r["OFFENSE"] is not None and r["DEFENSE"] is not None]
         ovr = [r["OVERALL"] for r in rows if r["OFFENSE"] is not None
                and r["DEFENSE"] is not None]
@@ -669,7 +670,7 @@ with tab_lead:
         # ── how the top scorers get their points (per game) — box, Free ──────
         st.markdown("**How the top scorers score** — points / game by source")
         sc12 = _leaders(rows, "PPG", n=12)
-        slab = [f"{r['name']}<br><span style='font-size:9px;color:#8b949e'>"
+        slab = [f"{_PLBL(r, team='')}<br><span style='font-size:9px;color:#8b949e'>"
                 f"{_team_short(r['team'])}</span>" for r in sc12]
         two = [(r["2PM"] * 2) / max(r["GP"], 1) for r in sc12]
         thr = [(r["3PM"] * 3) / max(r["GP"], 1) for r in sc12]
@@ -705,7 +706,7 @@ with tab_lead:
         if ue:
             ufig = go.Figure(go.Scatter(
                 x=[r["USG%"] for r in ue], y=[r["TS%"] for r in ue], mode="markers",
-                text=[f"{r['name']} · {_team_short(r['team'])}" for r in ue],
+                text=[f"{_PLBL(r, team='')} · {_team_short(r['team'])}" for r in ue],
                 hovertemplate="%{text}<br>USG %{x:.1f}% · TS %{y:.1f}%<extra></extra>",
                 marker=dict(size=[max(7, r["PPG"] * 1.4) for r in ue],
                             color=[r["OVERALL"] or 50 for r in ue],
@@ -860,7 +861,7 @@ with tab_rate:
         for col, key in zip(lead_cols, rcols):
             ld = _leaders(rows, key, n=1)
             if ld:
-                col.markdown(_glass(key, f"{ld[0][key]:.1f}", ld[0]["name"]),
+                col.markdown(_glass(key, f"{ld[0][key]:.1f}", _PLBL(ld[0])),
                              unsafe_allow_html=True)
 
         # ── Best per class (fragment — the rating picker reruns only this) ────
@@ -896,7 +897,7 @@ with tab_rate:
                         f"<div style='flex:1;min-width:0'>"
                         f"<div style='font-size:13px;font-weight:700;color:#f0f6fc;"
                         f"white-space:nowrap;overflow:hidden;"
-                        f"text-overflow:ellipsis'>{r['name']}</div>"
+                        f"text-overflow:ellipsis'>{_PLBL(r)}</div>"
                         f"<div style='font-size:10px;color:#8b949e'>"
                         f"{_team_short(r['team'])} · {r['class']}</div></div>"
                         f"<div style='flex:1;position:relative;height:7px;"
@@ -1078,7 +1079,7 @@ def _fx_shot():
     st.markdown("<div class='pl-hdr'>Player shot explorer</div>",
                 unsafe_allow_html=True)
     order_l = sorted(rows, key=lambda r: (r["Rank"] or 1e9))
-    labels_l = [f"#{r['Rank']}  {r['name']}  ·  {r['team']}" for r in order_l]
+    labels_l = [f"#{r['Rank']}  {_PLBL(r, team='')}  ·  {r['team']}" for r in order_l]
     pick_l = st.selectbox("Player", range(len(order_l)),
                           format_func=lambda i: labels_l[i], key="lab_pick")
     PL = order_l[pick_l]
@@ -1263,7 +1264,7 @@ def _fx_cmp():
                "a stat-by-stat breakdown with the edge highlighted.")
 
     order = sorted(rows, key=lambda r: (r["Rank"] or 1e9))
-    labels = [f"{r['name']}  ·  {r['team']}" for r in order]
+    labels = [f"{_PLBL(r, team='')}  ·  {r['team']}" for r in order]
     c1, c2 = st.columns(2)
     ia = c1.selectbox("Player A", range(len(order)),
                       format_func=lambda i: labels[i], key="cmp_a")
@@ -1288,7 +1289,7 @@ def _fx_cmp():
             col.markdown(
                 f"<div style='text-align:center'>"
                 f"<div style='font-size:17px;font-weight:700;color:#c9d1d9'>"
-                f"{P['name']}</div>"
+                f"{_PLBL(P)}</div>"
                 f"<div style='font-size:12px;color:#8b949e'>{P['team']} · "
                 f"{P['class']}{_rank_html}</div>"
                 f"{_ovr_html}</div>",
@@ -1352,7 +1353,7 @@ def _fx_cmp():
                         st.plotly_chart(pie, width="stretch",
                                         key=f"cmp_donut_{sfx}")
                     else:
-                        st.caption(f"{P['name']}: no shot attempts.")
+                        st.caption(f"{_PLBL(P)}: no shot attempts.")
 
             # side-by-side shot charts (where each player gets their looks)
             st.markdown("<div class='pl-hdr'>Shot charts</div>", unsafe_allow_html=True)
@@ -1368,7 +1369,7 @@ def _fx_cmp():
                             p_shots, zone_data=zsplits.get(p_pid, {}),
                             model=_shot_model(_vis_key), key=f"cmp_court_{sfx}",
                             title=P["name"], height=380):
-                        st.caption(f"{P['name']}: no shot locations or zones "
+                        st.caption(f"{_PLBL(P)}: no shot locations or zones "
                                    "logged yet.")
 
         # side-by-side percentile bars vs the pool
@@ -1388,7 +1389,7 @@ def _fx_cmp():
                          if s[0] not in PR.EVENT_DERIVED_STATS]
         pcc = st.columns(2)
         for col, P in ((pcc[0], A), (pcc[1], B)):
-            html = f"<div style='font-weight:700;color:#c9d1d9;margin-bottom:8px'>{P['name']}</div>"
+            html = f"<div style='font-weight:700;color:#c9d1d9;margin-bottom:8px'>{_PLBL(P)}</div>"
             for key, lbl, fmt, lb in PCT_STATS:
                 p = _pctile(P.get(key), key, rows, lower_better=lb)
                 # Per-STAT pool, not len(rows) — see cards.pctile_n (B1).
@@ -1449,7 +1450,7 @@ with tab_cmp:
 @st.fragment
 def _fx_prof():
     order = sorted(rows, key=lambda r: (r["Rank"] or 1e9))
-    labels = [f"#{r['Rank']}  {r['name']}  ·  {r['team']}" for r in order]
+    labels = [f"#{r['Rank']}  {_PLBL(r, team='')}  ·  {r['team']}" for r in order]
     # Deep-link preselect: a ?player=<id> link (from a landing/search leaderboard)
     # opens this profile already scoped to that player. Applied once per distinct
     # id so the user can still change the picker afterward; ids not in the current
@@ -1485,9 +1486,9 @@ def _fx_prof():
     from helpers.ui import pdf_or_html_download
     if _PAID:
         pdf_or_html_download(
-            "Player card", _player_card(pid, gender, _vis_key),
+            "Player card", lambda: _player_card(pid, gender, _vis_key),
             f"card_{P['name']}".replace(" ", "_"),
-            key="prof_card_dl")
+            key="prof_card_dl", fp=(pid, gender, _vis_key))
     else:
         st.caption("🔒 Download the full player card (ratings, usage, shot chart) — "
                    "a **Paid** feature. Upgrade to unlock.")
@@ -1542,7 +1543,7 @@ def _fx_plab():
         lclusters = _lab_clusters(gender, _vis_key)
         lstab = _lab_stab(gender, _vis_key)
         lnames = _lab_names(gender)
-        lab_pid_label = {pid: f"#{r['number']} {r['name']} · {r['team']}"
+        lab_pid_label = {pid: f"{_PLBL(r, team='')} · {r['team']}"
                          for pid, r in ltab.items()}
         lab_order = sorted(ltab, key=lambda p: -(ltab[p].get("OVERALL") or 0))
 
@@ -1578,7 +1579,7 @@ def _fx_plab():
             pb = lbadges.get(psel, [])
             r = ltab[psel]
             st.markdown(
-                f"<div class='glass-tile'><b style='font-size:18px'>{r['name']}</b> "
+                f"<div class='glass-tile'><b style='font-size:18px'>{_PLBL(r, team='')}</b> "
                 f"<span style='color:#8b949e'>#{r['number']} · {r['team']} · OVR "
                 f"{r.get('OVERALL','—')} · {BG.badge_points(pb)} badge pts</span></div>",
                 unsafe_allow_html=True)

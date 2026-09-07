@@ -78,6 +78,7 @@ def _wr_blob_save(key, blob):
 #  HEADER + LEAGUE + PRECISION
 # ══════════════════════════════════════════════════════════════════════════════
 from helpers.ui import lab_hero as _lab_hero
+from helpers.stats import player_label as _PLBL
 _lab_hero("War Room — Lineups, Matchups & Sims",
           sub="Build and compare your fives, optimize the rotation, project any "
               "matchup, roll the season thousands of times, and bracket the title.")
@@ -850,16 +851,18 @@ def _render_matchup():
             # ── the takeaway artifact: a print-ready matchup one-pager ───────
             from datetime import datetime as _dt
             import re as _re
-            _sheet = MS.matchup_html(
-                pred, sim=sim, n_sims=n,
-                home_label=("Neutral floor" if home_arg is None
-                            else f"Home court: {name_of[home_arg]}"),
-                generated=_dt.now().strftime("%B %d, %Y"))
             _slug = _re.sub(r"[^A-Za-z0-9]+", "_",
                             f"{pred['a_name']}_vs_{pred['b_name']}").strip("_")
             from helpers.ui import pdf_or_html_download
-            pdf_or_html_download("Matchup one-pager", _sheet,
-                                 f"matchup_{_slug}", key="wr_sheet_dl")
+            pdf_or_html_download(
+                "Matchup one-pager",
+                lambda: MS.matchup_html(
+                    pred, sim=sim, n_sims=n,
+                    home_label=("Neutral floor" if home_arg is None
+                                else f"Home court: {name_of[home_arg]}"),
+                    generated=_dt.now().strftime("%B %d, %Y")),
+                f"matchup_{_slug}", key="wr_sheet_dl",
+                fp=(_slug, n, home_arg))
             st.caption("Print-ready scouting sheet — text it straight to the "
                        "staff. Next steps: **Defensive assignments** (who guards "
                        "whom) and **Lineups** (pick the five) in the views above.")
@@ -1307,7 +1310,7 @@ if _wrview == "Lineups" and _lu_view == "Creator":
             _ctxd = _wl_ctx(gender, season_pick)
             _lab = {}
             for r in _rows:
-                _b = f"#{r['number']} {r['name']}"
+                _b = _PLBL(r)
                 _lab[r["_pid"]] = (f"{_b} (OVR {r['OVERALL']:.0f})"
                                    if r.get("OVERALL") is not None else _b)
             _def5 = [r["_pid"] for r in
@@ -1536,8 +1539,7 @@ if _wrview == "Lineups" and _lu_view == "Creator":
                         for _d, _out, _bp in _ups:
                             _o = _nmap[_out]
                             st.markdown(f"- **+{_d:.1f} Net** — sub in "
-                                        f"#{_bp['number']} {_bp['name']} for "
-                                        f"#{_o['number']} {_o['name']}")
+                                        f"{_PLBL(_bp)} for {_PLBL(_o)}")
                     else:
                         st.caption("No bench swap improves this five — it's the "
                                    "team's best available unit.")

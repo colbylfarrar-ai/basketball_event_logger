@@ -277,10 +277,44 @@ def _pdf_bytes(html_doc: str):
     return html_to_pdf(html_doc)
 
 
-def pdf_or_html_download(label: str, html_doc: str, basename: str, *, key: str):
+def pdf_or_html_download(label: str, html_doc, basename: str, *, key: str,
+                         fp=None):
     """The one-click export pair: a real PDF (when an engine is installed —
     xhtml2pdf ships in requirements) plus the HTML original; falls back to the
-    old HTML-only button with print instructions when no engine works."""
+    old HTML-only button with print instructions when no engine works.
+
+    `html_doc` may be a zero-arg CALLABLE, and that is the shape to prefer.
+    Passing the finished document means the call site built it — Python
+    evaluates an argument before the function is entered, so the report is
+    constructed on every render whether or not anyone downloads it. Four of the
+    six exports reach `court_png._light_court`, which costs ~43 s the first time
+    it is touched in a process (matplotlib import, backend init, font cache).
+    That was 43 of the Players page's 56.6 s cold, for a figure nobody looked at.
+
+    Handed a callable, this renders a Prepare button and builds nothing until a
+    coach asks. The built document is held in session state so it survives the
+    rerun a download click causes — otherwise the coach clicks Prepare, gets a
+    button, clicks it, and lands back on Prepare.
+
+    `fp` is the staleness guard: any value whose change means the held document
+    is now the wrong document (the recap's chosen sections, the scout sheet's
+    hidden blocks). Callers whose inputs cannot change may leave it None.
+    """
+    if callable(html_doc):
+        _slot = f"_dl_prepared_{key}"
+        _held = st.session_state.get(_slot)
+        if not (_held and _held[0] == fp):
+            if not st.button(f"⬇ Prepare {label}", key=f"{key}_prep"):
+                st.caption(f"Built on request — the {label.lower()} takes a "
+                           "moment to render, so it is not made until you ask.")
+                return
+            with st.spinner(f"Building the {label.lower()}…"):
+                # No st.rerun: half these call sites live inside fragments,
+                # where the scope argument would have to differ per caller.
+                # Falling through renders the buttons in this same run.
+                st.session_state[_slot] = (fp, html_doc())
+        html_doc = st.session_state[_slot][1]
+
     pdf = _pdf_bytes(html_doc)
     if pdf:
         c1, c2 = st.columns(2)
@@ -294,6 +328,18 @@ def pdf_or_html_download(label: str, html_doc: str, basename: str, *, key: str):
         st.download_button(f"⬇ {label} (HTML — open & print to PDF)", html_doc,
                            file_name=f"{basename}.html", mime="text/html",
                            key=key)
+
+
+def prepared_doc(key: str, fp=None):
+    """The document `pdf_or_html_download(key=…)` has already built, or None.
+
+    The scout sheet renders a preview of the same HTML it offers for download.
+    An `st.expander` body runs whether or not it is open, so a preview that
+    builds its own copy pays the whole cost back and defeats the point. This
+    lets the preview read what the download prepared instead.
+    """
+    held = st.session_state.get(f"_dl_prepared_{key}")
+    return held[1] if (held and held[0] == fp) else None
 
 
 # ── Command palette (global search — Tier 2 item 12) ────────────────────────────

@@ -30,6 +30,7 @@ import helpers.officials as OFF
 import helpers.seasons as SEAS
 import helpers.turnovers as TOV
 from PIL import Image
+from helpers.stats import player_label as _PLBL
 
 try:
     from streamlit_image_coordinates import streamlit_image_coordinates
@@ -522,9 +523,9 @@ if is_tracked and _paid_view and _gt_view == _V_LIVE:
             import helpers.reports as RP
             from helpers.ui import pdf_or_html_download
             pdf_or_html_download(
-                "Game recap", RP.game_recap_html(game_id),
+                "Game recap", lambda: RP.game_recap_html(game_id),
                 f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
-                key=f"gt{game_id}_recap")
+                key=f"gt{game_id}_recap", fp=game_id)
         except Exception:
             st.caption("Recap unavailable for this game.")
 
@@ -1073,19 +1074,19 @@ else:
         t2_db  = query(f"SELECT id, name, number FROM players WHERE team_id=? AND {_roster_c} ORDER BY number, name", (t2id, *_roster_p))
         all_offs = query("SELECT id, name FROM officials WHERE archived=0 ORDER BY name")
 
-        t1_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t1_db]
-        t2_opts  = ["—"] + [f"#{p['number']} {p['name']}" for p in t2_db]
+        t1_opts  = ["—"] + [_PLBL(p) for p in t1_db]
+        t2_opts  = ["—"] + [_PLBL(p) for p in t2_db]
         off_opts_all = ["—"] + [o["name"] for o in all_offs]
-        t1_pmap  = {f"#{p['number']} {p['name']}": p["id"] for p in t1_db}
-        t2_pmap  = {f"#{p['number']} {p['name']}": p["id"] for p in t2_db}
+        t1_pmap  = {_PLBL(p): p["id"] for p in t1_db}
+        t2_pmap  = {_PLBL(p): p["id"] for p in t2_db}
         off_imap = {o["name"]: o["id"] for o in all_offs}
 
         # Re-seed widget state from the persisted floor on a fresh session, so a
         # browser refresh doesn't silently zero everyone's minutes. The floor is
         # stored as ids (labels change when a jersey number or name is edited
         # mid-game); a missing/archived id just leaves its slot on "—".
-        t1_ilab  = {p["id"]: f"#{p['number']} {p['name']}" for p in t1_db}
-        t2_ilab  = {p["id"]: f"#{p['number']} {p['name']}" for p in t2_db}
+        t1_ilab  = {p["id"]: _PLBL(p) for p in t1_db}
+        t2_ilab  = {p["id"]: _PLBL(p) for p in t2_db}
         off_ilab = {o["id"]: o["name"] for o in all_offs}
 
         _stored = _load_floor(game_id) or {}
@@ -1522,7 +1523,7 @@ with st.expander("＋ Quick Add Player / Official"):
         else:
             _tname_by = {t1id: t1name, t2id: t2name}
             _hdf = pd.DataFrame([{"id": r["id"], "team": _tname_by.get(r["team_id"], ""),
-                                  "player": f"#{r['number']} {r['name']}",
+                                  "player": _PLBL(r),
                                   "handedness": r["handedness"] or "right"} for r in _hand_rows])
             _hed = st.data_editor(
                 _hdf, hide_index=True, width="stretch", key="gt_hand_editor",

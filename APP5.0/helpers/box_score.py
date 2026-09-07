@@ -593,9 +593,9 @@ def render_box_score(game_id: int):
             help="Pick what prints on the recap — like the scout sheet's toggles.")
         _rhidden = [k for k, _ in RP.RECAP_SECTIONS if k not in _rsec]
     pdf_or_html_download(
-        "Game recap", _recap(game_id, _rhidden),
+        "Game recap", lambda: _recap(game_id, _rhidden),
         f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
-        key=f"bs{game_id}_recap")
+        key=f"bs{game_id}_recap", fp=tuple(_rhidden))
 
     # LAZY SECTIONS, not st.tabs (2026-09-05). Under st.tabs every one of these
     # nine bodies ran on every render — a coach opening one box score paid for

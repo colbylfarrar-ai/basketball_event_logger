@@ -5405,27 +5405,49 @@ if _tdview == "Lab":
                 # possessions doesn't get announced as the best player.
                 _il_lines = []
                 _sig_r = [v for v in rows_r if v.get("sig")]
-                if _sig_r:
-                    _top = _sig_r[0]
+                # rows_r is sorted by RAPM descending, so _sig_r[0] is the best
+                # separated player — but only call it a POSITIVE if it is one.
+                # With the old OLS gate this line announced a -1.7 as "the
+                # clearest positive"; the sign is now checked, not assumed.
+                _pos = [v for v in _sig_r if v["RAPM"] > 0]
+                _neg = [v for v in _sig_r if v["RAPM"] < 0]
+                if _pos:
+                    _top = _pos[0]
                     _il_lines.append((
                         "impact", _top["poss"],
                         f"<b>{_top['name']}</b> is the clearest positive — "
                         f"<b>{_top['RAPM']:+.1f}</b> points per 100 possessions "
                         f"vs an average player, and clear of the noise band."))
-                    if len(_sig_r) > 1:
-                        _wrst = _sig_r[-1]
-                        if _wrst["RAPM"] < 0:
-                            _il_lines.append((
-                                "cost", _wrst["poss"],
-                                f"<b>{_wrst['name']}</b> is the clearest "
-                                f"negative at <b>{_wrst['RAPM']:+.1f}</b> — "
-                                "worth a look at who they share the floor with."))
-                else:
+                if _neg:
+                    _wrst = _neg[-1]
                     _il_lines.append((
-                        "sample", sum(v["poss"] for v in rows_r),
-                        "No player separates from league average yet — the "
-                        "possession book is too short to call anyone apart. "
-                        "Read the order below as directional only."))
+                        "cost", _wrst["poss"],
+                        f"<b>{_wrst['name']}</b> is the clearest "
+                        f"negative at <b>{_wrst['RAPM']:+.1f}</b> — "
+                        "worth a look at who they share the floor with."))
+                if not _sig_r:
+                    # Two different reasons a player fails, and they call for
+                    # different answers: a short book gets longer by tracking
+                    # more games, but a starter who never sits is not separable
+                    # from the four teammates who never sit either — no amount
+                    # of possessions fixes that, only a different rotation.
+                    _band = [v for v in rows_r if v.get("clears_band")
+                             and not v.get("separable")]
+                    if _band:
+                        _nm = ", ".join(v["name"] for v in _band[:3])
+                        _il_lines.append((
+                            "shared", max(v["poss"] for v in _band),
+                            f"No player separates yet. <b>{_nm}</b> "
+                            f"{'is' if len(_band) == 1 else 'are'} on the floor "
+                            "too consistently with the same teammates to tell "
+                            "their impact apart from the group's — the ridge is "
+                            "splitting one team rating between them."))
+                    else:
+                        _il_lines.append((
+                            "sample", sum(v["poss"] for v in rows_r),
+                            "No player separates from league average yet — the "
+                            "possession book is too short to call anyone apart. "
+                            "Read the order below as directional only."))
                 _verdict_lines(_il_lines)
 
                 rc1, rc2 = st.columns([3, 2])
@@ -5509,7 +5531,11 @@ if _tdview == "Lab":
                     xs = [v["RAPM"] for v in sequ]
                     half = [1.96 * v["RAPM_se"] for v in sequ]
                     nm = [v["name"] for v in sequ]
-                    sig = [abs(v["RAPM"]) > h for v, h in zip(sequ, half)]
+                    # the engine's flag, not a fourth rule invented here — this
+                    # line used to re-derive significance from the band alone,
+                    # which ignored identifiability and (against the old OLS
+                    # band) coloured every dot on every team grey.
+                    sig = [bool(v.get("sig")) for v in sequ]
                     dot = [(GOOD if x > 0 else BAD) if s else "#6b7280"
                            for s, x in zip(sig, xs)]
                     ef = go.Figure(go.Scatter(
@@ -5525,13 +5551,16 @@ if _tdview == "Lab":
                     ef.update_layout(margin=dict(l=4, r=14, t=6, b=30),
                                      showlegend=False)
                     st.plotly_chart(ef, width="stretch", key="il_rapm_ci")
+                    _nsep = sum(1 for v in sequ if not v.get("separable"))
                     st.caption(
-                        f"Dot = regularized RAPM (the ranking number). Whisker = 95% "
-                        f"CI from the unregularized fit — how tightly the ~15-game "
-                        f"sample pins each player down. {sum(sig)} of {len(sequ)} "
-                        "clear zero (green/red = distinguishable from average; grey = "
-                        "not yet). Wide bands are the honest signal that small samples "
-                        "can't separate most players.")
+                        f"Dot = RAPM (the ranking number). Whisker = its own 95% CI — "
+                        f"how far the number would move on another sample of the same "
+                        f"possessions. {sum(sig)} of {len(sequ)} separate from average "
+                        "(green/red = distinguishable; grey = not yet)."
+                        + (f" {_nsep} of them share the floor too consistently with the "
+                           "same teammates for the model to tell them apart, however "
+                           "many possessions they play — that is a rotation question, "
+                           "not a sample-size one." if _nsep else ""))
             else:
                 st.caption("Not enough possessions to solve RAPM for this team yet.")
 

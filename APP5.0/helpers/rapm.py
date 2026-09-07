@@ -27,8 +27,9 @@ so RAPM measures field-goal scoring/prevention per 100 possessions. Directional
 on this sample — but it is the genuine adjusted metric, λ-shrunk for safety.
 
 Pure data layer: numpy + database.db + helpers.stats. Optionally uses
-scikit-learn (RidgeCV — cross-validated penalty) and statsmodels (OLS standard
-errors for a significance read); both degrade gracefully if absent. No streamlit.
+scikit-learn (RidgeCV — cross-validated penalty), which degrades gracefully if
+absent. The certainty companion is closed-form numpy (see `inference`). No
+streamlit.
 """
 from __future__ import annotations
 
@@ -45,11 +46,6 @@ try:
 except Exception:
     _HAVE_SKLEARN = False
 
-try:
-    import statsmodels.api as _sm
-    _HAVE_SM = True
-except Exception:
-    _HAVE_SM = False
 
 
 # Ridge penalty in "possession" units. Larger = more shrinkage toward average.
@@ -57,6 +53,25 @@ except Exception:
 # samples stay near 0 (see the Impact Lab caption). Exposed for re-tuning.
 DEFAULT_LAMBDA = 1200.0
 DEFAULT_MIN_POSS = 40   # report gate: players below this are too thin to trust
+
+# Identifiability gate for `sig` (inference=True only) — the share of a player's
+# coefficient that comes from the DATA rather than from the penalty, read off the
+# diagonal of H = (X'X + λI)⁻¹X'X (whose trace is the fit's effective dof).
+#
+# Possessions alone do not make a player separable. A roster with one tracked
+# game hands every one of its players nearly the same lineup set, so the ridge
+# has no on/off variation to work with and simply spreads the TEAM's rating
+# across them — estimates that are reproducible (small sampling SE) but not
+# individually attributable. h measures precisely that: on the 2025-2026 book it
+# correlates +0.92 with the number of distinct 5-man units a player appears in,
+# and +0.87 with possessions.
+#
+# 0.35 is the centre of a measured plateau, not a taste: sweeping the cut over
+# the girls' pool gives 34 players flagged at 0.00, 19 at 0.10, 7 at 0.20, then a
+# flat {Ali Schwerdfeger, Kealey Sanders, Hannah Bond} for every cut in
+# [0.30, 0.40], collapsing to none at 0.44. The boys' pool (20 games) reads none
+# at any cut from 0.15 up. Re-measure this plateau before moving the number.
+MIN_DATA_SHARE = 0.35
 
 # Box-prior strength (Tier 1, ML_LAYER_ROADMAP): points-per-100 of prior impact per
 # rating point above/below the ~average rating, when building the prior from
@@ -148,11 +163,15 @@ def compute_rapm(game_ids=None, events=None, lam=None,
     small-sample fix so stars on a ~15-game book don't collapse to average. Default
     None reproduces the shrink-to-average behaviour exactly.
 
-    `inference=True` attaches an OLS certainty companion (statsmodels) per player:
-        RAPM_ols, RAPM_se, RAPM_lo, RAPM_hi (95% CI), sig (bool)
-    The headline RAPM stays the ridge estimate (the right point estimate to rank
-    on); the OLS columns quantify how firmly the data pins a player down. On a
-    ~15-game book the CIs are wide and `sig` is rarely True — the honest read.
+    `inference=True` attaches a certainty companion per player:
+        RAPM_se, RAPM_lo, RAPM_hi (95% CI), data_share, separable,
+        clears_band, sig
+    all measured on the SAME ridge estimate the rest of the row reports, so the
+    band describes the number the app ranks on. Two conditions, kept separate so
+    a caller can say WHICH one failed: `clears_band` (the estimate beats its own
+    95% CI) and `separable` (data_share >= MIN_DATA_SHARE — the possessions
+    actually identify this player rather than their team). `sig` is both. On a
+    short book few players clear both — the honest read.
 
     `names` is an optional {pid: {"name","team",...}} map for labels.
     """
@@ -206,15 +225,45 @@ def compute_rapm(game_ids=None, events=None, lam=None,
         A = X.T @ X + used_lam * np.eye(2 * P)
         beta = np.linalg.solve(A, X.T @ y_fit) + beta0
 
-    # ── optional OLS inference companion (statsmodels) ──
-    ols_beta = ols_cov = None
-    if inference and _HAVE_SM and n > 2 * P + 1:
+    # ── certainty companion: the sampling variance OF THE RIDGE ─────────────
+    # This design is EXACTLY rank-deficient by construction — every row carries
+    # five 1s in the offense block and five in the defense block, so
+    # col_j = Σ(defense cols) − Σ(other offense cols) for any j, and the
+    # offense-all-ones minus defense-all-ones direction sits dead in the null
+    # space. An unregularized refit on that matrix is not a second opinion about
+    # the ridge, it is a different estimator with variance an order of magnitude
+    # larger: on the 2025-2026 book the OLS bands ran a median ±34 (girls) /
+    # ±40 (boys) points per 100 around estimates whose whole spread was ±12 and
+    # ±4. Testing the ridge number against that band called every heavy-minutes
+    # player "not separable" while flagging 42-possession noise as real.
+    #
+    # The ridge's own variance is closed form:
+    #     β̂ = A⁻¹X'y,  A = X'X + λI   ⇒   Var(β̂) = σ²·A⁻¹(X'X)A⁻¹
+    # with σ² = RSS / (n − edf) and edf = tr(X'X·A⁻¹) the effective degrees of
+    # freedom the penalty actually spends. A fixed prior β0 only shifts the
+    # centre, so it drops out of the variance. One extra solve of the same
+    # matrix already formed — measured 0.37s on the girls' pool, and it agrees
+    # with a 40-resample possession bootstrap to within ~0.5 pts/100.
+    #
+    # The band alone is still not the whole answer, so H's DIAGONAL comes back
+    # with it as each coefficient's data share — see MIN_DATA_SHARE. Variance
+    # says how much the number would move on another sample; the data share says
+    # whether it is the player's number at all, or their team's.
+    cov = hdiag = None
+    if inference:
         try:
-            res = _sm.OLS(yc, X).fit()
-            ols_beta = np.asarray(res.params, dtype=float)
-            ols_cov = np.asarray(res.cov_params(), dtype=float)
+            XtX = X.T @ X
+            A = XtX + used_lam * np.eye(2 * P)
+            Ainv = np.linalg.inv(A)
+            Hm = Ainv @ XtX
+            resid = y_fit - X @ (beta - beta0)
+            edf = float(np.trace(Hm))
+            dof = max(n - edf, 1.0)
+            s2 = float(resid @ resid) / dof
+            cov = s2 * (Ainv @ XtX @ Ainv)
+            hdiag = np.clip(np.diag(Hm), 0.0, 1.0)
         except Exception:
-            ols_beta = ols_cov = None
+            cov = hdiag = None
 
     if names is None:
         names = {r["id"]: {"name": r["name"], "team": r["team"]}
@@ -238,17 +287,26 @@ def compute_rapm(game_ids=None, events=None, lam=None,
             "name": m.get("name", str(p)), "team": m.get("team", ""),
             "lambda": round(used_lam, 1),
         }
-        if ols_beta is not None and ols_cov is not None:
-            rapm_ols = 100.0 * ols_beta[io] - 100.0 * ols_beta[idd]
-            var = 1e4 * (ols_cov[io, io] + ols_cov[idd, idd]
-                         - 2 * ols_cov[io, idd])
+        if cov is not None:
+            # RAPM = 100·(βᴼ − βᴰ), so its variance is the contrast's:
+            # Var(a−b) = Var(a) + Var(b) − 2Cov(a,b), scaled by 100².
+            var = 1e4 * (cov[io, io] + cov[idd, idd] - 2 * cov[io, idd])
             se = float(np.sqrt(var)) if var > 0 else None
+            rapm = orapm + drapm
+            # a player is only as identified as their WEAKER half — a coefficient
+            # the penalty is holding up on one end is not rescued by the other.
+            share = (float(min(hdiag[io], hdiag[idd]))
+                     if hdiag is not None else None)
+            clears = bool(se and abs(rapm) > 1.96 * se)
             row.update({
-                "RAPM_ols": round(rapm_ols, 2),
                 "RAPM_se": round(se, 2) if se is not None else None,
-                "RAPM_lo": round(rapm_ols - 1.96 * se, 2) if se else None,
-                "RAPM_hi": round(rapm_ols + 1.96 * se, 2) if se else None,
-                "sig": bool(se and abs(rapm_ols) > 1.96 * se),
+                "RAPM_lo": round(rapm - 1.96 * se, 2) if se else None,
+                "RAPM_hi": round(rapm + 1.96 * se, 2) if se else None,
+                "data_share": round(share, 3) if share is not None else None,
+                "separable": bool(share is not None and share >= MIN_DATA_SHARE),
+                "clears_band": clears,
+                "sig": bool(clears and share is not None
+                            and share >= MIN_DATA_SHARE),
             })
         out[p] = row
     return out

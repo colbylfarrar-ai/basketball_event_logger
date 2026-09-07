@@ -258,7 +258,7 @@ def _spacing_block(ctx, tids, fp):
 
 
 def render(ctx, *, axes, shot_diet_lines=None, shot_depth_note=None,
-           ported=None, tids=(), fp=None):
+           ported=None, tids=(), fp=None, findings=None):
     """Section 1 — Who we are.
 
     `shot_depth_note` is the depth band's value clause, priced from the pool the
@@ -267,6 +267,17 @@ def render(ctx, *, axes, shot_diet_lines=None, shot_depth_note=None,
     and because the sentence it replaces was a typed-in 0.60 / 1.14 that matched
     neither gender's book (THE BOOK §8.4)."""
     _dna_verdict(axes)
+
+    # The team read sits SECOND, under the plain-word identity verdict and above
+    # the fitted machinery. The ordering rule in this module's docstring is the
+    # reason: a coach who stops reading after two blocks should still have the
+    # answer, and "what kind of team is this" is the first of those two.
+    try:
+        from helpers.dashboard import insights_team_read as _TR
+        _TR.render(ctx, findings=findings)
+    except Exception as _exc:
+        st.caption(f"Team read unavailable — {type(_exc).__name__}: {_exc}")
+
     if axes:
         BR._hdr("Team DNA — every axis against the field")
         cols = st.columns(4)

@@ -708,7 +708,8 @@ def render(ctx):
             from helpers.dashboard import insights_identity as _ID
             _ID.render(sctx, axes=_axes, shot_diet_lines=_shot_diet_lines(ctx),
                        shot_depth_note=_shot_depth_note(ctx),
-                       ported=_plines, tids=_tids, fp=_fp)
+                       ported=_plines, tids=_tids, fp=_fp,
+                       findings=_ranked)
         except Exception as _exc:
             st.caption(f"Who we are unavailable — "
                        f"{type(_exc).__name__}: {_exc}")

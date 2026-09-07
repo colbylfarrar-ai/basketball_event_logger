@@ -26,18 +26,25 @@ def _md_bold(text):
     return _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
 
 
-def render(ctx, side, header, blurb):
+def render(ctx, side, header, blurb, game_ids=None):
     """The verdict-first spike section for one side of the ball.
 
     Self-gating: a ctx with no ``scheme_sit`` (an older call site) renders
     nothing rather than raising, and a team without a real tagged baseline gets
     the honest "not enough yet" line instead of invented tendencies.
+
+    ``game_ids`` narrows the read to a caller-held pool. The two Team Dashboard
+    tabs pass nothing and keep their season-wide behaviour byte-identical; the
+    Insights team-read block passes its deck-narrowed window, because a block
+    that silently ignores a window the rest of its tab honours is a block a
+    coach stops trusting.
     """
     fn = getattr(ctx, "scheme_sit", None)
     if fn is None:
         return
     try:
-        res = fn(ctx.gender, ctx.team_id, side)
+        res = (fn(ctx.gender, ctx.team_id, side, game_ids)
+               if game_ids is not None else fn(ctx.gender, ctx.team_id, side))
     except Exception:
         return
 

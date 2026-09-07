@@ -6020,12 +6020,45 @@ if _tdview == "Scout":
 # `rec` / `team_name` feed THE DECK's masthead (record, margin, rank, rest,
 # next opponent). They are already on the page — the deck must not re-query the
 # schedule for a line the bundle has computed.
+# ── INSIGHTS team-read binders (helpers/dashboard/insights_team_read.py) ─────────
+# The Insights ctx carried neither of these, which is why "they sit in zone on a
+# BLOB" rendered on Play Style and Defense but had never reached the deck, and
+# why Insights had no quarter read at all while Charts → Quarters has four
+# sub-tabs of them. Both take the caller's game window so the deck's control
+# narrows them like every other wrapper on that tab.
+@st.cache_data(ttl=600, show_spinner=False)
+def _ins_scheme_sit(g, tid, side, game_ids=None):
+    """Scheme / set-call spikes for the Insights team read. Defaults to this
+    team's entitlement-visible tracked ids rather than the league pool."""
+    return _scheme_sit_view(
+        g, tid, side,
+        game_ids=(tuple(game_ids) if game_ids
+                  else tuple(bundle["tracked_ids"])) or None)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ins_quarter_read(g, tid, game_ids=None):
+    """The quarter story as verdict lines (helpers/quarters.py) — the sentence
+    version of Charts → Quarters, which keeps its panels."""
+    import helpers.quarters as QTR
+    _gids = list(game_ids) if game_ids else list(bundle["tracked_ids"])
+    if not _gids:
+        return []
+    return QTR.quarter_verdict(TA.quarter_boxes(tid, game_ids=_gids))
+
+
 _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,
                                 has_tracked=has_tracked,
                                 tracked_ids=tuple(bundle["tracked_ids"]),
                                 season=season_pick, season_gp=_season_gp,
                                 season_fp_gp=_season_fp_gp,
-                                rec=rec, team_name=team.get("name"))
+                                rec=rec, team_name=team.get("name"),
+                                # the team-read block (Insights section 1).
+                                # _def_ctx and _ps_ctx already bind scheme_sit;
+                                # this ctx had neither, which is why the "zone
+                                # on a BLOB" read had never reached Insights.
+                                scheme_sit=_ins_scheme_sit,
+                                quarter_read=_ins_quarter_read)
 if _tdview == "Insights":
     DINS.render(_insights_ctx)
 

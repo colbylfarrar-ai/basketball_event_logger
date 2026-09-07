@@ -26,9 +26,21 @@ The cuts (founder-selected):
   deadball    possessions the offense tagged BLOB / SLOB — the inbounds read.
   margin      usage by score state (trailing big ... leading big).
   clutch      4th quarter inside CLUTCH_MARGIN.
+  quarter     each regulation quarter against the season mix — the "they run man
+              more in the 4th" read.
 
-Quarter/period openers are deliberately NOT a cut here. They were considered and
-left out; situational.py already slices by quarter if that changes.
+REVERSAL, 2026-09-07. The quarter cut was originally left out, on the grounds
+that situational.py already slices by quarter. That is true and it is still
+true: `situational.team_situational` carries q1-q4 lenses. What it yields is
+four-factor CELLS — usage and efficiency per (situation x tag). What it does not
+yield is a spike VERDICT measured against the team's own baseline: "man jumps to
+74% of possessions in the 4th against a 51% season baseline". The verdict shape
+was the missing thing, not the slice, and verdict shapes live here. The original
+reasoning is kept rather than deleted so a later sweep does not "fix" it back.
+
+The quarter cut deliberately OVERLAPS the clutch cut, which is 4th-quarter-and-
+close. Quarter is the wider of the two, so where both qualify the coach reads
+the general tendency and the pressure-specific one, in that order.
 
 Streamlit-free (pure python). Display: the Team Dashboard Play Style + Defense
 tabs, as verdict lines.
@@ -52,6 +64,11 @@ MIN_DELTA = 0.12          # 12 percentage points off the team's own baseline
 
 CLUTCH_MARGIN = 5         # 4th-quarter margin that counts as clutch
 DEADBALL_SETS = ("blob", "slob")
+
+# Regulation quarters, in display order. OT is excluded on purpose — see the
+# quarter cut below.
+QUARTER_LABELS = [(1, "1st quarter"), (2, "2nd quarter"),
+                  (3, "3rd quarter"), (4, "4th quarter")]
 
 # Score-state buckets, in display order: (key, label, predicate on margin)
 MARGIN_BUCKETS = [
@@ -205,6 +222,13 @@ def scheme_situational(team_id, events, side="defense", min_delta=MIN_DELTA):
         _add(f"margin_{mkey}", mlabel,
              f"Possessions with the score state {mlabel.lower()}.",
              lambda s, _p=pred: _p(s.get("margin", 0)))
+
+    # Regulation quarters only. Overtime is its own animal and its samples are
+    # tiny, so an OT "tendency" would be a coin flip wearing a verdict's clothes.
+    for _q, _lbl in QUARTER_LABELS:
+        _add(f"q{_q}", _lbl,
+             f"Possessions in the {_lbl.lower()}, against the season mix.",
+             lambda s, _n=_q: s.get("q", 1) == _n)
 
     _add("clutch", "Clutch (4th, within 5)",
          "Fourth-quarter possessions inside five points.",

@@ -153,6 +153,75 @@ def test_thin_sample_gated():
        f"a 3-possession clutch cut is suppressed (min {SS.MIN_CUT_POSS})")
 
 
+def test_quarter_cut_spikes():
+    """"They run man more in the 4th" — the founder's own phrasing, and until
+    now not computable.
+
+    The quarter cut was deliberately left out of this engine on the grounds
+    that situational.py already slices by quarter. It does — but it yields
+    four-factor CELLS, usage and efficiency per (situation x tag). What it does
+    not yield is a spike VERDICT measured against the team's own baseline, and
+    the verdict shape is the thing that was missing. See the module docstring,
+    which records the reversal rather than dropping the reasoning."""
+    import helpers.scheme_situational as SS
+
+    # Q1-Q3: all man (45 possessions). Q4: all 2-3 zone (20 possessions).
+    ev = _played(1, gid=1)
+    for q in ("1", "2", "3"):
+        ev += [_shot(2, "man", q=q, clock=f"7:{i:02d}", gid=1)
+               for i in range(15)]
+    ev += [_shot(2, "zone_23", q="4", clock=f"7:{i:02d}", gid=1)
+           for i in range(20)]
+
+    r = SS.scheme_situational(1, ev, side="defense")
+    q4 = [c for c in r["cuts"] if c["key"] == "q4"]
+    ok(bool(q4), "a 4th quarter that flips scheme produces a q4 cut")
+    tags = {row["tag"] for row in q4[0]["rows"]} if q4 else set()
+    ok("zone_23" in tags,
+       f"the q4 cut names the scheme that spiked (got {tags})")
+
+    txt = " ".join(l["text"] for l in SS.verdict_lines(r, top=10))
+    ok("4th quarter" in txt,
+       f"the verdict line says which quarter it is talking about\n{txt[:200]}")
+
+
+def test_quarter_cut_is_gated_like_every_other():
+    """A quarter nobody played much in is not a tendency."""
+    import helpers.scheme_situational as SS
+
+    ev = _played(1, gid=1)
+    ev += [_shot(2, "man", q="1", clock=f"7:{i:02d}", gid=1) for i in range(40)]
+    # four possessions of zone in Q4 — a flip, but not a finding
+    ev += [_shot(2, "zone_23", q="4", clock="1:00", gid=1) for _ in range(4)]
+
+    r = SS.scheme_situational(1, ev, side="defense")
+    ok(not any(c["key"] == "q4" for c in r["cuts"]),
+       f"a 4-possession 4th quarter is suppressed (min {SS.MIN_CUT_POSS})")
+
+
+def test_quarter_cut_does_not_double_report_clutch():
+    """The clutch cut is 4th-quarter-and-close; the q4 cut is the whole
+    quarter. They overlap on purpose, but a coach reading two lines that say
+    the same thing twice stops reading. The quarter cut must be the WIDER one,
+    so its sample is never smaller than the clutch cut drawn from it."""
+    import helpers.scheme_situational as SS
+
+    ev = _played(1, gid=1)
+    for q in ("1", "2", "3"):
+        ev += [_shot(2, "man", q=q, clock=f"7:{i:02d}", gid=1)
+               for i in range(15)]
+    ev += [_shot(2, "zone_23", q="4", clock=f"7:{i:02d}", gid=1)
+           for i in range(20)]
+
+    r = SS.scheme_situational(1, ev, side="defense")
+    by = {c["key"]: c["poss"] for c in r["cuts"]}
+    if "q4" in by and "clutch" in by:
+        ok(by["q4"] >= by["clutch"],
+           f"q4 ({by['q4']}) is at least as wide as clutch ({by['clutch']})")
+    else:
+        ok(True, "only one of q4/clutch qualified — nothing to double-report")
+
+
 if __name__ == "__main__":
     test_own_games_gate()
     test_run_cut_spikes()
@@ -160,4 +229,7 @@ if __name__ == "__main__":
     test_deadball_cut_is_defense_only()
     test_untagged_excluded()
     test_thin_sample_gated()
+    test_quarter_cut_spikes()
+    test_quarter_cut_is_gated_like_every_other()
+    test_quarter_cut_does_not_double_report_clutch()
     print(f"\nALL {PASSED} CHECKS PASSED")

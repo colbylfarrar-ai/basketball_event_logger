@@ -428,6 +428,56 @@ _WL_SPEC = [
 ]
 
 
+#: Which OPTIONAL one-tap tag each signature stat is built on. Everything not
+#: listed here reads off the shot/turnover/clock skeleton the tracker always
+#: records, so it scores live from the first possession.
+#:
+#: This matters mid-game. The tracker's quick mode keeps the court tap, the
+#: make/miss, the turnover kind, the defense bar and the set-call bar — but it
+#: folds the per-shot detail dropdowns behind "+ details", and those are exactly
+#: the fields below. A goal built on one of them is not "currently missed" when
+#: nobody has tagged it, it is unmeasured, and the two must not render the same.
+#:
+#: `selfmade` needs BOTH: a shot carrying neither a pass nor a screen is COUNTED
+#: as self-created, so an untagged game does not push it to zero, it pushes it to
+#: 1.0. That is the direction that silently reads as a hit.
+GOAL_INPUTS = {
+    "AST%":     ("pass_from_id",),
+    "AST/TOV":  ("pass_from_id",),
+    "SC%":      ("shot_created_by_id",),
+    "selfmade": ("pass_from_id", "shot_created_by_id"),
+    "ORBpct":   ("rebound_by_id",),
+}
+
+
+def goal_capture(team_id, events, keys=None):
+    """How much of each goal's required tag this game actually carries.
+
+    Returns {key: {"fields", "tagged", "shots", "pct"}} for the keys that depend
+    on an optional tag — `pct` None when the team has not shot yet. A key with
+    `tagged` 0 cannot be scored at all; a partial one can, with its coverage
+    stated. Keys absent from GOAL_INPUTS never appear: they need no tag.
+
+    Counts a shot as tagged when it carries ANY of the key's fields, which is
+    the same "or" the stat itself uses (a shot is created by a pass OR a screen).
+    """
+    want = [k for k in (keys if keys is not None else GOAL_INPUTS)
+            if k in GOAL_INPUTS]
+    if not want:
+        return {}
+    shots = [e for e in (events or [])
+             if e.get("event_type") == "shot"
+             and e.get("shooter_team_id") == team_id]
+    out = {}
+    for k in want:
+        fields = GOAL_INPUTS[k]
+        tagged = sum(1 for e in shots
+                     if any(e.get(f) is not None for f in fields))
+        out[k] = {"fields": fields, "tagged": tagged, "shots": len(shots),
+                  "pct": (100.0 * tagged / len(shots)) if shots else None}
+    return out
+
+
 def _style_line(team_id, events):
     """The STYLE half of a team's per-game stat line — tempo, shot creation and
     runs, derived from the same event pass the box half already walks.
@@ -591,8 +641,24 @@ def _decorrelate(ranked, lines, result, top, max_r=MAX_ABS_R):
     return kept
 
 
+#: Ceiling on how many signature stats a team is asked to chase. NOT a target —
+#: the |d| >= min_d gate plus _decorrelate decide the real number, and on the
+#: 2025-2026 book they already disagree per team (Adair Girls clear 8, Adair Boys
+#: 7, Sequoyah Boys 6, Claremore Girls 5). `top` used to be a flat 4, which
+#: truncated every one of those to the same four and threw the difference away —
+#: a team with five loud signals lost one, and a team with three was handed a
+#: fourth it had no evidence for. This is only the point past which a pre-game
+#: list stops being a list a coach can hold in their head.
+#:
+#: Leave-one-game-out over the qualifying teams could not separate 3 / 4 / 5
+#: (AUC 0.939 / 0.950 / 0.960 on 54 folds from 3 teams, differences well inside
+#: the noise), so the count is NOT tuned for prediction — it is the gate's
+#: answer, capped for legibility.
+MAX_GOALS = 6
+
+
 def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
-                      min_each=2, top=4, min_d=0.8):
+                      min_each=2, top=MAX_GOALS, min_d=0.8):
     """The ~``top`` stats that most separate this team's WINS from its LOSSES.
 
     Splits every tracked, finished game by result, computes a per-game stat
@@ -671,6 +737,7 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
     # X-Y" the way a coach frames it. ──────────────────────────────────────────
     record = []
     goals = []
+    per_game = []
     if top_rows:
         thr = []
         for r in top_rows:
@@ -682,21 +749,53 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
         rec = {}                                  # n_hit -> [wins, losses]
         for gid, ln in lines.items():
             hit = 0
+            which = {}                            # key -> True hit / False miss
             for key, t, win_high in thr:
                 v = ln.get(key)
                 if v is None:
+                    which[key] = None             # not measurable in that game
                     continue
-                if (v >= t) if win_high else (v <= t):
+                ok = (v >= t) if win_high else (v <= t)
+                which[key] = ok
+                if ok:
                     hit += 1
             slot = rec.setdefault(hit, [0, 0])
             slot[0 if result[gid] == "win" else 1] += 1
+            # per-GAME attribution. The grouped record answers "how do we do at
+            # 3 of 4?"; it cannot answer "which night was that, and which goal
+            # did we drop?" — the coach's actual next question. Same hit test,
+            # kept per game instead of summed away.
+            per_game.append({
+                "game_id": gid, "result": result[gid], "hit": hit,
+                "of": sum(1 for v in which.values() if v is not None),
+                "goals": which,
+                "values": {key: ln.get(key) for key, _t, _wh in thr},
+            })
         record = [{"n": k, "wins": rec[k][0], "losses": rec[k][1],
                    "games": rec[k][0] + rec[k][1]}
                   for k in sorted(rec, reverse=True)]
 
+    # label each attributed game with its opponent and date so the list reads as
+    # a schedule rather than a column of ids. One query, only when there is
+    # something to label.
+    if per_game:
+        meta = {r["id"]: r for r in query(
+            f"""SELECT g.id, g.date,
+                       CASE WHEN g.team1_id = ? THEN t2.name ELSE t1.name END opp
+                FROM games g
+                JOIN teams t1 ON t1.id = g.team1_id
+                JOIN teams t2 ON t2.id = g.team2_id
+                WHERE g.id IN ({",".join("?" * len(per_game))})""",
+            (team_id,) + tuple(p["game_id"] for p in per_game))}
+        for p in per_game:
+            m = meta.get(p["game_id"]) or {}
+            p["opponent"] = m.get("opp")
+            p["date"] = m.get("date")
+        per_game.sort(key=lambda p: (p["date"] or "", p["game_id"]))
+
     return {"available": bool(out_rows), "win_games": n_w, "loss_games": n_l,
             "rows": top_rows, "n_goals": len(top_rows),
-            "goals": goals, "record": record}
+            "goals": goals, "record": record, "per_game": per_game}
 
 
 def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=None,

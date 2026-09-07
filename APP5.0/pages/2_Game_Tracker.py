@@ -363,8 +363,8 @@ _gt_view = _seg_ui("View", [_V_LIVE, _V_LOG], key="gt_view",
 
 # The Live side's insight picker — which panels the bench wants on screen.
 _LIVE_PANELS = ["Win probability", "Win formula", "Courtside strip",
-                "Box score", "Rosters", "Rotation watch", "Foul watch",
-                "Shot chart", "Play-by-play", "Scout cues"]
+                "Box score", "Team stats", "Rosters", "Rotation watch",
+                "Foul watch", "Shot chart", "Play-by-play", "Scout cues"]
 if _gt_view == _V_LIVE:
     _live_sel = st.multiselect(
         "Insights", _LIVE_PANELS, default=_LIVE_PANELS, key="gt_live_panels",
@@ -686,27 +686,46 @@ def _render_command_center():
                     import helpers.stats as _S
                     _live_ev = _S.fetch_events([game_id])
                 _line = _IT.team_stat_line(_tid, game_id, _live_ev)
-                _wf_render.append((_tnm, _goals, _line))
+                # how much of each goal's optional tag tonight actually carries
+                _cap = _IT.goal_capture(_tid, _live_ev,
+                                        [g["key"] for g in _goals])
+                _wf_render.append((_tnm, _goals, _line, _cap))
                 _wf_have = True
             if _wf_have:
                 st.markdown("<div class='lab-hdr' style='margin-top:4px'>"
                             "Win formula — signature stats vs live</div>",
                             unsafe_allow_html=True)
                 _wfc = st.columns(len(_wf_render))
-                for _col, (_tnm, _goals, _line) in zip(_wfc, _wf_render):
+                _untagged_any = False
+                for _col, (_tnm, _goals, _line, _cap) in zip(_wfc, _wf_render):
                     _rows = []
                     for gp in _goals:
                         _tgt = _wf_fmt(gp["target"], gp["fmt"])
                         _cur = (_line or {}).get(gp["key"])
                         _now = _wf_fmt(_cur, gp["fmt"])
-                        # 'pace' is a full-game possession count — not comparable
-                        # mid-game, so it's shown for reference with no ✅/❌.
-                        if gp["key"] == "pace" or _cur is None:
+                        _c = _cap.get(gp["key"])
+                        # A goal whose optional tag has NOT been entered once
+                        # tonight is unmeasured, not missed. Scoring it anyway
+                        # prints a confident ❌ on a stat nobody captured — and
+                        # for `selfmade`, an untagged game reads as a ✅, which
+                        # is worse. Say what it needs instead.
+                        if _c and _c["shots"] and not _c["tagged"]:
+                            _untagged_any = True
+                            _st = "🏷️"
+                            _now = "not tagged"
+                        elif gp["key"] == "pace" or _cur is None:
+                            # 'pace' is a full-game possession count — not
+                            # comparable mid-game, so it's shown for reference
+                            # with no ✅/❌.
                             _st = "·"
                         else:
                             _hit = ((_cur >= gp["target"]) if gp["win_high"]
                                     else (_cur <= gp["target"]))
                             _st = "✅" if _hit else "❌"
+                            # partial tagging still scores, but the number is
+                            # built on only part of the night — say how much.
+                            if _c and _c["pct"] is not None and _c["pct"] < 90:
+                                _now = f"{_now} ({_c['pct']:.0f}% tagged)"
                         _rows.append({"Signature stat": gp["label"],
                                       "Target": f"{'≥' if gp['win_high'] else '≤'} {_tgt}",
                                       "Now": _now, "": _st})
@@ -720,7 +739,11 @@ def _render_command_center():
                 st.caption("Each team's own win/loss signature stats from prior "
                            "tracked games (Team Dashboard → Insights). ✅ = "
                            "currently on the winning side of the target "
-                           "(midpoint of the team's win vs loss average).")
+                           "(midpoint of the team's win vs loss average)."
+                           + (" 🏷️ = this goal is built on an optional per-shot "
+                              "tag that hasn't been entered yet tonight — tap "
+                              "“+ details” on a shot to start scoring it."
+                              if _untagged_any else ""))
         except Exception:
             pass
 
@@ -817,6 +840,61 @@ def _render_command_center():
         st.caption("PF shading: 3 amber · 4 orange · 5 red (fouled out). "
                    "MIN from event-clock elapsed time; needs the on-court five set "
                    "wherever the events are logged.")
+
+    # ── team stats, live ─────────────────────────────────────────────────────
+    # The box score above is per-PLAYER; nothing on this page has ever shown the
+    # two TEAMS side by side, which is the number a coach actually calls a
+    # timeout over. Same `team_stat_line` the win formula scores against, so
+    # there is no second definition of eFG% or turnover rate on the page.
+    #
+    # Own-offense rows only: a team's opponent columns are the other team's own
+    # columns by construction, so printing both would be the same eight numbers
+    # twice. Read across for the defensive side.
+    if _panel_on("Team stats"):
+        try:
+            import helpers.insights_team as _IT2
+            import helpers.stats as _S2
+            _TS_KEYS = ["PPP", "eFG", "3P%", "3PAr", "TOVr", "FTr", "ORBpct",
+                        "AST%", "AST/TOV", "SC%", "transition", "trans_PPP",
+                        "hc_PPP", "pace", "run_diff"]
+            _spec = {k: (lbl, fmt) for k, lbl, fmt in _IT2._WL_SPEC}
+            # fetch_events, not the raw `events_asc` above — the stat line reads
+            # shooter_team_id and the rebound team, which only the joined fetch
+            # carries.
+            _ts_ev = _S2.fetch_events([game_id])
+            _tl = {tid: _IT2.team_stat_line(tid, game_id, _ts_ev)
+                   for tid in (t1id, t2id)}
+            _tcap = {tid: _IT2.goal_capture(tid, _ts_ev, _TS_KEYS)
+                     for tid in (t1id, t2id)}
+            if any(_tl.values()):
+                _trows = []
+                _tag_seen = False
+                for k in _TS_KEYS:
+                    if k not in _spec:
+                        continue
+                    _lbl, _fmt = _spec[k]
+                    _row = {"Stat": _lbl}
+                    for tid, tnm in ((t1id, t1name), (t2id, t2name)):
+                        _c = (_tcap.get(tid) or {}).get(k)
+                        if _c and _c["shots"] and not _c["tagged"]:
+                            _row[tnm] = "not tagged"
+                            _tag_seen = True
+                        else:
+                            _row[tnm] = _wf_fmt((_tl.get(tid) or {}).get(k), _fmt)
+                    _trows.append(_row)
+                st.markdown("<div class='lab-hdr'>Team stats — live</div>",
+                            unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame(_trows), hide_index=True,
+                             width="stretch", key=f"ts_{game_id}")
+                st.caption(
+                    "Both teams' own offense, from this game's events only. "
+                    "Read across for defense — one team's opponent numbers are "
+                    "the other's own. Rates read at any point in the game."
+                    + (" “not tagged” = that stat needs an optional per-shot "
+                       "tag nobody has entered yet tonight."
+                       if _tag_seen else ""))
+        except Exception:
+            pass
 
     # ── rosters (spec 2.2): FULL benches for both teams — the live box above
     #    only lists players with stats; this is the "who do they even have"

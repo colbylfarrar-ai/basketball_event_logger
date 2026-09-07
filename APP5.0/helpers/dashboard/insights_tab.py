@@ -1163,6 +1163,45 @@ def _render_winloss(ctx, _tids, _fp):
             st.markdown(dense_table(_rrows,
                         columns=["Goals hit", "Record", "Win%", "Games"]),
                         unsafe_allow_html=True)
+
+            # ── which goals, which night ─────────────────────────────────────
+            # The ladder above says "2-1 at 3 of 4" and stops there. A coach's
+            # next question is always which game that was and which goal got
+            # dropped, and the answer was being summed away. Same hit test, one
+            # row per game, so the ladder's levels are clickable in the head:
+            # the 4-of-6 loss and the 4-of-6 win sit next to each other and the
+            # difference is visible.
+            _pg = _wa.get("per_game") or []
+            if _pg:
+                _lab = {gp["key"]: gp["label"] for gp in _goals}
+                _short = {gp["key"]: (gp["label"][:11] + "…"
+                                      if len(gp["label"]) > 12 else gp["label"])
+                          for gp in _goals}
+                _grows = []
+                for p in reversed(_pg):          # most recent game first
+                    row = {
+                        "Date": (p.get("date") or "")[5:] or "—",
+                        "Opponent": p.get("opponent") or "—",
+                        "": "W" if p["result"] == "win" else "L",
+                        "Hit": f"{p['hit']} / {p['of']}",
+                    }
+                    for gp in _goals:
+                        v = p["goals"].get(gp["key"])
+                        row[_short[gp["key"]]] = (
+                            "—" if v is None else ("✅" if v else "❌"))
+                    _grows.append(row)
+                st.markdown("<div class='lab-hdr'>Which goals, which night</div>",
+                            unsafe_allow_html=True)
+                st.markdown(dense_table(
+                    _grows,
+                    columns=(["Date", "Opponent", "", "Hit"]
+                             + [_short[gp["key"]] for gp in _goals])),
+                    unsafe_allow_html=True)
+                st.caption("One row per tracked game, newest first. ✅ = on the "
+                           "winning side of that goal's target that night · ❌ = "
+                           "not · — = the game had no denominator for it. The "
+                           "losses that hit most of the goals are the ones worth "
+                           "watching back.")
     elif _wl.get("available"):
         st.caption("Signature win/loss stats need ≥2 tracked games on each "
                    "side of the record — fills in as results build.")

@@ -2159,3 +2159,47 @@ def box_only_table(table):
     only box-derivable (Free-tier) columns. See EVENT_DERIVED_STATS."""
     return {pid: {k: v for k, v in row.items() if k not in EVENT_DERIVED_STATS}
             for pid, row in table.items()}
+
+
+# The TEAM-level sibling of EVENT_DERIVED_STATS, and it lives here rather than in
+# league_analytics so the two cannot drift: a key that is Paid for a player and
+# Free for their team is a leak with extra steps, and until now the team half of
+# every gate decision was made by hand at each site.
+#
+# Same rule, restated once because it is the only thing that decides membership:
+# a key is EVENT-DERIVED when it cannot be computed from a final score plus a
+# manually kept box line. Plus the owner's possession carve-out (FINAL
+# 2026-06-15) — any per-possession or per-100 rate is Paid even though its box
+# inputs are Free, because the Free line is "derivable WITHOUT estimating
+# possessions".
+#
+# Everything NOT listed here is box-derivable and stays Free — the counting
+# per-game rates, the shooting percentages including eFG%/TS%/PPS, the ratios
+# (AST/TO, 3PAr, FTr), and the whole RESULTS family (W/L, MOV, Power, SOS, SOR,
+# Pythagorean, Luck), which comes from final scores and was never tracked depth.
+TEAM_EVENT_DERIVED = frozenset({
+    # possession-derived efficiency + tempo (S.estimate_possessions)
+    "ORtg", "DRtg", "NetRtg", "Pace", "Poss/G", "PPP", "Opp PPP",
+    "Adj ORtg", "Adj DRtg",
+    # the four factors' POSSESSION terms. eFG% is the shooting term and stays
+    # Free (§12.2 puts it in the Free box stage by name); these three do not,
+    # because each one divides by a possession estimate or an opponent's
+    # on-court rebound count.
+    "TOV%", "ORB%", "DRB%", "REB%", "OREB%", "DREB%", "Forced TOV%",
+    # opponent-adjusted terms — need the tracked league, not one box line
+    "Adj eFG%", "Adj Opp eFG%",
+    # shot quality / location — need the court tap
+    "SMOE", "xPPS", "xFG%", "ShotRating", "PPS_exp",
+    "Paint pt%", "3PT pt%", "FT pt%", "Paint/G", "RimFGA%", "MidFGA%",
+    # on-court and event-context reads (lineups, quarters, run detection)
+    "Clutch", "Momentum", "Biggest run", "10-0 runs/G", "10-0 allowed/G",
+    "Volatility", "Consistency", "Dominance",
+    # per-100 rates ride on the possession estimate
+    "STL/100", "BLK/100",
+})
+
+
+def box_only_team_row(row):
+    """Strip every event-derived stat from one team_stat_table() row.
+    The team-level twin of box_only_table. See TEAM_EVENT_DERIVED."""
+    return {k: v for k, v in row.items() if k not in TEAM_EVENT_DERIVED}

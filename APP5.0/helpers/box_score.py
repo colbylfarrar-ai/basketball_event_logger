@@ -39,6 +39,19 @@ import helpers.seasons as SEAS
 import helpers.playtypes as PT
 import helpers.defenses as DEF
 
+#: The box table's columns, and the Free subset of them.
+#:
+#: Which columns are Free is not a taste call — `player_ratings`
+#: EVENT_DERIVED_STATS already holds the rule at player level, and it answers
+#: the three this split turns on: MIN, +/- and SC are event-derived (they need
+#: the lineup log) and are Paid; eFG%, TS% and GS are named in that set's own
+#: comment as staying Free. `test_free_box_score.py` asserts the agreement rather
+#: than trusting this comment.
+BOX_COLS = ["#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%", "FT", "FT%",
+            "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF", "+/-",
+            "SC", "eFG%", "TS%", "GS"]
+FREE_BOX_COLS = [c for c in BOX_COLS if c not in ("MIN", "+/-", "SC")]
+
 ZONES = ["LC", "LW", "C", "RW", "RC"]
 ZONE_LABELS = {"LC": "Left Corner", "LW": "Left Wing", "C": "Paint / Center",
                "RW": "Right Wing", "RC": "Right Corner"}
@@ -140,6 +153,137 @@ def _team_total(boxes, tid):
 
 def _pct(n, d):
     return f"{100*n/d:.1f}%" if d else "—"
+
+
+def _box_df(boxes, roster_all, tid, cols):
+    """One team's box lines + DNP rows + the TOTAL row, as a DataFrame.
+
+    `cols` selects the columns, which is the whole Free/Paid split: every value
+    is computed, and the projection at the end decides what is shown. Building
+    the full row and projecting is deliberate — the alternative is two builders
+    that disagree about a number the moment one of them is edited."""
+    rows, played = [], set()
+    pls = sorted([b for b in boxes.values() if b["team_id"] == tid],
+                 key=lambda b: (-b["PTS"], -b["MIN"]))
+    for b in pls:
+        if not any([b["FGA"], b["FTA"], b["MIN"], b["TRB"], b["AST"],
+                    b["PF"], b["TOV"], b["STL"], b["BLK"]]):
+            continue
+        played.add(_pid_of(b, boxes))
+        rows.append({
+            "#": str(b["number"]), "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
+            "FG": f"{b['FGM']}-{b['FGA']}", "FG%": round(100*S._safe(b['FGM'],b['FGA']),1),
+            "3P": f"{b['3PM']}-{b['3PA']}", "3P%": round(100*S._safe(b['3PM'],b['3PA']),1),
+            "FT": f"{b['FTM']}-{b['FTA']}", "FT%": round(100*S._safe(b['FTM'],b['FTA']),1),
+            "ORB": b["ORB"], "DRB": b["DRB"], "REB": b["TRB"], "AST": b["AST"],
+            "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
+            "+/-": b["PM"], "SC": b["SC"], "eFG%": round(100*S.efg(b),1),
+            "TS%": round(100*S.ts(b),1), "GS": round(S.game_score(b),1)})
+    # DNP — rostered players with nothing recorded this game
+    for p in roster_all:
+        if p["team_id"] != tid or p["pid"] in played:
+            continue
+        rows.append({
+            "#": str(p["number"]), "Player": f"{p['name']} (DNP)", "MIN": 0.0,
+            "PTS": 0, "FG": "0-0", "FG%": 0.0, "3P": "0-0", "3P%": 0.0,
+            "FT": "0-0", "FT%": 0.0, "ORB": 0, "DRB": 0, "REB": 0, "AST": 0,
+            "STL": 0, "BLK": 0, "TOV": 0, "PF": 0, "+/-": 0, "SC": 0,
+            "eFG%": 0.0, "TS%": 0.0, "GS": 0.0})
+    tb = _team_total(boxes, tid)
+    rows.append({
+        "#": "", "Player": "TOTAL", "MIN": None, "PTS": tb["PTS"],
+        "FG": f"{tb['FGM']}-{tb['FGA']}", "FG%": round(100*S._safe(tb['FGM'],tb['FGA']),1),
+        "3P": f"{tb['3PM']}-{tb['3PA']}", "3P%": round(100*S._safe(tb['3PM'],tb['3PA']),1),
+        "FT": f"{tb['FTM']}-{tb['FTA']}", "FT%": round(100*S._safe(tb['FTM'],tb['FTA']),1),
+        "ORB": tb["ORB"], "DRB": tb["DRB"], "REB": tb["TRB"], "AST": tb["AST"],
+        "STL": tb["STL"], "BLK": tb["BLK"], "TOV": tb["TOV"], "PF": tb["PF"],
+        "+/-": None, "SC": tb["SC"], "eFG%": round(100*S.efg(tb),1),
+        "TS%": round(100*S.ts(tb),1), "GS": None})
+    return pd.DataFrame(rows, columns=cols)
+
+
+_BOX_COL_CFG = {
+    "MIN": lambda: st.column_config.NumberColumn("MIN", format="%.1f"),
+    "PTS": lambda: st.column_config.NumberColumn("PTS", format="%d"),
+    "FG%": lambda: st.column_config.ProgressColumn("FG%", format="%.0f", min_value=0, max_value=100),
+    "3P%": lambda: st.column_config.ProgressColumn("3P%", format="%.0f", min_value=0, max_value=100),
+    "FT%": lambda: st.column_config.ProgressColumn("FT%", format="%.0f", min_value=0, max_value=100),
+    "TS%": lambda: st.column_config.ProgressColumn("TS%", format="%.0f", min_value=0, max_value=100),
+    "eFG%": lambda: st.column_config.NumberColumn("eFG%", format="%.1f"),
+    "+/-": lambda: st.column_config.NumberColumn("+/-", format="%d"),
+    "GS": lambda: st.column_config.NumberColumn("GS", format="%.1f"),
+}
+
+
+def _render_box_tables(game_id, g, boxes, teams, cols):
+    """Both teams' box tables, their CSVs, and the MaxPreps combined export.
+
+    `teams` is [(team_id, name), …] in display order. Called from BOTH the Free
+    stage and the Paid Box Score section with different `cols`, so the tier
+    difference is a column list and never a second table.
+    """
+    # Same season scope as _build_boxes — this list drives the DNP rows, so an
+    # unscoped read printed a returning player once per season she was on the
+    # roster (worst on past-season boxes, where the active-season row is always
+    # an extra).
+    tids = tuple(t for t, _ in teams)
+    _brc, _brp = SEAS.roster_clause(g["season"], alias="p")
+    roster_all = query(
+        "SELECT p.id AS pid, p.name, p.number, p.team_id FROM players p "
+        f"WHERE p.team_id IN (?,?) AND {_brc} ORDER BY p.number, p.name",
+        tids + _brp)
+
+    pcfg = {c: f() for c, f in _BOX_COL_CFG.items() if c in cols}
+    glossary_key(*[c for c in ("MIN", "PTS", "FG%", "3P%", "FT%", "REB", "AST",
+                               "STL", "BLK", "TOV", "PF", "+/-", "SC", "eFG%",
+                               "TS%", "GS") if c in cols])
+    for tid, nm in teams:
+        st.markdown(f"**{nm}**")
+        df = _box_df(boxes, roster_all, tid, cols)
+        st.dataframe(df, hide_index=True, width="stretch", column_config=pcfg,
+                     key=f"bs{game_id}_box_{tid}")
+        st.download_button(f"{nm} box (CSV)", df.to_csv(index=False),
+                           file_name=f"box_{game_id}_{nm}.csv", mime="text/csv",
+                           key=f"dl_box_{game_id}_{tid}")
+
+    # MaxPreps-friendly combined export: both teams, one row per player, with a
+    # Team column and no TOTAL/derived-only cols — so a coach reporting to
+    # MaxPreps doesn't have to re-enter the box by hand. Free on purpose: this
+    # is the box score, and it is the most concrete reason to open an account.
+    mp_cols = [c for c in ["Team", "#", "Player", "MIN", "PTS", "FG", "FG%",
+                           "3P", "3P%", "FT", "FT%", "ORB", "DRB", "REB",
+                           "AST", "STL", "BLK", "TOV", "PF"]
+               if c == "Team" or c in cols]
+    mp_rows = []
+    for tid, nm in reversed(teams):
+        for _, rr in _box_df(boxes, roster_all, tid, cols).iterrows():
+            if rr["Player"] == "TOTAL":
+                continue
+            row = {"Team": nm}
+            row.update({c: rr[c] for c in mp_cols if c != "Team"})
+            mp_rows.append(row)
+    mp_df = pd.DataFrame(mp_rows, columns=mp_cols)
+    st.download_button(
+        "⬇ MaxPreps box — both teams (CSV)", mp_df.to_csv(index=False),
+        file_name=(f"maxpreps_box_{game_id}_"
+                   f"{teams[-1][1]}_vs_{teams[0][1]}.csv"),
+        mime="text/csv", key=f"dl_maxpreps_{game_id}")
+
+
+def _render_line_score(game_id, quarters, qs, teams):
+    """The quarter-by-quarter line score — Free, and the oldest thing in
+    basketball reporting."""
+    line = []
+    for tid, nm in teams:
+        row, tot = {"Team": nm}, 0
+        for q in qs:
+            v = quarters[q].get(tid, 0)
+            row[_q_label(q)] = v
+            tot += v
+        row["T"] = tot
+        line.append(row)
+    st.dataframe(pd.DataFrame(line), hide_index=True, width="stretch",
+                 key=f"bs{game_id}_linescore")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -364,6 +508,27 @@ def render_box_score(game_id: int):
         # Mirror the other gate sites' branched copy so each locked viewer gets the
         # right reason: Free -> Paid feature; banned -> suspension; Solo scouting ->
         # co-op invite; League-wide but this game isn't pooled -> neutral not-shared.
+        # ── the FREE stage (THE BOOK §12.2) ────────────────────────────────
+        # entitlement.py's first sentence is "Box score + final results are Free
+        # and visible to everyone, always", and until now this function returned
+        # here — so a Free coach on a current-season tracked game got a
+        # scoreboard and a padlock where the box score should be. That is the
+        # one artefact every coach already understands, on the app you are
+        # recruiting them with, which is why §12.2 makes it a launch blocker
+        # rather than a nicety.
+        #
+        # What separates this stage from the DEPTH below it is not taste: the
+        # column list is projected through player_ratings' event-derived rule,
+        # so MIN, +/- and SC (which need the lineup log) are absent and every
+        # counting stat a scorebook already holds is present.
+        st.markdown("<div class='lab-hdr'>Line score</div>",
+                    unsafe_allow_html=True)
+        _render_line_score(game_id, quarters, qs, [(t2id, t2name), (t1id, t1name)])
+        st.markdown("<div class='lab-hdr'>Box score</div>",
+                    unsafe_allow_html=True)
+        _render_box_tables(game_id, g, boxes, [(t2id, t2name), (t1id, t1name)],
+                           FREE_BOX_COLS)
+
         _gident = AUTH.current_user()
         if not ENT.has_paid_plan(_gident):
             st.info(ENT.MSG_PAID)
@@ -373,6 +538,15 @@ def render_box_score(game_id: int):
             st.info(ENT.MSG_COOP_INVITE)
         else:
             st.info(ENT.MSG_NOT_SHARED)
+        # Name what is behind the lock rather than only that there is one — a
+        # coach who can see the box already knows what a box score is, so the
+        # difference is the only thing worth saying.
+        st.caption(
+            "Above is the full box score, free. What the tracked depth adds: "
+            "minutes and +/- from the lineup log, shot charts and shot quality "
+            "(SMOE / expected FG%), possession efficiency (ORtg, DRtg, pace, "
+            "points per possession), the four factors, win-probability flow, "
+            "lineup combinations, play-type and defensive-scheme breakdowns.")
         return
 
     # ── shared scoring timeline (Overview KPI + Flow) ──────────────────────────
@@ -462,16 +636,9 @@ def render_box_score(game_id: int):
         st.caption("SMOE = FG% over expected (vs league shot-quality baseline). "
                    "Score-poss% = share of possessions ending in a made field goal.")
 
-        # line score
-        line = []
-        for tid, nm in [(t2id, t2name), (t1id, t1name)]:
-            row, tot = {"Team": nm}, 0
-            for q in qs:
-                v = quarters[q].get(tid, 0); row[_q_label(q)] = v; tot += v
-            row["T"] = tot
-            line.append(row)
-        st.dataframe(pd.DataFrame(line), hide_index=True, width="stretch",
-                     key=f"bs{game_id}_linescore")
+        # line score — the same one the Free stage draws
+        _render_line_score(game_id, quarters, qs,
+                           [(t2id, t2name), (t1id, t1name)])
 
         # ── post-game read: the "what happened" paragraph, engine-derived ──────
         try:
@@ -1346,99 +1513,11 @@ def render_box_score(game_id: int):
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_box():
-        cols = ["#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%", "FT", "FT%",
-                "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF", "+/-",
-                "SC", "eFG%", "TS%", "GS"]
-        # Same season scope as _build_boxes — this list drives the DNP rows, so
-        # an unscoped read printed a returning player once per season she was on
-        # the roster (worst on past-season boxes, where the active-season row is
-        # always an extra).
-        _brc, _brp = SEAS.roster_clause(g["season"], alias="p")
-        roster_all = query(
-            "SELECT p.id AS pid, p.name, p.number, p.team_id FROM players p "
-            f"WHERE p.team_id IN (?,?) AND {_brc} ORDER BY p.number, p.name",
-            (t1id, t2id) + _brp)
-
-        def make_df(tid):
-            rows, played = [], set()
-            pls = sorted([b for b in boxes.values() if b["team_id"] == tid],
-                         key=lambda b: (-b["PTS"], -b["MIN"]))
-            for b in pls:
-                if not any([b["FGA"], b["FTA"], b["MIN"], b["TRB"], b["AST"],
-                            b["PF"], b["TOV"], b["STL"], b["BLK"]]):
-                    continue
-                played.add(_pid_of(b, boxes))
-                rows.append({
-                    "#": str(b["number"]), "Player": b["name"], "MIN": b["MIN"], "PTS": b["PTS"],
-                    "FG": f"{b['FGM']}-{b['FGA']}", "FG%": round(100*S._safe(b['FGM'],b['FGA']),1),
-                    "3P": f"{b['3PM']}-{b['3PA']}", "3P%": round(100*S._safe(b['3PM'],b['3PA']),1),
-                    "FT": f"{b['FTM']}-{b['FTA']}", "FT%": round(100*S._safe(b['FTM'],b['FTA']),1),
-                    "ORB": b["ORB"], "DRB": b["DRB"], "REB": b["TRB"], "AST": b["AST"],
-                    "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
-                    "+/-": b["PM"], "SC": b["SC"], "eFG%": round(100*S.efg(b),1),
-                    "TS%": round(100*S.ts(b),1), "GS": round(S.game_score(b),1)})
-            # DNP — rostered players with nothing recorded this game
-            for p in roster_all:
-                if p["team_id"] != tid or p["pid"] in played:
-                    continue
-                rows.append({
-                    "#": str(p["number"]), "Player": f"{p['name']} (DNP)", "MIN": 0.0,
-                    "PTS": 0, "FG": "0-0", "FG%": 0.0, "3P": "0-0", "3P%": 0.0,
-                    "FT": "0-0", "FT%": 0.0, "ORB": 0, "DRB": 0, "REB": 0, "AST": 0,
-                    "STL": 0, "BLK": 0, "TOV": 0, "PF": 0, "+/-": 0, "SC": 0,
-                    "eFG%": 0.0, "TS%": 0.0, "GS": 0.0})
-            tb = _team_total(boxes, tid)
-            rows.append({
-                "#": "", "Player": "TOTAL", "MIN": None, "PTS": tb["PTS"],
-                "FG": f"{tb['FGM']}-{tb['FGA']}", "FG%": round(100*S._safe(tb['FGM'],tb['FGA']),1),
-                "3P": f"{tb['3PM']}-{tb['3PA']}", "3P%": round(100*S._safe(tb['3PM'],tb['3PA']),1),
-                "FT": f"{tb['FTM']}-{tb['FTA']}", "FT%": round(100*S._safe(tb['FTM'],tb['FTA']),1),
-                "ORB": tb["ORB"], "DRB": tb["DRB"], "REB": tb["TRB"], "AST": tb["AST"],
-                "STL": tb["STL"], "BLK": tb["BLK"], "TOV": tb["TOV"], "PF": tb["PF"],
-                "+/-": None, "SC": tb["SC"], "eFG%": round(100*S.efg(tb),1),
-                "TS%": round(100*S.ts(tb),1), "GS": None})
-            return pd.DataFrame(rows, columns=cols)
-
-        pcfg = {
-            "MIN": st.column_config.NumberColumn("MIN", format="%.1f"),
-            "PTS": st.column_config.NumberColumn("PTS", format="%d"),
-            "FG%": st.column_config.ProgressColumn("FG%", format="%.0f", min_value=0, max_value=100),
-            "3P%": st.column_config.ProgressColumn("3P%", format="%.0f", min_value=0, max_value=100),
-            "FT%": st.column_config.ProgressColumn("FT%", format="%.0f", min_value=0, max_value=100),
-            "TS%": st.column_config.ProgressColumn("TS%", format="%.0f", min_value=0, max_value=100),
-            "eFG%": st.column_config.NumberColumn("eFG%", format="%.1f"),
-            "+/-": st.column_config.NumberColumn("+/-", format="%d"),
-            "GS": st.column_config.NumberColumn("GS", format="%.1f"),
-        }
-        glossary_key("MIN", "PTS", "FG%", "3P%", "FT%", "REB", "AST", "STL",
-                     "BLK", "TOV", "PF", "+/-", "SC", "eFG%", "TS%", "GS")
-        for tid, nm in [(t2id, t2name), (t1id, t1name)]:
-            st.markdown(f"**{nm}**")
-            df = make_df(tid)
-            st.dataframe(df, hide_index=True, width="stretch", column_config=pcfg,
-                         key=f"bs{game_id}_box_{tid}")
-            st.download_button(f"{nm} box (CSV)", df.to_csv(index=False),
-                               file_name=f"box_{game_id}_{nm}.csv", mime="text/csv",
-                               key=f"dl_box_{game_id}_{tid}")
-
-        # MaxPreps-friendly combined export: both teams, one row per player, with
-        # a Team column and no TOTAL/derived-only cols — so a coach reporting to
-        # MaxPreps doesn't have to re-enter the box by hand.
-        mp_cols = ["Team", "#", "Player", "MIN", "PTS", "FG", "FG%", "3P", "3P%",
-                   "FT", "FT%", "ORB", "DRB", "REB", "AST", "STL", "BLK", "TOV", "PF"]
-        mp_rows = []
-        for tid, nm in [(t1id, t1name), (t2id, t2name)]:
-            for _, rr in make_df(tid).iterrows():
-                if rr["Player"] == "TOTAL":
-                    continue
-                row = {"Team": nm}
-                row.update({c: rr[c] for c in mp_cols if c != "Team"})
-                mp_rows.append(row)
-        mp_df = pd.DataFrame(mp_rows, columns=mp_cols)
-        st.download_button(
-            "⬇ MaxPreps box — both teams (CSV)", mp_df.to_csv(index=False),
-            file_name=f"maxpreps_box_{game_id}_{t1name}_vs_{t2name}.csv",
-            mime="text/csv", key=f"dl_maxpreps_{game_id}")
+        # The same builder the Free stage above uses, with the full column list.
+        # One table, one projection — the tier difference must never be a second
+        # implementation that can disagree about a number.
+        _render_box_tables(game_id, g, boxes, [(t2id, t2name), (t1id, t1name)],
+                           BOX_COLS)
 
     if _open == "Box Score":
         _tab_box()

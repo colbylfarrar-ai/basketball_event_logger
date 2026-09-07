@@ -926,8 +926,8 @@ def keys_extra(team_id, gender=None, game_ids=None):
     game_ids (when given) is trusted season-scoped, same contract as the tab."""
     try:
         import helpers.insights_team as INT
-        wa = INT.winloss_alignment(team_id, gender=gender,
-                                   game_ids=list(game_ids) if game_ids else None)
+        _scope = list(game_ids) if game_ids is not None else None
+        wa = INT.winloss_alignment(team_id, gender=gender, game_ids=_scope)
     except Exception:
         return {}
     if not wa.get("available") or not wa.get("goals"):

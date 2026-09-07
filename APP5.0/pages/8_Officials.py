@@ -143,8 +143,9 @@ def _official_overview(g, gids=None, season=None):
     # gids = read-filter (hashable tuple of game ids) or None = unrestricted.
     # season None = ALL seasons (career view — refs keep the same official_id
     # for ~15-year careers and are never archived at rollover).
-    return OFF.official_overview(gender=g, game_ids=(set(gids) if gids else None),
-                                 season=season)
+    return OFF.official_overview(
+        gender=g, game_ids=(set(gids) if gids is not None else None),
+        season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -152,14 +153,14 @@ def _official_environment(g, gids=None, untr=None, season=None):
     # Projection-facing coverage (tracked ∪ untracked boxed). gids/untr = the
     # tracked / untracked read-filters (hashable tuples) or None = unrestricted.
     return OFF.official_environment(
-        gender=g, game_ids=(set(gids) if gids else None),
-        untracked_ids=(set(untr) if untr else None), season=season)
+        gender=g, game_ids=(set(gids) if gids is not None else None),
+        untracked_ids=(set(untr) if untr is not None else None), season=season)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _official_game_log(off_pk, g, gids=None, season=None):
     return OFF.official_game_log(off_pk, gender=g,
-                                 game_ids=(set(gids) if gids else None),
+                                 game_ids=(set(gids) if gids is not None else None),
                                  season=season)
 
 
@@ -176,8 +177,9 @@ def _official_ratings(g, gids=None, season=None):
             scored.update(_TR.score_ratings(gender=g, season=_szn))
         except Exception:
             pass
-    return OFF.official_ratings(gender=g, game_ids=(set(gids) if gids else None),
-                                season=season, scored=scored)
+    return OFF.official_ratings(
+        gender=g, game_ids=(set(gids) if gids is not None else None),
+        season=season, scored=scored)
 
 
 hc1, hc2 = st.columns([3, 1])

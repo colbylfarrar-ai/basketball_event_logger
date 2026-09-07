@@ -64,7 +64,7 @@ from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 @st.cache_data(ttl=600, show_spinner=False)
 def _ctx_table_full(g, vis=None):
     return PR.player_stat_table(gender=g, min_games=1,
-                                game_ids=(list(vis) if vis else None))
+                                game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -110,7 +110,7 @@ def _ctx_foulft(season_gp=None):
 @st.cache_data(ttl=600, show_spinner=False)
 def _ctx_named_sets(g, vis=None):
     return PT.player_named_playtype_percentiles(
-        gender=g, game_ids=(list(vis) if vis else None))
+        gender=g, game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1818,8 +1818,8 @@ def render_card(ctx):
                  else None) or P["team_id"])
         ro = S.player_rebound_onoff(pid, _oot,
                                     game_ids=(list(_gp) if _gp is not None else None))
-        pm = S.player_playmaking_onoff(pid, _oot,
-                                       game_ids=(list(_gp) if _gp is not None else None))
+        pm = S.player_playmaking_onoff(
+            pid, _oot, game_ids=(list(_gp) if _gp is not None else None))
 
         if ro and ro.get("on_oreb_opps", 0) >= 5:
             st.markdown("**Team rebounding**")

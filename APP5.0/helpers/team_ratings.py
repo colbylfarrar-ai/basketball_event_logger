@@ -491,12 +491,12 @@ def hybrid_ratings(gender=None, season=SEAS_DEFAULT, game_ids=None,
     season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if k_tracked is None:
         k_tracked = HYBRID_K_TRACKED
+    _scope = list(game_ids) if game_ids is not None else None
     if scored is None:
-        scored = score_ratings(gender=gender, season=season,
-                               game_ids=(list(game_ids) if game_ids else None))
+        scored = score_ratings(gender=gender, season=season, game_ids=_scope)
     if tracked is None:
         tracked = tracked_ratings(gender=gender, season=season,
-                                  game_ids=(list(game_ids) if game_ids else None))
+                                  game_ids=_scope)
     out = {tid: dict(r) for tid, r in scored.items()}
     common = [t for t in tracked
               if t in out and tracked[t].get("RatingPts") is not None]

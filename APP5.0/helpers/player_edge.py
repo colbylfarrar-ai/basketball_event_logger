@@ -47,8 +47,12 @@ def edge_boards(gender=None, game_ids=None, season="Current"):
     qualifying players are still returned (empty rows) so the renderer can show a
     graceful 'not enough sample' note in place. `game_ids`/`season` scope the
     boards to an archived season's pool (None/'Current' = live default)."""
-    table = PR.player_stat_table(gender=gender, min_games=1,
-                                 game_ids=(set(game_ids) if game_ids else None))
+    # `is not None`, not truthiness: an empty scope means this viewer may
+    # aggregate nothing, and player_stat_table already honours that by
+    # returning {}. This is the one widening conversion that lived inside an
+    # ENGINE, so no amount of careful plumbing at a call site could save it.
+    _scope = set(game_ids) if game_ids is not None else None
+    table = PR.player_stat_table(gender=gender, min_games=1, game_ids=_scope)
 
     # ── tracked-edge trio (shot-making over expected · hand split · def WPA) ──
     poe = sorted(

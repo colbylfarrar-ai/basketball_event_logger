@@ -355,7 +355,7 @@ def _team_feed(gender, season=SEAS_DEFAULT, team_id=None, tids=None, fp=None,
         extras = None
         if team_id is not None:
             _ex = TIN.team_extras(team_id, gender=gender,
-                                  game_ids=(list(tids) if tids else None),
+                                  game_ids=(list(tids) if tids is not None else None),
                                   season=season,
                                   league_game_ids=(list(season_gp)
                                                    if season_gp else None))
@@ -374,7 +374,7 @@ def _strength(gender, team_id, tids, season=SEAS_DEFAULT, fp=None):
     league), cached per (gender, team, visible games, season)."""
     season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return INT.strength_splits(team_id, gender=gender,
-                               game_ids=list(tids) if tids else None,
+                               game_ids=list(tids) if tids is not None else None,
                                season=season)
 
 
@@ -382,21 +382,21 @@ def _strength(gender, team_id, tids, season=SEAS_DEFAULT, fp=None):
 def _winloss(gender, team_id, tids, fp=None):
     """Wins-vs-losses offense split for this team, cached per (gender, team, games)."""
     return INT.winloss_splits(team_id, gender=gender,
-                              game_ids=list(tids) if tids else None)
+                              game_ids=list(tids) if tids is not None else None)
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def _wl_align(gender, team_id, tids, fp=None):
     """This team's most win/loss-aligned stats (effect-size ranked)."""
     return INT.winloss_alignment(team_id, gender=gender,
-                                 game_ids=list(tids) if tids else None)
+                                 game_ids=list(tids) if tids is not None else None)
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def _tendencies(gender, team_id, tids, fp=None):
     """Zone-based shot tendencies (force left/right, where shots live)."""
     return INT.shot_tendencies(team_id, gender=gender,
-                               game_ids=list(tids) if tids else None)
+                               game_ids=list(tids) if tids is not None else None)
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)

@@ -818,7 +818,8 @@ def _passer_quality(g, gids):
     """Per-passer look quality over this team's tracked games (charts port of
     the Insights passer read — the render filters to this roster's pids)."""
     import helpers.insights_team as INT
-    return INT.passer_quality(gender=g, game_ids=list(gids) if gids else None)
+    return INT.passer_quality(gender=g,
+                              game_ids=list(gids) if gids is not None else None)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -836,7 +837,7 @@ def _strength_split(g, tid, gids, season):
     strength deep-dive)."""
     import helpers.insights_team as INT
     return INT.strength_splits(tid, gender=g,
-                               game_ids=list(gids) if gids else None,
+                               game_ids=list(gids) if gids is not None else None,
                                season=season)
 
 
@@ -1025,7 +1026,7 @@ def _rotation(tid, vis=None):
     visible games for this team (None = own/admin = full). Only reached when
     has_tracked, so vis is None or a non-empty pooled set — never empty."""
     import helpers.rotation_plan as RP
-    gids = list(vis) if vis else None
+    gids = list(vis) if vis is not None else None
     return RP.star_coverage(tid, game_ids=gids), RP.foul_prone(tid, game_ids=gids)
 
 
@@ -1035,7 +1036,7 @@ def _poss_ledger(tid, vis=None):
     for one team (Tier 2, ML_LAYER_ROADMAP). `vis` read-filters to the viewer's
     visible games (None = own/admin = full); only reached when has_tracked."""
     import helpers.possession_value as PVL
-    gids = list(vis) if vis else None
+    gids = list(vis) if vis is not None else None
     return PVL.team_ledger(tid, game_ids=gids)
 
 

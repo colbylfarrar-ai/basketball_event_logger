@@ -336,7 +336,7 @@ def _stat_table(g, mg, vis=None):
     # "whole tracked sample", so an empty visible set must NEVER reach here — the
     # caller downgrades to box-only instead (see the table-build block below).
     return PR.player_stat_table(gender=g, min_games=mg,
-                                game_ids=(list(vis) if vis else None),
+                                game_ids=(list(vis) if vis is not None else None),
                                 explain=True)   # spec 2.3 rating explainability
 
 
@@ -361,7 +361,7 @@ def _named_sets(g, vis=None):
     """Per-player play-type PPP, league-percentiled vs the visible pool
     (vis None = whole gender pool, for admin)."""
     return PT.player_named_playtype_percentiles(
-        gender=g, game_ids=(list(vis) if vis else None))
+        gender=g, game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -483,14 +483,14 @@ zsplits, zguard, hsplits = _zone_tables(_vis_key)
 @st.cache_data(ttl=600, show_spinner=False)
 def _table_full(g, vis=None):
     return PR.player_stat_table(gender=g, min_games=1,
-                                game_ids=(list(vis) if vis else None))
+                                game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _pgb(vis=None):
     """Every player's per-game boxes over tracked games (keyed by pid → gid).
     `vis` scopes to a season's pool (archive views); None = current default."""
-    return S.player_game_boxes(game_ids=(list(vis) if vis else None))
+    return S.player_game_boxes(game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -498,13 +498,13 @@ def _player_located(pid, vis=None):
     """Tap-captured shot locations for one player (cached so re-selecting / other
     widgets don't recompute). `vis` scopes to a season's pool (archive views)."""
     return S.located_shots(player_id=pid,
-                           game_ids=(list(vis) if vis else None))
+                           game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _foulft(vis=None):
     """Foul & free-throw detail per player. `vis` scopes to a season's pool."""
-    return FL.player_foul_ft(game_ids=(list(vis) if vis else None))
+    return FL.player_foul_ft(game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -535,7 +535,7 @@ def _lab_clusters(g, vis=None):
 def _lab_edge(g, vis=None, season="Current"):
     """League-wide player-edge leaderboards (shared with the Rankings League Lab).
     `vis`/`season` scope the boards to an archived season's pool."""
-    return PE.edge_boards(gender=g, game_ids=(list(vis) if vis else None),
+    return PE.edge_boards(gender=g, game_ids=(list(vis) if vis is not None else None),
                           season=season)
 
 
@@ -1198,9 +1198,9 @@ with tab_impact:
         def _reb_enrich(g, vis=None):
             import helpers.rebounding as RB
             P = RB.player_rebounding(gender=g,
-                                     game_ids=(list(vis) if vis else None))
+                                     game_ids=(list(vis) if vis is not None else None))
             roles = RB.pnr_rebound_roles(
-                gender=g, game_ids=(list(vis) if vis else None))
+                gender=g, game_ids=(list(vis) if vis is not None else None))
             return P, roles
 
         _RB, _roles = _reb_enrich(gender, _vis_key)

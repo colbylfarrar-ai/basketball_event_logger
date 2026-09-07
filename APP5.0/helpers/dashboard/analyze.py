@@ -43,7 +43,7 @@ from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 @st.cache_data(ttl=600, show_spinner=False)
 def _table(g, mg, gids=None, season=SEAS_DEFAULT):
     season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
-    return PR.player_stat_table(game_ids=(set(gids) if gids else None),
+    return PR.player_stat_table(game_ids=(set(gids) if gids is not None else None),
                                 gender=g, min_games=mg, season=season)
 
 
@@ -57,7 +57,7 @@ def _clusters(g, mg, vis=None, season=SEAS_DEFAULT):
 def _mapped(approx, team_id=None, player_id=None, vis=None):
     return S.mapped_shots(include_approx=approx, team_id=team_id,
                           player_id=player_id,
-                          game_ids=(set(vis) if vis else None))
+                          game_ids=(set(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)

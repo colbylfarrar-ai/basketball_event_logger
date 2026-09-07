@@ -36,14 +36,14 @@ def _adj_shooting(gender, season, tids, fp=None):
     """Opponent-adjusted eFG% for the tracked field."""
     import helpers.adj_efficiency as AE
     return AE.adjusted_shooting(gender=gender, season=season,
-                                game_ids=(list(tids) if tids else None))
+                                game_ids=(list(tids) if tids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _spacing(gender, team_id, tids, fp=None):
     import helpers.spacing as SP
     return SP.spacing_index(team_id, gender=gender,
-                            team_game_ids=(list(tids) if tids else None))
+                            team_game_ids=(list(tids) if tids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)

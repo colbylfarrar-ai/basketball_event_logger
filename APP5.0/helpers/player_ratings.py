@@ -1229,7 +1229,7 @@ def _pure_rapm_cached(game_ids, gender):
     signal rather than double-counting (the concern that kept box-prior HoopWAR
     display-only). On a thin book it shrinks stars toward 0, but the z still RANKS
     them correctly, which is all the leaf needs. Returns {} when RAPM can't solve."""
-    sig = tuple(sorted(game_ids)) if game_ids else None
+    sig = tuple(sorted(game_ids)) if game_ids is not None else None
     key = (gender, sig, _events_fingerprint())
     if key in _RAPM_MEMO:
         return _RAPM_MEMO[key]

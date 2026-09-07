@@ -515,9 +515,16 @@ _glossary_key("ORtg", "DRtg", "NetRtg", "Pace", "PPP", "HoopWAR", "RAPM",
 
 def _wr_team_pick(key):
     """Team selector for the Lineups views: Solo coaches get their own team,
-    League-wide / admin / open-archive viewers get every rated team."""
+    League-wide / admin / open-archive viewers get every team with tracked data.
+
+    Not every RATED team — a rated team with no tracked player behind it has
+    nothing for these views to build, and ranking the list put every league-wide
+    coach on the #1 team, which is one of them. Own team leads the list so the
+    picker opens on it. See lineup_projection.pickable_teams.
+    """
     _mine = _wr_ident.get("team_id")
-    opts = order if _wr_league_wide else [t for t in order if t == _mine]
+    opts = LP.pickable_teams(order, _wl_table(gender, season_pick),
+                             my_team=_mine, league_wide=_wr_league_wide)
     if not opts:
         empty_state("No team to build for",
                     "Ask the admin to assign you a team with tracked games, "
@@ -777,7 +784,7 @@ def _render_matchup():
                                         _uidm, season=season_pick))
                             _ovm = _OFFM.official_overview(
                                 gender=gender,
-                                game_ids=(set(_vtm) if _vtm else None),
+                                game_ids=(set(_vtm) if _vtm is not None else None),
                                 season=season_pick)
                             _envm = _OFFM.official_environment(
                                 gender=gender, game_ids=_vtm, untracked_ids=_vum,
@@ -1281,7 +1288,14 @@ if _wrview == "Lineups" and _lu_view == "Creator":
         st.caption("Pick a team and a five for a possession-calibrated "
                    "projection (ORtg / DRtg / Net vs the league) plus the observed "
                    "on-court rating and the best bench swaps.")
-        _team_opts = order if _li_any else [t for t in order if t == _my_team]
+        # The picker opens on the viewer's own team and lists only teams with
+        # tracked data behind them. Ranked-and-index-0 put every league-wide
+        # coach on the #1 team, which has none — see lineup_projection
+        # .pickable_teams. `_wl_table` is cached, so reading it before the
+        # widget costs nothing it was not going to pay anyway.
+        _tbl = _wl_table(gender, season_pick)
+        _team_opts = LP.pickable_teams(order, _tbl, my_team=_my_team,
+                                       league_wide=_li_any)
         if not _team_opts:
             empty_state("No team to build for",
                         "Ask the admin to assign you a team with tracked games, "
@@ -1301,11 +1315,13 @@ if _wrview == "Lineups" and _lu_view == "Creator":
         _t = st.selectbox("Team", _team_opts,
                           format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
                           key="wl1_team")
-        _tbl = _wl_table(gender, season_pick)
         _rows = [dict(r, _pid=pid) for pid, r in _tbl.items() if r["team_id"] == _t]
         if not _rows:
-            empty_state("No rated players on this team yet",
-                        "Track a game for them first.")
+            # Not "track a game for them first" — nobody can track another
+            # program's games, and the engine's own gate already knows the
+            # number that matters.
+            empty_state("Not enough tracked games yet",
+                        f"Lineup projection {LP.no_rotation_reason(0)}.")
         else:
             _ctxd = _wl_ctx(gender, season_pick)
             _lab = {}

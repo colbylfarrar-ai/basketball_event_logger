@@ -40,6 +40,7 @@ GAME_MIN     = 32.0     # HS regulation
 TEAM_MIN     = GAME_MIN * 5       # 160 player-minutes to allocate
 BLOCK        = 2.0      # minutes are placed in 2-minute blocks
 MIN_TEAM_GAMES = 8      # below this a team has no rotation to project
+
 MAX_ROTATION = 9        # players in the optimized rotation
 MIN_PP       = 8.0      # per-player minute bounds: a rotation player actually rotates
 MAX_PP       = 30.0     # nobody plays a full 32 wire-to-wire (rest/fatigue)
@@ -63,6 +64,51 @@ FATIGUE_W_SIG = 0.30
 FATIGUE_W_NET = 6.0
 FATIGUE_W_VAL = 2.5     # scale for the player-impact objective (Impact ~0-100)
 REPLACEMENT   = 40.0    # a 0-100 Impact/OVERALL below this adds ~no value
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  WHO CAN BE BUILT FOR  (the picker's option list, and the copy when it is empty)
+# ══════════════════════════════════════════════════════════════════════════════
+# The War Room's Creator picker was ranked and defaulted to index 0, and on
+# production the league's #1 team has no tracked data — 21 of 704 options
+# produce anything and the first that works is #22. It is the paid tool, so the
+# paying coach was the one who met the empty state.
+#
+# This lives here rather than in the page because it is the same question the
+# engine answers one line later (does this team have a rotation to project) and
+# because a page-local list cannot be asserted on.
+
+def pickable_teams(order, table, my_team=None, league_wide=True):
+    """The teams a coach can actually build a lineup for, own team first.
+
+    `order` is the ranked team-id list, `table` the rated-player table keyed by
+    player id (each row carrying `team_id`). A team with no rated player behind
+    it produces nothing, so it is not offered — except the viewer's OWN team,
+    which is always offered whatever its state. A coach is entitled to their own
+    program, and to the honest reason it is empty, rather than to a filtered-out
+    silence.
+    """
+    if not league_wide:
+        return [my_team] if my_team in set(order) else []
+    tracked = {(r or {}).get("team_id") for r in (table or {}).values()}
+    opts = [t for t in order if t in tracked or t == my_team]
+    if my_team in opts:                       # so the picker OPENS on it
+        opts = [my_team] + [t for t in opts if t != my_team]
+    return opts
+
+
+def no_rotation_reason(n_games):
+    """Why this team has no projection, in the coach's terms.
+
+    The page used to say "Track a game for them first", which is advice nobody
+    can follow — you cannot track another program's games. The count and the
+    requirement are the useful part, and they are the part the engine already
+    knew.
+    """
+    if not n_games:
+        return (f"needs {MIN_TEAM_GAMES} tracked games — this team has "
+                "none tracked yet")
+    return f"only {n_games} tracked games (need {MIN_TEAM_GAMES})"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -146,8 +192,7 @@ def build_context(team_id, gender=None, game_ids=None, season=SEAS_DEFAULT):
                     n_games = len(gids)
                     break
     if n_games < MIN_TEAM_GAMES:
-        return {"gated": f"only {n_games} tracked games (need {MIN_TEAM_GAMES})",
-                "team_games": n_games}
+        return {"gated": no_rotation_reason(n_games), "team_games": n_games}
 
     events = S.fetch_events(gids)
     observed = _observed_line(team_id, gids, events)

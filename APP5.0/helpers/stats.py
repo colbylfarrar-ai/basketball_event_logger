@@ -345,6 +345,31 @@ def _is_placeholder_name(name):
     return (not n) or n.isdigit() or n.lower().startswith("unknown")
 
 
+# ── leaderboard sample floor, stated ────────────────────────────────────────────
+#: The default minimum games for a LEADER board. Not 1: on production 168 of 703
+#: rated girls teams and 210 of 748 boys teams have played exactly one game, so a
+#: floor of 1 put four of the five Team-leader cards on 1-0 teams — including a
+#: "Best defense (PA/G) 0.0" that was a forfeit. Q5 set this at 5. The slider
+#: still goes down to 1; this is only where it starts.
+LEADERBOARD_MIN_GP = 5
+
+
+def floor_note(min_gp, *, tracked=False):
+    """`(min 5 games)` — the sample floor as a heading fragment.
+
+    Hall of Fame already states its floors this way and it is the reason its
+    boards read honestly. A board that hides its floor is asking a coach to
+    assume one, and the assumption is always higher than the truth.
+
+    Says "tracked games" when the pool is tracked-only: a tracked floor and a
+    played floor are different claims, and conflating them overstates what was
+    actually measured.
+    """
+    n = int(min_gp or 0)
+    unit = "tracked game" if tracked else "game"
+    return f"(min {n} {unit}{'' if n == 1 else 's'})"
+
+
 _LABEL_ROW_TEAM = object()      # "take the team off the row" — see player_label
 
 

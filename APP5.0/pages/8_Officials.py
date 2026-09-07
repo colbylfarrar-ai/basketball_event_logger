@@ -266,12 +266,9 @@ if not rows:
                 cta="Open the Game Tracker", page="pages/2_Game_Tracker.py")
     st.stop()
 
-# Derived per-ref stats: pace-adjusted whistle rate + lean/clutch shares
-for r in rows:
-    r["FP100"] = (r["fouls"] / r["game_poss"] * 100.0) if r["game_poss"] else 0.0
-    _tot_ha = r["home_fouls"] + r["away_fouls"]
-    r["home_lean"] = (r["ha_diff"] / _tot_ha * 100.0) if _tot_ha else 0.0
-    r["q4_share"] = (r["q4"] / r["fouls"] * 100.0) if r["fouls"] else 0.0
+# Derived per-ref stats: pace-adjusted whistle rate + lean/clutch shares.
+# In helpers/officials so the tiles, tables and charts read one derivation.
+OFF.derive_rates(rows)
 
 total_fouls = sum(r["fouls"] for r in rows)
 
@@ -293,28 +290,38 @@ with hc1:
                f"Avg PPP {_avg('PPP'):.3f}"])
 
 # ── Signature whistle leaders (glass tiles) ─────────────────────────────────────
-_elig = [r for r in rows if r["games"] >= 2] or rows
-_tightest = max(_elig, key=lambda r: r["FP100"])
-_lenient = min(_elig, key=lambda r: r["FP100"])
-_homer = max(rows, key=lambda r: abs(r["home_lean"])
-             if (r["home_fouls"] + r["away_fouls"]) >= 4 else -1)
-_steady = min(_elig, key=lambda r: r["FPG_std"])
-_hottest = max([r for r in rows if r["game_poss"] > 0],
-               key=lambda r: r["PPP"], default=rows[0])
-
-st.markdown("<div class='lab-hdr'>League whistle leaders</div>",
-            unsafe_allow_html=True)
-_g = st.columns(5)
-_glass(_g[0], "TIGHTEST WHISTLE", f"{_tightest['FP100']:.1f}",
-       f"{_tightest['name']} · FP100", ACCENT)
-_glass(_g[1], "MOST LENIENT", f"{_lenient['FP100']:.1f}",
-       f"{_lenient['name']} · FP100", _uimod.GOOD)
-_glass(_g[2], "BIGGEST H/A LEAN", f"{_homer['ha_diff']:+d}",
-       f"{_homer['name']}", "#bc8cff")
-_glass(_g[3], "MOST CONSISTENT", f"±{_steady['FPG_std']:.1f}",
-       f"{_steady['name']} · FPG", "#58a6ff")
-_glass(_g[4], "HOTTEST ENV.", f"{_hottest['PPP']:.2f}",
-       f"{_hottest['name']} · PPP", "#e3b341")
+# One floor for all five, one official per tile, and each tile states the
+# sample behind it — see helpers/officials.whistle_leaders for why each of
+# those is a rule rather than a preference.
+_lead = OFF.whistle_leaders(rows)
+_TILES = [
+    ("tightest",   "TIGHTEST WHISTLE", lambda r: f"{r['FP100']:.1f}",  "FP100", ACCENT),
+    ("lenient",    "MOST LENIENT",     lambda r: f"{r['FP100']:.1f}",  "FP100", _uimod.GOOD),
+    ("lean",       "BIGGEST H/A LEAN", lambda r: f"{r['ha_diff']:+d}", "H/A",   "#bc8cff"),
+    ("consistent", "MOST CONSISTENT",  lambda r: f"±{r['FPG_std']:.1f}", "FPG", "#58a6ff"),
+    ("hottest",    "HOTTEST ENV.",     lambda r: f"{r['PPP']:.2f}",    "PPP",   "#e3b341"),
+]
+if any(_lead.values()):
+    st.markdown("<div class='lab-hdr'>League whistle leaders</div>",
+                unsafe_allow_html=True)
+    _g = st.columns(5)
+    for _i, (_slot, _lbl, _val, _unit, _clr) in enumerate(_TILES):
+        _r = _lead.get(_slot)
+        if _r is None:
+            _glass(_g[_i], _lbl, "—",
+                   f"needs {OFF.WHISTLE_MIN_GAMES} games worked", "#8b949e")
+        else:
+            _glass(_g[_i], _lbl, _val(_r),
+                   f"{_r['name']} · {_unit} · {_r['games']} games", _clr)
+    st.caption(
+        f"Every tile is over officials with at least "
+        f"{OFF.WHISTLE_MIN_GAMES} tracked games worked — the same floor the "
+        "Ratings tab uses — and no official fills two of them. The busiest ref "
+        "in this book has worked nine games, so read these as a description of "
+        "a thin sample, not a reputation.")
+else:
+    st.info(f"No official has worked {OFF.WHISTLE_MIN_GAMES} tracked games yet — "
+            "the whistle leaders fill in as refs build a history.")
 
 tab_rate, tab_over, tab_charts, tab_ind, tab_gloss = st.tabs(
     ["Ratings", "Overview", "Charts", "Individual", "Glossary"])

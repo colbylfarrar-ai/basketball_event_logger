@@ -467,6 +467,73 @@ def official_overview(gender=None, game_ids=None, season="Current"):
     return {"officials": rows, "teams": teams}
 
 
+def derive_rates(rows):
+    """Add the pace-adjusted whistle rate and lean/Q4 shares to each row, in
+    place, and return the list.
+
+    These are pure functions of fields `official_overview` already returns, and
+    they lived in the page — which meant the tiles, the tables and the charts
+    were all reading a derivation the engine could not test.
+    """
+    for r in rows:
+        r["FP100"] = ((r["fouls"] / r["game_poss"] * 100.0)
+                      if r.get("game_poss") else 0.0)
+        _ha = (r.get("home_fouls") or 0) + (r.get("away_fouls") or 0)
+        r["home_lean"] = ((r["ha_diff"] / _ha * 100.0) if _ha else 0.0)
+        r["q4_share"] = ((r["q4"] / r["fouls"] * 100.0) if r.get("fouls") else 0.0)
+    return rows
+
+
+#: The Lab's headline tiles: slot -> (row key, take the MAX?). Data rather than
+#: five hand-written max/min calls, because the five used to disagree about which
+#: pool they were choosing from and a table cannot.
+WHISTLE_SLOTS = (
+    ("tightest",   "FP100",    True),
+    ("lenient",    "FP100",    False),
+    ("lean",       "abs_lean", True),
+    ("consistent", "FPG_std",  False),
+    ("hottest",    "PPP",      True),
+)
+
+
+def whistle_leaders(rows, min_games=None):
+    """{slot: row or None} for the Officiating Lab's five headline tiles.
+
+    Three rules, all of them THE BOOK §10 rule 3, and none of them a new number:
+
+      * ONE floor — `WHISTLE_MIN_GAMES`, which is `RATING_MIN_GAMES`. The five
+        tiles used to run four different rules between them (games >= 2 for
+        three, "at least 4 fouls" for the lean tile, nothing at all for the
+        environment tile) with the tab below on a fifth.
+      * A slot it cannot fill comes back None. The old code read
+        `[r for r in rows if r["games"] >= 2] or rows`, so an empty eligible
+        pool fell back to every row and the floor evaporated in precisely the
+        case it existed for — which is how a ONE-GAME official came to be
+        published as the league's hottest scoring environment.
+      * One official per slot. On a book where eleven refs have worked five
+        games, a single busy one could otherwise hold four of five tiles and the
+        strip would say nothing at all.
+
+    Every returned row carries `games` and `fouls`, so the tile can state its
+    sample rather than leaving the reader to assume a career behind it.
+    """
+    floor = WHISTLE_MIN_GAMES if min_games is None else min_games
+    pool = [r for r in rows if (r.get("games") or 0) >= floor]
+    for r in pool:
+        r["abs_lean"] = abs(r.get("home_lean") or 0.0)
+    out, taken = {}, set()
+    for slot, key, want_max in WHISTLE_SLOTS:
+        avail = [r for r in pool
+                 if r.get(key) is not None and id(r) not in taken]
+        if not avail:
+            out[slot] = None
+            continue
+        pick = (max if want_max else min)(avail, key=lambda r: r[key])
+        taken.add(id(pick))
+        out[slot] = pick
+    return out
+
+
 def official_game_log(off_pk, gender=None, game_ids=None, season="Current"):
     """
     Per-game detail for one official, newest first. Each row:
@@ -617,6 +684,13 @@ def official_environment(gender=None, game_ids=None, season="Current",
 # result does not bar it. 50 = a crew that split the game normally; a ref lands
 # below only by taking a share chance cannot explain.
 RATING_MIN_GAMES = 3       # below this an official isn't rated (too few games)
+
+#: Games worked before an official may HEADLINE the Officiating Lab. Deliberately
+#: the same number as RATING_MIN_GAMES, because the page below the tiles already
+#: uses that one and a screen running two floors cannot tell a reader which is
+#: biting (THE BOOK §14 item 4 — it was running four).
+WHISTLE_MIN_GAMES = RATING_MIN_GAMES
+
 CLUTCH_MARGIN = 6          # |margin| within this in Q4/OT = a clutch situation
 
 SHARE_MIN_LIVE_CALLS = 6   # a game thinner than this can't price a share

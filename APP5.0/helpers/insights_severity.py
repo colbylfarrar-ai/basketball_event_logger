@@ -161,6 +161,7 @@ METRIC_SECTION = {
     "Vs scheme": S_IDENTITY,
     # ── why we win / why we lose ─────────────────────────────────────────────
     "Margin mix": S_WHY, "Deserved": S_WHY, "Quarters": S_WHY, "Runs": S_WHY,
+    "Shot clock": S_WHY,
     "Game script": S_WHY, "Close games": S_WHY, "Luck": S_WHY,
     "Volatility": S_WHY, "Momentum": S_WHY, "Rest": S_WHY,
     "Transition": S_WHY, "Transition D": S_WHY, "Keys": S_WHY,
@@ -229,6 +230,7 @@ METRIC_EVIDENCE = {
     "Foul rate": ("Roster", None),
     # ── team metrics ─────────────────────────────────────────────────────────
     "Quarters": ("Charts", "Quarters"), "Transition": ("Charts", "Play Style"),
+    "Shot clock": ("Charts", "Situational"),
     "Transition D": ("Charts", ("Defense", "Team Defense")),
     "Runs": ("Charts", "Trends"),
     "Momentum": ("Charts", "Trends"), "Game script": ("Charts", "Trends"),
@@ -294,6 +296,9 @@ METRIC_RELIABILITY = {
     "Shots allowed": ("team", "band_share"),
     "3PT diet": ("team", "band_share"),
     "Scheme": ("team", "scheme_mix"),
+    # the SHARE, not the early-band PPP: the read ships the coach's choice, and
+    # the share is the less flattering of the two measurements (.746 vs .800)
+    "Shot clock": ("team", "clock_share"),
     "Margin mix": ("game", "xmargin_vs_margin"),
     "Deserved": ("game", "xmargin_vs_margin"),
 }

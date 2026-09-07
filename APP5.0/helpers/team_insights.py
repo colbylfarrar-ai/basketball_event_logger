@@ -23,6 +23,10 @@ MIN_GAMES = 3          # a team read needs a real schedule behind it (scout tier
                        # a 3-game tournament book still earns its best reads)
 MIN_TRACKED = 2        # tracked-plane generators (ts) need tracked games
 
+#: The shot-clock knee, quoted in _t_clock's prose. Imported rather than
+#: repeated so the sentence cannot drift from the band it describes.
+from helpers.shot_clock import EARLY_MAX as SC_EARLY  # noqa: E402
+
 
 def _num(d, key):
     v = (d or {}).get(key)
@@ -225,6 +229,64 @@ def _t_quarter(tid, ts, fm, pools, d):
                f"{lbl.lower()} ({swing:+.1f} vs their other quarters); "
                f"opponents make their run in the same window every night.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "Quarters", "n": gp}
+
+
+def _t_clock(tid, ts, fm, pools, d):
+    """Shot-clock state — how much of this team's offense happens in the first
+    seven seconds, where a possession is worth ~0.14 PPP more than at any point
+    after it.
+
+    Reads the SHARE, not the early-band PPP. The share is the coach's choice and
+    the thing a team can change on Monday; the PPP gap is a league constant this
+    read quotes rather than a trait it claims. Both were measured — see
+    `reliability.THE SHOT CLOCK IS A TEMPO CHOICE`.
+    """
+    c = d.get("clock")
+    gp = d.get("trk_gp") or 0
+    if not c or gp < MIN_TRACKED:
+        return None
+    team, league = c.get("team") or {}, c.get("league") or {}
+    share = (team.get("early") or {}).get("share")
+    counts = c.get("counts") or {}
+    poss = team.get("poss") or 0
+    if share is None or poss < 60 or len(counts) < 4:
+        return None
+    # z that charges this team's own sampling error to the denominator — a two-
+    # game book does not get to be a style just by landing far from the mean.
+    import helpers.shot_clock as SC
+    zz = SC.early_z(share, poss, counts)
+    if zz is None:
+        return None
+    z, mu = zz
+    if abs(z) < MIN_Z:
+        return None
+
+    # the league's own price for getting there early — quoted, not claimed
+    e_ppp = (league.get("early") or {}).get("PPP")
+    l_ppp = (league.get("late") or {}).get("PPP")
+    gap = (e_ppp - l_ppp) if (e_ppp is not None and l_ppp is not None) else None
+    gap_bit = (f" League-wide the first {SC_EARLY}s are worth "
+               f"**{e_ppp:.2f} PPP** against {l_ppp:.2f} after — "
+               f"{gap:+.2f} a possession." if gap else "")
+
+    # the confound check, stated only when it actually holds
+    nt = ((c.get("team_nt") or {}).get("early") or {}).get("share")
+    nt_bit = ""
+    if nt is not None and z > 0 and nt >= mu:
+        nt_bit = (f" It is not only fast breaks — {nt * 100:.0f}% of their "
+                  "half-court possessions start early too.")
+
+    if z > 0:
+        txt = (f"**Hunts the first look** — **{share * 100:.0f}% of their "
+               f"possessions** get a shot up inside {SC_EARLY} seconds, against "
+               f"{mu * 100:.0f}% for the field.{gap_bit}{nt_bit}")
+    else:
+        txt = (f"**Plays late** — only **{share * 100:.0f}% of their "
+               f"possessions** get a shot up inside {SC_EARLY} seconds "
+               f"({mu * 100:.0f}% for the field), so most of their offense "
+               f"happens in the flat part of the clock.{gap_bit}")
+    return {"text": txt, "score": abs(z), "z": z, "metric": "Shot clock",
+            "n": int(team.get("poss") or 0)}
 
 
 def _t_forced_tov(tid, ts, fm, pools, d):
@@ -837,7 +899,7 @@ def _t_after_scramble(tid, ts, fm, pools, d):
 
 
 _TEAM_GENERATORS = [_t_luck, _t_close, _t_volatility, _t_momentum,
-                    _t_off_leak, _t_def_leak, _t_three_dep, _t_quarter,
+                    _t_off_leak, _t_def_leak, _t_three_dep, _t_quarter, _t_clock,
                     _t_lineup, _t_forced_tov, _t_off_glass, _t_frontrunner,
                     _t_chemistry,
                     _t_keys, _t_vs_scheme, _t_runs, _t_rest, _t_predictable,
@@ -1032,6 +1094,32 @@ def runs_extra(team_id, events=None):
     return {"runs": prof} if prof else {}
 
 
+def clock_extra(team_id, events=None, league_events=None):
+    """{'clock': {...}} for _t_clock — where this team's offense happens in the
+    possession, against the league's own distribution.
+
+    Carries the no-transition profile too: the early band's edge has to survive
+    dropping fast breaks or the read is just "this team runs", which the tempo
+    generators already say.
+    """
+    if not events:
+        return {}
+    try:
+        import helpers.shot_clock as SC
+        team = SC.clock_profile(events, team_id=team_id)
+        if not team.get("poss"):
+            return {}
+        base = league_events if league_events else events
+        out = {"team": team,
+               "team_nt": SC.clock_profile(events, team_id=team_id,
+                                           exclude_transition=True),
+               "league": SC.clock_profile(base),
+               "counts": SC.league_early_counts(base)}
+    except Exception:
+        return {}
+    return {"clock": out}
+
+
 def rest_extra(team_id, season="Current"):
     """{'rest': rest_splits} for _t_rest — SCORE-based (fires on the full
     schedule, untracked games included), scoped to `season`. Builds the team's
@@ -1123,6 +1211,7 @@ def team_extras(team_id, gender=None, game_ids=None, season="Current",
     out.update(keys_extra(team_id, gender=gender, game_ids=game_ids))
     out.update(vs_scheme_extra(team_id, events=events, game_ids=game_ids))
     out.update(runs_extra(team_id, events=events))
+    out.update(clock_extra(team_id, events=events, league_events=league_events))
     out.update(rest_extra(team_id, season=season))
     out.update(predict_extra(team_id, events=events))
     out.update(pv_extra(team_id, events=events, game_ids=game_ids))

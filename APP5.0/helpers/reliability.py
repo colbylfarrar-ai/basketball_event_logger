@@ -229,6 +229,11 @@ MEASURED = {
     ("defender", "scheme_share_man"): 0.321,
     ("defender", "press_share"): 0.050,       # collapses within team — refused
     ("team", "scheme_mix"): 0.650,            # a coach's choice, and it repeats
+    # ── shot-clock state (measured 2026-09-07, helpers/shot_clock.py) ────────
+    # See THE SHOT CLOCK IS A TEMPO CHOICE below. 200 random half-splits of the
+    # 63-game production book over the 8 teams with >= 4 tracked games.
+    ("team", "clock_share"): 0.746,           # early share — what the read ships
+    ("team", "clock_ppp"): 0.800,             # early-band PPP, the better half
     # ── OFFENSIVE play-type axis (measured 2026-07-26 round 2) ───────────────
     # Never measured before today; the book covered band and kind shares and
     # the ACTION axis was assumed. Shares behave like every other offensive
@@ -607,6 +612,39 @@ MEASURED_DEFENDER_NOTE = (
 # cannot settle that — team per-band FG% allowed is unmeasurable at six teams,
 # which is precisely the quantity that would answer it. Report the rate and the
 # shot diet it comes with; do not rank defences by it.
+# ── THE SHOT CLOCK IS A TEMPO CHOICE ─────────────────────────────────────────
+# `possession_secs` is non-NULL on every row and had been read only as a mean.
+# Bucketed over the 63-game production book (7,808 clean possessions):
+#
+#     early (<7s)  n=1,978  PPP 0.741   mid (7-15s)   n=3,265  PPP 0.601
+#                                       late (16-35s) n=2,565  PPP 0.604
+#
+# The entire effect lives before seven seconds; mid and late land within 0.003
+# of each other, which is why the read has one knee and not a gradient. It is
+# not a fast-break artefact — dropping every play_type='transition' row leaves
+# the early band +0.104 clear (0.709 vs 0.605 on n=6,494).
+#
+# WHAT WAS MEASURED FOR REPEATABILITY. 200 random half-splits over the 8 teams
+# with >= 4 tracked games: early SHARE r .595 (SB .746, "fair"), early-band PPP
+# r .667 (SB .800, "stable"). Both are robustly positive rather than a lucky
+# median — 1 of 200 splits landed negative for the share, 0 of 200 for the PPP,
+# with p10 at +.31 and +.41 respectively. That is what separates this from team
+# per-band FG% above, which came back -.12 to .10 and is deliberately absent.
+#
+# THE READ SHIPS THE SHARE, THE WEAKER HALF. The share is the coach's decision
+# and the thing that changes on Monday; the PPP gap is a league constant the
+# verdict quotes rather than a per-team trait it claims. Eight units is a thin
+# base for a split-half and the interval is wide (p10-p90 spans .31-.83), so
+# this is registered as "fair" — directional, real, and will still move.
+MEASURED_CLOCK_NOTE = (
+    "Where a team's offense happens in the possession is a tempo choice and it "
+    "repeats: early-possession share measures SB .746 over the tracked book. "
+    "The value gap behind it is league-wide, not a team trait — the first seven "
+    "seconds are worth 0.741 PPP against 0.604 after, and nothing past seven "
+    "seconds differs at all."
+)
+
+
 MEASURED_CONTEST_NOTE = (
     "Contest rate allowed measures SB .69-.74 (within-game demeaned), the most "
     "repeatable team defensive read in this book. `guarded_by_id` records who "

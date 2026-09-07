@@ -163,7 +163,7 @@ def _may_read_game(user: dict, g: dict) -> bool:
     if ENT._is_past_season(g.get("season")):
         return True
     return ENT.can_see_game_tracked(user, g["team1_id"], g["team2_id"],
-                                    in_pool=g["in_pool"])
+                                    in_pool=g["in_pool"], game_id=g.get("id"))
 
 
 def _guest_game_gate(user: dict, game_id: int) -> None:

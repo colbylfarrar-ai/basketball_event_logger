@@ -174,6 +174,74 @@ def coach_team_ids(email: str) -> list:
     return [t] if t is not None else []
 
 
+def staff_emails(ident: dict | None) -> set[str]:
+    """Every address that staffs any of this viewer's teams, plus their own.
+
+    The key for OWN-CREATION visibility (founder ruling Q3). Keyed on the staff
+    rather than on the signed-in address for the three reasons THE BOOK §9.2.1
+    measured out: the founder works from two accounts and a game landing on the
+    school address would otherwise strand; four people already staff team 1 and
+    an assistant's scout game belongs to the same staff room; and it is Q3's own
+    co-op logic one level down. Their own address is always included so a scout
+    with no program of their own can still read what they logged.
+
+    Empty strings are dropped: `tracked_by` is '' on the 15 pre-attribution
+    games, and a viewer whose staff set contained '' would silently claim all of
+    them (Q3: empty needs no attribution — those are archive games and the
+    archive is open anyway).
+    """
+    if not ident:
+        return set()
+    out = set()
+    me = (ident.get("email") or "").strip().lower()
+    if me:
+        out.add(me)
+    own = _own_teams(ident)
+    if own:
+        ph = ",".join("?" * len(own))
+        out |= {(r["coach_email"] or "").strip().lower() for r in query(
+            f"SELECT DISTINCT coach_email FROM coach_teams "
+            f"WHERE team_id IN ({ph})", tuple(own))}
+    out.discard("")
+    return out
+
+
+def own_created_game_ids(ident: dict | None, season=SEAS_DEFAULT) -> set[int]:
+    """Tracked game ids this viewer's STAFF logged, in `season`.
+
+    "If the coach tracked it, they get to see it" (Q3). `games.tracked_by`
+    recorded who logged a game and was read by exactly one function —
+    `recompute_game_pool`, which decides what to SHARE — so it never once
+    decided what its author may READ. On production that left 32 of 63 tracked
+    games invisible to the person who typed them in.
+    """
+    emails = staff_emails(ident)
+    if not emails:
+        return set()
+    season = resolve_read_season(season)
+    ph = ",".join("?" * len(emails))
+    return {r["id"] for r in query(
+        f"SELECT id FROM games WHERE tracked=1 AND season=? "
+        f"AND tracked_by IS NOT NULL AND tracked_by != '' "
+        f"AND LOWER(tracked_by) IN ({ph})",
+        (season,) + tuple(sorted(emails)))}
+
+
+def has_own_tracked_of(ident: dict | None, team_id, season=SEAS_DEFAULT) -> bool:
+    """Has this viewer's staff tracked at least one game involving `team_id`?
+
+    The yes/no `tracked_gate` needs, separate from the id set the read-filter
+    needs, so the UI question and the data question ask the same thing once."""
+    own_ids = own_created_game_ids(ident, season)
+    if not own_ids or team_id is None:
+        return False
+    ph = ",".join("?" * len(own_ids))
+    return bool(query(
+        f"SELECT 1 FROM games WHERE id IN ({ph}) "
+        f"AND (team1_id=? OR team2_id=?) LIMIT 1",
+        tuple(sorted(own_ids)) + (team_id, team_id)))
+
+
 def gating_identity(row: dict) -> dict:
     """Build a full gating identity from an app_users row, for a NON-Streamlit
     caller (the tracker API). Mirrors the dict auth.require_login() assembles:
@@ -224,7 +292,7 @@ def can_see_team_tracked(ident: dict | None, team_id, pool=None) -> bool:
 
 
 def can_see_game_tracked(ident: dict | None, team1_id, team2_id,
-                         pool=None, *, in_pool=None) -> bool:
+                         pool=None, *, in_pool=None, game_id=None) -> bool:
     """May this viewer open a tracked GAME's depth (it reveals both teams)? Paid
     AND (own team is in it OR (League-wide AND the game is pooled)). Pass `in_pool`
     for a specific game; without it, fall back to whether either team has any
@@ -237,6 +305,10 @@ def can_see_game_tracked(ident: dict | None, team1_id, team2_id,
     own = _own_teams(ident)
     if (team1_id is not None and int(team1_id) in own) or \
        (team2_id is not None and int(team2_id) in own):
+        return True
+    # Own creation (Q3). Needs the game itself, so callers holding one pass it;
+    # without a game_id this is the pre-B3 behaviour and nothing regresses.
+    if game_id is not None and int(game_id) in own_created_game_ids(ident):
         return True
     if not viewer_is_league_wide(ident):
         return False
@@ -267,6 +339,10 @@ def visible_tracked_game_ids(ident: dict | None, season=SEAS_DEFAULT) -> set[int
             f"AND (team1_id IN ({ph}) OR team2_id IN ({ph}))", params)}
     if viewer_is_league_wide(ident):
         ids |= pooled_game_ids(season)
+    # Own creation (Q3): a game this viewer's staff LOGGED is theirs to read,
+    # whichever teams were on the floor. A union, never a replacement — the
+    # pattern this fixes is a Solo coach who scouts widely and is punished for it.
+    ids |= own_created_game_ids(ident, season)
     return GD.representative_game_ids(ids)   # one canonical row per double-tracked game
 
 
@@ -311,10 +387,21 @@ def team_visible_tracked_ids(ident: dict | None, team_id, season=SEAS_DEFAULT) -
     if team_id is not None and int(team_id) in _own_teams(ident):
         return None                      # own team → full depth, always
     # league-wide scout of another team → that team's pooled games only, with
-    # duplicate tracks collapsed to the canonical (most-detailed / pinned) row.
-    return GD.representative_game_ids({r["id"] for r in query(
+    # duplicate tracks collapsed to the canonical (most-detailed / pinned) row —
+    # PLUS any of this team's games the viewer's own staff tracked (Q3). A coach
+    # who opponent-scouted this team four times reads those four games even when
+    # the team itself shares nothing, which is the whole point of scouting.
+    ids = {r["id"] for r in query(
         "SELECT id FROM games WHERE in_pool=1 AND tracked=1 AND season=? "
-        "AND (team1_id=? OR team2_id=?)", (season, team_id, team_id))})
+        "AND (team1_id=? OR team2_id=?)", (season, team_id, team_id))}
+    own_ids = own_created_game_ids(ident, season)
+    if own_ids:
+        ph = ",".join("?" * len(own_ids))
+        ids |= {r["id"] for r in query(
+            f"SELECT id FROM games WHERE id IN ({ph}) "
+            f"AND (team1_id=? OR team2_id=?)",
+            tuple(sorted(own_ids)) + (team_id, team_id))}
+    return GD.representative_game_ids(ids)
 
 
 def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
@@ -340,6 +427,11 @@ def tracked_gate(ident: dict | None, team_id, raw_has_tracked: bool, pool=None,
         return True, None
     if team_id is not None and int(team_id) in _own_teams(ident):
         return True, None               # own team → always
+    # A team this viewer's own staff has tracked: their work, their read (Q3).
+    # Without this the gate answered "they haven't shared" over the viewer's own
+    # scouting — a neutral message, and the wrong one.
+    if team_id is not None and has_own_tracked_of(ident, team_id, season):
+        return True, None
     # Paid coach scouting ANOTHER team:
     if not viewer_is_league_wide(ident):
         # a banned coach gets a suspension notice, not a co-op invite they can't act on

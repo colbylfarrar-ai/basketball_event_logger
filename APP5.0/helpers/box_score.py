@@ -440,7 +440,8 @@ def render_box_score(game_id: int):
     # depth. This must sit ABOVE the hero so the tag never leaks pre-gate.
     scored, trk_rank = {}, {}
     _gident = AUTH.current_user()
-    _show_trk = ENT.can_see_game_tracked(_gident, t1id, t2id, in_pool=g["in_pool"])
+    _show_trk = ENT.can_see_game_tracked(_gident, t1id, t2id,
+                                         in_pool=g["in_pool"], game_id=game_id)
     try:
         scored = _score_ratings_fp(g["gender"], TR.results_fingerprint())
     except Exception:
@@ -504,7 +505,8 @@ def render_box_score(game_id: int):
     # a funnel, not a leak — see helpers/seasons.py). Only the CURRENT season's
     # tracked depth is gated.
     if SEAS.is_current(g["season"]) and not ENT.can_see_game_tracked(
-            AUTH.current_user(), t1id, t2id, in_pool=g["in_pool"]):
+            AUTH.current_user(), t1id, t2id, in_pool=g["in_pool"],
+            game_id=game_id):
         # Mirror the other gate sites' branched copy so each locked viewer gets the
         # right reason: Free -> Paid feature; banned -> suspension; Solo scouting ->
         # co-op invite; League-wide but this game isn't pooled -> neutral not-shared.

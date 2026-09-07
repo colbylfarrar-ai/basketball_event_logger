@@ -61,7 +61,7 @@ games = EL.games_with_events()
 games = [g for g in games
          if (g["season"] or "Current") != "Current"
          or ENT.can_see_game_tracked(_ident, g["t1_id"], g["t2_id"],
-                                     in_pool=g["in_pool"])]
+                                     in_pool=g["in_pool"], game_id=g["id"])]
 if not games:
     empty_state("No tracked events yet",
                 "Log a game in the Game Tracker first, then come here to fix it.",

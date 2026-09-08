@@ -256,21 +256,72 @@ on anybody remembering them in January. **They ship in the repo and are not
 installed on the droplet** — installing each one is a `sudo` step someone has to
 take, and until it is taken the job simply never runs.
 
+**Verified on the droplet 2026-09-08: none of these are installed.**
+`systemctl list-timers --all` shows only Ubuntu's own (`dpkg-db-backup`,
+`logrotate`, `apt-daily`…), and `/etc/systemd/system/` carries only the three
+long-running services. Every job below is therefore not running at all.
+
+**It needs the founder's sudo password.** `sudo -l` on the box grants
+`NOPASSWD` for exactly `systemctl restart app5-web app5-tracker` and nothing
+else, so `cp` into `/etc/systemd/system` and `systemctl enable` both prompt.
+Nobody but the account holder can install these.
+
+### Install all five, one block
+
 ```bash
-sudo cp ~/app5/APP5.0/deploy/app5-analyze.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now app5-analyze.timer
-systemctl list-timers 'app5-*'            # confirm the next elapse
+ssh app5@107.170.27.154
+cd ~/app5
+
+# The box appends to APP5.0/docs/RECAL_LOG.md on every living-recal run, so it
+# is dirty and a pull that touches that file would abort. Its content is now
+# committed upstream, so discarding the local copy loses nothing.
+git checkout -- APP5.0/docs/RECAL_LOG.md
+git pull
+
+sudo cp APP5.0/deploy/app5-season-rollover.{service,timer} /etc/systemd/system/
+sudo cp APP5.0/deploy/app5-analyze.{service,timer}         /etc/systemd/system/
+sudo cp APP5.0/deploy/app5-rating-history.{service,timer}  /etc/systemd/system/
+sudo cp APP5.0/deploy/app5-verify-backup.{service,timer}   /etc/systemd/system/
+sudo cp APP5.0/deploy/app5-ossaa-refresh.{service,timer}   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now app5-season-rollover.timer app5-analyze.timer                             app5-rating-history.timer app5-verify-backup.timer
+
+systemctl list-timers 'app5-*'            # confirm the next elapse of each
 ```
 
-| timer | what it does | why it cannot be manual |
-|---|---|---|
-| `app5-analyze` | `ANALYZE` — refreshes the query planner's statistics (~0.1 s) | Without it the planner searches a 13,362-row index instead of a 63-row one on the predicate 74 sites share. |
-| `app5-season-rollover` | rolls the active season at the Oct 1 boundary | Everything scoped to `season='Current'` is wrong from Oct 1 until someone presses the button. |
-| `app5-ossaa-refresh`, `app5-living-recal` | see their unit files | — |
+Then run each one **once, by hand**, so a failure surfaces now rather than at
+03:30 in November. All four are idempotent, so this costs nothing:
 
-Same shape for each: copy the pair, `daemon-reload`, `enable --now`. All are
-idempotent and all no-op on a run with nothing to do, so a double install or an
-extra run costs nothing.
+```bash
+sudo systemctl start app5-season-rollover app5-analyze                      app5-rating-history app5-verify-backup
+journalctl -u app5-season-rollover -u app5-analyze            -u app5-rating-history -u app5-verify-backup --since '-10 min'
+```
+
+`app5-ossaa-refresh` is copied but deliberately **not enabled** — §17 rules the
+scrape stays a manual morning click, because an unattended job that bulk-writes
+teams and games into the shared league DB is exactly the one that needs a hand
+on it. The unit is there for the day that changes.
+
+### What each one is for
+
+| timer | when | what it does | why it cannot be a memory |
+|---|---|---|---|
+| `app5-season-rollover` | 03:30 daily | advances the active season at the Oct 1 cutoff, forward-only | Everything scoped to `season='Current'` is wrong from Oct 1 until someone presses the button — and the deadline is three weeks out. |
+| `app5-analyze` | 03:40 daily | `ANALYZE` (~0.1 s) | Without it the planner searches a 13,362-row index instead of a 63-row one, on the predicate 74 sites share. |
+| `app5-rating-history` | 03:50 daily | rebuilds the weekly rank trajectory | All three résumé surfaces — trajectory, the feed's Power deltas, risers — are empty until someone opens Rankings and presses "Rebuild rating history". |
+| `app5-verify-backup` | Sun 04:20 | restores the litestream replica to temp, checks integrity + row counts, deletes it | litestream replicating and Settings offering a download tell nobody it is *working*. A replica failing for a month looks exactly like one that is not. |
+
+The three daily jobs are spaced ten minutes apart on purpose so two maintenance
+WRITES never contend for the same writer lock on a 1 vCPU box, and the history
+rebuild runs last so that on rollover night it reconstructs the season the
+rollover just made current. Every unit sets `Persistent=true`, so a box that
+was off overnight still runs on the next boot rather than skipping a day —
+which is what makes the Oct 1 boundary safe.
+
+All five are idempotent and no-op on a run with nothing to do, so a double
+install or an extra run costs nothing. `app5-verify-backup` exits non-zero when
+the replica is damaged or too far behind, so `systemctl is-failed` is a real
+health check.
 
 ## 9. Cold-start the Coaches' Co-op (GTM, not code)
 

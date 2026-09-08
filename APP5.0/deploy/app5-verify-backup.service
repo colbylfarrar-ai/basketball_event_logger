@@ -1,0 +1,23 @@
+[Unit]
+Description=APP5 backup verification (restore the replica and count it)
+After=network-online.target app5-litestream.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5/APP5.0
+Environment=APP5_DATA_DIR=/var/lib/app5
+# THE BOOK 17 item 3: litestream replicates and Settings offers a download, and
+# neither tells anyone it is WORKING. A replica that has been failing for a
+# month looks exactly like one that has not. This restores it to a temp path,
+# checks integrity + foreign keys, compares row counts against the live book
+# and removes the copy — including on failure. Non-zero exit = look at it.
+ExecStart=/home/app5/app5/APP5.0/.venv/bin/python tools/verify_backup.py
+# The restore lands in a temp dir under /tmp; PrivateTmp keeps it off the real
+# one and guarantees it is gone when the unit exits even if the script dies.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5

@@ -1,0 +1,13 @@
+[Unit]
+Description=Rebuild the APP5 rank trajectory once a day
+
+[Timer]
+# 03:50, ten minutes after ANALYZE and twenty after the rollover check, so the
+# three maintenance writes never contend for the same writer lock. It also has
+# to run AFTER the rollover: on the night the season turns over, the rebuild
+# should be reconstructing the season the rollover just made current.
+OnCalendar=*-*-* 03:50:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

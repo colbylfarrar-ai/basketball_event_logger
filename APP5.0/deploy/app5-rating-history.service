@@ -1,0 +1,20 @@
+[Unit]
+Description=APP5 rank-trajectory rebuild (rating history backfill)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app5
+Group=app5
+WorkingDirectory=/home/app5/app5/APP5.0
+Environment=APP5_DATA_DIR=/var/lib/app5
+# THE BOOK 17 item 4: all three resume surfaces are empty until someone opens
+# Rankings and presses "Rebuild rating history". That press is a memory, and
+# memories fail in January. Idempotent by construction (INSERT OR IGNORE per
+# day/gender/system/team), so a nightly run over a season that is already
+# reconstructed writes nothing.
+ExecStart=/home/app5/app5/APP5.0/.venv/bin/python tools/rebuild_rating_history.py
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/app5

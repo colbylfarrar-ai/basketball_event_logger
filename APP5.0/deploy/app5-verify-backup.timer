@@ -1,0 +1,13 @@
+[Unit]
+Description=Verify the APP5 backup restores, once a week
+
+[Timer]
+# Sunday 04:20 — after the nightly maintenance, and on the quietest morning of
+# the week. A restore reads the whole replica and writes a full copy of the
+# book to temp, which is the heaviest thing this box does; weekly is the
+# cadence that answers "are the backups real" without paying for it daily.
+OnCalendar=Sun *-*-* 04:20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

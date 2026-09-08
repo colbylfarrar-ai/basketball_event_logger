@@ -40,6 +40,19 @@ off = execute("INSERT INTO officials (name,official_id) VALUES ('Ref',900001)")
 
 DATE = "2099-12-25"
 
+# `ux_games_matchup` (database/db.py) forbids a second IMPORTED row for one
+# matchup on one date, and this file's whole subject is a book that HAS them.
+# That is not a contradiction, it is the migration path: the index stops NEW
+# duplicates and game_dedup cleans up the ones a pre-index book already
+# carries — including the nine still sitting in production. So the throwaway
+# DB drops the index and reconstructs the state the deduper exists for.
+#
+# Dropping it here rather than exempting the rows with a `tracked_by` is
+# deliberate: `result_duplicate_groups` is the IMPORTED-row deduper (the
+# merge_teams class), so the fixture has to be imported rows to be the thing
+# under test.
+execute("DROP INDEX IF EXISTS ux_games_matchup")
+
 
 def _game():
     return execute("INSERT INTO games (team1_id,team2_id,date,tracked,season,in_pool) "

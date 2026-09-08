@@ -18,6 +18,7 @@ import numpy as np
 
 import helpers.team_ratings as TR
 import helpers.predictor as PRED
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 DEFAULT_N = 20000
 SD = PRED.PREGAME_SD       # single-game margin SD around the predicted margin
@@ -338,13 +339,14 @@ def simulate_season(scored, schedule, n=DEFAULT_N, sd=SD, seed=DEFAULT_SEED):
     return out
 
 
-def schedule_from_results(gender=None, season="Current"):
+def schedule_from_results(gender=None, season=SEAS_DEFAULT):
     """
     Build a (team_a, team_b, home) schedule from finished games for season sim.
     team_a = home (team1). Each completed game contributes one matchup.
     `season` scopes to the active season by default (never blend seasons); pass an
     archive label to replay a past season.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     from database.db import query
     clause = ("WHERE g.home_score IS NOT NULL AND g.away_score IS NOT NULL "
               "AND g.season = ?")

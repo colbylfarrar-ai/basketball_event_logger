@@ -516,9 +516,17 @@ def _foulft(vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _player_card(pid, g, vis=None):
-    """Printable HTML player report card (cached per player/gender/visible-set)."""
-    return RP.player_card_html(pid, gender=g, table=_table_full(g, vis))
+def _player_card(pid, g, vis=None, season=None):
+    """Printable HTML player report card (cached per player/gender/visible-set).
+
+    `vis` reaches the export now, not just the table it is built from. The card
+    drew its shot chart over every season and every team's tracked games while
+    the stat table beside it was scoped — one artefact disagreeing with itself,
+    inside a Paid-gated download (THE BOOK §8.8)."""
+    return RP.player_card_html(
+        pid, gender=g, table=_table_full(g, vis),
+        season=(season if season is not None else SEAS.DEFAULT),
+        game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1495,9 +1503,10 @@ def _fx_prof():
     from helpers.ui import pdf_or_html_download
     if _PAID:
         pdf_or_html_download(
-            "Player card", lambda: _player_card(pid, gender, _vis_key),
+            "Player card",
+            lambda: _player_card(pid, gender, _vis_key, season_pick),
             f"card_{P['name']}".replace(" ", "_"),
-            key="prof_card_dl", fp=(pid, gender, _vis_key))
+            key="prof_card_dl", fp=(pid, gender, _vis_key, season_pick))
     else:
         st.caption("🔒 Download the full player card (ratings, usage, shot chart) — "
                    "a **Paid** feature. Upgrade to unlock.")

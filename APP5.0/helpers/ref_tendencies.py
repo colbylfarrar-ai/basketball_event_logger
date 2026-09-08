@@ -16,6 +16,7 @@ from __future__ import annotations
 from statistics import mean
 
 import helpers.officials as OFF
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 MIN_LEAN_FOULS = 6      # min home+away attributable fouls before a lean is meaningful
 CONFIDENT_GAMES = 4     # combined crew games-worked for a confident read
@@ -25,7 +26,7 @@ def _fp100(r):
     return (r["fouls"] / r["game_poss"] * 100.0) if r.get("game_poss") else 0.0
 
 
-def crew_pairs(gender=None, game_ids=None, season="Current", *, min_games=5,
+def crew_pairs(gender=None, game_ids=None, season=SEAS_DEFAULT, *, min_games=5,
                games_map=None, worked=None, fouls=None, poss=None, names=None):
     """How officials call games TOGETHER — every pair (and the full three-man
     crew where the sample holds) that has worked ≥ `min_games` games.
@@ -42,6 +43,7 @@ def crew_pairs(gender=None, game_ids=None, season="Current", *, min_games=5,
       {kind: 'pair'|'crew', off_pks, label, games, fpg, lean_pct, ha_fouls,
        ppp, q4_share}
     lean_pct > 0 = home-leaning (same convention as crew_outlook)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     from itertools import combinations
 
     if games_map is None:

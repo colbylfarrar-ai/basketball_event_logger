@@ -14,6 +14,7 @@ League Lab and the Players Lab tab draw the SAME boards from one source.
 from __future__ import annotations
 
 import helpers.player_ratings as PR
+from helpers.seasons import DEFAULT as SEAS_DEFAULT
 import helpers.stats as S
 import helpers.playtypes as PT
 import helpers.wpa as WPA
@@ -38,7 +39,7 @@ def _rank(table, stat, gate_stat, gate_min, higher=True, cols=None):
     return out
 
 
-def edge_boards(gender=None, game_ids=None, season="Current"):
+def edge_boards(gender=None, game_ids=None, season=SEAS_DEFAULT):
     """The full set of player-edge leaderboards for a gender.
 
     Returns a list of board dicts: {key, title, caption, rows, signed, pct} where
@@ -73,7 +74,13 @@ def edge_boards(gender=None, game_ids=None, season="Current"):
         key=lambda d: -d["Gap"])[:TOP_N]
 
     try:
-        sw = WPA.season_wpa(gender, mode="possession", season=season)
+        # `_scope`, not nothing: this is the Def WPA leaderboard THE BOOK §9.5
+        # names — it had no scope at all, so a league-wide coach's board listed
+        # players from teams that chose Solo. The board's own filter above was
+        # already honouring the read-filter; this one was not.
+        sw = WPA.season_wpa(gender, mode="possession", season=season,
+                            game_ids=(list(_scope) if _scope is not None
+                                      else None))
     except Exception:
         sw = {}
     dwpa = sorted(

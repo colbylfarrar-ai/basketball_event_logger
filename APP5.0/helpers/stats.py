@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database.db import query
 import helpers.seasons as SEAS
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2072,13 +2073,16 @@ def individual_defensive_rating_all(game_ids=None, events=None):
 #  games convention (see pages/1_Input_Hub.py): team1_id = home (home_score),
 #  team2_id = away (away_score).
 
-def team_games(team_id, outcome=None, tracked_only=True, season="Current"):
+def team_games(team_id, outcome=None, tracked_only=True, season=SEAS_DEFAULT):
     """
     Game rows involving team_id, from that team's point of view. `outcome` filters
     to 'W' or 'L' (None = all). Each row: id, team_pts, opp_pts, margin, win, tracked.
-    Only games with both scores recorded are returned. `season` scopes to the active
-    season by default; pass a label to read an archive (None = all seasons).
+    Only games with both scores recorded are returned. `season` scopes to the
+    READ season by default (the DEFAULT sentinel resolves at call time, so a
+    rolled-over book does not silently read an empty 'Current'); pass a label
+    to read an archive, or None for all seasons.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     clause = "AND season=?" if season is not None else ""
     params = (team_id, team_id) + ((season,) if season is not None else ())
     rows = query(
@@ -2113,7 +2117,7 @@ def team_game_ids(team_id, outcome=None, tracked_only=True):
     return [g["id"] for g in team_games(team_id, outcome, tracked_only)]
 
 
-def team_summary(team_id, opp_id=None, outcome=None, game_ids=None, season="Current"):
+def team_summary(team_id, opp_id=None, outcome=None, game_ids=None, season=SEAS_DEFAULT):
     """
     Win/loss record, Margin of Victory, points for/against per game, possessions
     per game, and ORtg/DRtg/Net over the selected (optionally W- or L-only) games.
@@ -2124,6 +2128,7 @@ def team_summary(team_id, opp_id=None, outcome=None, game_ids=None, season="Curr
     scopes the base game set (default = active season); an archive view passes its
     label so the possession ratings aren't pre-filtered away to the current season.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     games = team_games(team_id, outcome, season=season)
     if game_ids is not None:
         _allow = set(game_ids)

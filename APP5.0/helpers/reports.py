@@ -11,6 +11,7 @@ from __future__ import annotations
 import html as _html
 
 from database.db import query
+from helpers.seasons import DEFAULT as SEAS_DEFAULT
 import helpers.stats as S
 import helpers.player_ratings as PR
 import helpers.team_analytics as TA
@@ -49,9 +50,25 @@ def _pctile(val, key, pool):
 
 
 # ── per-player season report card ────────────────────────────────────────────────
-def player_card_html(player_id, gender=None, table=None):
+def player_card_html(player_id, gender=None, table=None, *,
+                     season=SEAS_DEFAULT, game_ids=None):
+    """The printable player card.
+
+    `game_ids` is the caller's READ-FILTER and `season` its partition, and both
+    were missing (THE BOOK §8.8, §9.5). Without them this export drew its shot
+    chart over EVERY season and every team's tracked games, ignoring the page's
+    season picker and the entitlement filter that the very same page had
+    already resolved — inside a Paid-gated download. The stat table was scoped
+    and the two engine blocks under it were not, so one artefact disagreed with
+    itself.
+
+    None means "no filter"; () means "this viewer may aggregate nothing", and
+    the shot chart and impact block go quiet rather than widening (§8.7)."""
     if table is None:
-        table = PR.player_stat_table(gender=gender, min_games=1)
+        table = PR.player_stat_table(
+            gender=gender, min_games=1,
+            game_ids=(set(game_ids) if game_ids is not None else None))
+    _scope = list(game_ids) if game_ids is not None else None
     r = table.get(player_id)
     if not r:
         return _doc("Player card", "<div class='wrap'>Player not found.</div>")
@@ -238,7 +255,9 @@ def player_card_html(player_id, gender=None, table=None):
                 f"<th class='num'>Value</th><th class='num'>Percentile</th></tr>"
                 f"{prows}</table>") if prows else ""
 
-    shots = S.located_shots(player_id=player_id)
+    # scoped to the caller's pool — an unscoped call here reached every season
+    shots = (S.located_shots(player_id=player_id, game_ids=_scope)
+             if _scope is None or _scope else [])
     chart_html = ""
     if shots:
         # the accuracy line the profile prints under its fold shot map
@@ -267,14 +286,21 @@ def player_card_html(player_id, gender=None, table=None):
         import helpers.rapm as RP
         import helpers.wpa as WP
         import helpers.hoopwar as HW
-        _gids = PT._tracked_game_ids(gender)
+        # the caller's pool when it gave one, the gender's live pool otherwise
+        _gids = (_scope if _scope is not None
+                 else PT._tracked_game_ids(gender))
         _rpall = (RP.compute_rapm(game_ids=_gids,
                                   prior=RP.box_prior_from_ratings(gender=gender))
                   if _gids else {})
         _rp = _rpall.get(player_id, {})
         _wr = (HW.war_table(gender, rapm=_rpall) or {}).get(player_id, {})
-        _ws = WP.season_wpa(gender, mode="scoring").get(player_id, {})
-        _wq = WP.season_wpa(gender, mode="possession").get(player_id, {})
+        # season + game_ids, both of which this call used to default away. The
+        # bare season default read 'Current', which on a rolled-over book names
+        # an EMPTY partition, so every WPA cell on this card printed an em dash.
+        _ws = WP.season_wpa(gender, mode="scoring", season=season,
+                            game_ids=_scope).get(player_id, {})
+        _wq = WP.season_wpa(gender, mode="possession", season=season,
+                            game_ids=_scope).get(player_id, {})
 
         def _sv(d, k, f="{:+.1f}"):
             v = d.get(k)

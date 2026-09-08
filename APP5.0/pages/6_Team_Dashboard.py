@@ -1042,8 +1042,14 @@ def _poss_ledger(tid, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _season_wpa(g, mode, season="Current"):
-    return WP.season_wpa(gender=g, mode=mode, season=season)
+def _season_wpa(g, mode, season=SEAS_DEFAULT, vis=None):
+    """Season WPA for a gender. `vis` is the read-filter (None = unrestricted).
+
+    The bare season="Current" default here was the §9.5 sentinel trap: on a
+    rolled-over book 'Current' names an EMPTY partition, so a caller that
+    forgot the argument got {} over a full database rather than an error."""
+    return WP.season_wpa(gender=g, mode=mode, season=season,
+                         game_ids=(list(vis) if vis is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)

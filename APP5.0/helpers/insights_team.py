@@ -189,7 +189,7 @@ def team_glance(gender, team_id, n=6, season=SEAS_DEFAULT):
     return sorted(by_cat.values(), key=lambda d: -d["dist"])[:n]
 
 
-def _team_game_opponents(team_id, game_ids=None):
+def _team_game_opponents(team_id, game_ids=None, season=SEAS_DEFAULT):
     """{game_id: opponent_team_id} for the team's tracked games. With no
     `game_ids` this defaults to the CURRENT season; a passed set is trusted as
     already season-scoped (the dashboard hands the bundle's season ids), so an
@@ -206,8 +206,8 @@ def _team_game_opponents(team_id, game_ids=None):
     else:
         rows = query(
             "SELECT id, team1_id, team2_id FROM games "
-            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current'",
-            (team_id, team_id))
+            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season=?",
+            (team_id, team_id, resolve_read_season(season)))
     return {r["id"]: (r["team2_id"] if r["team1_id"] == team_id else r["team1_id"])
             for r in rows}
 
@@ -267,14 +267,15 @@ _ZONE_LABEL = {"LC": "Left corner", "LW": "Left wing", "C": "Paint / middle",
 MIN_TENDENCY_SHOTS = 30
 
 
-def shot_tendencies(team_id, gender=None, game_ids=None, events=None):
+def shot_tendencies(team_id, gender=None, game_ids=None, events=None,
+                    season=SEAS_DEFAULT):
     """Self-scout shot map from ZONE (present on every shot, so it's dense): where
     this team's own shots come from and how they score there — the "force them left/
     right, here's where they live" read a scout builds. Returns {available, total,
     side (Left/Middle/Right shares), zones [{zone,label,poss,share,PPP,FG%}], plus
     rim/mid/three rate}. Robust without the sparse play-type/defense tags."""
     if events is None:
-        gids = list(_team_game_opponents(team_id, game_ids))
+        gids = list(_team_game_opponents(team_id, game_ids, season))
         events = S.fetch_events(gids) if gids else []
     # accumulators, split by shot value (2 vs 3) plus a combined total. Each keeps
     # its own zone counts + Left/Middle/Right side so the tendencies can be read
@@ -349,7 +350,8 @@ def _bucket_profiles(team_id, events, bucket_of, labels):
     return {k: PT._profile_fin(p, k, labels[k]) for k, p in profs.items()}
 
 
-def winloss_splits(team_id, gender=None, game_ids=None, events=None):
+def winloss_splits(team_id, gender=None, game_ids=None, events=None,
+                   season=SEAS_DEFAULT):
     """The team's own-offense profile split by RESULT — how it plays in WINS vs
     LOSSES (what makes it go, what shows up when it loses). Same profile fields as
     strength_splits. `available` False until both sides clear MIN_SPLIT_SHOTS."""
@@ -368,9 +370,9 @@ def winloss_splits(team_id, gender=None, game_ids=None, events=None):
     else:
         rows = query(
             "SELECT id, team1_id, home_score, away_score FROM games "
-            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current' "
+            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season=? "
             "AND home_score IS NOT NULL AND away_score IS NOT NULL",
-            (team_id, team_id))
+            (team_id, team_id, resolve_read_season(season)))
     result = {}                       # game_id -> 'win' | 'loss'
     for r in rows:
         is_home = r["team1_id"] == team_id            # team1 = home in this app
@@ -658,6 +660,7 @@ MAX_GOALS = 6
 
 
 def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
+                      season=SEAS_DEFAULT,
                       min_each=2, top=MAX_GOALS, min_d=0.8):
     """The ~``top`` stats that most separate this team's WINS from its LOSSES.
 
@@ -680,9 +683,9 @@ def winloss_alignment(team_id, gender=None, game_ids=None, events=None,
     else:
         rows = query(
             "SELECT id, team1_id, home_score, away_score FROM games "
-            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season='Current' "
+            "WHERE (team1_id=? OR team2_id=?) AND tracked=1 AND season=? "
             "AND home_score IS NOT NULL AND away_score IS NOT NULL",
-            (team_id, team_id))
+            (team_id, team_id, resolve_read_season(season)))
     result = {}
     for r in rows:
         my = r["home_score"] if r["team1_id"] == team_id else r["away_score"]
@@ -809,7 +812,7 @@ def strength_splits(team_id, gender=None, game_ids=None, events=None, scored=Non
     both sides clear MIN_SPLIT_SHOTS. Also carries the opponent list per side."""
     if scored is None:
         scored = TR.score_ratings(gender=gender, season=season)
-    opps = _team_game_opponents(team_id, game_ids)
+    opps = _team_game_opponents(team_id, game_ids, season)
     if not opps or not scored:
         return {"available": False}
 

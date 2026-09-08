@@ -42,6 +42,7 @@ from collections import defaultdict
 
 from database.db import query
 import helpers.shrinkage as SH
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 # ── the player-intrinsic rate leaves this layer projects ────────────────────────
@@ -231,7 +232,7 @@ def _clusters_for(table):
 
 
 def project_roster(team_id, gender=None, game_ids=None, min_games=1,
-                   season="Current"):
+                   season=SEAS_DEFAULT):
     """Projected intrinsic rates for every player on `team_id`.
 
     Builds the stat table, archetype clusters and priors ONCE (league-wide, so the
@@ -242,6 +243,7 @@ def project_roster(team_id, gender=None, game_ids=None, min_games=1,
     season the `game_ids` belong to — on a rolled-over prod the active season is a
     real string, not the 'Current' sentinel, so callers pass season_pick through.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.player_ratings as PR
     table = PR.player_stat_table(game_ids=game_ids, gender=gender,
                                  min_games=min_games, season=season)
@@ -255,9 +257,10 @@ def project_roster(team_id, gender=None, game_ids=None, min_games=1,
 
 
 def tracked_baseline(gender=None, game_ids=None, min_games=1, table=None,
-                     season="Current"):
+                     season=SEAS_DEFAULT):
     """The average-tracked-team baseline per stat (the league volume-weighted pool
     mean). Shared with helpers.lineup_projection. {stat: mean}."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if table is None:
         import helpers.player_ratings as PR
         table = PR.player_stat_table(game_ids=game_ids, gender=gender,
@@ -276,7 +279,7 @@ def tracked_baseline(gender=None, game_ids=None, min_games=1, table=None,
 CAREER_CUTOFF = 5
 
 
-def career_stat_table(gender=None, season="Current", cutoff=CAREER_CUTOFF,
+def career_stat_table(gender=None, season=SEAS_DEFAULT, cutoff=CAREER_CUTOFF,
                       min_games=1, cur_table=None):
     """A player_stat_table for `season` where every CURRENT-ROSTER player with
     fewer than `cutoff` tracked games this season reads as their newest archived
@@ -290,6 +293,7 @@ def career_stat_table(gender=None, season="Current", cutoff=CAREER_CUTOFF,
     league-relative. Pass `cur_table` (an already-built, possibly
     entitlement-scoped season table) to substitute into it instead of building
     a fresh one — the archive rows swapped in are open-archive data either way."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.player_ratings as PR
     import helpers.seasons as SEAS
 

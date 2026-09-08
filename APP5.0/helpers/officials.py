@@ -25,11 +25,12 @@ import statistics
 from collections import defaultdict
 
 from database.db import query
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 # ── low-level loaders ───────────────────────────────────────────────────────
 
-def _games(gender=None, allow=None, season="Current"):
+def _games(gender=None, allow=None, season=SEAS_DEFAULT):
     """Tracked games with scores, optionally limited to one gender (team1's).
 
     `allow` is the entitlement read-filter (a set/iterable of game ids the viewer
@@ -37,11 +38,14 @@ def _games(gender=None, allow=None, season="Current"):
     tracked games (refs/foul depth scoped to their own games); a league-wide coach
     passes the pooled set; admin passes None.
 
-    `season` — 'Current' (default), an archive label, or None = ALL seasons.
+    `season` — the READ season by default (helpers.seasons.DEFAULT resolves
+    at call time), an archive label, or None = ALL seasons. An explicit
+    'Current' is still honoured literally.
     Officials are career-long (same person, same official_id, ~15-year careers,
     never archived at rollover), so the Officials page aggregates across seasons
     by default (season=None) and offers a per-season view.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     clause = "AND g.season = ?" if season is not None else ""
     params = (season,) if season is not None else ()
     rows = query(
@@ -156,12 +160,13 @@ def _possessions_by_game(game_ids):
 from helpers.stats import _safe   # shared definition lives in helpers.stats
 
 
-def _untracked_boxed_games(gender=None, allow=None, season="Current"):
+def _untracked_boxed_games(gender=None, allow=None, season=SEAS_DEFAULT):
     """UNTRACKED games that have BOTH an entered box AND ≥1 assigned official —
     the projection-only pool (setup page). Same shape/filters as _games. These
     add game-level ENVIRONMENT (scoring / pace / total fouls) to the officials
     who worked them; they never carry per-official foul attribution, so the
     Officials Rating stays tracked-only (founder rule)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     clause = "AND g.season = ?" if season is not None else ""
     params = (season,) if season is not None else ()
     rows = query(
@@ -338,7 +343,7 @@ def wp_profile(game_ids):
     return out
 
 
-def official_overview(gender=None, game_ids=None, season="Current"):
+def official_overview(gender=None, game_ids=None, season=SEAS_DEFAULT):
     """
     Returns {"officials": [row, ...], "teams": {team_id: name}}.
 
@@ -361,6 +366,7 @@ def official_overview(gender=None, game_ids=None, season="Current"):
       game_fouls       total fouls called by ANYONE in their games
       foul_share       fouls / game_fouls  (share of calls this ref made)
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     games = _games(gender, allow=game_ids, season=season)
     game_ids = list(games.keys())
     offs = _officials()
@@ -534,7 +540,7 @@ def whistle_leaders(rows, min_games=None):
     return out
 
 
-def official_game_log(off_pk, gender=None, game_ids=None, season="Current"):
+def official_game_log(off_pk, gender=None, game_ids=None, season=SEAS_DEFAULT):
     """
     Per-game detail for one official, newest first. Each row:
       game_id, date, matchup, home, away, home_score, away_score,
@@ -542,6 +548,7 @@ def official_game_log(off_pk, gender=None, game_ids=None, season="Current"):
 
     `game_ids` is the entitlement read-filter (see _games): None = unrestricted.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     games = _games(gender, allow=game_ids, season=season)
     game_ids = list(games.keys())
     worked = _worked(game_ids).get(off_pk, set())
@@ -587,7 +594,7 @@ def official_game_log(off_pk, gender=None, game_ids=None, season="Current"):
     return out
 
 
-def official_environment(gender=None, game_ids=None, season="Current",
+def official_environment(gender=None, game_ids=None, season=SEAS_DEFAULT,
                          untracked_ids=None):
     """Per-official GAME-LEVEL coverage over tracked ∪ untracked-boxed games —
     the projection-facing layer (crew outlook / War Room / the projection
@@ -601,6 +608,7 @@ def official_environment(gender=None, game_ids=None, season="Current",
     / untracked pools (None = unrestricted). Returns
     {off_pk: {name, env_games, tracked_games, box_games, env_pts, env_poss,
     env_fouls, env_ppp, env_pace, env_ptspg, env_fpg}}."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     tracked = _games(gender, allow=game_ids, season=season)
     untr = _untracked_boxed_games(gender, allow=untracked_ids, season=season)
     all_ids = list(tracked.keys()) + list(untr.keys())
@@ -986,7 +994,7 @@ def _rating_from(share_mean, share_worst, vol_z):
     return max(0.0, min(100.0, 50.0 - RATING_SLOPE * d))
 
 
-def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
+def official_ratings(gender=None, game_ids=None, season=SEAS_DEFAULT, scored=None):
     """The Officials Rating table. Builds on official_overview (FPG / PPP /
     POSSPG), adds the mean leverage of the games each ref worked, a clutch-call
     count, a 0-100 crew-share rating, and each ref's foul BIAS on two axes:
@@ -1005,6 +1013,7 @@ def official_ratings(gender=None, game_ids=None, season="Current", scored=None):
                           rating, share_z, worst_z, live_pg, rated_games}],
      "weights": _RATING_TERMS}, ordered best-first with placeholder-named refs
     after every named one."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     base = official_overview(gender=gender, game_ids=game_ids, season=season)
     rows = base["officials"]
     if not rows:

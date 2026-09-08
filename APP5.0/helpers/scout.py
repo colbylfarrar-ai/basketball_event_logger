@@ -29,6 +29,7 @@ ZONE_LABELS = {"LC": "Left corner", "LW": "Left wing", "C": "Center / top",
 # Official HoopTracks mark — single-sourced from the shared print chrome
 # ([[helpers.printouts]]); the alias keeps existing importers working.
 import helpers.printouts as PO
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 _BRAND_MARK = PO.BRAND_MARK
 
@@ -100,7 +101,7 @@ def team_zone_by_type(game_ids, team_pids, events=None):
 
 def build_scout(team_id, gender, scored, tracked, pack, table,
                 personnel_limit=7, exclude_pids=None, visible_game_ids=None,
-                season="Current"):
+                season=SEAS_DEFAULT):
     """Assemble every piece of the scouting report for one team.
 
     personnel_limit=None shows the WHOLE roster (self-scout); exclude_pids drops
@@ -110,6 +111,7 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     League-wide scout passes the team's pooled games). `season` partitions the
     event-based sections ('Current' or an archive label) — the caller must pass
     season-matched scored/tracked/pack/table alongside it."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     s = scored.get(team_id, {})
     ts = pack.get("ts", {})
     me = ts.get(team_id)

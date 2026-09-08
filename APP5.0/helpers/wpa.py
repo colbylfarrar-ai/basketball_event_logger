@@ -41,6 +41,7 @@ from database.db import query
 import helpers.win_probability as WP
 import helpers.stats as S
 import helpers.late_game as LG
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 CLUTCH_LI = 1.5         # leverage threshold for a moment to count as "clutch"
@@ -419,7 +420,8 @@ def game_wpa(game_id, mode="scoring", sd_full=WP.SD_FULL, ep=None,
 #  SEASON WPA  (aggregate across tracked games)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def season_wpa(gender=None, mode="scoring", opp_adjust=True, season="Current"):
+def season_wpa(gender=None, mode="scoring", opp_adjust=True,
+               season=SEAS_DEFAULT, game_ids=None):
     """
     Aggregate WPA across every tracked game for a gender, in the chosen mode.
 
@@ -429,15 +431,36 @@ def season_wpa(gender=None, mode="scoring", opp_adjust=True, season="Current"):
     underdog) is weighted up and padding a blowout is weighted down. Set False for
     the legacy even-teams behaviour. Unrated matchups fall back to even teams.
 
+    `game_ids` is the entitlement READ-FILTER and it can only ever NARROW the
+    (gender, season) pool this function builds for itself — never widen it.
+    Until it existed this function had no scope parameter at all (THE BOOK
+    §9.5): it built its own pool from `games WHERE tracked=1`, and with five
+    consumers that meant a league-wide coach's Def WPA leaderboard named
+    players from teams that chose Solo. On production that is 63 tracked games
+    where the pooled set is 11.
+
+    None means "no filter" and () means "this viewer may aggregate nothing" —
+    the §8.7 distinction, and the reason the empty case returns {} rather than
+    falling through to the whole book.
+
     Returns {player_id: {"wpa","clutch_wpa","off_wpa","def_wpa","plays","games",
     "wpa_per_game","name","team"}}. In possession mode off_wpa/def_wpa split a
     player's value into the offense and defense it created vs expectation.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
+    if game_ids is not None and not game_ids:
+        return {}
     tg = query(
         """SELECT g.id FROM games g JOIN teams t ON t.id=g.team1_id
            WHERE g.tracked=1 AND g.season=? AND t.gender=?""", (season, gender)) if gender else query(
         "SELECT id FROM games WHERE tracked=1 AND season=?", (season,))
-    game_ids = [row["id"] for row in tg]
+    game_ids_pool = [row["id"] for row in tg]
+    if game_ids is not None:
+        _vis = set(game_ids)
+        game_ids_pool = [g for g in game_ids_pool if g in _vis]
+        if not game_ids_pool:
+            return {}
+    game_ids = game_ids_pool
     # EP over THIS scope (gender + season), never the no-arg default: the no-arg
     # call filters season='Current', which is EMPTY post-rollover — it silently
     # returned EP=0.0, zeroing every positive defensive credit (the all-negative

@@ -363,14 +363,20 @@ def _war(gender, season=SEAS_DEFAULT, game_ids=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _wpa(gender, season=SEAS_DEFAULT):
+def _wpa(gender, season=SEAS_DEFAULT, vis=None):
     """Season WPA per player in both modes {scoring:{pid:...}, possession:{...}}.
-    scoring → wpa + clutch_wpa; possession → off_wpa (OWA) + def_wpa (DWA)."""
+    scoring → wpa + clutch_wpa; possession → off_wpa (OWA) + def_wpa (DWA).
+
+    `vis` is the viewer's read-filter and can only narrow the season pool
+    (THE BOOK §9.5) — the card's other league fetchers already take it."""
     season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.wpa as WP
+    _sc = list(vis) if vis is not None else None
     try:
-        return {"scoring": WP.season_wpa(gender, mode="scoring", season=season),
-                "possession": WP.season_wpa(gender, mode="possession", season=season)}
+        return {"scoring": WP.season_wpa(gender, mode="scoring", season=season,
+                                         game_ids=_sc),
+                "possession": WP.season_wpa(gender, mode="possession",
+                                            season=season, game_ids=_sc)}
     except Exception:
         return {"scoring": {}, "possession": {}}
 
@@ -620,7 +626,8 @@ def render_card(ctx):
         # archetype lenses side by side — agreement is the scouting note
         _gnd = getattr(ctx, "gender", None)
         _gwar = _war(_gnd, _szn, _gp).get(pid, {}).get("WAR")
-        _gwpa = ((_wpa(_gnd, _szn).get("scoring") or {}).get(pid, {}) or {}).get("wpa")
+        _gwpa = ((_wpa(_gnd, _szn, _gp).get("scoring") or {})
+                 .get(pid, {}) or {}).get("wpa")
         _barch = BG.badge_archetype(lab_badges or [])["archetype"] \
             if lab_badges is not None else None
         _verdict_bits = []
@@ -892,7 +899,7 @@ def render_card(ctx):
     if paid:
         _g = getattr(ctx, "gender", None)
         _rp = _rapm(_g, _gp).get(pid, {})
-        _wpm = _wpa(_g, _szn)
+        _wpm = _wpa(_g, _szn, _gp)      # same read-filter as _rapm / _war above
         _ws = (_wpm.get("scoring") or {}).get(pid, {})
         _wq = (_wpm.get("possession") or {}).get(pid, {})
 

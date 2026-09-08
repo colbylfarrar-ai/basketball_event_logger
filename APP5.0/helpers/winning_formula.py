@@ -59,6 +59,7 @@ import math
 import helpers.stats as S
 import helpers.seasons as SEAS
 from database.db import query
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 #: Minimum games before a league fit is attempted. Below this the
 #: standardization itself is unstable, never mind the coefficients.
@@ -136,7 +137,7 @@ def _factor_set(box, opp):
     }
 
 
-def game_rows(gender=None, season="Current", game_ids=None, events=None):
+def game_rows(gender=None, season=SEAS_DEFAULT, game_ids=None, events=None):
     """One row per (game, team): factor differentials and the point margin.
 
     Returns [{game_id, team_id, opp_id, margin, won, diffs: {key: value}}].
@@ -149,6 +150,7 @@ def game_rows(gender=None, season="Current", game_ids=None, events=None):
     possession count by construction — so it enters as a level. It is context
     only and never reaches the model.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if game_ids is None:
         game_ids = sorted(SEAS.game_pool(season, gender=gender,
                                          tracked_only=True))
@@ -318,22 +320,24 @@ def _fit(rows, min_games):
     return base
 
 
-def league_formula(gender=None, season="Current", game_ids=None, events=None,
+def league_formula(gender=None, season=SEAS_DEFAULT, game_ids=None, events=None,
                    rows=None):
     """What decides games in this gender's tracked pool."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if rows is None:
         rows = game_rows(gender=gender, season=season, game_ids=game_ids,
                          events=events)
     return _fit(rows, MIN_LEAGUE_GAMES)
 
 
-def team_formula(team_id, gender=None, season="Current", game_ids=None,
+def team_formula(team_id, gender=None, season=SEAS_DEFAULT, game_ids=None,
                  events=None, rows=None):
     """The same fit over one team's own games — "which edge decides YOUR games".
 
     `rows` accepts a prebuilt `game_rows` result so a surface showing both the
     league and the team pays for ONE event walk, not two.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if rows is None:
         rows = game_rows(gender=gender, season=season, game_ids=game_ids,
                          events=events)

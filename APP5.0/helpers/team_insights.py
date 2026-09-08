@@ -26,6 +26,7 @@ MIN_TRACKED = 2        # tracked-plane generators (ts) need tracked games
 #: The shot-clock knee, quoted in _t_clock's prose. Imported rather than
 #: repeated so the sentence cannot drift from the band it describes.
 from helpers.shot_clock import EARLY_MAX as SC_EARLY  # noqa: E402
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 def _num(d, key):
@@ -1120,10 +1121,11 @@ def clock_extra(team_id, events=None, league_events=None):
     return {"clock": out}
 
 
-def rest_extra(team_id, season="Current"):
+def rest_extra(team_id, season=SEAS_DEFAULT):
     """{'rest': rest_splits} for _t_rest — SCORE-based (fires on the full
     schedule, untracked games included), scoped to `season`. Builds the team's
     dated result rows directly so it honours the season (not just 'Current')."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     try:
         from database.db import query
         import helpers.fatigue as FT
@@ -1177,7 +1179,7 @@ def after_extra(team_id, events=None, game_ids=None):
     return {"after": res} if res else {}
 
 
-def team_extras(team_id, gender=None, game_ids=None, season="Current",
+def team_extras(team_id, gender=None, game_ids=None, season=SEAS_DEFAULT,
                 league_game_ids=None, league_events=None):
     """One team's full extras bundle for the miner — merges every per-team feed
     (lineup / chemistry / keys / scheme / runs / rest / predictability /
@@ -1189,6 +1191,7 @@ def team_extras(team_id, gender=None, game_ids=None, season="Current",
     need a LEAGUE baseline rather than this team's own schedule. A caller that
     already holds the league pass should hand it in — prod is 1 vCPU and this
     is otherwise a second full fetch."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     events = None
     if game_ids:
         try:
@@ -1220,7 +1223,7 @@ def team_extras(team_id, gender=None, game_ids=None, season="Current",
 
 
 # ── the miner ─────────────────────────────────────────────────────────────────
-def team_insight_feed(gender=None, season="Current", game_ids=None, *,
+def team_insight_feed(gender=None, season=SEAS_DEFAULT, game_ids=None, *,
                       pack=None, form=None, extras=None, top=3):
     """{team_id: [insight, ...]} — the 1-``top`` most surprising team reads,
     |z| vs the league's tracked field, hard-gated by sample.
@@ -1229,6 +1232,7 @@ def team_insight_feed(gender=None, season="Current", game_ids=None, *,
     ``form`` (team_form_stats) to skip recomputing; ``extras`` = {team_id:
     {...}} feeds for generators added by later surfaces (lineup / matchup /
     possession / chemistry) — absent keys simply don't fire."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     import helpers.league_analytics as LA
     if pack is None:
         pack = LA.team_tracked_pack(gender=gender, game_ids=game_ids,
@@ -1294,9 +1298,10 @@ def team_insight_feed(gender=None, season="Current", game_ids=None, *,
     return out
 
 
-def team_insights(team_id, gender=None, season="Current", game_ids=None, *,
+def team_insights(team_id, gender=None, season=SEAS_DEFAULT, game_ids=None, *,
                   pack=None, form=None, extras=None, top=3):
     """The insight lines for a single team (wraps team_insight_feed)."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     return team_insight_feed(gender=gender, season=season, game_ids=game_ids,
                              pack=pack, form=form, extras=extras,
                              top=top).get(team_id, [])

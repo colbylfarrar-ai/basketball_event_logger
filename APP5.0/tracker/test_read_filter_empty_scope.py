@@ -215,3 +215,49 @@ def test_rapm_memo_keys_an_empty_scope_apart_from_the_unrestricted_one():
     assert set(PR._RAPM_MEMO) - keys_after_unrestricted, \
         ("the empty scope reused the unrestricted memo key "
          f"{keys_after_unrestricted}")
+
+
+def test_season_wpa_takes_a_read_filter_and_only_narrows():
+    """THE BOOK §9.5 — `season_wpa` had NO game_ids parameter at all.
+
+    It built its own pool from `games WHERE tracked=1 AND season=? AND
+    gender=?` and had five consumers, so a league-wide coach's Def WPA
+    leaderboard named players from teams that chose Solo. On production that is
+    63 tracked games where the pooled set is 11.
+
+    The filter can only ever NARROW that pool, never widen it — a caller
+    handing over ids outside the season must not drag them in.
+    """
+    import inspect
+    import helpers.wpa as WPA
+    sig = inspect.signature(WPA.season_wpa)
+    assert "game_ids" in sig.parameters, "season_wpa lost its read-filter"
+    assert sig.parameters["game_ids"].default is None, \
+        "None must stay the unrestricted default"
+    assert sig.parameters["season"].default != "Current", \
+        "the bare 'Current' sentinel trap is back"
+
+    src = inspect.getsource(WPA.season_wpa)
+    assert "if game_ids is not None and not game_ids:" in src, \
+        "an empty scope no longer short-circuits — () would widen to the pool"
+    assert "game_ids_pool = [g for g in game_ids_pool if g in _vis]" in src, \
+        "the filter is no longer an intersection, so it can widen the pool"
+
+
+def test_every_season_wpa_consumer_passes_a_scope():
+    """A parameter nothing supplies is the shape §12.6 was, so hold the seam."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    sites = {
+        "helpers/player_edge.py": "the Def WPA leaderboard §9.5 names",
+        "helpers/dashboard/insights_tab.py": "the Insights impact board",
+        "helpers/dashboard/player_card.py": "the player card's impact block",
+        "helpers/reports.py": "the Paid-gated player-card export",
+        "pages/6_Team_Dashboard.py": "the Team Dashboard's cached wrapper",
+    }
+    for rel, what in sites.items():
+        src = (root / rel).read_text(encoding="utf-8")
+        assert "season_wpa(" in src, f"{rel} no longer calls season_wpa"
+        head = src[src.index("season_wpa("):]
+        assert "game_ids=" in head[:600], \
+            f"{what} ({rel}) calls season_wpa with no read-filter again"

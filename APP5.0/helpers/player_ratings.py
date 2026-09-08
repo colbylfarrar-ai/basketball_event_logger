@@ -55,6 +55,7 @@ from collections import defaultdict
 from database.db import query
 import helpers.stats as S
 import helpers.shrinkage as SHR
+from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 
 
 CATEGORIES = ["OVERALL", "OFFENSE", "DEFENSE", "PLAYMAKING", "REBOUNDING"]
@@ -241,7 +242,7 @@ def _player_meta(gender=None):
             for r in rows}
 
 
-def _manual_box_totals(gender=None, season="Current"):
+def _manual_box_totals(gender=None, season=SEAS_DEFAULT):
     """{player_id: {**base box totals, "manual_gp": n}} from hand-entered boxes on
     UNtracked games (games.tracked=0). Tracked wins: a game tracked after its box
     was entered is excluded here (the event stream is the truth) — the same
@@ -251,6 +252,7 @@ def _manual_box_totals(gender=None, season="Current"):
     paint / shot-creation / on-court fields are event-only and never faked from a
     box. `season` scopes to the active season so ratings never blend seasons.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     clause = "WHERE g.tracked=0"
     params = []
     if gender:
@@ -294,7 +296,7 @@ def _manual_box_totals(gender=None, season="Current"):
 
 
 def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
-                    season="Current", include_manual=True):
+                    season=SEAS_DEFAULT, include_manual=True):
     """
     Raw stat profile for every eligible player (combined GP >= min_games, gender).
 
@@ -317,6 +319,7 @@ def player_profiles(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
         player whose evidence is mostly manual.
     `include_manual=False` reproduces the pure tracked-only engine (cb == b).
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     events = S.fetch_events(game_ids)
     boxes = S.aggregate_player_boxes(game_ids, events=events)
     gp = S.games_played(game_ids)
@@ -1359,7 +1362,7 @@ def _team_prior_anchors(profiles, gender, season, opp_ratings=None):
 
 
 def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
-                   stabilize=True, profiles=None, season="Current",
+                   stabilize=True, profiles=None, season=SEAS_DEFAULT,
                    opp_adjust=True, opp_ratings=None,
                    include_impact=True, rapm=None, explain=False):
     """
@@ -1382,6 +1385,7 @@ def player_ratings(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     `profiles` lets a caller (player_stat_table) hand in an already-built profile
     map so the engine isn't recomputed twice for one table.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     if profiles is None:
         profiles = player_profiles(game_ids, gender=gender, min_games=min_games,
                                    season=season)
@@ -1735,7 +1739,7 @@ def _versatility(per_game, pool_means):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
-                      stabilize=True, season="Current", explain=False):
+                      stabilize=True, season=SEAS_DEFAULT, explain=False):
     """
     A single flat row per eligible player holding EVERY stat the app computes:
     meta (name/number/team/class), games, the five 0-100 ratings, raw totals,
@@ -1749,6 +1753,7 @@ def player_stat_table(game_ids=None, gender=None, min_games=DEFAULT_MIN_GAMES,
     per-game stats are rounded floats. A None means the stat is undefined for
     that player (e.g. 3P% with no 3PA) and should be skipped, not treated as 0.
     """
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
     profiles = player_profiles(game_ids, gender=gender, min_games=min_games,
                                season=season)
     if not profiles:

@@ -325,7 +325,12 @@ def _league(gender, season=SEAS_DEFAULT, season_gp=None, fp=None):
     roles = PT.player_role_splits(events=ev) if ev else {}
     cliffs = IN.guarded_cliffs(ev) if ev else {}
     try:
-        impact = WPA.season_wpa(gender, mode="possession", season=season)
+        # the SAME pool the stat table above was built from. Unscoped, the
+        # impact board in "Who's helping" ranked against a league the rest of
+        # this pass could not see (THE BOOK §9.5).
+        impact = WPA.season_wpa(
+            gender, mode="possession", season=season,
+            game_ids=(gids if season_gp is not None else None))
     except Exception:
         impact = {}
     # `imp` (RAPM + HoopWAR, merged) is RETURNED rather than discarded: the

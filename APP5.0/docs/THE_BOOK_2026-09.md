@@ -1348,6 +1348,41 @@ no exceptions.*
 changes what a paying coach sees, and it is the one that stops a coach being
 unable to read the games they typed in themselves.*
 
+### STATUS — overnight run 2026-09-07 (weeks 3-4)
+
+Everything in weeks 3 and 4 below is now **done, deferred with a number, or
+retracted**. What the run changed, and what it refused:
+
+| § | item | outcome |
+|---|---|---|
+| 12.3 | Overview zone C leads with a verdict | **done** — top two feed lines, each with its n |
+| 12.4 | `their_leaks` | **done** — "Attack on O", and every scheme line now prints its possessions |
+| 12.4 | `player_margin_scoring` | **RETRACTED** — it has a renderer and fires; 6 lines render on prod |
+| 13.2 | Quarter reads ×5 | **1 of 5 ships.** Q pace SB .596; Q shooting SB −.135 and Q ball security SB +.082, both refused; Half starts unresolvable (t = 1.87 on the longest book); Q scout already built |
+| 12.5 | The passing graph | **partly retracted** — the 2-node graph was already live; the PLAYER CARD was the gap and now leads with it |
+| 12.6 | The play-type axis | **done** — `render_concedes` takes the tag; post 68.8% at the rim, +24pp |
+| 8.1 | **Forfeits** | **done** — 117 walkovers in W-L only; the 0.00 and 1.00 defences are gone |
+| 9.5 | `season_wpa` + season defaults | **done** — read-filter added, 29 engine defaults, and 3 LIVE hardcoded `'Current'` in `insights_team` |
+| 8.8 | The book's dirt | **reported, not applied** — 9 dup games, 2 tracked=0, 26 team pairs. Production untouched |
+| 18 Q13 | The `UNIQUE` index | **done, and narrower than the ruling reads** — see below |
+| 17 | Timers | **written, NOT installed** — needs the founder's sudo password |
+| 14.1 | The player view | **mostly already done** — 3 of 4 surfaces shared one renderer; the roster got the missing door |
+| 8.8 | `player_card_html` gating leak | **done** — takes `season` + `game_ids` |
+
+**The one ruling that had to be narrowed.** Q13's index cannot be strict.
+`tracker/api.py` treats two rows for one game as legitimate — *"the same real
+game already tracked by another coach is legitimate (a second angle)"* — and a
+strict index also blocks the ORDINARY courtside create, measured: a PWA-shaped
+INSERT for a matchup the scraper had already loaded failed in both
+orientations. `ux_games_matchup` is therefore partial on `tracked_by = ''`,
+which catches all nine production duplicates (every one is ''-on-both-sides)
+and leaves both coach paths open.
+
+**Four premises in this document did not survive being measured**, and they are
+corrected in place above: `player_margin_scoring` has a renderer, the 2-node
+passing graph was already shipping, three of the five quarter reads are noise
+or unresolvable, and three of the four player surfaces already shared one card.
+
 ### Week 3 — the reads
 
 *Goal: the app starts talking. This is the week that changes how it feels.*

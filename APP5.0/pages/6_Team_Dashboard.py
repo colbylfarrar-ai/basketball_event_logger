@@ -5059,8 +5059,18 @@ def _fx_chadv():
         st.markdown("<div class='lab-hdr'>Strength of Schedule</div>",
                     unsafe_allow_html=True)
         sm = st.columns(4)
+        # `n_forfeit` is disclosed, not hidden: Q2 keeps a walkover in the
+        # RECORD (so the vs-Top lines below still count it) and takes it out of
+        # strength of schedule, and a number that quietly means two different
+        # things across four tiles on one row is §10's finding.
+        _nff = sos.get("n_forfeit") or 0
         sm[0].metric("Avg opp. power", f"{sos['avg_opp_power']:.1f}",
-                     help="Mean opponent power rating (50 = league average).")
+                     help="Mean opponent power rating (50 = league average)."
+                          + (f" {_nff} walkover"
+                             f"{'' if _nff == 1 else 's'} excluded — a forfeit "
+                             f"is out of strength of schedule (it stays in the "
+                             f"record, and in the vs-Top lines beside this)."
+                             if _nff else ""))
         sm[1].metric(f"vs Top-{sos['top_cut']}",
                      f"{sos['vs_top']['w']}-{sos['vs_top']['l']}",
                      help="Record vs top-25% ranked opponents.")

@@ -11,7 +11,8 @@ then three zones —
     A · Identity   record detail, vs-ranked, game-type records, rest & fatigue
     B · Engine     tracked efficiency: ORtg/DRtg/Net/Pace, adjusted shooting,
                    possession ledger (where points come from / leak)
-    C · Verdict    Pythagorean expectation + luck, momentum, tracked rank,
+    C · Verdict    the auto-scout SENTENCE first, then its evidence:
+                   Pythagorean expectation + luck, momentum, tracked rank,
                    the model's read on the NEXT game
 Every number is measured or model-derived and labeled as such — the OOTP feel,
 not a video game.
@@ -127,6 +128,22 @@ def _style_tags(gender, season=SEAS_DEFAULT):
     try:
         pack = LA.team_tracked_pack(gender=gender, season=season)
         return AR.team_style_tags(pack.get("ts", {}))
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _insight_feed(gender, season=SEAS_DEFAULT):
+    """League-wide team auto-scout feed — one compute per (gender, season).
+
+    Zone C headed "Verdict — model reads" over five key-value rows and no
+    sentence; this is the sentence. Same engine, same 3-line surface cap and
+    the same cache shape Rankings and the War Room already use, so the three
+    surfaces cannot say different things about the same team."""
+    season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
+    import helpers.team_insights as TIN
+    try:
+        return TIN.team_insight_feed(gender=gender, season=season, top=3)
     except Exception:
         return {}
 
@@ -546,6 +563,24 @@ def render_header(ctx):
     # ── zone C · verdict (model reads, labeled as such) ───────────────────────
     with z3:
         html = _zone_hdr("Verdict — model reads")
+        # The verdict LEADS with a sentence (THE BOOK §12.3). The key-value rows
+        # below are the evidence for it, not a substitute. `verdict_lines` on ctx
+        # opts a caller out: Rankings renders the same feed in its own wider
+        # auto-scout block, so it passes [] rather than printing it twice.
+        _vl = getattr(ctx, "verdict_lines", None)
+        if _vl is None:
+            _vl = _insight_feed(ctx.gender, _season).get(ctx.team_id, [])
+        if _vl:
+            import re as _re_v
+            _lead = "".join(
+                f"<div style='font-size:12px;line-height:1.45;margin-bottom:6px'>"
+                f"{_re_v.sub(r'[*][*](.+?)[*][*]', r'<b>\1</b>', _l['text'])} "
+                f"{CARDS.conf_dot(_l.get('n'), k=8) if isinstance(_l.get('n'), (int, float)) else ''}"
+                f"<span style='color:var(--subtext);font-size:10px'>"
+                f"n={_l.get('n')}</span></div>"
+                for _l in _vl[:2])
+            html += (f"<div style='border-left:2px solid var(--accent);"
+                     f"padding-left:8px;margin:2px 0 8px'>{_lead}</div>")
         if fm:
             html += _kv("Pythagorean W-L",
                         f"{fm['Pyth_W']:.1f}-{fm['Pyth_L']:.1f}")
@@ -576,6 +611,8 @@ def render_header(ctx):
                             f"{pred['pf_a']:.0f}-{pred['pf_b']:.0f} · "
                             f"{pred['win_prob_a'] * 100:.0f}%")
         st.markdown(html, unsafe_allow_html=True)
-    st.caption("Pythagorean / luck / momentum are results-math; the next-game "
-               "line is the opponent-adjusted model with home court at the "
-               "actual venue. Every other number is measured play.")
+    st.caption("The verdict sentence is the league-relative auto-scout read and "
+               "carries its own n. Pythagorean / luck / momentum are "
+               "results-math; the next-game line is the opponent-adjusted model "
+               "with home court at the actual venue. Every other number is "
+               "measured play.")

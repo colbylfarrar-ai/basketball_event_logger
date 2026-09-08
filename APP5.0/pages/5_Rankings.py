@@ -1209,6 +1209,10 @@ def _fx_team():
                "NetRtg": _tr["NetRtg"], "POSS_pg": _tr["Pace"]} if _tr else {}),
         rank_info={"tracked": (rk["tracked"] if _see_trk else None)},
         tracked=tracked,
+        # The card's verdict zone leads with the auto-scout feed; this page
+        # renders the same feed wider, below, and gated on _see_trk. [] = "I
+        # have my own", so the sentence isn't printed twice on one screen.
+        verdict_lines=[],
     ))
 
     # Rankings-only extras the card doesn't carry (schedule strength + the

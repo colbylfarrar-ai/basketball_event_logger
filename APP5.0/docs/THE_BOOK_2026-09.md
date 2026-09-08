@@ -1008,10 +1008,20 @@ team:
   read by nothing. The War Room renders its siblings `throw` and `avoid` (6–11
   possession rows) and drops the one half that answers *"what should my offense
   attack"* (106–842 possessions). **Three lines.**
-* **`situational.player_margin_scoring`** — no renderer. Four Adair bench players
-  score **63–94% of their points in garbage time**, one at 94.1% with a 2.4%
-  close-game share. A coach deciding who to trust late has that computed and
-  hidden.
+* ~~**`situational.player_margin_scoring`** — no renderer.~~ **RETRACTED
+  2026-09-07 — it has one, and it fires.** The chain is
+  `situational.player_margin_scoring` → `insights.garbage_edges` (a registered
+  `_FEED_STAGES` entry) → `insights._g_garbage` → `insights_severity` routes
+  the metric `"Garbage time"` to `S_WHY` with evidence `("Charts",
+  "Situational")`. Measured on production: 18 player lines fire on the girls'
+  book, and a headless render of Team Dashboard → Insights → *Why we win / why
+  we lose* for team 1 prints **six** of them, each with its point total —
+  *"Pads it in garbage time — 95% of their points come with the game decided
+  (±15+), only 2% in one-possession moments"*. The 94.1% player the finding
+  named is pid 19, and the app was already saying so. The engine numbers in the
+  original bullet are correct; the claim that nobody reads them is not.
+  (The `z <= 0` branch — *"Every bucket counts"* — renders zero times, which is
+  a property of the pool, not a defect.)
 
 ### 12.5 · The passing graph uses 317 passes and throws away 3,978 (½ session)
 

@@ -907,12 +907,27 @@ def _render_matchup():
                             "Edge": st.column_config.NumberColumn(format="%.2f"),
                         })
                 st.caption(off["note"])
+                # Every row prints its possession count. These three lists are
+                # ordered by PPP with no volume floor above `min_poss`, so a
+                # scheme faced four times can head the "play on D" list at
+                # 0.00 — the same one-game-leaderboard shape THE BOOK §8.2
+                # found on Rankings, in a place a coach acts on.
                 if dfn["throw"]:
                     st.markdown("**Play on D:** " + " · ".join(
-                        f"{r['label']} ({r['ppp']:.2f} PPP)" for r in dfn["throw"]))
+                        f"{r['label']} ({r['ppp']:.2f} PPP, {r['poss']} poss)"
+                        for r in dfn["throw"]))
                 if dfn["avoid"]:
                     st.markdown("**Don't sit in:** " + " · ".join(
-                        f"{r['label']} ({r['ppp']:.2f})" for r in dfn["avoid"]))
+                        f"{r['label']} ({r['ppp']:.2f}, {r['poss']} poss)"
+                        for r in dfn["avoid"]))
+                # The other half of the plan, and the half with the sample:
+                # the schemes the opponent RUNS, ranked by what they give up.
+                # `throw`/`avoid` are the D call; this is the O call, and it is
+                # computed on every render of this block (THE BOOK §12.4).
+                if dfn.get("their_leaks"):
+                    st.markdown("**Attack on O:** " + " · ".join(
+                        f"{r['label']} ({r['ppp_allowed']:.2f} PPP allowed, "
+                        f"{r['poss']} poss)" for r in dfn["their_leaks"]))
                 _thin_def = bool(dfn["throw"] or dfn["avoid"]) and not any(
                     r["stable"] for r in dfn["throw"] + dfn["avoid"])
                 st.caption(("⚠ Thin sample — lean on scouting, not these splits. "

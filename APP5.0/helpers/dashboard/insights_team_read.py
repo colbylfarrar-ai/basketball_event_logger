@@ -92,14 +92,22 @@ def _quarters(ctx):
             "pattern, and the halves agree. That is an answer, not a gap — this "
             "team is the same team for 32 minutes.")
         return
+    # The badge names the CUT, because the lines no longer share a unit: the
+    # scoring lines are points a game and the tempo line is possessions a game.
+    _tag = {"quarter": "Quarter", "half": "Halves", "pace": "Tempo"}
     st.markdown(
-        verdict_card([("Quarter", l["n"], _md_bold(l["text"])) for l in lines]),
+        verdict_card([(_tag.get(l.get("cut"), "Quarter"), l["n"],
+                       _md_bold(l["text"])) for l in lines]),
         unsafe_allow_html=True)
     st.caption(
-        "Points per game, not per possession, and each line carries the number "
-        "of tracked games behind it. Overtime is deliberately excluded — an OT "
-        "“tendency” drawn from two games is a coin flip wearing a verdict's "
-        "clothes.")
+        "Scoring lines are points per game, not per possession; the tempo line "
+        "is possessions per game against this team's own other quarters, "
+        "measured per game so one loose night cannot become a habit. Each line "
+        "carries the number of tracked games behind it. Overtime is "
+        "deliberately excluded — an OT “tendency” drawn from two games is a "
+        "coin flip wearing a verdict's clothes. Tempo is the one quarter read "
+        "that repeats (SB .596); quarter shooting and quarter ball security "
+        "were measured and refused — see reliability.THE QUARTER AXIS.")
 
 
 def _rollup(findings):

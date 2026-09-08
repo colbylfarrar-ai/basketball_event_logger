@@ -112,3 +112,94 @@ def test_j_strongest_read_first():
     lines = Q.quarter_verdict(SPLIT)
     mags = [abs(l.get("delta") or 0) for l in lines]
     assert mags == sorted(mags, reverse=True), mags
+
+
+# ── the PACE read (THE BOOK §13.2) ───────────────────────────────────────────
+# Of the five reads §13.2 named, tempo is the one that survived measurement:
+# SB .596 against SB -.135 for quarter eFG and +.082 for quarter turnovers.
+# See reliability.THE QUARTER AXIS. These tests hold the shape of the gate,
+# which is where a reliable metric still ships an unreliable NUMBER.
+
+def _bg(per_game):
+    """{game_id: {q: {'poss': n}}} from [{q: poss}, ...], one entry per game."""
+    return {i: {q: {"poss": p, "team": {"PTS": 0}, "opp": {"PTS": 0}}
+                for q, p in g.items()}
+            for i, g in enumerate(per_game)}
+
+
+def test_pace_read_fires_on_a_consistent_push():
+    # +3 possessions in Q1 every night, and the same every night, so the
+    # game-to-game spread is small and the paired t is large.
+    games = [{1: 21, 2: 18, 3: 18, 4: 18}, {1: 22, 2: 19, 3: 19, 4: 19},
+             {1: 20, 2: 17, 3: 17, 4: 17}, {1: 21, 2: 18, 3: 18, 4: 18},
+             {1: 23, 2: 20, 3: 20, 4: 20}]
+    lines = Q.pace_verdict(_bg(games))
+    assert lines, "a 3-possession Q1 push held across five games is a read"
+    top = lines[0]
+    assert top["cut"] == "pace" and top["n"] == 5
+    assert "1st quarter" in top["text"] and "push" in top["text"]
+    assert round(top["delta"], 2) == 3.0
+
+
+def test_pace_read_refuses_the_same_gap_when_it_is_one_loose_night():
+    # The SAME +3.0 mean in Q1, carried entirely by one game. The pooled
+    # numbers are identical to the test above and this must say nothing —
+    # that is the whole reason the read is paired per game rather than pooled.
+    games = [{1: 18, 2: 18, 3: 18, 4: 18}, {1: 18, 2: 18, 3: 18, 4: 18},
+             {1: 18, 2: 18, 3: 18, 4: 18}, {1: 18, 2: 18, 3: 18, 4: 18},
+             {1: 33, 2: 18, 3: 18, 4: 18}]
+    pooled = sum(g[1] for g in games) / 5 - sum(
+        g[q] for g in games for q in (2, 3, 4)) / 15
+    assert round(pooled, 2) == 3.0, "same pooled gap as the firing case"
+    assert Q.pace_verdict(_bg(games)) == [], \
+        "one loose night is not a tempo habit"
+
+
+def test_pace_read_needs_a_book():
+    games = [{1: 21, 2: 18, 3: 18, 4: 18}, {1: 22, 2: 19, 3: 19, 4: 19}]
+    assert Q.pace_verdict(_bg(games)) == [], "two games is not three"
+
+
+def test_pace_read_holds_the_effect_floor():
+    # Dead-consistent +0.5 possessions: the t-stat is enormous and the number
+    # is useless. Both gates, per Q6 — this is the one the t-stat cannot catch.
+    games = [{1: 18.5, 2: 18, 3: 18, 4: 18}] * 4
+    games = [dict(g) for g in games]
+    for i, g in enumerate(games):                # break the exact ties
+        g[1] += i * 0.01
+    assert Q.pace_verdict(_bg(games)) == [], \
+        "half a possession a game is true and unactionable"
+
+
+def test_pace_read_says_nothing_about_a_level_team():
+    games = [{1: 18, 2: 18, 3: 18, 4: 18}, {1: 20, 2: 20, 3: 20, 4: 20},
+             {1: 16, 2: 16, 3: 16, 4: 16}, {1: 19, 2: 19, 3: 19, 4: 19}]
+    assert Q.pace_verdict(_bg(games)) == []
+
+
+def test_quarter_reads_carries_both_halves_of_the_axis():
+    games = [{1: 21, 2: 18, 3: 18, 4: 18}, {1: 22, 2: 19, 3: 19, 4: 19},
+             {1: 20, 2: 17, 3: 17, 4: 17}, {1: 21, 2: 18, 3: 18, 4: 18},
+             {1: 23, 2: 20, 3: 20, 4: 20}]
+    both = Q.quarter_reads(SPLIT, by_game=_bg(games))
+    cuts = {l["cut"] for l in both}
+    assert "quarter" in cuts and "pace" in cuts
+    # and without the per-game boxes it degrades to exactly the old answer
+    assert Q.quarter_reads(SPLIT) == Q.quarter_verdict(SPLIT)
+
+
+def test_the_four_refused_quarter_reads_stay_refused():
+    """A record, so the next sweep does not rebuild them.
+
+    Q shooting and Q ball security were measured at SB -.135 and +.082 over
+    200 random half-splits and are deliberately absent. Half starts is absent
+    for a different reason — unresolvable on this book, not unreliable. Q scout
+    was already built. If someone adds a `quarter_efg` verdict, this fails and
+    points them at the study rather than at a merge conflict.
+    """
+    import helpers.reliability as REL
+    assert REL.measured("team", "quarter_pace") == 0.596
+    assert REL.measured("team", "quarter_efg") < 0
+    assert REL.measured("team", "quarter_tov") < 0.2
+    assert not hasattr(Q, "shooting_verdict")
+    assert not hasattr(Q, "ball_security_verdict")

@@ -234,6 +234,13 @@ MEASURED = {
     # 63-game production book over the 8 teams with >= 4 tracked games.
     ("team", "clock_share"): 0.746,           # early share — what the read ships
     ("team", "clock_ppp"): 0.800,             # early-band PPP, the better half
+    # ── the QUARTER axis (measured 2026-09-07, helpers/quarters.py) ──────────
+    # See THE QUARTER AXIS below. Same estimator as the shot clock: 200 random
+    # half-splits of the production book over the 5 teams with >= 6 tracked
+    # games, each team's four quarters demeaned against its OWN other three.
+    ("team", "quarter_pace"): 0.596,          # poss/game deviation — SHIPS
+    ("team", "quarter_efg"): -0.135,          # REFUSED, see the note
+    ("team", "quarter_tov"): 0.082,           # REFUSED, see the note
     # ── OFFENSIVE play-type axis (measured 2026-07-26 round 2) ───────────────
     # Never measured before today; the book covered band and kind shares and
     # the ACTION axis was assumed. Shares behave like every other offensive
@@ -642,6 +649,49 @@ MEASURED_CLOCK_NOTE = (
     "The value gap behind it is league-wide, not a team trait — the first seven "
     "seconds are worth 0.741 PPP against 0.604 after, and nothing past seven "
     "seconds differs at all."
+)
+
+
+# ── THE QUARTER AXIS — one of the five shipped, and the other four are why ───
+# THE BOOK §13.2 named five quarter reads to build: Q shooting, Q ball
+# security, Q pace, Half starts, Q scout. Measured 2026-09-07 against the
+# production snapshot, four of the five do not survive.
+#
+# METHOD. 200 random half-splits over the five teams with >= 6 tracked games
+# (26/15/11/8/7 games), the same estimator the shot clock used. Each half is
+# summarised as the team's deviation in each quarter from its OWN other three,
+# so the number under test is exactly the number the read would print. Pearson
+# over the 20 (team, quarter) cells per split, median across splits, then
+# Spearman-Brown.
+#
+#     quarter PACE deviation   median r +.424   p10 +.208  p90 +.640   SB .596
+#     quarter eFG  deviation   median r -.063   p10 -.255  p90 +.157   SB -.135
+#     quarter TOV% deviation   median r +.043   p10 -.187  p90 +.297   SB +.082
+#
+# Tempo repeats because it is a decision a staff makes the same way every
+# night. A quarter's shooting and a quarter's ball security do not repeat at
+# all: the p10-p90 interval straddles zero for both, so "they shoot better in
+# the second half" and "the fourth quarter is where they give it away" are the
+# sample talking. Note the single odd-vs-even split — the first cut of this
+# study — put quarter eFG at SB +.559. One split is not a measurement; the
+# 200-split median is -.135 and the odd/even number was luck.
+#
+# HALF STARTS was refused for a different reason and it is worth recording
+# separately, because it is not a reliability failure. Q1 net minus Q3 net,
+# paired per game, has a game-to-game sd of ~10.5 points on the longest book in
+# the league; the 26-game team's +3.85 gap reaches t = 1.87 and every other
+# team is below it. The read is not unreliable, it is unresolvable — this book
+# does not have the games to separate it from zero.
+#
+# Q SCOUT was already built. `team_insights._t_quarter` is a registered, routed
+# league-wide generator ("Q1 team — they win the q1 by +10.4 points/game") and
+# has been firing since before the finding was written.
+MEASURED_QUARTER_NOTE = (
+    "How fast a team plays a given quarter is a choice and it repeats: the "
+    "per-quarter possession deviation measures SB .596 over the tracked book. "
+    "Its shooting and turnover equivalents do not — SB -.135 and +.082, both "
+    "with intervals straddling zero — so this axis ships tempo and refuses the "
+    "other two."
 )
 
 

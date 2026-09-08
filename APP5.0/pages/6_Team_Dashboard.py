@@ -6068,12 +6068,18 @@ def _ins_scheme_sit(g, tid, side, game_ids=None):
 @st.cache_data(ttl=600, show_spinner=False)
 def _ins_quarter_read(g, tid, game_ids=None):
     """The quarter story as verdict lines (helpers/quarters.py) — the sentence
-    version of Charts → Quarters, which keeps its panels."""
+    version of Charts → Quarters, which keeps its panels.
+
+    `quarter_reads` rather than `quarter_verdict` so the scoring-margin lines
+    and the pace line arrive together; picking up half the axis is how a
+    surface ends up disagreeing with the one next to it."""
     import helpers.quarters as QTR
     _gids = list(game_ids) if game_ids else list(bundle["tracked_ids"])
     if not _gids:
         return []
-    return QTR.quarter_verdict(TA.quarter_boxes(tid, game_ids=_gids))
+    return QTR.quarter_reads(TA.quarter_boxes(tid, game_ids=_gids),
+                             by_game=TA.quarter_boxes_by_game(tid,
+                                                              game_ids=_gids))
 
 
 _insights_ctx = SimpleNamespace(players=players, team_id=team_id, gender=gender,

@@ -27,6 +27,23 @@ MIN_GAMES = 3          # a quarter needs a real book behind it
 MIN_NET = 2.0          # points/game off level before a quarter is worth a line
 MIN_HALF_GAP = 4.0     # points/game between the halves before that is a read
 
+# ── the PACE read (THE BOOK §13.2) ───────────────────────────────────────────
+# Of the five quarter reads §13.2 named, this is the one that survived being
+# measured. See `reliability.THE QUARTER AXIS` for the study; the short version
+# is that a team's per-quarter POSSESSION deviation repeats at SB .596 while
+# its per-quarter eFG deviation repeats at SB -.135 and its turnover deviation
+# at SB +.082. Tempo is a choice a team makes every night; shooting and ball
+# security in a single quarter are the sample talking.
+#
+# Both gates, per Q6, because they fail in opposite directions. The t-stat is
+# charged with the team's OWN game-to-game spread, so a 2-game book cannot
+# reach it — that is the §"thin books inflate a plain z" fix in its paired
+# form. The effect floor is what stops the opposite failure: once a book is
+# long enough, t >= 2 will certify a half-possession wobble that no coach can
+# act on, and the number would be true and useless.
+MIN_PACE_T = 2.0       # paired t of the quarter's deviation across games
+MIN_PACE_POSS = 1.0    # possessions/game off the team's own other quarters
+
 QUARTER_NAMES = {1: "1st quarter", 2: "2nd quarter",
                  3: "3rd quarter", 4: "4th quarter"}
 
@@ -110,4 +127,75 @@ def quarter_verdict(qbx, min_net=MIN_NET):
                           "delta": gap})
 
     lines.sort(key=lambda d: -abs(d.get("delta") or 0))
+    return lines
+
+
+def pace_verdict(by_game, min_t=MIN_PACE_T, min_poss=MIN_PACE_POSS):
+    """Which quarter this team plays FASTER or SLOWER than its own others.
+
+    Takes `team_analytics.quarter_boxes_by_game` — {game_id: {q: {...'poss'}}}
+    — not the pooled `quarter_boxes`, and the per-game shape is the whole
+    point. Pooling four quarters into four numbers throws away the only thing
+    that says whether a 2-possession gap is a habit or one loose night, and a
+    pooled gate fires hardest for the teams with the fewest games.
+
+    Returns the house verdict-line shape, [{text, cut, n, delta}] with
+    `cut="pace"`, strongest first. An empty list means this team plays its four
+    quarters at one speed, which is an answer.
+    """
+    per = {q: [] for q in (1, 2, 3, 4)}
+    for qd in (by_game or {}).values():
+        if not all(q in qd for q in (1, 2, 3, 4)):
+            continue                       # a game that did not finish four
+        for q in (1, 2, 3, 4):
+            per[q].append((qd[q] or {}).get("poss") or 0)
+    games = len(per[1])
+    if games < MIN_GAMES:
+        return []
+
+    lines = []
+    for q in (1, 2, 3, 4):
+        # paired: each game contributes this quarter MINUS that same game's
+        # other three, so an opponent who plays fast cancels out of both sides.
+        diffs = [per[q][i] - sum(per[x][i] for x in (1, 2, 3, 4) if x != q) / 3.0
+                 for i in range(games)]
+        mean = sum(diffs) / games
+        var = sum((d - mean) ** 2 for d in diffs) / (games - 1)
+        sd = var ** 0.5
+        # Zero spread is the STRONGEST version of this read, not the absence of
+        # one: the same gap in every game is a habit with no counter-example.
+        # Guarding `sd < 1e-9` as "nothing to test" silenced exactly the teams
+        # the read is for, so an unvarying gap gets an infinite t and is left
+        # to the effect floor below. A zero gap with zero spread is still
+        # nothing, and falls out on `abs(mean) < min_poss`.
+        t = (mean / (sd / games ** 0.5)) if sd > 1e-9 else \
+            (float("inf") if mean > 0 else float("-inf") if mean < 0 else 0.0)
+        if abs(t) < min_t or abs(mean) < min_poss:
+            continue
+        name = QUARTER_NAMES[q]
+        if mean > 0:
+            txt = (f"**They push the {name}** — **{mean:+.1f} possessions a "
+                   f"game** more than their own other quarters, across "
+                   f"{games} tracked games. The tempo is a choice, and this is "
+                   f"where they make it.")
+        else:
+            txt = (f"**The {name} slows down** — **{mean:+.1f} possessions a "
+                   f"game** against their own other quarters, across {games} "
+                   f"tracked games. Fewer trips is fewer chances to close a "
+                   f"gap.")
+        lines.append({"text": txt, "cut": "pace", "n": games, "delta": mean,
+                      "t": t})
+
+    lines.sort(key=lambda d: -abs(d.get("t") or 0))
+    return lines
+
+
+def quarter_reads(qbx, by_game=None):
+    """Every quarter verdict this book supports: the scoring-margin lines from
+    `quarter_verdict` plus, when the per-game boxes are supplied, the pace
+    lines. One call so a surface cannot pick up half of the axis.
+    """
+    lines = list(quarter_verdict(qbx))
+    if by_game:
+        lines += pace_verdict(by_game)
     return lines

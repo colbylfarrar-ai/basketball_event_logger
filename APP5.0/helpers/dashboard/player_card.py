@@ -134,9 +134,19 @@ def _conn_edges(gids=None):
 
     Cached on the POOL, not the player: the matrix is one pass over the whole
     event list and every card drawn from the same pool wants the same answer,
-    so paying per player would rebuild the shot-quality model each time."""
+    so paying per player would rebuild the shot-quality model each time.
+
+    `gids` is the entitlement read-filter, so None and () are DIFFERENT things:
+    None means "no scope given, read the default pool" and () means "this
+    viewer may read nothing". Collapsing the second into the first is the §8.7
+    class, and it would widen a shut-out viewer's passing graph to the whole
+    league. `tracker/test_read_filter_empty_scope.py` caught exactly that here
+    on the first cut of this function."""
     import helpers.passing_chains as _PC
-    return _PC.connection_matrix(game_ids=(list(gids) if gids else None))
+    if gids is not None and not gids:
+        return []
+    return _PC.connection_matrix(
+        game_ids=(list(gids) if gids is not None else None))
 
 
 def build_card_ctx(pid, gender, season=SEAS_DEFAULT, season_gp=None, *,

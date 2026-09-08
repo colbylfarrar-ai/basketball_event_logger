@@ -92,7 +92,14 @@ def _win_formula(team_id, season):
     enough tracked win-and-loss history there."""
     import helpers.insights_team as IT
     if SEAS.is_current(season):
-        return IT.winloss_alignment(team_id)     # default = current-season games
+        # SEAS.ACTIVE, not the read default. This is a WRITE page scoring a game
+        # that is IN the current season, so it wants that season literally —
+        # `seasons.default_read_season()` deliberately falls back to the last
+        # PLAYED season in the gap after a rollover, which is right for a
+        # reading surface and wrong here. It read 'Current' by hard-code until
+        # winloss_alignment took a season parameter; this keeps that meaning
+        # rather than inheriting the new fallback.
+        return IT.winloss_alignment(team_id, season=SEAS.ACTIVE)
     gids = [r["id"] for r in query(
         "SELECT id FROM games WHERE (team1_id=? OR team2_id=?) AND tracked=1 "
         "AND season=? AND home_score IS NOT NULL AND away_score IS NOT NULL",

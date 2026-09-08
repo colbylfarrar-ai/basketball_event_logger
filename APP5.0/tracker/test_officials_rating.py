@@ -126,10 +126,13 @@ def _seed():
             "(8504,'Unknown 4','O4'),(8505,'Ref Five','O5'),"
             "(8506,'Ref Six','O6'),(8507,'Ref Seven','O7'),"
             "(8508,'Thin Ref','O8')")
-    for gid in (8600, 8601, 8602, 8603, 8604, 8605):
+    # DISTINCT DATES. Six games of one matchup on one calendar day is not a
+    # book that can exist (Q13) and `ux_games_matchup` refuses it; the crew
+    # maths under test never looks at the date.
+    for _i, gid in enumerate((8600, 8601, 8602, 8603, 8604, 8605)):
         execute("INSERT INTO games (id, team1_id, team2_id, date, tracked, "
-                "season) VALUES (?,8001,8002,'2026-01-05',1,'2025-2026')",
-                (gid,))
+                "season) VALUES (?,8001,8002,?,1,'2025-2026')",
+                (gid, f"2026-01-{5 + _i:02d}"))
     for gid in (8600, 8601, 8602):
         for ref in (R1, R2, UNK):
             execute("INSERT INTO game_lineup_officials (game_id, official_id) "

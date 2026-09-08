@@ -45,8 +45,17 @@ for i in range(6):
                         (t1, HOME_NAMES[i], i + 1)))
     away.append(execute("INSERT INTO players (team_id,name,number) VALUES (?,?,?)",
                         (t2, AWAY_NAMES[i], i + 10)))
-gid = execute("INSERT INTO games (team1_id,team2_id,date) VALUES (?,?, date('now'))",
-              (t1, t2))
+# tracked_by, because that is what tracker/api.py's create_game writes and it
+# is what exempts a coach-created row from `ux_games_matchup` — the partial
+# index that keeps ONE IMPORTED row per matchup per day (Q13) while leaving the
+# courtside create and the second-angle retrack open. This file logs four games
+# between the same two teams on one day, which is exactly the shape the index
+# would refuse if these rows were imports. See database/db.py.
+# the SAME email as the app_users row below — the API rejects a game
+# owned by another coach ("this game belongs to another coach")
+COACH_EMAIL = "coach@test"
+gid = execute("INSERT INTO games (team1_id,team2_id,date,tracked_by) "
+              "VALUES (?,?, date('now'), ?)", (t1, t2, COACH_EMAIL))
 REF_NAMES = ["Obadiah Whistle", "Percival Tweet", "Quincy Blowhard"]
 refs = [execute("INSERT INTO officials (name, official_id) VALUES (?,?)",
                 (REF_NAMES[i], 9000 + i)) for i in range(3)]
@@ -200,8 +209,9 @@ ok(client.get("/api/public/scoreboard?date=garbage").status_code == 422,
    "bad date -> 422")
 # a second, NON-public in-progress game the same day must list as plain
 # upcoming — no score, no link, no hint it's being tracked
-gid2 = execute("INSERT INTO games (team1_id,team2_id,date,location) "
-               "VALUES (?,?, date('now'), 'Privacy Gym')", (t2, t1))
+gid2 = execute("INSERT INTO games (team1_id,team2_id,date,location,tracked_by) "
+               "VALUES (?,?, date('now'), 'Privacy Gym', ?)",
+               (t2, t1, COACH_EMAIL))
 coach.post(f"/api/games/{gid2}/events", json={"events": [
     {"uuid": "sb-shot", "event_type": "shot", "quarter": 1, "time": "7:00",
      "primary_player_id": away[0], "shot_result": "make",
@@ -301,8 +311,8 @@ print("fan link QR")
 res = coach.get(f"/api/games/{gid}/fanqr")
 ok(res.status_code == 200 and "svg" in res.headers.get("content-type", "")
    and "<svg" in res.text, "QR svg for a public game")
-gid3 = execute("INSERT INTO games (team1_id,team2_id,date) "
-               "VALUES (?,?, date('now'))", (t1, t2))
+gid3 = execute("INSERT INTO games (team1_id,team2_id,date,tracked_by) "
+               "VALUES (?,?, date('now'), ?)", (t1, t2, COACH_EMAIL))
 ok(coach.get(f"/api/games/{gid3}/fanqr").status_code == 404,
    "QR 404 when the fan link is off")
 ok(client.get(f"/api/games/{gid}/fanqr").status_code == 401, "QR needs auth")
@@ -317,8 +327,8 @@ res = client.get(f"/live/team/{t1}")
 ok(res.status_code == 200 and "RESULTS" in res.text, "/live/team/<id> serves the team page")
 
 print("rowid-reuse version guard (undo then relog)")
-gid4 = execute("INSERT INTO games (team1_id,team2_id,date) "
-               "VALUES (?,?, date('now'))", (t1, t2))
+gid4 = execute("INSERT INTO games (team1_id,team2_id,date,tracked_by) "
+               "VALUES (?,?, date('now'), ?)", (t1, t2, COACH_EMAIL))
 coach.post(f"/api/games/{gid4}/public")
 tok4 = query("SELECT share_token FROM games WHERE id=?", (gid4,))[0]["share_token"]
 coach.post(f"/api/games/{gid4}/events", json={"events": [

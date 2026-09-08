@@ -54,15 +54,23 @@ LAST_MONTH = (datetime.now() - timedelta(days=32)).strftime("%Y-%m-%d")
 
 execute("INSERT INTO teams (id, name, gender, class) VALUES (1,'Home HS','F','3A')")
 execute("INSERT INTO teams (id, name, gender, class) VALUES (2,'Away HS','F','3A')")
+execute("INSERT INTO teams (id, name, gender, class) VALUES (3,'Third HS','F','3A')")
+execute("INSERT INTO teams (id, name, gender, class) VALUES (4,'Fourth HS','F','3A')")
 
 # 10 = live today (untracked + events)   -> MUST warn
 # 11 = final today (tracked + events)    -> must NOT warn
 # 12 = scheduled today (no events)       -> must NOT warn
 # 13 = abandoned last month (untracked + events) -> must NOT warn (date guard)
-for gid, date, tracked in ((10, TODAY, 0), (11, TODAY, 1),
-                           (12, TODAY, 0), (13, LAST_MONTH, 0)):
+#
+# DISTINCT MATCHUPS, not distinct dates: three of these have to be TODAY for
+# the test to mean anything, and `ux_games_matchup` refuses three rows of one
+# matchup on one day (Q13 — teams play once a day). A four-team night is what
+# this scenario actually looks like anyway.
+for gid, t1, t2, date, tracked in ((10, 1, 2, TODAY, 0), (11, 3, 4, TODAY, 1),
+                                   (12, 1, 3, TODAY, 0),
+                                   (13, 1, 2, LAST_MONTH, 0)):
     execute("INSERT INTO games (id, team1_id, team2_id, date, tracked, season) "
-            "VALUES (?, 1, 2, ?, ?, '2025-2026')", (gid, date, tracked))
+            "VALUES (?, ?, ?, ?, ?, '2025-2026')", (gid, t1, t2, date, tracked))
 for gid in (10, 11, 13):
     execute("INSERT INTO game_events (game_id, event_type, quarter, time) "
             "VALUES (?, 'shot', 1, '08:00')", (gid,))

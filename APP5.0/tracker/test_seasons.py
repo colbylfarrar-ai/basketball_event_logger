@@ -38,14 +38,18 @@ A = execute("INSERT INTO teams (name,class,gender) VALUES ('SeasonTestA','3A','F
 B = execute("INSERT INTO teams (name,class,gender) VALUES ('SeasonTestB','3A','F')")
 
 
-def _game(season, hs, as_):
+def _game(season, hs, as_, date="2025-12-01"):
+    # DISTINCT DATES per season. A date already implies a season (the Oct 1
+    # cutoff), so one calendar day carrying the same matchup in two different
+    # seasons is not a book that can exist — and `ux_games_matchup` now refuses
+    # it. The test is about the season COLUMN, not the date.
     return execute("INSERT INTO games (team1_id,team2_id,date,home_score,away_score,"
-                   "tracked,season) VALUES (?,?, '2025-12-01', ?,?, 1, ?)",
-                   (A, B, hs, as_, season))
+                   "tracked,season) VALUES (?,?, ?, ?,?, 1, ?)",
+                   (A, B, date, hs, as_, season))
 
 
-g_cur = _game("Current", 60, 50)      # active season  (A wins)
-g_old = _game("2099-2100", 40, 70)    # archived season (A loses) — unique label
+g_cur = _game("Current", 60, 50)                          # active   (A wins)
+g_old = _game("2099-2100", 40, 70, date="2099-12-01")     # archived (A loses)
 
 print("active label")
 ok(SZ.active_label() == "2025-2026", "active_label seeded to 2025-2026")

@@ -61,6 +61,7 @@ from helpers.court import (shot_chart as _shot_chart, hot_zones as _hot_zones,
 from helpers.glossary import glossary_tab
 import helpers.team_analytics as TA
 import helpers.team_ratings as TR
+import helpers.forfeits as FF
 import helpers.stats as S
 import helpers.player_ratings as PR
 import helpers.league_analytics as LA
@@ -5255,7 +5256,8 @@ def _fx_chadv():
                         unsafe_allow_html=True)
             tracked_games = [g for g in log if g["tracked"]]
             glabels = [f"{g['date']}  {g['site']} {g['opp']}  "
-                       f"({'W' if g['won'] else 'L'} {g['pf']}-{g['pa']})"
+                       f"({FF.label(g['won'], g.get('ff'))} "
+                       f"{g['pf']}-{g['pa']})"
                        for g in tracked_games]
             gi = st.selectbox("Tracked game", range(len(tracked_games)),
                               format_func=lambda i: glabels[i], key="adv_flow_game")

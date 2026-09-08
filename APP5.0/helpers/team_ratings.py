@@ -49,6 +49,7 @@ from database.db import query
 # default_read_season() fallback the pickers have always used. An explicit
 # 'Current' is still honoured literally, and None still means every season.
 from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+import helpers.forfeits as FF
 
 import helpers.stats as S
 
@@ -204,10 +205,15 @@ def _per_team_games(games, half_life=None):
         hp, ap = g["home_pts"], g["away_pts"]
         d = g.get("date") or ""
         gid = g["id"]
+        # `ff` marks a walkover (THE BOOK 8.1 / Q2). It rides on the row rather
+        # than being re-derived downstream so every engine reading this shape
+        # asks the same question of the same rule, and `margin_games` below is
+        # the only place that decides what to do about it.
+        ff = FF.is_forfeit(hp, ap)
         out[h].append({"opp": a, "pts_for": hp, "pts_against": ap, "won": hp > ap,
-                       "date": d, "gid": gid, "w": 1.0})
+                       "date": d, "gid": gid, "w": 1.0, "ff": ff})
         out[a].append({"opp": h, "pts_for": ap, "pts_against": hp, "won": ap > hp,
-                       "date": d, "gid": gid, "w": 1.0})
+                       "date": d, "gid": gid, "w": 1.0, "ff": ff})
     if half_life and half_life > 0:
         for gl in out.values():
             gl.sort(key=lambda e: (e["date"], e["gid"]))   # oldest → newest
@@ -216,6 +222,19 @@ def _per_team_games(games, half_life=None):
                 games_ago = (n - 1) - j
                 e["w"] = 0.5 ** (games_ago / half_life)
     return out
+
+
+def margin_games(team_games):
+    """`team_games` with every walkover dropped — the pool for MARGIN math.
+
+    Q2 splits a forfeit in two: it counts in the win-loss record and in nothing
+    that is built from points. So the record is taken over the full pool and
+    everything else over this one, and a team whose only game was a walkover
+    comes out of here with an EMPTY list rather than a missing key — the
+    difference between "no margin evidence" and "no such team", which is what
+    lets the row still carry its 1-0.
+    """
+    return {t: [g for g in gl if not g.get("ff")] for t, gl in team_games.items()}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -399,35 +418,61 @@ def score_ratings(gender=None, class_step=DEFAULT_CLASS_STEP, iters=DEFAULT_ITER
     # league average stays the flat, unweighted league scoring level — the stable
     # neutral floor the phantom-game shrinkage regresses toward). GP / W / L stay
     # true counts regardless of weighting.
-    ppg, oppg, gp, wins = {}, {}, {}, {}
+    # THE SPLIT (THE BOOK 8.1 / Q2). GP / W / L are counted over every finished
+    # game, because a forfeit win is a win. EVERY OTHER NUMBER below is built
+    # from `mg`, the same pool with the walkovers removed — points for and
+    # against, the opponent adjustment, SOS, SOR and therefore the Rating and
+    # the Power scale. Before this split, 117 walkovers were rated as games and
+    # a 0-3 team was the boys' best defence on 1.00 points allowed.
+    mg = margin_games(tg)
+    rated = {t: gl for t, gl in mg.items() if gl}      # has margin evidence
+    ppg, oppg, gp, wins, ffw, ffl = {}, {}, {}, {}, {}, {}
     tot_pts = tot_games = 0
     for t, gl in tg.items():
-        n = len(gl)
+        gp[t] = len(gl)
+        wins[t] = sum(1 for g in gl if g["won"])
+        ffw[t] = sum(1 for g in gl if g.get("ff") and g["won"])
+        ffl[t] = sum(1 for g in gl if g.get("ff") and not g["won"])
+    for t, gl in rated.items():
         wtot = sum(g["w"] for g in gl)
         ppg[t] = _safe(sum(g["w"] * g["pts_for"] for g in gl), wtot)
         oppg[t] = _safe(sum(g["w"] * g["pts_against"] for g in gl), wtot)
-        gp[t] = n
-        wins[t] = sum(1 for g in gl if g["won"])
         tot_pts += sum(g["pts_for"] for g in gl)
-        tot_games += n
+        tot_games += len(gl)
     league_avg = _safe(tot_pts, tot_games)  # avg points scored per team-game
 
-    adjO, adjD = _adjust(tg, ppg, oppg, league_avg, iters=iters, reg=reg)
-    adj_net = {t: adjO[t] - adjD[t] for t in tg}
-    sos, sor = _sos_sor(tg, adj_net)
-    cadj = _class_adj(meta, list(tg.keys()), class_step)
+    adjO, adjD = _adjust(rated, ppg, oppg, league_avg, iters=iters, reg=reg)
+    adj_net = {t: adjO[t] - adjD[t] for t in rated}
+    sos, sor = _sos_sor(rated, adj_net)
+    cadj = _class_adj(meta, list(rated.keys()), class_step)
     sbump = _sos_bump(sos, sos_weight)
 
-    rating = {t: adj_net[t] + cadj[t] + sbump[t] for t in tg}
+    rating = {t: adj_net[t] + cadj[t] + sbump[t] for t in rated}
     power = _power_scale(rating)
 
     out = {}
     for t, gl in tg.items():
+        # A TEAM WHOSE ONLY GAMES WERE WALKOVERS IS NOT RATED AND IS NOT HERE.
+        # This function's contract is results-only power ratings, and a team
+        # with no played games has no results to rate. Returning it with a row
+        # of zeros is precisely how Mercy Institute Girls (1-0, a 0-1 forfeit)
+        # became the best defence in Oklahoma on 0.00 points allowed, and how
+        # Unity Academy Boys (0-3, three forfeits) became the boys'. Returning
+        # it with a row of Nones would have moved the same failure into 119
+        # call sites that format these keys.
+        #
+        # The RECORD is not lost with it: league_analytics.team_form_stats and
+        # team_analytics.team_game_log both still carry every walkover, marked,
+        # which is where a W-L belongs. Twelve teams on production.
+        if t not in rated:
+            continue
         out[t] = {
             "name": meta.get(t, {}).get("name", f"#{t}"),
             "class": meta.get(t, {}).get("class", "N/A"),
             "state": meta.get(t, {}).get("state", ""),
             "GP": gp[t], "W": wins[t], "L": gp[t] - wins[t],
+            "GP_margin": len(mg.get(t) or []),
+            "forfeit_w": ffw[t], "forfeit_l": ffl[t],
             "PPG": round(ppg[t], 1), "oPPG": round(oppg[t], 1),
             "MOV": round(ppg[t] - oppg[t], 1),
             "xPPG": round(adjO[t], 1), "xoPPG": round(adjD[t], 1),

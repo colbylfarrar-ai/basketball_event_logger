@@ -21,6 +21,7 @@ import helpers.entitlement as ENT
 import helpers.predictor as PRED
 import helpers.resume as RES
 import helpers.team_ratings as TR
+import helpers.forfeits as FF
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -159,7 +160,8 @@ def render(ctx):
             "Opp Rec": (f"{o_sc.get('W', 0)}-{o_sc.get('L', 0)}"
                         if o_sc else "—"),
             "Proj": (f"{pred['pf_a']:.0f}-{pred['pf_b']:.0f}" if pred else "—"),
-            "Result": ("W" if g["won"] else "L") + f" {g['pf']}-{g['pa']}",
+            "Result": (FF.label(g["won"], g.get("ff"))
+                       + f" {g['pf']}-{g['pa']}"),
             "Margin": f"{g['margin']:+d}",
             "Tracked": "✓" if g["tracked"] else "",
         }
@@ -193,6 +195,11 @@ def render(ctx):
     st.dataframe(pd.DataFrame(sched_rows), hide_index=True, width="stretch",
                  height=min(680, 60 + 35 * len(sched_rows)),
                  column_config=sched_cfg)
+    # Disclose the exclusion where the excluded rows are visible (Q6). A "(ff)"
+    # on a row whose margin the rest of the page ignores is only honest if the
+    # page says so once.
+    if any(g.get("ff") for g in ctx.log):
+        st.caption(FF.NOTE)
 
     # ── post-game read (THE BOOK 12.1) ───────────────────────────────────────
     # The table above is thirteen columns of numbers and no sentence about any
@@ -204,7 +211,8 @@ def render(ctx):
         st.markdown("<div class='lab-hdr'>Post-game read</div>",
                     unsafe_allow_html=True)
         _opts = {f"{g['date']} {g['site']} {g['opp']} "
-                 f"({'W' if g['won'] else 'L'} {g['pf']}-{g['pa']})":
+                 f"({FF.label(g['won'], g.get('ff'))} "
+                 f"{g['pf']}-{g['pa']})":
                  g["game_id"] for g in reversed(_trk)}
         _pick = st.selectbox("Game", list(_opts), key="sched_pg_pick",
                              label_visibility="collapsed")
@@ -298,7 +306,8 @@ def render(ctx):
         st.info("No tracked games to open a box score for yet.")
     else:
         glabels = [f"{g['date']}  {g['site']} {g['opp']}  "
-                   f"({'W' if g['won'] else 'L'} {g['pf']}-{g['pa']})"
+                   f"({FF.label(g['won'], g.get('ff'))} "
+                   f"{g['pf']}-{g['pa']})"
                    for g in tracked_games]
         gi = st.selectbox("Pick a tracked game", range(len(tracked_games)),
                           format_func=lambda i: glabels[i], key="sc_box")

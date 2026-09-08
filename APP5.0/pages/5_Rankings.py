@@ -50,6 +50,7 @@ import helpers.cards as CD
 from helpers.cards import team_short
 from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
+import helpers.forfeits as FF
 import helpers.predictor as PRED
 import helpers.team_analytics as TA
 import helpers.stats as S
@@ -149,6 +150,10 @@ def _team_results(team_id):
             pf, pa, opp, site = g["away_score"], g["home_score"], g["team1_id"], "@"
         out.append({"game_id": g["id"], "date": g["date"], "opp": opp,
                     "site": site, "pf": pf, "pa": pa, "won": pf > pa,
+                    # a walkover (THE BOOK §8.1) — the row still shows and
+                    # still counts in the record; the marker says why the
+                    # margin numbers above it do not include it
+                    "ff": FF.is_forfeit(pf, pa),
                     "tracked": g["tracked"]})
     return out
 
@@ -719,7 +724,8 @@ st.caption(("State / " if _RK_MULTI_ST else "")
            + "Class / min-games scope every ranking view below. "
            + f"Every board here is **{S.floor_note(_MIN_GP)[1:-1]}** — the "
              "Hall of Fame states its floors the same way, because a board "
-             "that hides its floor is asking you to assume one.")
+             "that hides its floor is asking you to assume one. "
+           + FF.NOTE)
 
 # Lazy-load: a "View" segmented_control instead of st.tabs, so only the chosen
 # view's heavy queries run each rerun (st.tabs computes every tab body). The
@@ -828,14 +834,31 @@ if _view == "Overview":
                     unsafe_allow_html=True)
 
         def _leader_card(col, label, key, hi=True, fmt="{:.1f}"):
-            best = max(ov_rows, key=lambda r: r[key]) if hi else \
-                min(ov_rows, key=lambda r: r[key])
+            # A walkover-only team has no margin evidence, so every rate here
+            # is None rather than 0.0 (THE BOOK §8.1). None is skipped, not
+            # sorted: 0.00 points allowed is exactly how a 1-0 forfeit became
+            # the best defence in the state, and min() over a None raises
+            # rather than misleads — both are wrong answers to this question.
+            pool = [r for r in ov_rows if r.get(key) is not None]
+            if not pool:
+                col.markdown(
+                    f"<div class='dash-card'><div class='dash-card-title'>"
+                    f"{label}</div><div class='dash-card-value'>—</div>"
+                    f"<div class='dash-card-sub'>no rated team in this "
+                    f"filter</div></div>", unsafe_allow_html=True)
+                return
+            best = max(pool, key=lambda r: r[key]) if hi else \
+                min(pool, key=lambda r: r[key])
             col.markdown(
                 f"<div class='dash-card'><div class='dash-card-title'>{label}</div>"
                 f"<div class='dash-card-value'>{fmt.format(best[key])}</div>"
                 f"<div class='dash-card-sub'>{best['name']}</div>"
                 f"<div class='dash-card-meta'>{best.get('class_lbl', best['class'])} · "
-                f"{best['W']}-{best['L']}</div></div>", unsafe_allow_html=True)
+                f"{best['W']}-{best['L']}"
+                + (f" · {best['GP_margin']} rated"
+                   if best.get("GP_margin") not in (None, best["W"] + best["L"])
+                   else "")
+                + "</div></div>", unsafe_allow_html=True)
 
         tl = st.columns(5)
         _leader_card(tl[0], "Top rating", "Rating")
@@ -1355,7 +1378,8 @@ def _fx_team():
                 "Opponent": f"{_chip} {name_of.get(opp, '?')}".strip(),
                 "Rk now": f"#{rank_of[opp]}" if rank_of.get(opp) else "—",
                 "Class": class_of.get(opp, "N/A"),
-                "Result": f"{'W' if g['won'] else 'L'} {g['pf']}-{g['pa']}",
+                "Result": (f"{FF.label(g['won'], g.get('ff'))} "
+                           f"{g['pf']}-{g['pa']}"),
                 "Tracked": "●" if g["tracked"] else "",
             })
         if sched:
@@ -1806,7 +1830,8 @@ def _fx_track():
             _glabel = {
                 g["game_id"]: (f"{g['date']}  ·  {g['site']} "
                                f"{name_of.get(g['opp'], '?')}  ·  "
-                               f"{'W' if g['won'] else 'L'} {g['pf']}-{g['pa']}")
+                               f"{FF.label(g['won'], g.get('ff'))} "
+                               f"{g['pf']}-{g['pa']}")
                 for g in games_desc}
             gpick = st.selectbox(
                 "Game", [g["game_id"] for g in games_desc],

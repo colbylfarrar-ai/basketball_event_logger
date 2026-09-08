@@ -38,6 +38,7 @@ from database.db import query
 # default_read_season() fallback the pickers have always used. An explicit
 # 'Current' is still honoured literally, and None still means every season.
 from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+import helpers.forfeits as FF
 
 import helpers.stats as S
 import helpers.team_ratings as TR
@@ -91,12 +92,15 @@ def per_team_results(gender=None, rows=None, season=SEAS_DEFAULT):
     for g in rows:
         h, a = g["team1_id"], g["team2_id"]
         hp, ap = g["home_score"], g["away_score"]
+        # `ff` marks a walkover (THE BOOK 8.1 / Q2) so every consumer of this
+        # shape splits the record from the margin math the same way.
+        ff = FF.is_forfeit(hp, ap)
         out[h].append({"game_id": g["id"], "date": g["date"], "opp": a,
                        "pf": hp, "pa": ap, "margin": hp - ap, "won": hp > ap,
-                       "tracked": bool(g["tracked"])})
+                       "tracked": bool(g["tracked"]), "ff": ff})
         out[a].append({"game_id": g["id"], "date": g["date"], "opp": h,
                        "pf": ap, "pa": hp, "margin": ap - hp, "won": ap > hp,
-                       "tracked": bool(g["tracked"])})
+                       "tracked": bool(g["tracked"]), "ff": ff})
     return dict(out)
 
 
@@ -198,51 +202,77 @@ def team_form_stats(gender=None, results=None, exp=PYTHAG_EXP, season=SEAS_DEFAU
         n = len(gl)
         if not n:
             continue
+        # THE SPLIT (THE BOOK 8.1 / Q2). The RECORD is every game — a forfeit
+        # win is a win, and the streak and the W/L form string keep it. Every
+        # number built from points comes off `mgl`, the same list with the
+        # walkovers removed. A 2-0 walkover has a margin of 2, so an unfiltered
+        # engine files it as a one-possession thriller and it lands in the
+        # clutch composite; that is not a hypothetical, it is what this did.
+        mgl = [g for g in gl if not g.get("ff")]
+        m = len(mgl)
         w = sum(1 for g in gl if g["won"])
-        pf = sum(g["pf"] for g in gl)
-        pa = sum(g["pa"] for g in gl)
-        margins = [g["margin"] for g in gl]
-        mov = sum(margins) / n
-        var = sum((m - mov) ** 2 for m in margins) / n
-        vol = var ** 0.5
-        pyth = (pf ** exp / (pf ** exp + pa ** exp)) if (pf or pa) else 0.0
+        ffw = sum(1 for g in gl if g.get("ff") and g["won"])
+        ffl = sum(1 for g in gl if g.get("ff") and not g["won"])
+        pf = sum(g["pf"] for g in mgl)
+        pa = sum(g["pa"] for g in mgl)
+        margins = [g["margin"] for g in mgl]
+        mov = (sum(margins) / m) if m else None
+        vol = ((sum((x - mov) ** 2 for x in margins) / m) ** 0.5) if m else None
+        pyth = (pf ** exp / (pf ** exp + pa ** exp)) if (pf or pa) else None
         actual = w / n
+        # Pythagorean expectation is a rate, so it is applied to the games it
+        # was measured over. A team that played three and walked over one is
+        # not "expected" to have won 1.7 of four.
+        pyth_w = pyth * m if pyth is not None else None
 
         def _rec(pred):
-            sub = [g for g in gl if pred(g)]
+            sub = [g for g in mgl if pred(g)]
             ww = sum(1 for g in sub if g["won"])
             return ww, len(sub) - ww, sub
 
         cw, cl, close = _rec(lambda g: abs(g["margin"]) <= 5)
         ow, ol, _ = _rec(lambda g: abs(g["margin"]) <= 3)
         bw, bl, _ = _rec(lambda g: abs(g["margin"]) >= 15)
-        last5 = gl[-5:]
-        l5_mov = sum(g["margin"] for g in last5) / len(last5)
+        last5 = mgl[-5:]
+        l5_mov = (sum(g["margin"] for g in last5) / len(last5)) if last5 else None
         l5_w = sum(1 for g in last5 if g["won"])
-        styp, slen = _streak(gl)
+        styp, slen = _streak(gl)          # the streak is a RECORD fact
         lw, ll = _longest(gl)
-        blow_rate = _safe(bw, n)
+        blow_rate = _safe(bw, m) if m else None
 
         raw[tid] = {
-            "games": n, "W": w, "L": n - w, "win_pct": actual,
+            "games": n, "margin_games": m,
+            "forfeit_w": ffw, "forfeit_l": ffl,
+            "W": w, "L": n - w, "win_pct": actual,
             "PF": pf, "PA": pa, "MOV": mov,
-            "PF_pg": pf / n, "PA_pg": pa / n,
+            "PF_pg": (pf / m) if m else None, "PA_pg": (pa / m) if m else None,
             "Volatility": vol,
-            "ceiling": max(margins), "floor": min(margins),
-            "Pyth_wpct": pyth, "Pyth_W": pyth * n, "Pyth_L": (1 - pyth) * n,
-            "Luck": actual - pyth, "Luck_wins": w - pyth * n,
+            "ceiling": max(margins) if margins else None,
+            "floor": min(margins) if margins else None,
+            "Pyth_wpct": pyth, "Pyth_W": pyth_w,
+            "Pyth_L": (m - pyth_w) if pyth_w is not None else None,
+            # Luck is actual-minus-expected and both halves have to be over the
+            # same games, so it is the PLAYED record against the Pythagorean.
+            "Luck": ((sum(1 for g in mgl if g["won"]) / m) - pyth)
+            if (m and pyth is not None) else None,
+            "Luck_wins": (sum(1 for g in mgl if g["won"]) - pyth_w)
+            if pyth_w is not None else None,
             "close_w": cw, "close_l": cl,
             "one_w": ow, "one_l": ol, "blow_w": bw, "blow_l": bl,
             "close_wpct": _safe(cw, cw + cl) if (cw + cl) else None,
             "avg_close_margin": (sum(g["margin"] for g in close) / len(close))
             if close else None,
             "n_close": cw + cl,
-            "l5_mov": l5_mov, "l5_wpct": l5_w / len(last5),
-            "mom_delta": l5_mov - mov,
+            "l5_mov": l5_mov,
+            "l5_wpct": (l5_w / len(last5)) if last5 else None,
+            "mom_delta": (l5_mov - mov)
+            if (l5_mov is not None and mov is not None) else None,
             "streak_type": styp, "streak_len": slen,
             "longest_win": lw, "longest_loss": ll,
             "blow_rate": blow_rate,
+            # the form string is a RECORD fact and keeps the walkovers, marked
             "form": ["W" if g["won"] else "L" for g in gl[-10:]],
+            "form_ff": [bool(g.get("ff")) for g in gl[-10:]],
         }
 
     # ── league-relative composites ──────────────────────────────────────────

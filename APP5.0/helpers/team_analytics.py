@@ -36,6 +36,7 @@ import helpers.player_ratings as PR
 # default_read_season() fallback the pickers have always used. An explicit
 # 'Current' is still honoured literally, and None still means every season.
 from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+import helpers.forfeits as FF
 
 
 
@@ -164,6 +165,9 @@ def team_game_log(team_id, season=SEAS_DEFAULT):
             "opp_class": meta.get(opp, {}).get("class", "N/A"),
             "pf": pf, "pa": pa, "margin": pf - pa, "won": pf > pa,
             "tracked": bool(g["tracked"]),
+            # a walkover (THE BOOK 8.1 / Q2) — the row still shows, and every
+            # margin read over this log has to skip it
+            "ff": FF.is_forfeit(pf, pa),
             "video_url": g["video_url"],
         })
     return out
@@ -1822,11 +1826,19 @@ def strength_of_schedule(game_log, power_by_team, rank_by_team, n_teams):
     vs_top10 = {"w": 0, "l": 0}
     quality_wins = 0
     toughest = None
+    n_ff = 0
     for g in game_log:
         opp = g["opp_id"]
         pw = power_by_team.get(opp)
         rk = rank_by_team.get(opp)
-        if pw is not None:
+        # Q2 names SOS explicitly: a walkover is out of it. `avg_opp_power` and
+        # `toughest` are schedule reads and skip it; the vs-top RECORDS below
+        # keep it, because a forfeit win is a win and those are W-L against a
+        # class of opponent rather than margin math. `n_forfeit` is returned so
+        # a surface can say which half it is looking at.
+        if g.get("ff"):
+            n_ff += 1
+        elif pw is not None:
             powers.append(pw)
             if toughest is None or pw > toughest["power"]:
                 toughest = {"opp": g["opp"], "power": pw,
@@ -1842,7 +1854,7 @@ def strength_of_schedule(game_log, power_by_team, rank_by_team, n_teams):
         "n_rated": len(powers),
         "vs_top": vs_top, "vs_top10": vs_top10,
         "quality_wins": quality_wins, "top_cut": top_cut,
-        "toughest": toughest,
+        "toughest": toughest, "n_forfeit": n_ff,
     }
 
 

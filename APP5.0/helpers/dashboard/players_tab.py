@@ -128,6 +128,39 @@ def render(ctx):
             st.caption("➕ Set player positions on the **Setup** page to unlock the "
                        "depth chart (with height / wingspan / weight).")
 
+        # ── one click into the full card (THE BOOK §14.1) ───────────────────
+        # The roster scan is the table a coach looks at most and it was the one
+        # surface with no route into a player card: the only way through was to
+        # switch to the Player sub-view and re-pick the name already on screen.
+        # `ctx.quick_view` is the page's opener over the SAME build_card_ctx +
+        # render_card the two Profile views use, so this adds a door rather
+        # than a fourth version of the card. None when the page could not open
+        # one (no tracked pool, or the entitlement lock is on) — in which case
+        # the Player sub-view is already saying why, and repeating it here
+        # would be a second lock message on one screen.
+        # ctx.players is the bundle's LIST of stat rows, not a {pid: row} map —
+        # the same shape _rating_df above iterates.
+        _qv = getattr(ctx, "quick_view", None)
+        # `_pid` is the key on a bundle row (defense_tab and insights_tab read
+        # the same one); the stat table's own pid is its dict KEY, not a column.
+        _qrows = [p for p in (ctx.players or []) if p.get("_pid") is not None]             if _qv else []
+        if _qrows:
+            _qrows.sort(key=lambda p: (p.get("number") if isinstance(
+                p.get("number"), int) else 999, str(p.get("name") or "")))
+            # player_label, never the raw name: a scouted player's "name" is a
+            # bare jersey number and a picker full of integers is §10's finding
+            # in the one place a coach chooses from.
+            _qlab = {p["_pid"]: _PLBL(p) for p in _qrows}
+            _q1, _q2 = st.columns([3, 1])
+            _qpid = _q1.selectbox(
+                "Open a card", [None] + [p["_pid"] for p in _qrows],
+                format_func=lambda p: ("Pick a player…" if p is None
+                                       else _qlab.get(p, f"#{p}")),
+                key="td_pl_qv_pick", label_visibility="collapsed")
+            if _q2.button("Open card", key="td_pl_qv_btn", width="stretch",
+                          disabled=_qpid is None):
+                _qv(_qpid)
+
         # Top table — a quick toggle between the compact ratings view (default)
         # and ONE scrollable grid of every per-player stat. Default off so the
         # tab stays light; the full grid is wide (every glossary stat) and is

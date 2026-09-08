@@ -1042,7 +1042,7 @@ def _poss_ledger(tid, vis=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _season_wpa(g, mode, season=SEAS_DEFAULT, vis=None):
+def _season_wpa(g, mode, season=SEAS.DEFAULT, vis=None):
     """Season WPA for a gender. `vis` is the read-filter (None = unrestricted).
 
     The bare season="Current" default here was the §9.5 sentinel trap: on a
@@ -6555,6 +6555,28 @@ def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
         zsplits=zsplits, zguard=zguard, hsplits=hsplits, vis=_gp))
 
 
+def _roster_quick_view(pid):
+    """The same player card as the Profile view, in a modal, from the roster.
+
+    THE BOOK §14.1 asked for one player screen. Three of the four surfaces
+    already shared one — `build_card_ctx` + `render_card` serve the Team
+    Dashboard's Profile view, the Players page's Profile tab AND the Players
+    page's quick-view dialog. The one that did not was the surface a coach
+    opens most: their OWN roster table, from which the only route into a card
+    was to switch sub-views and re-pick the player they were already looking
+    at. Same builder, same renderer, no fourth version of anything."""
+    from helpers.dashboard.player_card import quick_view
+    _pool = _ptable_full(gender, _prof_gp)
+    P = _pool.get(pid)
+    if not P:
+        return
+    _zs, _zg, _hs = _pp_zone_tables(_prof_gp)
+    quick_view(pid, gender, season=_prof_season, season_gp=_prof_gp,
+               P=P, rows=sorted(_pool.values(), key=lambda r: (r["Rank"] or 1e9)),
+               paid=True, accent=ACCENT, zsplits=_zs, zguard=_zg, hsplits=_hs,
+               vis=_prof_gp)
+
+
 # The Player Profile tab lives in helpers/dashboard/profile_tab.py; the heavy
 # renderer (_render_profile) and zone tables stay here and ride in as callables.
 #
@@ -6603,6 +6625,12 @@ if _tdview == "Roster":
     _rv = _seg("View", ["Roster", "Impact & Splits", "Player"], default="Roster",
                key="td_roster_view") or "Roster"
     if _rv == "Roster":
+        # The card opener rides on the ctx rather than being built in the tab:
+        # the page owns the caches (_ptable_full, _pp_zone_tables) and the
+        # season/pool binding, exactly as it does for the Profile view.
+        # Attached here, not at construction, because _prof_gp and the two
+        # fetchers are defined further down the file than _players_ctx is.
+        _players_ctx.quick_view = _roster_quick_view if _prof_open else None
         DPLAY.render(_players_ctx)
     elif _rv == "Impact & Splits":
         import helpers.advanced_ratings as ADV

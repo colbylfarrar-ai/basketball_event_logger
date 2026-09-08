@@ -1897,6 +1897,10 @@ if _tdview == "Charts":
             ACCENT=ACCENT, BLUE=BLUE, GREY=GREY, GOOD=GOOD, BAD=BAD,
             PURPLE=PURPLE, PINK=PINK, pctf=_pctf,
             located_team=_located_team,
+            # the league's located feed — the depth x set-call cross-tab
+            # normalizes each set against the league's mix for the SAME set,
+            # the way the defense tab already does for schemes (§12.6)
+            located_pool=_located_pool(gender, season_pick),
             named_view=_LGBIND(_named_playtype_view),
             playtype_view=_LGBIND(_playtype_view),
             set_profiles=_LGBIND(_set_profiles_view),

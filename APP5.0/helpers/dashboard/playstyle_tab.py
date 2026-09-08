@@ -36,6 +36,7 @@ from helpers.cards import pctile_bar, glass, dense_table
 from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
+import helpers.dashboard.shot_diet as _shot_diet
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 from helpers.stats import player_label as _PLBL
 
@@ -394,6 +395,25 @@ def render(ctx):
         if n_untagged:
             st.caption(f"{n_untagged}/{len(shots)} located shots are untagged — "
                        "tag them in the tracker to sharpen the by-set views.")
+
+    # ══ what each set call GETS, by depth ════════════════════════════════════
+    # The offensive mirror of the Defense tab's "what each scheme gives up".
+    # Both live call sites of kind_by_shot_tag hardcoded "defense" and nothing
+    # ever passed "play_type", so this half of the cross-tab was unbuilt on a
+    # column tagged on 93% of shots (THE BOOK §12.6). Measured on production it
+    # is the sharpest read on this tab: team 1's post-ups finish at the rim
+    # 68.8% of the time against a league post rate 24 points lower, and its
+    # off-screen actions land 18pp LESS at the arc and 14pp more in the 4ft-arc
+    # dead band — the curls are getting caught short.
+    #
+    # own_side=False because `shots` are our OWN attempts, so the shooter's
+    # point of view is the right one and more dead-band is bad news.
+    if shots:
+        _shot_diet.render_concedes(
+            shots, labels=_PTL, own_side=False,
+            league_shots=getattr(ctx, "located_pool", None),
+            heading="What each set call gets — by depth",
+            tag="play_type", unit="set call", key_prefix="ps")
 
     # ══ where the boards come from, by set call ══════════════════════════════
     # `shots` is our OWN attempts (located_team), and is emptied on the defense

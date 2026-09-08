@@ -52,6 +52,9 @@ from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 # call time through default_read_season(); an explicit 'Current' is still
 # honoured literally, and None still means every season.
 from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+# The edge floor the connection matrix draws at — quoted in the card's caption
+# so the number a coach reads and the number the engine applies are one thing.
+from helpers.passing_chains import MIN_EDGE_FEEDS as _PC_MIN_FEEDS
 
 # ── shared ctx builder (Tier 2 item 13) ─────────────────────────────────────────
 # The heavy per-player feed set behind the card, cached HERE so the Players page,
@@ -123,6 +126,17 @@ def _ctx_role_splits(g, vis=None):
 def _ctx_set_profiles(g, vis=None):
     gids = list(vis) if vis else PT._tracked_game_ids(g)
     return PT.player_playtype_shot_profiles(game_ids=gids) if gids else {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _conn_edges(gids=None):
+    """The passer→shooter edge list for a game pool (passing_chains).
+
+    Cached on the POOL, not the player: the matrix is one pass over the whole
+    event list and every card drawn from the same pool wants the same answer,
+    so paying per player would rebuild the shot-quality model each time."""
+    import helpers.passing_chains as _PC
+    return _PC.connection_matrix(game_ids=(list(gids) if gids else None))
 
 
 def build_card_ctx(pid, gender, season=SEAS_DEFAULT, season_gp=None, *,
@@ -1218,6 +1232,46 @@ def render_card(ctx):
                     "style read, not a grade: weak-side crashing and cleaning up "
                     "your own assignment are different jobs. Thin samples are "
                     "shrunk toward the pool mean (the stabilized value).")
+
+        # ── "who they feed" — the 2-node passer→shooter graph (§12.5) ────
+        # This card showed the 3-NODE hockey graph and nothing else, so a
+        # player's passing read was gated on an opt-in tag. Measured on the
+        # production book: 3,957 shots carry a plain pass_from_id against 317
+        # carrying a hockey tag, and the card's top feeder has 222 rendered
+        # feeds beside 8 tagged chains — the card showed her the 8. Thirty-six
+        # players clear the feed bar with no hockey chain at all and got
+        # nothing here. The hockey table below still renders when it can; it is
+        # the enrichment, not the entry point.
+        if paid:
+            _edges = [r for r in _conn_edges(tuple(_gp) if _gp is not None
+                                             else None)
+                      if r["passer"] == pid]
+            if _edges:
+                _ids = {r["shooter"] for r in _edges}
+                _nm = {r["id"]: r["name"] for r in query(
+                    "SELECT id, name FROM players WHERE id IN "
+                    f"({','.join('?' * len(_ids))})", tuple(_ids))}
+                st.markdown("**Who they feed** — passes that became a shot")
+                st.dataframe(pd.DataFrame([{
+                    "Shooter": _nm.get(r["shooter"], f"#{r['shooter']}"),
+                    "Feeds": r["feeds"],
+                    "Made": r["made"],
+                    "xA": r["xa"],
+                    "Finish vs xA": r["finish_delta"],
+                } for r in _edges]), hide_index=True, width="stretch",
+                    column_config={
+                        "xA": st.column_config.NumberColumn(format="%.2f"),
+                        "Finish vs xA": st.column_config.NumberColumn(
+                            format="%+.2f"),
+                    })
+                st.caption(
+                    f"Every pass this player made that produced a shot, made "
+                    f"or missed — an edge needs {_PC_MIN_FEEDS} feeds to draw. "
+                    "**xA** is what those looks were worth to an average "
+                    "finisher, so a pair that generates good shots the shooter "
+                    "misses still reads as a connection. **Finish vs xA** is a "
+                    "read about the SHOOTER, not the passer, and small samples "
+                    "dominate it below about ten feeds.")
 
         # ── "who ignites whom" — hockey-assist chains (spec Part 1 §3) ────
         # Opt-in capture, so this renders ONLY for a player who has tagged

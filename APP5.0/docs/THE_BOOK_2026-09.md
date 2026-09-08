@@ -1031,8 +1031,21 @@ local-copy artefact (§0.2).*
 The module works on production. `hast_coverage()` reports **317 tagged shots
 across 19 games, 220 pairs, `ready: True`** — so HAST and xA2 are live, not inert.
 
-But every entry point still drops any row without a hockey tag, and the **2-node
-passer→shooter edge is twelve times the sample**:
+**PARTLY RETRACTED 2026-09-07 — the 2-node graph was already built.**
+`passing_chains.connection_matrix` reads only `pass_from_id`, needs no hockey
+tag, and is the engine behind the Connection Matrix already rendering on
+Charts → Offense → Playmaking. Re-measured: 1,081 edges, 264 at the module's
+own `MIN_EDGE_FEEDS = 4`, 89 at ten or more — the finding's numbers, reproduced,
+against a graph that was already on screen. What was true is that the **player
+card** had no such block: it rendered "Who they ignite" behind
+`P.get("PotHAST")` and nothing else, so a player's passing read was gated on an
+opt-in tag. 100 players clear the feed bar, **36 of them have no hockey chain at
+all and saw nothing**, and the biggest feeder in the book has **222 rendered
+feeds beside 8 tagged chains** — the card showed her the 8. Fixed by adding
+"Who they feed" above the ignite table.
+
+But every hockey entry point still drops any row without the tag, and the
+**2-node passer→shooter edge is twelve times the sample**:
 
 ```
 shots carrying a plain pass_from_id      3,978

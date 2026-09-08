@@ -298,8 +298,9 @@ def _cut(d, unit, heading):
 
 
 def render_concedes(shots, *, labels=None, own_side=True, league_shots=None,
-                    heading="What each scheme gives up — by depth"):
-    """Shot band × defensive scheme: what the tag actually concedes.
+                    heading="What each scheme gives up — by depth",
+                    tag="defense", unit="scheme", key_prefix="def"):
+    """Shot band × a shot tag: what that tag actually produces or concedes.
 
     The cross-tab the zones could never give, because "gives up the paint" and
     "gives up layups" are the same sentence in a five-wedge system and two very
@@ -308,6 +309,13 @@ def render_concedes(shots, *, labels=None, own_side=True, league_shots=None,
     `shots` is the tab's already-scoped located feed — shots ALLOWED when
     own_side is True (the `defense` tag is then the scheme this team ran), or
     the team's own attempts when False (the tag is the scheme it faced).
+
+    `tag` is the shot column to cross against depth. It was hardcoded to
+    "defense" at both live call sites and `play_type` was never supplied
+    (THE BOOK §12.6), which left the offensive half of this cross-tab unbuilt
+    even though the column is tagged on 93% of shots. `unit` is the word for
+    a tag value in the copy — "scheme" for defenses, "set call" for play types
+    — and `key_prefix` keeps two instances on one page from colliding.
 
     NORMALIZED AGAINST THE LEAGUE'S MIX FOR THE SAME SCHEME, which is the whole
     point of `league_shots`. The raw version of this table produced a finding
@@ -323,12 +331,13 @@ def render_concedes(shots, *, labels=None, own_side=True, league_shots=None,
     no league feed is supplied the table falls back to raw shares and says so,
     rather than silently comparing against nothing.
     """
-    xt = SK.kind_by_shot_tag(shots, "defense", taxonomy=SK.DISPLAY_TAXONOMY)
+    xt = SK.kind_by_shot_tag(shots, tag, taxonomy=SK.DISPLAY_TAXONOMY)
     if not xt:
+        _what = "Defense" if tag == "defense" else "Play type"
         st.caption(
-            "No scheme has enough tagged located shots yet for a depth "
-            f"cross-tab (needs {SK.MIN_KIND_RATE_ATT} per scheme). Tag the "
-            "Defense in the tracker and this fills in.")
+            f"No {unit} has enough tagged located shots yet for a depth "
+            f"cross-tab (needs {SK.MIN_KIND_RATE_ATT} per {unit}). Tag the "
+            f"**{_what}** in the tracker and this fills in.")
         return
     st.markdown(f"<div class='lab-hdr'>{html.escape(heading)}</div>",
                 unsafe_allow_html=True)
@@ -337,12 +346,13 @@ def render_concedes(shots, *, labels=None, own_side=True, league_shots=None,
     # The league's OWN cross-tab, same tag, same taxonomy, no per-scheme
     # minimum — a scheme thin for one team can still be well sampled league-wide,
     # and that is exactly the row worth comparing against.
-    lg_xt = (SK.kind_by_shot_tag(league_shots, "defense", min_n=1,
+    lg_xt = (SK.kind_by_shot_tag(league_shots, tag, min_n=1,
                                  taxonomy=SK.DISPLAY_TAXONOMY)
              if league_shots else {})
 
     rows = sorted(xt.items(), key=lambda kv: -kv[1]["_meta"]["located"])
-    head = ("<table class='mini'><tr><th>Scheme</th><th>Shots</th>"
+    head = (f"<table class='mini'><tr><th>{html.escape(unit.title())}</th>"
+            "<th>Shots</th>"
             + "".join(f"<th>{html.escape(SK.BAND_LABELS[k])}</th>"
                       for k in cells_)
             + "<th>PPS</th></tr>")
@@ -394,32 +404,38 @@ def render_concedes(shots, *, labels=None, own_side=True, league_shots=None,
     st.markdown(head + body + "</table>", unsafe_allow_html=True)
 
     _verb = "concedes" if own_side else "gets"
+    # The "a scramble concedes rim by definition" example is the defensive
+    # one; the offensive axis has its own, and it is the same trap. A post-up
+    # ends at the rim for everybody, so a raw post row looks like a finding on
+    # every team in the league.
+    _trap = ("A scramble is a broken possession, so it gives up rim looks by "
+             "definition — every team's does."
+             if tag == "defense" else
+             "A post-up finishes at the rim for everyone, so a raw post row "
+             "looks like a finding on every team in the league.")
+    _plural = unit + ("s" if not unit.endswith("s") else "")
     if lg_xt:
         st.caption(
-            f"Big number = share of shots from each band this scheme {_verb}. "
-            f"Small number = **the same scheme's league average, subtracted**, "
-            f"in share points. That subtraction is the point of the table. A "
-            f"scramble is a broken possession, so it gives up rim looks by "
-            f"definition — every team's does. Against the league as a whole "
-            f"that reads as a damning finding about your defense; against "
-            f"other people's scrambles it reads as whatever it actually is. "
-            f"Only the small number is about you. Neutral under 3 points, "
-            f"which at these samples is a shot or two. The PPS column is "
-            f"normalized the same way. Schemes under "
+            f"Big number = share of shots from each band this {unit} {_verb}. "
+            f"Small number = **the same {unit}'s league average, subtracted**, "
+            f"in share points. That subtraction is the point of the table. "
+            f"{_trap} Against the league as a whole that reads as a damning "
+            f"finding; against other people's, it reads as whatever it "
+            f"actually is. Only the small number is about you. Neutral under 3 "
+            f"points, which at these samples is a shot or two. The PPS column "
+            f"is normalized the same way. {_plural.title()} under "
             f"{SK.MIN_KIND_RATE_ATT} tagged located shots for THIS team are "
             f"left off; the league baseline behind them has no such floor, "
-            f"because a scheme that is thin here can be well sampled "
+            f"because a {unit} that is thin here can be well sampled "
             f"league-wide and that is exactly the row worth comparing to. "
             f"Located shots only.")
     else:
         st.caption(
-            f"Share of shots from each depth band each scheme {_verb}, and the "
+            f"Share of shots from each depth band each {unit} {_verb}, and the "
             "points per shot that comes with it. **Not normalized** — no "
-            "league feed was supplied, so these are raw shares and a scheme "
-            "that concedes rim looks by its nature (a scramble) will look "
-            "alarming here whoever is running it. "
-            f"Schemes under {SK.MIN_KIND_RATE_ATT} tagged located shots are "
-            "left off. Located shots only.")
+            f"league feed was supplied, so these are raw shares. {_trap} "
+            f"{_plural.title()} under {SK.MIN_KIND_RATE_ATT} tagged located "
+            "shots are left off. Located shots only.")
 
 
 def league_reference(shots=None):

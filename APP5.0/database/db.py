@@ -685,6 +685,50 @@ def _run_init(db_path):
             # look-back; unbounded growth was bloating the DB. Runs every boot
             # (cheap — indexed on ts).
             "DELETE FROM audit_log WHERE ts < datetime('now','-12 months')",
+            # ── one IMPORTED row per real game (THE BOOK §8.8, ruling Q13) ───
+            # Q13: "Teams only play once per day", which is what unblocks an
+            # index at all. Two details decide its shape.
+            #
+            # NORMALISED, because half the duplicates are mirrored. Production
+            # carried nine duplicate matchups and four had home/away swapped,
+            # which UNIQUE(date, team1_id, team2_id) does not see — the mirror
+            # is exactly what ossaa_sync.merge_teams produces and the case
+            # game_dedup.py exists for. MIN/MAX collapses the orientation and
+            # SQLite indexes expressions.
+            #
+            # PARTIAL ON tracked_by = '', because Q13 answers a SCHEDULING
+            # question and a strict index would answer a different one. Two
+            # rows for one real game are DESIGNED here: tracker/api.py's
+            # create_game says so in its own comment — "the same real game
+            # already tracked by another coach is legitimate (a second angle)"
+            # — and game_dedup surfaces only the most detailed version at read
+            # time. A strict index also blocks the ordinary courtside create,
+            # measured: POST /games for a matchup the scraper has already
+            # loaded fails with an IntegrityError, in both orientations. That
+            # is a 500 on the one surface where a failure costs data
+            # permanently.
+            #
+            # tracked_by separates the two cleanly. Every imported row carries
+            # '' and every coach-created row carries an email, and on the
+            # production book all nine duplicate pairs are ''-on-both-sides
+            # while all nine collisions among ''-rows are those same nine. So
+            # this closes the class the scraper creates and leaves both the
+            # scrape-then-track and the second-angle paths open.
+            #
+            # DELIBERATELY NOT SELF-REPAIRING. uidx_glo above deletes its own
+            # duplicates because that table is a pure membership set and a
+            # second row carries no information. A duplicate GAME can carry
+            # events, a score and a tracked flag, and choosing which one to
+            # destroy is a judgement about someone's season — the same reason
+            # the client_uuid indexes are left alone. On a book that still has
+            # duplicates this statement FAILS, the loop below records it in
+            # _INIT_SKIPPED with its reason, and boot continues unharmed:
+            #     python tools/repair_book.py            # read it first
+            #     python tools/repair_book.py --apply
+            # and the index takes on the next boot with nothing left to do.
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_games_matchup ON games ("
+            " date, MIN(team1_id, team2_id), MAX(team1_id, team2_id))"
+            " WHERE tracked_by = ''",
         ]
 
         # Every statement above is written to be a no-op once applied, so the

@@ -868,6 +868,24 @@ if _hubview == "Games":
                     _d = normalize_date(r["date"])
                     _szn = SZ.resolve_new_game_season(
                         _d, None if _szn_pick.startswith("Auto") else _szn_pick)
+                    # ux_games_matchup (db.py) forbids a second IMPORTED row for
+                    # one matchup on one date, in either orientation. Catch it
+                    # here so the coach reads a sentence instead of the raw
+                    # constraint name — and so the rest of a pasted batch still
+                    # saves, which is what apply_delta's per-row try/except is
+                    # for. Q13: teams play once a day.
+                    _t1, _t2 = tm[r["team1"]], tm[r["team2"]]
+                    if query(
+                            "SELECT id FROM games WHERE date=? AND tracked_by=''"
+                            " AND ((team1_id=? AND team2_id=?)"
+                            "   OR (team1_id=? AND team2_id=?))",
+                            (_d, _t1, _t2, _t2, _t1)):
+                        skipped.append(
+                            f"Skipped {r['team1']} vs {r['team2']} on {_d} — "
+                            "that matchup is already on the schedule for that "
+                            "day (teams play once a day). Edit the existing "
+                            "row instead.")
+                        return
                     execute(
                         "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, neutral, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (tm[r["team1"]], tm[r["team2"]], _d,

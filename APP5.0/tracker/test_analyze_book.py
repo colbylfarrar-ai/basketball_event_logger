@@ -57,10 +57,17 @@ def _seed():
     # A lopsided book is the whole point — the planner only has a wrong choice
     # to make when one branch of the predicate is far more selective than the
     # other, which is what a book of 13,383 games and 63 tracked ones is.
+    # DISTINCT DATES. These 200 rows are all the same matchup, so recycling 28
+    # dates put seven copies of one game on each day — which `game_dedup` has
+    # always collapsed at read time and `ux_games_matchup` now refuses at write
+    # time. The planner test only wants a lopsided tracked/untracked split; the
+    # date collision was incidental and is not what is under test here.
+    from datetime import date as _date, timedelta as _td
+    _d0 = _date(2025, 11, 1)
     for i in range(200):
         execute("INSERT INTO games (team1_id,team2_id,date,tracked,season,"
                 "home_score,away_score) VALUES (?,?,?,?,'2025-2026',50,40)",
-                (t1, t2, "2026-01-%02d" % (i % 28 + 1), 1 if i < 3 else 0))
+                (t1, t2, (_d0 + _td(days=i)).isoformat(), 1 if i < 3 else 0))
     return t1
 
 

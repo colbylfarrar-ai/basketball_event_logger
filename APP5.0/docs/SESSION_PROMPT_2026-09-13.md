@@ -1,8 +1,9 @@
 > **READ THIS FIRST — written 2026-09-12 evening, after the block below.**
-> A headless Charts/Lab/box-score session landed **ten more commits on
-> `main`, still UNPUSHED** (`12d0471` → `db143bf`). The state-of-the-repo
-> paragraph below is now short by those ten, and the suites are **494
-> pytest / 106 run_all**, not 481 / 104.
+> A headless Charts/Lab/box-score session landed **twelve more commits on
+> `main`** starting at `12d0471`, and they were DEPLOYED the same evening.
+> The state-of-the-repo paragraph below is short by those twelve, TASK 1 is
+> already done, and the suites are **495 pytest / 106 run_all**, not
+> 481 / 104.
 >
 > What changed that this prompt's tasks touch:
 >
@@ -19,13 +20,17 @@
 >   `5_Rankings`, `7_Players`) — TASK 2 adds a class rank to a Rankings
 >   table, so read that allowlist before you add a column.
 >
-> **One founder call came out of it and it is not in the list below:**
-> `team_analytics.team_player_rows` solves the RAPM leaf over EVERY tracked
-> game that season, both genders, while labelling the table with one gender.
-> 94 of 261 girls get a different OVERALL and 136 a different league rank
-> depending on which code path drew the table — Adair Girls most of all.
-> `APP5.0/docs/CHARTS_LAB_BOX_2026-09-12.md` §1.12 has it, and
-> `python -m tools.rating_pool_diff` prints both columns. Ask before
+> **One founder call came out of it, and it was ruled and fixed the same
+> evening.** `team_analytics.team_player_rows` solved the RAPM leaf over
+> EVERY tracked game that season, both genders, while labelling the table
+> with one gender: 94 of 261 girls and **98 of 110 boys** got a different
+> OVERALL depending on which code path drew the table, and up to ten league
+> places. It is now gender-scoped through `seasons.game_pool`, guarded by
+> `tracker/test_roster_season_scope.py` (verified to fail without the fix),
+> and written up as §1.12 of `docs/CHARTS_LAB_BOX_2026-09-12.md`.
+> **Ratings on prod move slightly when this deploys** — that is expected and
+> it is the correction, not a regression. `python -m tools.rating_pool_diff`
+> is the gate if anyone proposes moving that scope again.
 > changing it: it moves published ratings.
 
 # Session prompt — 2026-09-13 (day session)

@@ -119,10 +119,67 @@ def test_roster_fallback_table_survives_arrow():
     ok(True, f"team {tid}: {len(df)}-row fallback table converts "
              f"(Grad types: {mixed})")
 
+def test_the_league_pool_is_scoped_to_the_GENDER_too():
+    """One player, one league rank, whichever code path drew the table.
+
+    `team_player_rows` builds the pool the league stat table is computed over
+    and hands it to `player_stat_table(gender=...)`, which filters the PLAYERS
+    by gender and passes the game ids straight through to the RAPM leaf. Before
+    2026-09-12 the pool carried no gender predicate, so the gender filter
+    reached the players and never reached the possessions the ridge was solved
+    over — a girls' league rank computed against a design matrix that included
+    boys' possessions, and vice versa.
+
+    It was not theoretical and it was not invisible. Measured on the production
+    book by `tools/rating_pool_diff.py`: 94 of 261 girls and 98 of 110 boys got
+    a different OVERALL depending on which path built the table, 136 and 81 a
+    different league Rank, biggest move ten places. The boys were worse hit —
+    20 boys games diluted by 43 girls games is the worse ratio.
+
+    This asserts the property rather than the predicate: the rows this function
+    returns must be identical to the ones a caller gets by scoping the pool by
+    gender itself, which is what every other league-wide wrapper does.
+    """
+    import helpers.team_analytics as TA
+    import helpers.player_ratings as PR
+    import helpers.seasons as SEAS
+    from database.db import query
+
+    probes = query(
+        """SELECT t.gender, g.season, g.team1_id tid, COUNT(*) n
+           FROM games g JOIN teams t ON t.id = g.team1_id
+           WHERE g.tracked = 1
+           GROUP BY t.gender, g.season, g.team1_id
+           ORDER BY n DESC LIMIT 4""")
+    if not probes:
+        print("  -- no tracked games in this DB; skipped")
+        return
+
+    for p in probes:
+        gender, season, tid = p["gender"], p["season"], p["tid"]
+        pool = set(SEAS.game_pool(season, gender=gender, tracked_only=True,
+                                  finished_only=False))
+        ref = PR.player_stat_table(gender=gender, min_games=1, game_ids=pool)
+        rows = TA.team_player_rows(tid, gender=gender, season=season)
+        if not rows:
+            continue
+        bad = [(r["_pid"], r["OVERALL"], ref[r["_pid"]]["OVERALL"])
+               for r in rows if r["_pid"] in ref
+               and round(r["OVERALL"] or -1, 3)
+               != round(ref[r["_pid"]]["OVERALL"] or -1, 3)]
+        ok(not bad, f"{gender}/{season} team {tid}: {len(rows)} rows, every "
+                    f"OVERALL matches the gender-scoped pool")
+        bad_rank = [(r["_pid"], r.get("Rank"), ref[r["_pid"]].get("Rank"))
+                    for r in rows if r["_pid"] in ref
+                    and r.get("Rank") != ref[r["_pid"]].get("Rank")]
+        ok(not bad_rank, f"{gender}/{season} team {tid}: every league Rank "
+                         f"matches too")
+
 
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))   # secrets-free cwd
     test_current_never_borrows_an_archived_roster()
     test_archived_season_still_returns_that_years_roster()
     test_roster_fallback_table_survives_arrow()
+    test_the_league_pool_is_scoped_to_the_GENDER_too()
     print(f"\nALL {PASSED} CHECKS PASSED")

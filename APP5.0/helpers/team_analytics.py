@@ -36,6 +36,7 @@ import helpers.player_ratings as PR
 # default_read_season() fallback the pickers have always used. An explicit
 # 'Current' is still honoured literally, and None still means every season.
 from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
+import helpers.seasons as SEAS   # game_pool: THE per-season scoping helper
 import helpers.forfeits as FF
 
 
@@ -407,8 +408,10 @@ def team_player_rows(team_id, gender=None, min_games=1, season=SEAS_DEFAULT):
     PR.player_stat_table (ratings are still pool-relative to the whole league,
     so they're comparable to players on other teams). Sorted by OVERALL desc.
 
-    The league pool is scoped to THAT SEASON's tracked games, so ratings and
-    percentiles reflect that year — not another year's roster.
+    The league pool is scoped to that season's tracked games FOR THAT GENDER,
+    so ratings and percentiles reflect that year and that league — not another
+    year's roster, and not the other gender's possessions (see the comment on
+    the pool below; the gender predicate is a correctness fix, not a filter).
 
     'Current' is scoped exactly like an archived label, and must be: live rows
     carry season='Current' literally (the rollover rewrites them to the real
@@ -420,8 +423,24 @@ def team_player_rows(team_id, gender=None, min_games=1, season=SEAS_DEFAULT):
     raw season-scoped roster (see helpers/dashboard/players_tab.py).
     """
     season = resolve_read_season(season)   # SEAS_DEFAULT -> the read season
-    gids = [r["id"] for r in query(
-        "SELECT id FROM games WHERE tracked=1 AND season=?", (season or "Current",))]
+    # GENDER, and it is load-bearing. This pool is handed to
+    # `player_stat_table(gender=...)`, which filters the PLAYERS by gender and
+    # hands the game ids straight through to the RAPM leaf — so without the
+    # predicate here the gender filter reached the players and never reached
+    # the possessions the ridge was solved over. A girls' league rank was
+    # being computed against a design matrix that included boys' possessions.
+    #
+    # Measured on production before the fix (`tools/rating_pool_diff.py`):
+    # 94 of 261 girls and 98 of 110 boys got a different OVERALL depending on
+    # which code path built the table, 136 and 81 a different league rank,
+    # biggest move ten places. The boys were hit hardest, because 20 boys
+    # games diluted by 43 girls games is the worse ratio.
+    #
+    # `finished_only=False` reproduces this query's own predicates exactly, so
+    # gender is the ONLY thing that changed: a tracked-but-unscored game stays
+    # in the pool as it always did.
+    gids = SEAS.game_pool(season, gender=gender, tracked_only=True,
+                          finished_only=False)
     if not gids:
         return []                        # no tracked games that season → no rows
     table = PR.player_stat_table(game_ids=set(gids), gender=gender,

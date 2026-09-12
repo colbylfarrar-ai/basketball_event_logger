@@ -272,7 +272,7 @@ table.
 
 ---
 
-### 1.12 · The one I did not fix — a player has two league ranks on one page
+### 1.12 · A player had two league ranks on one page — RULED AND FIXED
 
 Chasing the ~15-second floor (§3.2) turned up something that is not a
 performance problem. One cold render calls `_pure_rapm_cached` **twice**,
@@ -309,21 +309,38 @@ The magnitudes are small; the property is not. A player has two league ranks
 on one screen depending on which code path drew the table — THE BOOK §8.3's
 "two engines that answer the same question differently", in a new place.
 
-**I did not fix it, deliberately.** The gender-scoped pool is the obvious
-candidate — a girls' league rank computed against boys' possessions is hard
-to defend — but the fix moves published OVERALL numbers on your own roster,
-and the standing rule (`recal-round2`) is that nothing that moves a rating
-ships without its own gate. `tools/rating_pool_diff.py` **is** that gate:
-one command, holds every constant still, moves only the pool, prints both
-columns side by side.
+**Founder ruling, same evening: fix it.** The gate was run first, on both
+genders, and the boys turned out to be hit harder than the girls — 20 boys
+games diluted by 43 girls games is the worse ratio:
+
+```
+GIRLS  63-game pool vs 43   94 of 261 move OVERALL (-0.4…+0.2), 136 ranks, max 10 places
+BOYS   63-game pool vs 20   98 of 110 move (-0.6…+0.6),          81 ranks, max  7 places
+```
+
+`team_analytics.team_player_rows` now scopes its pool through
+`seasons.game_pool(season, gender=gender, tracked_only=True,
+finished_only=False)` — `finished_only=False` reproduces the old query's own
+predicates exactly, so **gender is the only thing that changed**; a
+tracked-but-unscored game stays in the pool as it always did.
+
+The regression guard is in `tracker/test_roster_season_scope.py`, and it
+asserts the PROPERTY rather than the predicate: the rows this function
+returns must be identical — OVERALL and league Rank — to the ones a caller
+gets by scoping the pool by gender itself. Verified in both directions:
+it passes on the fix and fails on `F/2025-2026 team 1` without it.
+
+`tools/rating_pool_diff.py` stays, because it measures the *choice* and not
+the code — it will always print a difference between the two pools. It is
+the gate to re-run if anyone proposes moving that scope again.
 
 ```bash
-APP5_DATA_DIR=~/app5_prod python -m tools.rating_pool_diff
+APP5_DATA_DIR=~/app5_prod python -m tools.rating_pool_diff --gender M
 ```
 
 ## 2 · What shipped
 
-Eight commits on `main`, each green on both suites.
+Twelve commits on `main`, each green on both suites.
 
 | commit | what |
 |---|---|
@@ -334,7 +351,10 @@ Eight commits on `main`, each green on both suites.
 | `d0bf55f` | **one pctile helper, and the quality table is built once** — `cards.pctile_or_thin`; `_player_quality` cached |
 | `9db874e` | **the shapes, locked** — two render suites, 108 checks |
 | `8f17fee` | **Trends leads with five figures, not thirty-nine** — the reference grid gets its own section; this document |
-| *(this commit)* | **every percentile in these three surfaces says its pool** — six chips and two tables on Play Style / Scheme, plus a static guard and the named backlog; the matchup grid's league table takes the season scope |
+| `e2fffd8` | **every percentile in these three surfaces says its pool** — six chips and two tables on Play Style / Scheme, plus a static guard and the named backlog; the matchup grid's league table takes the season scope |
+| `db143bf` | **`tools/rating_pool_diff.py`** — the gate for §1.12 |
+| `09db9b1` | the handoff note on tomorrow's prompt |
+| *(this commit)* | **§1.12 ruled and fixed** — `team_player_rows` scopes its league pool by gender, with the regression guard that fails without it |
 
 ### The two decisions worth knowing about
 
@@ -396,17 +416,17 @@ ratios, not the seconds):
 
 ```
 _team_bundle                                       20.5 s cumulative
-  └ player_ratings._pure_rapm_cached   × 2         14.9 s
+  └ player_ratings._pure_rapm_cached   × 2         14.9 s   <- now × 1, see §1.12
 player_stat_table                      × 2          9.3 s
 module import (box_score, team_analytics, …)        9.2 s
 ```
 
-The ridge solve runs **twice** per cold render, under two different
-`(gender, game-set)` keys — and on this book those two game-sets resolve to
-the same 261 players (§1.9 is the same duplication one level up, and fixing
-it there collapsed one of the two `player_stat_table` calls). Whether the two
-RAPM scopes are genuinely different, or the second is the same waste, is one
-measurement away and it is the largest single number on this page.
+The ridge solve ran **twice** per cold render, under two different
+`(gender, game-set)` keys — 63 games and 43. §1.12 turned out to be the
+reason, and fixing it collapsed them: both call sites now ask for the same
+43-game pool, the memo serves the second, and one `player_stat_table` call
+went with it. What is left under the floor is one `player_stat_table` and
+the module imports.
 
 *The next performance pass should aim at the bundle, not at the charts* —
 recorded here so nobody spends another session shaving figures.
@@ -437,9 +457,7 @@ recorded here so nobody spends another session shaving figures.
 * **Touching the Overview view.** It was offered as open to change and it did
   not come up: it leads with a verdict, it was the fastest view measured, and
   nothing in the scrub pointed at it.
-* **The RAPM pool (§1.12).** Measured, written up, and handed over with the
-  script that reproduces it. Changing it moves published ratings, and that
-  is a decision, not a cleanup.
+* ~~**The RAPM pool (§1.12).**~~ Measured, gated, ruled the same evening and fixed — see §1.12.
 * **Any constant.** `recal-round2` stands: nothing moves without its own gate.
 
 ---
@@ -448,19 +466,14 @@ recorded here so nobody spends another session shaving figures.
 
 Ranked, with the reason each waited.
 
-0. **The founder call in §1.12** — does a girls' league rank get computed
-   against boys' possessions? It is one line in
-   `team_analytics.team_player_rows`, it moves your own roster's OVERALL by
-   0.3–0.4 and one player ten league places, and
-   `tools/rating_pool_diff.py` shows both columns. **Before October**, not
-   because it is urgent but because four new readers should not learn two
-   different ranks for one player.
+0. ~~The founder call in §1.12~~ — **done.** Ruled and fixed the same
+   evening; `team_player_rows` is gender-scoped and
+   `tracker/test_roster_season_scope.py` holds it.
 
-1. **The `team_bundle` floor** (§3.2), and inside it the ridge solve that
-   runs twice. ~9 s of `player_stat_table` and ~15 s of
-   `_pure_rapm_cached` on every view of every team. It is the largest
-   number on this page and it is not in any of the three surfaces scoped
-   here, which is exactly why it should be its own session. §1.12 already
-   printed both RAPM keys: they are 63 games and 43 games,
-   so the two solves are not redundant — they are inconsistent, and
+1. **The `team_bundle` floor** (§3.2). ~9 s of `player_stat_table` on every
+   view of every team, and it is not in any of the three surfaces scoped
+   here, which is why it should be its own session. The *ridge* half of it
+   is already smaller: §1.12's fix made both RAPM call sites ask for the
+   same 43-game pool, so the memo serves the second one and the cold render
+   now solves **once, not twice** — re-traced to confirm.
    resolving that is what collapses them to one.

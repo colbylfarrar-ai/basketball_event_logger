@@ -34,6 +34,8 @@ import helpers.team_ratings as TR
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.hall_of_fame as HOF
+import helpers.league_analytics as LA
+import helpers.resume as RES
 from helpers.stats import player_label as _PLBL
 
 _cfg, ACCENT = page_chrome("Hall of Fame")
@@ -139,6 +141,83 @@ def _team_seasons(g):
                          "Power": s.get("Power"), "W": w, "L": l, "GP": gp,
                          "Win%": w / gp})
     return rows
+
+
+RESUME_TOP_N = RES.DEFAULT_TOP_N    # a "quality win" is a win over a top-25 team
+RESUME_MIN_GP = 15                  # a resume needs a season behind it
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _resumes(g):
+    """[{Team, Season, QW, Record, Best, BestRk, AsOf}] — the best RESUMES, by
+    wins over a team ranked top-`RESUME_TOP_N` ON THE DAY THEY WERE PLAYED.
+
+    THE BOOK 12.7. Everything here already existed: `resume.quality_wins` does
+    the counting and `rating_snapshots` holds the boards. What was missing was
+    a league-wide surface for it — the Team Dashboard can only ever answer the
+    question for the team you are looking at, and "who beat the most good teams
+    this season" is a hall-of-fame question.
+
+    Why the at-the-time board and not today's: a team's rank moves a median of
+    68 places over three months on this book, so "beat #6" read off the CURRENT
+    board is routinely describing a different team than the one that was played.
+    A resume is a claim about the night it happened.
+
+    Only seasons with saved boards can appear (`rank_history` empty -> skipped),
+    and a game played before the first snapshot of its season resolves to None
+    and is not counted — an honest gap, per `day_before`.
+
+    Forfeits are excluded. A walkover is a win in the W-L column and nowhere
+    else (THE BOOK 8.1), and "beat the #3 team" is exactly the sort of claim a
+    1-0 walkover must not be allowed to make.
+    """
+    rows = []
+    for lbl in _SEASONS:
+        try:
+            hist = RES.rank_history(g, season=lbl)
+        except Exception:
+            continue
+        if not hist:                     # no saved boards for that season
+            continue
+        try:
+            scored = TR.score_ratings(gender=g, season=lbl) or {}
+            results = LA.per_team_results(gender=g, season=lbl) or {}
+        except Exception:
+            continue
+        for tid, games in results.items():
+            s = scored.get(tid)
+            if not s:
+                continue
+            w, l = s.get("W", 0) or 0, s.get("L", 0) or 0
+            if w + l < RESUME_MIN_GP:
+                continue
+            # per_team_results names the opponent by ID in `opp`; quality_wins
+            # wants `opp_id` plus a display name, so translate once here.
+            log = [{"game_id": r["game_id"], "date": r["date"],
+                    "opp_id": r["opp"], "won": r["won"],
+                    "opp": ((scored.get(r["opp"]) or {}).get("name")
+                            or _team_name(r["opp"])),
+                    "pf": r["pf"], "pa": r["pa"], "margin": r["margin"]}
+                   for r in games if not r.get("ff")]
+            qw = RES.quality_wins(log, g, season=lbl, top_n=RESUME_TOP_N,
+                                  history=hist)
+            if not qw["n_then"]:
+                continue
+            best = min(qw["wins"], key=lambda r: r["rank_then"])
+            rows.append({"Team": s.get("name", tid), "Season": lbl,
+                         "QW": qw["n_then"], "W": w, "L": l,
+                         "Unresolved": qw["unresolved"],
+                         "Best": best["opp"], "BestRk": best["rank_then"],
+                         "BestDate": best["date"],
+                         "BestScore": f"{best['pf']}-{best['pa']}"})
+    rows.sort(key=lambda r: (-r["QW"], r["BestRk"]))
+    return rows[:10]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _team_name(tid):
+    r = query("SELECT name FROM teams WHERE id=?", (tid,))
+    return r[0]["name"] if r else str(tid)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -408,6 +487,44 @@ with tab_records:
                      "Record": f"{t['W']}–{t['L']}",
                      "Win%": f"{t['Win%'] * 100:.0f}%"} for t in _rc],
                    ["Team", "Season", "Record", "Win%"], "hof_t_rec")
+
+        # ── best resumes (THE BOOK 12.7) ─────────────────────────────────
+        st.markdown(f"**Best résumés — wins over a top-{RESUME_TOP_N} team "
+                    f"AT THE TIME** (min {RESUME_MIN_GP} games)")
+        _rs = _resumes(g)
+        if not _rs:
+            st.info("Needs saved weekly boards. Ranks are reconstructed from "
+                    "`rating_snapshots`, so a season with no snapshot history "
+                    "cannot have its résumés counted — Rankings › Overview can "
+                    "rebuild them.")
+        else:
+            # "No board" is not a footnote. This board RANKS teams by a count,
+            # and a team whose wins mostly predate the first snapshot is
+            # competing with an arm tied behind it — on this book that is 3 to
+            # 12 wins per team. Printing it is the difference between a ranking
+            # and a ranking that hides its own sample.
+            _board([{"Team": r["Team"], "Season": r["Season"],
+                     "Quality wins": r["QW"],
+                     "Record": f"{r['W']}–{r['L']}",
+                     "Best win": f"#{r['BestRk']} {r['Best']} "
+                                 f"({r['BestScore']})",
+                     "No board": r["Unresolved"] or ""}
+                    for r in _rs],
+                   ["Team", "Season", "Quality wins", "Record", "Best win",
+                    "No board"], "hof_t_resume")
+            st.caption(
+                f"A **quality win** is a win over a team ranked top-"
+                f"{RESUME_TOP_N} **on the day it was played**, not today. A "
+                f"rank moves a median of 68 places over three months on this "
+                f"book, so “beat #6” read off the current board usually "
+                f"describes a different team than the one that was played. "
+                f"**No board** counts that team's wins that could not be "
+                f"resolved at all — played before the season's first saved "
+                f"board, or against a team under the snapshot floor. Those are "
+                f"not counted rather than guessed, so a high number there means "
+                f"the résumé is under-measured, not that the team was weak. "
+                f"Forfeits are excluded too: a walkover is a win in the W–L "
+                f"column and nowhere else.")
 
     # ── the two teasers ──────────────────────────────────────────────────────
     st.markdown("### ✨ From the deep engine")

@@ -60,14 +60,23 @@ most high-school programs can show, and it renders well on a phone (checked at
 375 px: the score, linescore, WP chart and a horizontally-scrollable box all
 land). Do not trim it.
 
-**One item to re-affirm or cut deliberately: the officiating table** on the fan
-page — R / U1 / U2 with foul counts by quarter and by team. It is correctly
-anonymised, and it is a real differentiator. It is also the highest-risk, lowest
--funnel-value block on the page: it hands a parent in the stands a table that
-reads "the ref called 12 fouls, 6 on us". Officials are one of your customer
-segments; showing a referee their own rating is a promise you made them, and
-showing a crowd a crew's foul split is a different thing. Record whichever way
-you decide as a decision, so a future sweep does not "fix" it either way.
+**The officiating table — RULED, 2026-09-12: it stays, and it stays for the
+reason it was built.** I flagged it as the highest-risk block on the page and
+argued officials were a customer segment being over-served. **Both halves of
+that were wrong**, and the founder's correction is the design:
+
+> Officials are **not** a customer segment currently. The officiating table is
+> there **exclusively so assigners can check, in real time, whether a ref is
+> being a hero**. Assigners have been asked and they like it. From a founder who
+> refereed at the highest level of high-school basketball: you need thick skin,
+> and you do not call 7 fouls on one team and fewer than 4 on the other. The
+> table exists **by design, to show who is ruining a game.**
+
+So the asymmetry a parent can read off it is the *product*, not a side effect —
+the whole point is that a lopsided split is visible to somebody who can act on
+it. R / U1 / U2 anonymity is what keeps it a professional tool rather than a
+pile-on. **Recorded as a decision, not an oversight** (THE BOOK §14's rule), so
+no future sweep "fixes" it.
 
 ---
 
@@ -184,13 +193,13 @@ is the "too many hats" question in §0 in its most concrete form.
 
 # Smaller notes
 
-* **Name truncation.** "Claremore (Sequoya…" in the hero and the linescore on a
-  375 px phone. Cosmetic; a short-name field would fix it, and `cards.team_short`
-  already exists on the app side.
-* **A pregame fan page is thin** — badge, 0–0, "No stats yet", "Nothing logged
-  yet". A fan who scans the QR before tip-off gets nothing to read. The two
-  teams' records and ranks are already in `teams_directory`; putting them on the
-  pregame page is cheap and turns dead air into a reason to stay on the tab.
+* **Name truncation — APPROVED to fix.** "Claremore (Sequoya…" in the hero and
+  the linescore at 375 px. `cards.team_short` only strips the " Girls"/" Boys"
+  suffix, so it is not enough on its own and the live pages are plain JS that
+  cannot import it — the short name has to travel in the `public_feed` payload.
+* **A pregame fan page is thin — APPROVED to fill.** Badge, 0–0, "No stats yet",
+  "Nothing logged yet". A fan who scans the QR before tip-off gets nothing to
+  read. Both teams' records and ranks are already in `teams_directory`.
 * **`tracker/demo_tracker.html`** (4.9 KB) is not routed by `api.py` and is not
   referenced anywhere I could find. Probably a leftover; worth confirming before
   it confuses someone.

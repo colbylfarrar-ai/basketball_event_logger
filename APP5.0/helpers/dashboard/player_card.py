@@ -34,6 +34,10 @@ import helpers.trends as TRD
 import helpers.player_ratings as PR
 import helpers.playtypes as PT
 import helpers.shrinkage as SH
+# The card's prose is written ABOUT one player, so every other sentence carries
+# a pronoun. `teams.gender` picks the set; unknown falls to the singular they
+# rather than to the girls' book the card was first written against.
+import helpers.pronouns as PRON
 from helpers.ui import empty_state, rgb as _rgb, style_fig as _style
 from helpers import ui as _uit  # theme-reactive tokens — read at call time
 from helpers.cards import (fmt as _fmt, pctile as _pctile, pctile_bar as _pctile_bar,
@@ -56,13 +60,29 @@ from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 # so the number a coach reads and the number the engine applies are one thing.
 from helpers.passing_chains import MIN_EDGE_FEEDS as _PC_MIN_FEEDS
 
-#: The card's sections, in the order a coach asks the questions: does she help
-#: us win, how does she score, what is her form, where does she rank, where is
-#: she going, and the written strengths/watch read. The fold and the Verdict are
-#: above this selector and always render.
-CARD_SECTIONS = ["Does the team win with her on?", "How does she score?",
-                 "What is her form?", "Where does she rank?",
-                 "Where is she going?", "Strengths & watch"]
+#: The card's sections, in the order a coach asks the questions: does this
+#: player help us win, how do they score, what is their form, where do they
+#: rank, where are they going, and the written strengths/watch read. The fold
+#: and the Verdict are above this selector and always render.
+#:
+#: These are STABLE KEYS, not labels. The questions carry the roster's pronouns
+#: (helpers/pronouns), so the visible text changes with the league while the
+#: branch below still compares against one fixed string — and a coach who flips
+#: Girls→Boys keeps the section they were reading instead of falling back to
+#: the first one because the stored label no longer matches any option.
+CARD_SECTIONS = ["win_on", "scoring", "form", "rank", "going", "strengths"]
+
+#: key → the question, as a coach would ask it about this roster.
+def card_section_label(key, pron):
+    """Render one CARD_SECTIONS key as its gendered question."""
+    return {
+        "win_on": f"Does the team win with {pron.obj} on?",
+        "scoring": f"How {pron.v('does')} {pron.subj} score?",
+        "form": f"What is {pron.poss} form?",
+        "rank": f"Where {pron.v('does')} {pron.subj} rank?",
+        "going": f"Where {pron.v('is')} {pron.subj} going?",
+        "strengths": "Strengths & watch",
+    }.get(key, key)
 
 
 #: The league-percentile rail, ONCE. This 21-row list was copy-pasted verbatim
@@ -339,7 +359,7 @@ def _player_window(pid, game_ids=None, k=5):
     return tuple(r["id"] for r in rows)[-int(k):]
 
 
-def _pool_note(win_label, *, ranked=True):
+def _pool_note(win_label, *, ranked=True, pron=None):
     """The one line a windowed block owes the reader.
 
     Silence here is the actual bug: a coach who narrows to five games and then
@@ -347,14 +367,15 @@ def _pool_note(win_label, *, ranked=True):
     percentile moved with it. `ranked=False` is for a block whose numbers ARE
     the window (the game log, the shot map) — it says which games, and nothing
     about a pool it does not use."""
+    pron = pron or PRON.NEUTRAL
     if win_label == "Season":
         return
     if ranked:
-        st.caption(f"⚖️ Her own numbers below are the **{win_label.lower()}**. "
-                   "Percentiles, ranks and league bars still rank her SEASON "
-                   "totals against the season pool — a last-5 percentile would "
-                   "be a rank among everyone's last five games, which is a "
-                   "different claim.")
+        st.caption(f"⚖️ {pron.Poss} own numbers below are the "
+                   f"**{win_label.lower()}**. Percentiles, ranks and league "
+                   f"bars still rank {pron.poss} SEASON totals against the "
+                   "season pool — a last-5 percentile would be a rank among "
+                   "everyone's last five games, which is a different claim.")
     else:
         st.caption(f"Showing the **{win_label.lower()}** only.")
 
@@ -544,7 +565,7 @@ def _insight_feed(gender, season=SEAS_DEFAULT, game_ids=None):
         pass
     # top=None: rank, never hide. The renderer spotlights and says it is
     # spotlighting; truncating here would decide for it.
-    return IN.build_feed(table, ev, top=None, impact=imp)
+    return IN.build_feed(table, ev, top=None, impact=imp, gender=gender)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -642,6 +663,7 @@ def _render_matchups(ctx, P, pid, gender, gp):
     the whole time; the inverse read — who guarded HER — falls out of the same
     table for free and was on no surface at all.
     """
+    p = PRON.for_gender(gender)
     try:
         tbl, diff = _matchup_reads(gender, gp)
     except Exception as exc:
@@ -649,11 +671,12 @@ def _render_matchups(ctx, P, pid, gender, gp):
         return
     _names = {r["id"]: r["name"] for r in query("SELECT id, name FROM players")}
     mine = tbl.get(pid) or {}
-    st.markdown("<div class='pl-hdr'>Matchups — who she guarded, who guarded "
-                "her</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='pl-hdr'>Matchups — who {p.subj} "
+                f"{p.v('guarded')}, who guarded {p.obj}</div>",
+                unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**She contested**")
+        st.markdown(f"**{p.Subj} {p.v('contested')}**")
         _rows = sorted(((sh, c) for sh, c in (mine.get("by_shooter") or {}).items()
                         if c["FGA"] >= 3), key=lambda kv: -kv[1]["FGA"])[:8]
         if _rows:
@@ -669,12 +692,13 @@ def _render_matchups(ctx, P, pid, gender, gp):
                 st.caption(
                     f"Assignment difficulty **{_d['Difficulty100']:.0f}/100** "
                     f"over {_d.get('shots_faced', 0)} contested shots — 50 is an "
-                    "average night's assignment. High = she drew their scorers.")
+                    f"average night's assignment. High = {p.subj} "
+                    f"{p.v('drew')} their scorers.")
         else:
-            st.caption("No contested shots tagged to her yet — tap who "
+            st.caption(f"No contested shots tagged to {p.obj} yet — tap who "
                        "contested the shot in the Game Tracker.")
     with c2:
-        st.markdown("**Who guarded her**")
+        st.markdown(f"**Who guarded {p.obj}**")
         _inv = []
         for did, cell in tbl.items():
             c = (cell.get("by_shooter") or {}).get(pid)
@@ -682,21 +706,24 @@ def _render_matchups(ctx, P, pid, gender, gp):
                 _inv.append((did, c))
         _inv.sort(key=lambda kv: -kv[1]["FGA"])
         if _inv:
+            _fgcol = f"{p.Poss} FG%"
             st.dataframe(pd.DataFrame([{
                 "Defender": _names.get(d, f"#{d}"), "FGA": c["FGA"],
-                "Made": c["FGM"], "Her FG%": c["FG%"] or 0,
+                "Made": c["FGM"], _fgcol: c["FG%"] or 0,
                 "Pts": c["pts"]} for d, c in _inv[:8]]),
                 hide_index=True, width="stretch",
-                column_config={"Her FG%":
+                column_config={_fgcol:
                                st.column_config.NumberColumn(format="%.0f%%")})
-            st.caption("The same table, inverted — how she shot against each "
-                       "defender who took her.")
+            st.caption(f"The same table, inverted — how {p.subj} "
+                       f"{p.v('shot')} against each defender who took "
+                       f"{p.obj}.")
         else:
-            st.caption("Nobody is tagged as contesting her shots yet.")
+            st.caption(f"Nobody is tagged as contesting {p.poss} shots yet.")
 
 
 def _render_giveaways(pid, gender, gp):
     """Her giveaway mix — which kind, not just how many."""
+    p = PRON.for_gender(gender)
     try:
         mix = (_turnover_types(gender, gp) or {}).get(pid)
     except Exception:
@@ -711,7 +738,8 @@ def _render_giveaways(pid, gender, gp):
     _top = max(_rows, key=lambda r: r["n"])
     st.markdown(verdict_card([(
         "Giveaway mix", mix.get("total_tagged"),
-        f"Her most common giveaway is <b>{html_escape(_top['label'])}</b> — "
+        f"{p.Poss} most common giveaway is "
+        f"<b>{html_escape(_top['label'])}</b> — "
         f"{_top['n']} of {mix.get('total_tagged') or 0} tagged "
         f"({_top['share'] * 100:.0f}%). That is the one to drill.")]),
         unsafe_allow_html=True)
@@ -721,7 +749,8 @@ def _render_giveaways(pid, gender, gp):
         hide_index=True, width="stretch",
         column_config={"Share": st.column_config.NumberColumn(format="%.0f%%")})
     if mix.get("untagged"):
-        st.caption(f"{mix['untagged']} of her turnovers carry no kind tag yet.")
+        st.caption(f"{mix['untagged']} of {p.poss} turnovers carry no kind "
+                   "tag yet.")
 
 
 def _render_verdict(ctx, P, pid, rows, paid, lab_badges, archetype, feed):
@@ -747,6 +776,7 @@ def _render_verdict(ctx, P, pid, rows, paid, lab_badges, archetype, feed):
     import helpers.badges as _BG
     from helpers.cards import verdict_card as _vc
 
+    p = PRON.for_gender(getattr(ctx, "gender", None) or P.get("gender"))
     lines = []
 
     # the role, reconciled
@@ -758,8 +788,8 @@ def _render_verdict(ctx, P, pid, rows, paid, lab_badges, archetype, feed):
             "Role", None,
             f"<b>{html_escape(archetype)}</b> by play profile, "
             f"<b>{html_escape(_barch)}</b> by badges — "
-            + ("the two lenses agree, which is the strongest read this card "
-               "makes about who she is."
+            + (f"the two lenses agree, which is the strongest read this "
+               f"card makes about who {p.subj} {p.v('is')}."
                if _agree else
                "the two lenses disagree, so treat the role as unsettled and "
                "read the lines below rather than the label.")))
@@ -799,7 +829,7 @@ def _render_verdict(ctx, P, pid, rows, paid, lab_badges, archetype, feed):
                                       f.get("text") or ""))
                              for f in _mon]), unsafe_allow_html=True)
         if len(_ranked) > 6:
-            with st.expander(f"Every read the engines have on her "
+            with st.expander(f"Every read the engines have on {p.obj} "
                              f"({len(_ranked)} lines, most material first)"):
                 st.markdown(_vc([
                     (f.get("metric") or "Read", f.get("n"),
@@ -829,6 +859,9 @@ def render_card(ctx):
     # view passes its gender tracked pool so those sections read that season too.
     _szn = getattr(ctx, "season", "Current")
     _gp = getattr(ctx, "season_gp", None)
+    # Pronouns for every sentence this card writes about the player. No "F"
+    # fallback on purpose: a card that cannot name its league says "they".
+    _pron = PRON.for_gender(getattr(ctx, "gender", None) or P.get("gender"))
     _hand = (hsplits or {}).get(pid, {})
     _hand_dom = _hand.get("dominant", {}).get("all") if _hand else None
     _hand_weak = _hand.get("weak", {}).get("all") if _hand else None
@@ -963,8 +996,9 @@ def render_card(ctx):
         located = _ctx_located(pid, _win)
         foulft = _ctx_foulft(_win).get(pid)
         if not _win:
-            st.caption(f"No tracked games for her in the {_win_lab.lower()}.")
-        _pool_note(_win_lab)
+            st.caption(f"No tracked games for {_pron.obj} in the "
+                       f"{_win_lab.lower()}.")
+        _pool_note(_win_lab, pron=_pron)
     # The fold's trajectory chips are "last 5 vs SEASON" by construction, so they
     # keep the season boxes; narrowing them would compare the last five to
     # themselves and always read flat.
@@ -1227,7 +1261,7 @@ def render_card(ctx):
         # narrowed to five games reads these bars as five-game percentiles.
         st.markdown("<div class='pl-hdr'>League percentiles</div>",
                     unsafe_allow_html=True)
-        _pool_note(_win_lab)
+        _pool_note(_win_lab, pron=_pron)
         _PPG = PCT_RAIL
         _third = (len(_PPG) + 2) // 3
         _gpc = st.columns(3)
@@ -1268,14 +1302,16 @@ def render_card(ctx):
     # exactly this reason. This matters most inside quick_view, where the
     # whole card renders in a modal.
     import helpers.ui as _UIseg
+    # Options are the stable keys; `format_func` renders the gendered question.
     _sec = _UIseg.seg("Section", CARD_SECTIONS, default=CARD_SECTIONS[0],
-                      key=f"{_kp}_sec", label_visibility="collapsed") \
+                      key=f"{_kp}_sec", label_visibility="collapsed",
+                      format_func=lambda k: card_section_label(k, _pron)) \
         or CARD_SECTIONS[0]
 
-    if _sec == "Does the team win with her on?":
+    if _sec == "win_on":
         # Impact (RAPM/WPA/WAR) is a LEAGUE design and stays on the season
         # pool; the matchup block below is windowed. One line, said once.
-        _pool_note(_win_lab)
+        _pool_note(_win_lab, pron=_pron)
         # ── "why this OVERALL" (ratings live as bars in the grid) ────────────
         # The seven-metric tile row that used to sit here is gone. Five of the seven
         # — USG%, +/-, EFF, FIC, VPS — are rows in the league-percentile rail
@@ -1379,9 +1415,10 @@ def render_card(ctx):
                     unsafe_allow_html=True)
                 if _oo.get("net_diff") is not None:
                     st.caption(
-                        f"Net **{_oo['net_diff']:+.1f}** points per 100 possessions "
-                        "with her on the floor versus off it, over the games she "
-                        "played. Raw on/off is teammate-confounded and measured "
+                        f"Net **{_oo['net_diff']:+.1f}** points per 100 "
+                        f"possessions with {_pron.obj} on the floor versus off "
+                        f"it, over the games {_pron.subj} played. "
+                        "Raw on/off is teammate-confounded and measured "
                         "barely repeatable on a book this size — read the sign and "
                         "the rough size, and let the adjusted RAPM in the Impact "
                         "block above carry the argument.")
@@ -1464,8 +1501,8 @@ def render_card(ctx):
                          getattr(ctx, "gender", None) or P.get("gender") or "F",
                          _win)
 
-    if _sec == "How does she score?":
-        _pool_note(_win_lab)
+    if _sec == "scoring":
+        _pool_note(_win_lab, pron=_pron)
         # ── signature / invented metrics (glass tiles) ────────────────────────────
         #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.
         st.markdown("<div class='pl-hdr'>Signature metrics</div>",
@@ -1999,10 +2036,10 @@ def render_card(ctx):
                           getattr(ctx, "gender", None) or P.get("gender") or "F",
                           _gp)
 
-    if _sec == "What is her form?":
+    if _sec == "form":
         # The log and the form strip ARE the window, so this block owes the
         # reader which games — not a disclaimer about a pool it never reads.
-        _pool_note(_win_lab, ranked=False)
+        _pool_note(_win_lab, ranked=False, pron=_pron)
         # ── Game log ──────────────────────────────────────────────────────────────
         st.markdown("<div class='pl-hdr'>Game log</div>",
                     unsafe_allow_html=True)
@@ -2129,7 +2166,8 @@ def render_card(ctx):
                                       "role-adjusted)"),
                              "Margin": st.column_config.NumberColumn(
                                  "Margin", format="%+d",
-                                 help="Final margin from her team's side.")})
+                                 help=f"Final margin from {_pron.poss} team's "
+                                      f"side.")})
             st.caption(f"{len(log)} tracked games. Box scores are per game from "
                        "tracked events.")
 
@@ -2222,9 +2260,9 @@ def render_card(ctx):
                         "their game log will show up here.")
 
 
-    if _sec == "Where does she rank?":
+    if _sec == "rank":
         # Nothing in this section moves with the window, by construction.
-        _pool_note(_win_lab)
+        _pool_note(_win_lab, pron=_pron)
         # ── League percentiles — Free tier only (Paid gets the Overview grid rail) ──
         if not paid:
             st.markdown("<div class='pl-hdr'>League percentiles</div>",
@@ -2290,8 +2328,8 @@ def render_card(ctx):
                 st.plotly_chart(bar, width="stretch", key=f"{_kp}_leaguebar")
 
 
-    if _sec == "Where is she going?":
-        _pool_note(_win_lab)
+    if _sec == "going":
+        _pool_note(_win_lab, pron=_pron)
         # ── Across seasons — development (Tier 3, ML_LAYER_ROADMAP) ───────────────
         # Season-by-season lines + YoY progression/regression + a rough next-season
         # projection. Auto-lights-up as rollovers link more seasons; on one season it
@@ -2420,8 +2458,8 @@ def render_card(ctx):
                     st.caption("🟢 solid sample · 🟡 directional · ⚪ thin — reads as its prior.")
 
 
-    if _sec == "Strengths & watch":
-        _pool_note(_win_lab)
+    if _sec == "strengths":
+        _pool_note(_win_lab, pron=_pron)
         # ── Scouting report — rides on the category ratings → Paid ────────────────
         if paid:
             st.markdown("<div class='pl-hdr'>Scouting report</div>",
@@ -2488,7 +2526,8 @@ def render_card(ctx):
                     f"{arch[1]}</div>"
                     f"<div style='font-size:11px;color:var(--subtext);margin-top:6px'>"
                     f"Named from percentile cutoffs because the play-profile "
-                    f"cluster has too little to group her on yet — the Verdict at "
+                    f"cluster has too little to group {_pron.obj} on yet — "
+                    f"the Verdict at "
                     f"the top uses the measured lenses as soon as they exist."
                     f"</div></div>", unsafe_allow_html=True)
 

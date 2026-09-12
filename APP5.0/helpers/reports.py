@@ -354,7 +354,8 @@ def player_card_html(player_id, gender=None, table=None, *,
         import helpers.insights as _IN
         import helpers.insights_severity as _SEV
         _ev = S.fetch_events(_scope) if _scope else S.fetch_events()
-        _feed = _IN.build_feed(table, _ev, top=None).get(player_id, [])
+        _feed = _IN.build_feed(table, _ev, top=None,
+                               gender=gender).get(player_id, [])
         _vlines = []
         if _arch and _barch:
             _vlines.append(

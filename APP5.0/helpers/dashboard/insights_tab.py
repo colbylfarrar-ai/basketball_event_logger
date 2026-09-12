@@ -46,6 +46,7 @@ import helpers.insights_severity as SEV
 import helpers.player_ratings as PR
 import helpers.stats as S
 import helpers.insights as IN
+import helpers.pronouns as PRON
 import helpers.insights_team as INT
 import helpers.playtypes as PT
 import helpers.wpa as WPA
@@ -321,7 +322,8 @@ def _league(gender, season=SEAS_DEFAULT, season_gp=None, fp=None):
         pass
     # top=None → EVERY qualifying insight per player (the tab is the deep-dive
     # home; the 3-line cap stays on player-card / rankings surfaces).
-    feed = IN.build_feed(table, ev, top=None, impact=imp) if table else {}
+    feed = (IN.build_feed(table, ev, top=None, impact=imp, gender=gender)
+            if table else {})
     roles = PT.player_role_splits(events=ev) if ev else {}
     cliffs = IN.guarded_cliffs(ev) if ev else {}
     try:
@@ -750,7 +752,8 @@ def render(ctx):
             for ln in feed.get(pid, []):
                 _is_new(ln)
         _seen_persist()      # stamp today's first-sight dates (one write, if any)
-        _impact_board(pids, table, impmap, impact)
+        _impact_board(pids, table, impmap, impact,
+                      pron=PRON.for_gender(getattr(ctx, "gender", None)))
         try:
             _DEEP.render_offense_board(sctx, pids, table, fp=_fp)
         except Exception as _exc:
@@ -910,7 +913,7 @@ def _player_feed(feed, pids, table):
                    "league average on the tracked splits, or needs more games.")
 
 
-def _impact_board(pids, table, impmap, wpa):
+def _impact_board(pids, table, impmap, wpa, pron=None):
     """RAPM · HoopWAR · WPA on one row, with the possession sample beside each.
 
     Free: `_league` already solves the ridge for the stats-vs-substance
@@ -948,8 +951,9 @@ def _impact_board(pids, table, impmap, wpa):
     _BR._hdr("Impact board — adjusted, not raw",
              "RAPM strips out who a player shared the floor with; HoopWAR "
              "prices that in wins; WPA is the leverage-weighted record of what "
-             "actually swung games. Read them together — they disagree when a "
-             "player's minutes flatter her.")
+             "actually swung games. Read them together — they disagree "
+             f"when a player's minutes flatter "
+             f"{(pron or PRON.NEUTRAL).obj}.")
     st.markdown(dense_table(rows), unsafe_allow_html=True)
     st.caption("Poss = the possessions the ridge had to work with. A player "
                "under a few hundred is being carried by the box-impact prior, "

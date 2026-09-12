@@ -31,6 +31,7 @@ from __future__ import annotations
 import streamlit as st
 
 import helpers.stats as S
+import helpers.pronouns as PRON
 from helpers.cards import dense_table, verdict_card, conf_dot_r
 import helpers.reliability as REL
 
@@ -164,12 +165,14 @@ def render_offense_board(ctx, pids, table, fp=None):
     diets, edges, load, footprint, own = _off_board(tids, fp=fp)
     if not diets:
         return
+    pr = PRON.for_gender(getattr(ctx, "gender", None))
 
     _hdr("Offense — what each player actually shoots")
     st.caption(
         "The mirror of the Defense tab, on the side the measurement actually "
-        "supports. **OLOAD%** is the offensive twin of DLOAD%: the share of her "
-        "team's shots a player takes while she is on the floor — five players "
+        f"supports. **OLOAD%** is the offensive twin of DLOAD%: the share of "
+        f"{pr.poss} team's shots a player takes while {pr.subj} "
+        f"{pr.v('is')} on the floor — five players "
         "share every shot, so **20% is average by construction**. Read it as "
         "who the offense is looking for.")
 
@@ -265,7 +268,8 @@ def render_offense_board(ctx, pids, table, fp=None):
                      "on vs off (descriptive)"):
         st.caption(
             "What this team's own shot selection did while a player was out "
-            "there — the read behind \"the offense changes shape when she checks "
+            f"there — the read behind \"the offense changes shape when "
+            f"{pr.subj} {pr.v('checks')} "
             "in\". **Not teammate-adjusted and not repeatable**: the defensive "
             "twin of this delta measured −0.06 across a split season, the same "
             "failure mode as raw on/off. Describe the minutes with it; argue "
@@ -337,11 +341,14 @@ def render_defense_board(ctx, pids, table, fp=None):
     if not diets:
         return
 
+    pr = PRON.for_gender(getattr(ctx, "gender", None))
+
     _hdr("Defense — what each player is asked to guard")
     st.caption(
         "The offensive profile, ported to defense off the nearest-defender tap. "
         "**DLOAD%** is the defensive twin of usage: the share of this team's "
-        "tagged contests a player takes on while she is on the floor — five "
+        f"tagged contests a player takes on while {pr.subj} {pr.v('is')} on "
+        "the floor — five "
         "players share every possession, so **20% is average by construction**. "
         "Read it as who the offense is hunting.")
 
@@ -392,13 +399,16 @@ def render_defense_board(ctx, pids, table, fp=None):
         "*isolation* alone measures −0.15. And **on-ball / off-ball / zone "
         "minutes are compared to this player's OWN TEAMMATES**, not the league "
         "— pooled leaguewide, man-defense share measures .73 and almost all of "
-        "it is which team she plays for rather than anything about her.",
+        f"it is which team {pr.subj} {pr.v('plays')} for rather than anything "
+        f"about {pr.obj}.",
         unsafe_allow_html=True)
 
     with st.expander("Assignment mix — what actions each defender drew "
                      "(a record of these games, not a tendency)"):
+        _cx = pr.v("'s")          # she's / he's / they're
         st.caption(
-            "The single most natural sentence in this data — *\"she's an "
+            f"The single most natural sentence in this data — "
+            f"*\"{pr.subj}{_cx} an "
             "isolation defender\"* — is the one it does not support: "
             "isolation-assignment share measures **r = −0.15** across a split "
             "season, worse than any offensive read in the book. A defender's "
@@ -510,6 +520,9 @@ def _ported(team_id, gender, tids, fp=None):
     gids = list(tids)
     out, diag = {}, {}
     names = _names()
+    # Every verdict below writes prose ABOUT one player, so the engines need
+    # the roster's pronouns, not the girls' book they were first written for.
+    pron = PRON.for_gender(gender)
 
     def stage(key, fn):
         try:
@@ -536,13 +549,14 @@ def _ported(team_id, gender, tids, fp=None):
     def _involve():
         import helpers.involvement as IV
         return IV.involvement_verdict(
-            IV.player_involvement(events=ev, team_id=team_id), names=names)
+            IV.player_involvement(events=ev, team_id=team_id), names=names,
+            pron=pron)
 
     def _fouls():
         import helpers.foul_trouble as FT
         bench = FT.bench_cost(events=ev, team_id=team_id)
         state = FT.team_foul_state_net(events=ev, team_id=team_id)
-        return FT.foul_trouble_verdict(bench, state, names=names)
+        return FT.foul_trouble_verdict(bench, state, names=names, pron=pron)
 
     def _clock():
         import helpers.foul_trouble as FT
@@ -552,7 +566,7 @@ def _ported(team_id, gender, tids, fp=None):
         # answer "is it early?" — the clock in absolute time, the other two
         # against the quarter the foul landed in.
         lines = FT.foul_clock_lines(
-            FT.foul_clock(events=ev, team_id=team_id), names=names)
+            FT.foul_clock(events=ev, team_id=team_id), names=names, pron=pron)
         try:
             import helpers.lineups as LU
             floor = LU._event_floor(gids)
@@ -561,7 +575,7 @@ def _ported(team_id, gender, tids, fp=None):
         lines += FT.quarter_rule_lines(
             FT.early_fouls(events=ev, team_id=team_id),
             FT.carried_load(events=ev, floor=floor, team_id=team_id),
-            names=names)
+            names=names, pron=pron)
         return lines
 
     # ── engines with no verdict of their own; the lines are built here ───────

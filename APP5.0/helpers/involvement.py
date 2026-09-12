@@ -52,6 +52,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 import helpers.stats as S
+import helpers.pronouns as PRON
 from helpers.lineups import _event_floor
 
 #: On-floor scoring plays below this and the rate is noise. A high-school team
@@ -194,13 +195,18 @@ def team_tag_dependence(rows):
     return (tag / inv) if inv else 0.0
 
 
-def involvement_verdict(rows, names=None, min_plays=MIN_PLAYS):
+def involvement_verdict(rows, names=None, min_plays=MIN_PLAYS, pron=None):
     """[(badge, n, html)] for helpers.cards.verdict_card.
 
     Leads with the player whose involvement most OUTRUNS their scoring, because
     that is the read no box score gives — the glue player the stat sheet calls
     quiet. Silent when the sample cannot carry it.
+
+    `pron` is the roster's pronoun set (helpers/pronouns.for_gender); omitted,
+    the lines read as singular they rather than guessing a league.
     """
+    p = pron or PRON.NEUTRAL
+
     def nm(pid):
         return (names or {}).get(pid, f"#{pid}")
 
@@ -213,8 +219,9 @@ def involvement_verdict(rows, names=None, min_plays=MIN_PLAYS):
     pid, r = top
     lines.append((
         "Most involved", r["plays_on"],
-        f"<b>{nm(pid)}</b> has a hand in <b>{r['rate']:.0f}%</b> of the "
-        f"baskets scored while she is on the floor "
+        f"<b>{nm(pid)}</b> {p.v('has')} a hand in "
+        f"<b>{r['rate']:.0f}%</b> of the "
+        f"baskets scored while {p.subj} {p.v('is')} on the floor "
         f"({r['involved']} of {r['plays_on']})."))
 
     # The glue read: involved a lot, scoring little of it themselves. Ranked by
@@ -228,10 +235,11 @@ def involvement_verdict(rows, names=None, min_plays=MIN_PLAYS):
         other = gr["involved"] - gr["as_scorer"]
         lines.append((
             "Glue", gr["plays_on"],
-            f"<b>{nm(gp)}</b> is in on <b>{gr['rate']:.0f}%</b> of them but "
-            f"scores only <b>{gr['as_scorer']}</b> — {other} of her "
-            f"{gr['involved']} touches are passes, screens and second "
-            f"chances. The box score will not show this."))
+            f"<b>{nm(gp)}</b> {p.v('is')} in on "
+            f"<b>{gr['rate']:.0f}%</b> of them but "
+            f"{p.v('scores')} only <b>{gr['as_scorer']}</b> — {other} of "
+            f"{p.poss} {gr['involved']} touches are passes, screens and "
+            f"second chances. The box score will not show this."))
 
     dep = team_tag_dependence(elig)
     if dep >= TAG_DEPENDENCE_WARN:

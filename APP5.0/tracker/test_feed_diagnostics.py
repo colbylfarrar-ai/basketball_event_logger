@@ -46,7 +46,10 @@ keys = {k for k, _fn, _t in IN._FEED_STAGES}
 ok(keys <= sig, f"every stage key is a real league_insights kwarg ({len(keys)})")
 ok(len(keys) == len(IN._FEED_STAGES), "no duplicate stage keys")
 ok("impact" not in keys, "impact is the caller's, not a stage")
-missing = sig - keys - {"table", "top", "impact"}
+# `gender` joins table/top/impact as a kwarg the CALLER supplies rather than a
+# split a stage computes: it carries the roster's pronouns into the generators
+# (helpers/pronouns), so there is no events pass that could produce it.
+missing = sig - keys - {"table", "top", "impact", "gender"}
 ok(not missing, f"no league_insights split kwarg is left unfed (missing: {missing})")
 
 print("\n-- a raising stage is recorded, not swallowed --------------------")

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+import helpers.pronouns as PRON
 
 #: Failures inside the feed builders used to be `except Exception: pass` at
 #: fourteen sites, which made a raising engine indistinguishable from an engine
@@ -125,9 +126,10 @@ def _g_selection(row, pools, d):
                f"league (shot difficulty {sr:.0f} vs 50 average); live with "
                f"the contested ones.")
     else:
+        _p = d.get("pron") or PRON.NEUTRAL
         txt = (f"**Great shot selection** — consistently hunts the easier "
-               f"look (shot difficulty {sr:.0f} vs 50 average); make her "
-               f"take the hard ones.")
+               f"look (shot difficulty {sr:.0f} vs 50 average); make "
+               f"{_p.obj} take the hard ones.")
     return {"text": txt, "score": abs(z), "z": z, "metric": "Selection", "n": n}
 
 
@@ -1347,7 +1349,8 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
                     matchup=None, totypes=None, foulft=None, pnr=None,
                     spacing=None, garbage=None, stints=None, form=None,
                     onoff=None, def_diet=None, def_edge=None, def_load=None,
-                    def_footprint=None, scheme_faced=None, top=3):
+                    def_footprint=None, scheme_faced=None, top=3,
+                    gender=None):
     """{player_id: [insight, ...]} — top findings per player, |z| vs the pool,
     hard-gated by sample. ``guarded`` = {pid: {'cliff','n'}}, ``q4`` =
     {pid: {'swing','n'}}, ``playtypes`` = {pid: {'key','label','PPP','pct',
@@ -1358,9 +1361,15 @@ def league_insights(table, *, guarded=None, q4=None, playtypes=None,
     when omitted those generators simply don't fire. Generators tied to
     play_type or x,y light up automatically once games carry that data."""
     rows = list(table.items())
+    # Generators write prose ABOUT a player, so they need the league's pronoun
+    # set. It rides in `derived` rather than in every generator signature: one
+    # of fifteen generators uses it today, and the other fourteen should not
+    # have to grow an argument for it.
+    _pron = PRON.for_gender(gender)
     derived = {}
     for pid, row in rows:
         d = _derive(row)
+        d["pron"] = _pron
         if guarded and pid in guarded:
             d["guard_cliff"] = guarded[pid].get("cliff")
             d["guard_n"] = guarded[pid].get("n")
@@ -1886,7 +1895,8 @@ _FEED_STAGES = (
 )
 
 
-def build_feed(table, events, *, top=3, impact=None, diagnostics=None):
+def build_feed(table, events, *, top=3, impact=None, diagnostics=None,
+               gender=None):
     """One-call insight feed: precomputes the event-derived splits (guarded-cliff,
     Q4, signature play_type, situational) and runs the miner. ``{pid: [insight,...]}``.
     ``impact`` = a precomputed ``impact_map`` (RAPM/WAR need gender+season the
@@ -1912,4 +1922,5 @@ def build_feed(table, events, *, top=3, impact=None, diagnostics=None):
                 diagnostics[key] = msg
             _log.warning("insights.build_feed stage %r failed - %s", key, msg,
                          exc_info=True)
-    return league_insights(table, impact=impact, top=top, **parts)
+    return league_insights(table, impact=impact, top=top, gender=gender,
+                           **parts)

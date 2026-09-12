@@ -28,6 +28,7 @@ import streamlit as st
 
 import helpers.ui as _UI
 import helpers.cards as CARDS
+import helpers.pronouns as PRON
 
 e = _html.escape
 
@@ -41,8 +42,8 @@ e = _html.escape
 OPP_SECTIONS = (
     ("clock", "⏱️ Their foul clock — when their bench decision arrives",
      "The median game-clock stamp of each of their players' fouls. Attack the "
-     "name at the top of this list early: the decision keeps arriving for her, "
-     "and their coach has to make it."),
+     "name at the top of this list early: the decision keeps arriving for "
+     "{obj}, and their coach has to make it."),
     ("fouls", "⚖️ What foul trouble costs them",
      "Floor time they lose after the Nth foul, and their net in each foul "
      "state — what you actually buy by drawing one."),
@@ -85,6 +86,19 @@ OPP_SECTIONS = (
 PRINT_KEYS = ("clock", "scheme", "tovs", "anatomy", "involve")
 
 
+def opp_sections(pron):
+    """OPP_SECTIONS with this league's pronouns filled into the captions.
+
+    The captions are stored with `{obj}`-style placeholders rather than a
+    hard-coded "her": one of them names an opposing player, and the scout is
+    read by boys' coaches as often as girls'. `str.format` is safe here because
+    the only braces in these strings are the placeholders themselves.
+    """
+    return tuple(
+        (k, h, c.format(subj=pron.subj, obj=pron.obj, poss=pron.poss))
+        for k, h, c in OPP_SECTIONS)
+
+
 def _lines(ctx, fp=None):
     """`{key: [(badge, n, html)]}` for the opponent, or {} when nothing is
     visible. One cached pass; each engine is isolated inside `_ported`, so a
@@ -115,7 +129,8 @@ def render_ported(ctx, fp=None):
                    "the engine reads below have nothing to run on. The "
                    "hand-entered scouting and the matchup planner still work.")
         return
-    shown = [(k, h, c) for k, h, c in OPP_SECTIONS if got.get(k)]
+    _secs = opp_sections(PRON.for_gender(getattr(ctx, "gender", None)))
+    shown = [(k, h, c) for k, h, c in _secs if got.get(k)]
     for key, header, cap in shown:
         st.markdown(f"<div class='lab-hdr'>{header}</div>",
                     unsafe_allow_html=True)
@@ -369,6 +384,7 @@ def player_depth(ctx, fp=None):
     if not tids:
         return {}
     out = {}
+    pr = PRON.for_gender(getattr(ctx, "gender", None))
 
     # foul clock, per player
     try:
@@ -387,7 +403,8 @@ def player_depth(ctx, fp=None):
             share = d["pre_half"] / d["n"]
             out.setdefault(pid, []).append((
                 "2nd foul", d["n"],
-                f"picks up her second at <b>{FT.clock_label(d['median'])}</b> "
+                f"{pr.v('picks')} up {pr.poss} second at "
+                f"<b>{FT.clock_label(d['median'])}</b> "
                 f"on a typical night"
                 + (f" — <b>{d['pre_half']} of {d['n']}</b> land before the half."
                    if share >= 0.5 else ".")))
@@ -410,8 +427,9 @@ def player_depth(ctx, fp=None):
                 continue
             out.setdefault(pid, []).append((
                 "Form", len(pts),
-                f"{'up' if d > 0 else 'down'} <b>{abs(d):.1f} ppg</b> over her "
-                f"last five ({last5:.1f} vs {season:.1f} on the season)"))
+                f"{'up' if d > 0 else 'down'} <b>{abs(d):.1f} ppg</b> over "
+                f"{pr.poss} last five "
+                f"({last5:.1f} vs {season:.1f} on the season)"))
     except Exception:
         pass
     return out

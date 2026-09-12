@@ -49,6 +49,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 import helpers.stats as S
+import helpers.pronouns as PRON
 from helpers.lineups import _event_floor
 
 #: Foul counts worth reporting a bench cost for. Two is the classic first-half
@@ -704,7 +705,7 @@ def clock_label(secs):
 
 
 def foul_clock_lines(clock, names=None, level=None, levels=CLOCK_LEVELS,
-                     min_games=MIN_GAMES_AT_LEVEL, per_level=3):
+                     min_games=MIN_GAMES_AT_LEVEL, per_level=3, pron=None):
     """[(badge, n, html)] — the descriptive read, safe at any sample.
 
     Every level in `levels` reports, not only the second. The second foul is the
@@ -715,7 +716,12 @@ def foul_clock_lines(clock, names=None, level=None, levels=CLOCK_LEVELS,
     Within a level, sorted by how EARLY the median lands — whoever tops that list
     is the player the bench decision keeps arriving for. `level=` still works and
     means "just this one", so older callers are unchanged.
+
+    `pron` is the roster's pronoun set (helpers/pronouns.for_gender); a caller
+    that does not pass one gets the singular they rather than a wrong guess.
     """
+    p = pron or PRON.NEUTRAL
+
     def nm(pid):
         return (names or {}).get(pid, f"#{pid}")
 
@@ -728,10 +734,11 @@ def foul_clock_lines(clock, names=None, level=None, levels=CLOCK_LEVELS,
         ord_ = _ordinal(lv)
         for pid, d in (rows[:per_level] if per_level else rows):
             share = d["pre_half"] / d["n"]
-            # A fifth foul is a disqualification; "picks up her 5th" undersells
-            # what a coach is reading, which is when she was lost for the night.
-            verb = ("fouls out" if lv >= 5
-                    else f"picks up her {ord_}")
+            # A fifth foul is a disqualification; "picks up the 5th"
+            # undersells what a coach is reading, which is when the player was
+            # lost for the night.
+            verb = (p.v("fouls") + " out" if lv >= 5
+                    else f"{p.v('picks')} up {p.poss} {ord_}")
             lines.append((
                 f"{ord_} foul", d["n"],
                 f"<b>{nm(pid)}</b> {verb} at <b>"
@@ -744,12 +751,16 @@ def foul_clock_lines(clock, names=None, level=None, levels=CLOCK_LEVELS,
 
 
 def quarter_rule_lines(early, carried, names=None,
-                       min_games=MIN_GAMES_AT_LEVEL, min_drag=5.0):
+                       min_games=MIN_GAMES_AT_LEVEL, min_drag=5.0, pron=None):
     """[(badge, n, html)] for the two quarter-relative reads.
 
     EARLY first — it is a fact about the player and the trigger for the decision
     — then CARRIED, which is what the staff did once the trigger fired.
+
+    `pron` is the roster's pronoun set; omitted, the lines read as singular they.
     """
+    p = pron or PRON.NEUTRAL
+
     def nm(pid):
         return (names or {}).get(pid, f"#{pid}")
 
@@ -769,18 +780,20 @@ def quarter_rule_lines(early, carried, names=None,
         ord_ = _ordinal(lv)
         lines.append((
             f"{ord_} early", d["games"],
-            f"<b>{nm(pid)}</b> reaches her {ord_} foul before the "
-            f"{_ordinal(lv)} quarter in <b>{d['early']} of {d['games']}</b> "
-            f"games she gets there — on pace to foul out, with a quarter still "
+            f"<b>{nm(pid)}</b> {p.v('reaches')} {p.poss} {ord_} foul "
+            f"before the {_ordinal(lv)} quarter in "
+            f"<b>{d['early']} of {d['games']}</b> "
+            f"games {p.subj} {p.v('gets')} there — on pace to foul out, "
+            f"with a quarter still "
             f"to play. That is the trigger; the row below is what the bench did "
             f"with it."))
     elif early:
         lines.append((
             "Foul pace", sum(d["games"] for by in early.values()
                              for d in by.values()),
-            "Nobody on this roster is reaching her Nth foul before the Nth "
-            "quarter often enough to call it a pattern — fouls are arriving on "
-            "or behind the pace that projects to fouling out."))
+            f"Nobody on this roster is reaching {p.poss} Nth foul before "
+            "the Nth quarter often enough to call it a pattern — fouls are "
+            "arriving on or behind the pace that projects to fouling out."))
 
     # ── CARRIED: floor share once she is at or past the quarter number ────────
     best = None
@@ -795,11 +808,13 @@ def quarter_rule_lines(early, carried, names=None,
             lines.append((
                 "Played through it", d["games"],
                 f"<b>{nm(pid)}</b> is on the floor for "
-                f"<b>{d['carry_share']:.0f}%</b> of the game once she is "
-                f"carrying as many fouls as the quarter, against "
-                f"<b>{d['clean_share']:.0f}%</b> of the same quarters when she "
-                f"is not — <b>{d['drag']:.0f} percentage points of floor share</b> across "
-                f"{d['games']} games. Compared against her own clean quarters, "
+                f"<b>{d['carry_share']:.0f}%</b> of the game once "
+                f"{p.subj} {p.v('is')} carrying as many fouls as the quarter, "
+                f"against <b>{d['clean_share']:.0f}%</b> of the same quarters "
+                f"when {p.subj} {p.v('is')} not — "
+                f"<b>{d['drag']:.0f} percentage points of floor share</b> "
+                f"across {d['games']} games. Compared against {p.poss} own "
+                f"clean quarters, "
                 f"so a reserve who only plays fourths is not scored for "
                 f"entering late."))
         else:
@@ -807,8 +822,9 @@ def quarter_rule_lines(early, carried, names=None,
                 "Played through it", d["games"],
                 f"Nobody's minutes move much once the fouls reach the quarter "
                 f"number — the largest change is <b>{nm(pid)}</b> at "
-                f"<b>{d['drag']:+.0f}</b> percentage points of floor share against her own "
-                f"clean quarters. This staff plays through foul trouble."))
+                f"<b>{d['drag']:+.0f}</b> percentage points of floor share "
+                f"against {p.poss} own clean quarters. This staff plays "
+                f"through foul trouble."))
     return lines
 
 
@@ -911,12 +927,16 @@ def crew_foul_rate(game_ids=None, events=None, player_id=None, min_games=1):
             for k, v in out.items() if len(v["games"]) >= min_games}
 
 
-def foul_trouble_verdict(bench, state, names=None):
+def foul_trouble_verdict(bench, state, names=None, pron=None):
     """[(badge, n, html)] for helpers.cards.verdict_card.
 
     Leads with the bench cost, which is the measurable half, and offers the
     pooled net only when both states clear MIN_STATE_POSS.
+
+    `pron` is the roster's pronoun set; omitted, the lines read as singular they.
     """
+    p = pron or PRON.NEUTRAL
+
     def nm(pid):
         return (names or {}).get(pid, f"#{pid}")
 
@@ -937,18 +957,20 @@ def foul_trouble_verdict(bench, state, names=None):
             lines.append((
                 f"{ord_} foul", d["games"],
                 f"<b>{nm(pid)}</b> is on the floor for "
-                f"<b>{d['after_share']:.0f}%</b> of what is left after her "
-                f"{ord_} foul, against <b>{d['season_share']:.0f}%</b> in a "
-                f"normal game — she loses <b>{d['drag']:.0f} percentage points "
-                f"of floor share</b> over {d['games']} such games. That is the "
+                f"<b>{d['after_share']:.0f}%</b> of what is left after "
+                f"{p.poss} {ord_} foul, against "
+                f"<b>{d['season_share']:.0f}%</b> in a normal game — "
+                f"{p.subj} {p.v('loses')} <b>{d['drag']:.0f} percentage "
+                f"points of floor share</b> over {d['games']} such games. "
+                f"That is the "
                 f"bench decision, measured."))
         else:
             lines.append((
                 f"{ord_} foul", d["games"],
                 f"Nobody's minutes move much on fouls — the biggest change is "
-                f"<b>{nm(pid)}</b> at <b>{d['drag']:+.0f}</b> percentage points "
-                f"of floor share against her normal role after her {ord_}. This "
-                f"staff plays through foul trouble."))
+                f"<b>{nm(pid)}</b> at <b>{d['drag']:+.0f}</b> percentage "
+                f"points of floor share against {p.poss} normal role after "
+                f"{p.poss} {ord_}. This staff plays through foul trouble."))
 
     if state:
         w, c = state.get("with_trouble") or {}, state.get("clean") or {}

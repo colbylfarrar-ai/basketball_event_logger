@@ -76,6 +76,7 @@ import helpers.lineups as LU
 import helpers.stops as ST
 import helpers.passing_chains as PC
 import helpers.involvement as IV
+import helpers.pronouns as PRON
 import helpers.foul_trouble as FTR
 import helpers.hero_ball as HB
 import helpers.winning_formula as WF
@@ -436,6 +437,10 @@ default_gender = _dt_rows[0]["gender"] if _dt_rows else "F"
 c1, c2 = st.columns([1, 3])
 # keyed so the command palette (helpers/ui) can land a jump on the right league
 gender = gender_radio(c1, default=default_gender, key="ta_gender")
+# The prose on this page is written ABOUT players, so it carries pronouns. One
+# set, bound to the league that is actually selected — every caption and every
+# engine below reads from here instead of hard-coding the girls' book.
+PRONS = PRON.for_gender(gender)
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _list_teams(g):
@@ -4237,15 +4242,16 @@ def _fx_foul_trouble():
                 "costs</div>", unsafe_allow_html=True)
     _nm = {p["_pid"]: f"#{p['number']}" for p in players}
     _full = {p["_pid"]: p["name"] for p in players}
-    _fv = FTR.foul_trouble_verdict(_bench, _state, names=_nm)
+    _fv = FTR.foul_trouble_verdict(_bench, _state, names=_nm, pron=PRONS)
     # The clock goes FIRST: "is it early?" is the question a coach asks before
     # "what did sitting her cost", and the bench-cost read below has no way to
     # answer it — a second foul at 6:10 of the first and one at 1:20 of the
     # second are the same row there and completely different decisions.
     _clk = _foul_clock(_tids, tuple(sorted(_full)))
-    _cv = FTR.foul_clock_lines(_clk, names=_nm)      # every level, not just 2
+    _cv = FTR.foul_clock_lines(_clk, names=_nm,      # every level, not just 2
+                               pron=PRONS)
     _early, _carried = _foul_quarters(team_id, _tids)
-    _qv = FTR.quarter_rule_lines(_early, _carried, names=_nm)
+    _qv = FTR.quarter_rule_lines(_early, _carried, names=_nm, pron=PRONS)
     if _cv or _fv or _qv:
         _verdict_lines(_cv + _qv + _fv)
 
@@ -4280,7 +4286,8 @@ def _fx_foul_trouble():
                     hide_index=True, width="stretch")
                 st.caption(
                     "The elapsed-clock stamp of each player's Nth personal, "
-                    "across the games she reached it. Purely descriptive, and "
+                    f"across the games {PRONS.subj} {PRONS.v('reached')} it. "
+                    "Purely descriptive, and "
                     "the only read on this screen that is honest at any sample "
                     "— it makes no causal claim at all, it reports when a "
                     "thing that happened, happened. A median is a description "
@@ -4308,19 +4315,21 @@ def _fx_foul_trouble():
                      column_config={
                          "Drag": st.column_config.NumberColumn(
                              "Drag", format="%+.1f",
-                             help="Normal floor share minus the share she "
-                                  "played after that foul. Positive = the "
-                                  "staff sat her."),
+                             help=f"Normal floor share minus the share "
+                                  f"{PRONS.subj} played after that foul. "
+                                  f"Positive = the staff sat {PRONS.obj}."),
                          "Normal floor %": st.column_config.NumberColumn(
                              "Normal floor %", format="%.1f%%"),
                          "After that foul %": st.column_config.NumberColumn(
                              "After that foul %", format="%.1f%%")})
         st.caption(
             "Measured against each player's **own season floor share**, not "
-            "against her minutes earlier in that same game. The in-game "
+            f"against {PRONS.poss} minutes earlier in that same game. "
+            "The in-game "
             "comparison looks obvious and is wrong: a reserve enters late, so "
-            "her second foul lands late, and the before-window spans a game "
-            "she mostly watched — on this book that made two reserves read as "
+            f"{PRONS.poss} second foul lands late, and the before-window "
+            f"spans a game {PRONS.subj} mostly watched — on this book that "
+            "made two reserves read as "
             "though foul trouble put them ON the floor. Only rotation regulars "
             "(at or above this team's median floor share) are listed, and each "
             f"row needs {FTR.MIN_GAMES_AT_LEVEL}+ games reaching that foul.")
@@ -4341,7 +4350,8 @@ def _fx_foul_trouble():
                          help="Descriptive only — see the caption.")
             st.caption(
                 "Pooled across the whole roster on purpose. One player's net "
-                "across her own foul-trouble minutes is a thinner slice than "
+                f"across {PRONS.poss} own foul-trouble minutes is a thinner "
+                "slice than "
                 "the raw on/off split this app already measured as having no "
                 "repeatable signal, so it is not offered per player. And this "
                 "is **not the cost of the fouls**: foul trouble is not handed "
@@ -4591,7 +4601,7 @@ def _fx_playmaking():
                         "basket</div>", unsafe_allow_html=True)
             _iv = IV.involvement_verdict(
                 {p: r for p, r in _inv.items() if p in full_by},
-                names=name_by)
+                names=name_by, pron=PRONS)
             if _iv:
                 _verdict_lines(_iv)
 
@@ -4629,11 +4639,14 @@ def _fx_playmaking():
                 column_config={
                     "Involved %": st.column_config.NumberColumn(
                         "Involved %", format="%.1f%%",
-                        help="Share of the baskets scored WHILE SHE WAS ON THE "
-                             "FLOOR that she had a hand in."),
+                        help=f"Share of the baskets scored WHILE "
+                             f"{PRONS.subj.upper()} "
+                             f"{PRONS.v('was').upper()} ON THE FLOOR that "
+                             f"{PRONS.subj} had a hand in."),
                     "On floor for": st.column_config.NumberColumn(
                         "On floor for",
-                        help="Team scoring plays she was on the floor for — the "
+                        help=f"Team scoring plays {PRONS.subj} "
+                             f"{PRONS.v('was')} on the floor for — the "
                              "denominator.")})
 
             _dep = IV.team_tag_dependence(_ielig)
@@ -4645,8 +4658,10 @@ def _fx_playmaking():
                 "slots the event records; the offensive board is inferred by "
                 "walking the possession back, so it counts toward Involved % "
                 "without a column of its own. The denominator is the baskets "
-                "scored while she was on the floor, which is what stops this "
-                "from being a minutes stat: a reserve who touches half of hers "
+                f"scored while {PRONS.subj} {PRONS.v('was')} on the floor, "
+                "which is what stops this "
+                "from being a minutes stat: a reserve who touches half of "
+                f"{PRONS.poss_abs} "
                 "outranks a starter who touches a third."
                 + (f" Note that **{_dep * 100:.0f}%** of these credits come "
                    f"from optional screen and hockey tags, so do not compare "

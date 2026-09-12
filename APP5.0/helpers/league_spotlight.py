@@ -173,7 +173,8 @@ def _intel(gender, vis=None):
     except Exception:
         pass
 
-    feed = IN.build_feed(table, ev, top=1, impact=imp) if (table and ev) else {}
+    feed = (IN.build_feed(table, ev, top=1, impact=imp, gender=gender)
+            if (table and ev) else {})
 
     def _b(t):
         return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)

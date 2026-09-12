@@ -196,6 +196,30 @@ def _clbl(r):
     return r.get("class_lbl", r["class"])
 
 
+def _cls_rk(r):
+    """'#3 of 74' — a scored row's rank inside its own state + class, stated
+    with the pool it was taken over (the pctile_bar convention: a rank that
+    does not name its pool is an unreadable number).
+
+    Returns '—' when the row carries no class. `_assign_ranks` still gives such
+    a row a ClassRank, but its bucket is "every classless team in that state",
+    which is not a class ladder and must not be printed as one.
+
+    'N/A' is checked as well as blank, and that is the whole trap: the class
+    column holds the literal string 'N/A' far more often than it holds NULL
+    (`class_label` resolves both to the same label), so a blank-only guard
+    passes 'N/A' straight through. Measured on the book: 21 separate
+    (state, 'N/A') buckets all render under the one label 'N/A', which would
+    have printed "#63 of 84" and "#24 of 27" as if they were the same ladder."""
+    _c = (r.get("class") or "").strip()
+    if not _c or _c.upper() == "N/A":
+        return "—"
+    rk, of = r.get("ClassRank"), r.get("ClassOf")
+    if not rk:
+        return "—"
+    return f"#{rk} of {of}" if of else f"#{rk}"
+
+
 def _clbl_key(lbl):
     """Sort key for class labels: state prefix (if any), then ladder rank."""
     parts = lbl.rsplit(" ", 1)
@@ -1043,9 +1067,19 @@ if _view == "Overview":
             columns={"name": "Team", "class_lbl": "Class"})
         # Rank movement vs ~a week ago (rating_snapshots) — appears once two
         # snapshot days exist, so the column simply shows up as history accrues.
+        # Class rank next to the overall rank. ov_rows already carry ClassRank /
+        # ClassOf (team_ratings._assign_ranks stamps both), so this is columns,
+        # not engine work. Rendered "#3 of 74" — the rank states its pool, per
+        # the house convention (helpers/cards.pctile_bar). Teams with no class
+        # (out-of-state entries) get "—": _assign_ranks still buckets them, but
+        # the bucket is "everyone in that state with no class", which is not a
+        # class and must not be printed as one.
+        df.insert(1, "Cls Rk", [_cls_rk(scored[t]) for t in ov_tids])
         _mv = _rank_moves(gender, season_pick)
         if _mv:
-            df.insert(1, "Δ Rk",
+            # Index 2: after Rank AND Cls Rk, so the "All" column set orders the
+            # two ranks side by side the way Core and Composites do.
+            df.insert(2, "Δ Rk",
                       [RH.arrow(_mv.get(t, {}).get("d_rank")) for t in ov_tids])
         # Inline margin-trend sparkline per team (last 7 games, oldest→newest) —
         # reads the engine's per_team_results; aligned to ov_tids row order.
@@ -1075,17 +1109,19 @@ if _view == "Overview":
                         if _rnd is not None else form_stats.get(t, {}).get(_src))
                        for t in ov_tids]
 
-        _core_cols = ["Rank", "Team", "Class", "W", "L", "Power", "Rating",
-                      "PPG", "oPPG", "MOV", "xPPG", "xoPPG", "SOS", "SOR"]
+        _core_cols = ["Rank", "Cls Rk", "Team", "Class", "W", "L", "Power",
+                      "Rating", "PPG", "oPPG", "MOV", "xPPG", "xoPPG",
+                      "SOS", "SOR"]
         if "Form" in df.columns:
             _core_cols.append("Form")
         _core_cols += ["Form Pwr", "Form Δ"]
-        _comp_cols = ["Rank", "Team", "Class", "Power", "MOV", "Dominance",
-                      "Consistency", "Clutch", "Momentum", "Volatility",
-                      "Pyth W", "Luck (W)"]
+        _comp_cols = ["Rank", "Cls Rk", "Team", "Class", "Power", "MOV",
+                      "Dominance", "Consistency", "Clutch", "Momentum",
+                      "Volatility", "Pyth W", "Luck (W)"]
         if "Δ Rk" in df.columns:
-            _core_cols.insert(1, "Δ Rk")
-            _comp_cols.insert(1, "Δ Rk")
+            # After BOTH ranks, so "Rank / Cls Rk" stay side by side.
+            _core_cols.insert(2, "Δ Rk")
+            _comp_cols.insert(2, "Δ Rk")
         _colset = _rkseg("Columns", ["Core", "Composites", "All"],
                          default="Core", key="rk_ov_cols") or "Core"
         _show = (_core_cols if _colset == "Core"
@@ -1095,6 +1131,14 @@ if _view == "Overview":
             CD.round_df(df[_show]), hide_index=True, width="stretch",
             height=min(720, 60 + 35 * len(df)),
             column_config={
+                "Cls Rk": st.column_config.TextColumn(
+                    "Cls Rk",
+                    help="Rank inside the team's own class (the Class column) — "
+                         "and its state, because a 4A in Oklahoma is not a 4A in "
+                         "Texas. \"#3 of 74\" = 3rd of the 74 teams in that "
+                         "group, ordered by the same Rating as the overall Rank. "
+                         "\"—\" = the team carries no class, so there is no "
+                         "class pool to rank it in."),
                 "Δ Rk": st.column_config.TextColumn(
                     "Δ Rk",
                     help="Rank movement vs about a week ago (▲ = climbed, "
@@ -1162,7 +1206,9 @@ if _view == "Overview":
                     "Luck (W)", format="%.2f",
                     help="Actual wins minus Pythagorean expected wins."),
             })
-        st.caption("Columns: **Core** = ratings & scoring · **Composites** = "
+        st.caption("**Rank** is over every team in the gender; **Cls Rk** is "
+                   "inside the team's own state + class. Columns: "
+                   "**Core** = ratings & scoring · **Composites** = "
                    "Dominance / Consistency / Clutch / Momentum & luck · **All** "
                    "= everything. Scope set by the Class / min-games filter above.")
         st.download_button("Rankings (CSV)",

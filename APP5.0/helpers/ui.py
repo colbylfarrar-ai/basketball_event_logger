@@ -543,8 +543,17 @@ def score_card(rows, *, footer="", footer_top=False, style_names=False):
 def rank_chip(cls, rank, *, prefix=""):
     """Small muted '<class> #<rank>' chip for score cards / headers. Returns ""
     when `rank` is falsy (team not yet ranked) so callers append unconditionally.
-    `prefix` labels the system when needed (e.g. 'TRK ')."""
-    if not rank:
+    `prefix` labels the system when needed (e.g. 'TRK ').
+
+    Also returns "" when `cls` is 'N/A' — every caller passes a CLASS rank
+    (`class_lbl` + `ClassRank`), and a team with no class has no class rank.
+    `team_ratings._assign_ranks` buckets on (state, class) and hands the
+    classless rows a number anyway, while `class_label` collapses all 21 of
+    those per-state buckets to the single label 'N/A'. The chip was therefore
+    rendering 'N/A #63' and 'N/A #24' side by side on the same score card,
+    from different ladders, neither of them a class rank. Print nothing
+    instead, which is what the team actually has."""
+    if not rank or (str(cls).strip().upper() == "N/A"):
         return ""
     label = f"{html.escape(str(cls))} #{rank}" if cls else f"#{rank}"
     return f"<span class='rank-chip'>{html.escape(prefix)}{label}</span>"

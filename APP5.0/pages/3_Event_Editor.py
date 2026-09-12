@@ -201,6 +201,55 @@ st.divider()
 # everything while governing three tools of five — the bulk-defense fill and the
 # lineup fixer both silently act on the whole game, which their captions had to
 # keep apologising for. A filter that does not apply is now simply not drawn.
+# ── the quarter / event-type filter, written once ────────────────────────
+def _ee_filters(what):
+    """Draw the quarter + event-type filters for the tool that is running.
+
+    Returns ``(events, qpick, tpick)``: the events the filters select (``[]``
+    when nothing matches — the message is already on screen by then) and the
+    two picks themselves, which every tool folds into its widget keys so that
+    changing a filter resets the grid or the selection under it rather than
+    re-applying a stale row index to a different set of rows.
+
+    This block used to exist three times, byte for byte, inside Fix events,
+    Shot locations and Bulk tags. That is not a tidiness point: a filter
+    defined three times is exactly how a filter ends up governing the wrong
+    tool, which is the defect the 2026-09-10 scrub opened this page on. One
+    definition cannot drift from itself.
+
+    `what` names the thing this tool's filter narrows, because it is not the
+    same thing in all three. All three copies said "the grid (and the shot
+    fixer)" whichever tool was drawing them — which stopped being true the
+    moment each filter moved inside the tool it governs.
+
+    The widget keys stay shared (`ee_q`, `ee_type`) on purpose: only one tool's
+    body runs per rerun, so a coach who filtered to Q3 shots and then switched
+    tools finds the same slice waiting rather than a reset one.
+    """
+    qs = EL.quarters_in_game(gid)
+    qlabels = ["All"] + [f"Q{q}" if q <= 4 else f"OT{q - 4}" for q in qs]
+    qmap = {("All"): None,
+            **{(f"Q{q}" if q <= 4 else f"OT{q - 4}"): q for q in qs}}
+    qpick = st.radio("Quarter", qlabels, horizontal=True, key="ee_q")
+    quarter = qmap[qpick]
+
+    events = EL.load_events(gid, quarter)
+
+    _etypes = sorted({e["event_type"] for e in events})
+    tpick = st.radio("Event type", ["All"] + _etypes, horizontal=True,
+                     key="ee_type",
+                     format_func=lambda t: "All" if t == "All"
+                     else t.replace("_", " "),
+                     help=f"Filter {what} to one event type — e.g. only shots "
+                          f"in this game.")
+    if tpick != "All":
+        events = [e for e in events if e["event_type"] == tpick]
+    if not events:
+        st.info("No events match this quarter / event-type filter — widen it "
+                "above.")
+    return events, qpick, tpick
+
+
 _EE_TOOLS = ["Fix events", "Shot locations", "Add an event", "Bulk tags",
              "Lineups"]
 _eetool = _seg("Tool", _EE_TOOLS, default="Fix events", key="ee_tool") or "Fix events"
@@ -224,30 +273,8 @@ st.caption("Fixing a single event courtside? The tracker app's **Edit log** does
            "correcting an on-court five.")
 
 if _eetool == "Fix events":
-    # ── quarter filter ─────────────────────────────────────────────────────────────
-    qs = EL.quarters_in_game(gid)
-    qlabels = ["All"] + [f"Q{q}" if q <= 4 else f"OT{q - 4}" for q in qs]
-    qmap = {("All"): None,
-            **{(f"Q{q}" if q <= 4 else f"OT{q - 4}"): q for q in qs}}
-    qpick = st.radio("Quarter", qlabels, horizontal=True, key="ee_q")
-    quarter = qmap[qpick]
-
-    events = EL.load_events(gid, quarter)
-
-    # ── event-type filter — view just shots, just fouls, etc. ───────────────────────
-    _etypes = sorted({e["event_type"] for e in events})
-    tpick = st.radio("Event type", ["All"] + _etypes, horizontal=True, key="ee_type",
-                     format_func=lambda t: "All" if t == "All" else t.replace("_", " "),
-                     help="Filter the grid (and the shot fixer) to one event type — "
-                          "e.g. only shots in this game.")
-    if tpick != "All":
-        events = [e for e in events if e["event_type"] == tpick]
-
-
-    if not events:
-        st.info("No events match this quarter / event-type filter — widen it "
-                "above.")
-    else:
+    events, qpick, tpick = _ee_filters("the grid")
+    if events:
         def _disp(ev):
             return {
                 "id": ev["id"],
@@ -416,30 +443,8 @@ if _eetool == "Fix events":
 
 
 if _eetool == "Shot locations":
-    # ── quarter filter ─────────────────────────────────────────────────────────────
-    qs = EL.quarters_in_game(gid)
-    qlabels = ["All"] + [f"Q{q}" if q <= 4 else f"OT{q - 4}" for q in qs]
-    qmap = {("All"): None,
-            **{(f"Q{q}" if q <= 4 else f"OT{q - 4}"): q for q in qs}}
-    qpick = st.radio("Quarter", qlabels, horizontal=True, key="ee_q")
-    quarter = qmap[qpick]
-
-    events = EL.load_events(gid, quarter)
-
-    # ── event-type filter — view just shots, just fouls, etc. ───────────────────────
-    _etypes = sorted({e["event_type"] for e in events})
-    tpick = st.radio("Event type", ["All"] + _etypes, horizontal=True, key="ee_type",
-                     format_func=lambda t: "All" if t == "All" else t.replace("_", " "),
-                     help="Filter the grid (and the shot fixer) to one event type — "
-                          "e.g. only shots in this game.")
-    if tpick != "All":
-        events = [e for e in events if e["event_type"] == tpick]
-
-
-    if not events:
-        st.info("No events match this quarter / event-type filter — widen it "
-                "above.")
-    else:
+    events, qpick, tpick = _ee_filters("the shot list")
+    if events:
         # ══════════════════════════════════════════════════════════════════════════════
         #  FIX A SHOT LOCATION — move a mistapped shot, or add a location to a legacy
         #  zone-only shot. The x/y is the source of truth: zone + 2/3 re-derive from it
@@ -678,30 +683,8 @@ if _eetool == "Add an event":
             st.rerun()
 
 if _eetool == "Bulk tags":
-    # ── quarter filter ─────────────────────────────────────────────────────────────
-    qs = EL.quarters_in_game(gid)
-    qlabels = ["All"] + [f"Q{q}" if q <= 4 else f"OT{q - 4}" for q in qs]
-    qmap = {("All"): None,
-            **{(f"Q{q}" if q <= 4 else f"OT{q - 4}"): q for q in qs}}
-    qpick = st.radio("Quarter", qlabels, horizontal=True, key="ee_q")
-    quarter = qmap[qpick]
-
-    events = EL.load_events(gid, quarter)
-
-    # ── event-type filter — view just shots, just fouls, etc. ───────────────────────
-    _etypes = sorted({e["event_type"] for e in events})
-    tpick = st.radio("Event type", ["All"] + _etypes, horizontal=True, key="ee_type",
-                     format_func=lambda t: "All" if t == "All" else t.replace("_", " "),
-                     help="Filter the grid (and the shot fixer) to one event type — "
-                          "e.g. only shots in this game.")
-    if tpick != "All":
-        events = [e for e in events if e["event_type"] == tpick]
-
-
-    if not events:
-        st.info("No events match this quarter / event-type filter — widen it "
-                "above.")
-    else:
+    events, qpick, tpick = _ee_filters("the rows a bulk tag will touch")
+    if events:
         # ── bulk-tag the defense scheme, PER TEAM (set each side, then tweak) ───────────
         # Most teams play one or two defenses, so per-possession entry is a slog. The
         # defense tag is the DEFENDING (other) team's scheme, so splitting by the team

@@ -1,5 +1,5 @@
 """
-box_score.py — Reusable, tabbed single-game box-score report.
+box_score.py — the reusable single-game box-score report.
 
 UI helper (imports streamlit): call `render_box_score(game_id)` from any page
 that has a game in context. Everything is recomputed from `game_events`, so it
@@ -7,7 +7,11 @@ stays consistent with the source of truth. Box + advanced formulas come from
 helpers/stats.py; team/shot-quality/lineup engines from helpers/team_analytics.py,
 helpers/lineups.py, helpers/wpa.py. Display-only; PF is credited to the fouler.
 
-Tabs: Overview · Flow · Shooting · Quarters · Lineups · Box Score · Four Factors.
+Sections (one lazy switcher, not `st.tabs` — only the open body runs):
+Overview · Box Score · Flow · Shooting · Quarters · Four Factors ·
+Play Types · Defense · Lineups. A viewer without this game's tracked depth
+gets the FREE stage instead: the read, the line score and the box table,
+built from the same builder with a shorter column list.
 """
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import html
 from collections import defaultdict
 
 import pandas as pd
@@ -151,6 +156,25 @@ def _team_total(boxes, tid):
     return tb
 
 
+def _pct_pool(row):
+    """A percentile cell that states the pool it was ranked against (B1).
+
+    Both ranked tables in this file printed a bare `Pct` column and a
+    caption reading "Pct = league percentile", which is the exact shape
+    THE BOOK §10 names: a percentile over five tracked teams renders
+    identically to one over 748. `playtypes.py` and `defenses.py` have
+    carried `pool_n` on every row since the B1 pass; nothing here read it.
+
+    `stats.pctile_badge` owns the grammar, so this says exactly what a
+    percentile bar three screens away says — "64th of 22", or the RANK
+    ("3rd of 5") when the pool is under POOL_FLOOR.
+    """
+    p, n = row.get("pct"), row.get("pool_n")
+    if p is None:
+        return "thin"
+    return S.pctile_badge(p, n)[0]
+
+
 def _pct(n, d):
     return f"{100*n/d:.1f}%" if d else "—"
 
@@ -268,6 +292,82 @@ def _render_box_tables(game_id, g, boxes, teams, cols):
         file_name=(f"maxpreps_box_{game_id}_"
                    f"{teams[-1][1]}_vs_{teams[0][1]}.csv"),
         mime="text/csv", key=f"dl_maxpreps_{game_id}")
+
+
+def _free_read(htb, atb, t1name, t2name, quarters, qs, t1id, t2id, boxes):
+    """The post-game sentence a FREE viewer is allowed to read.
+
+    Not `postgame.game_report`: that one prices the four-factors battle in
+    TOV% and ORB%, which are possession math and therefore Paid (§12.2 puts
+    the possession layer behind the gate and leaves the shooting terms in
+    front of it). Publishing a sentence built on numbers the same screen
+    refuses to show is the failure mode this whole tier split exists to
+    avoid, so this builds only from what the Free box table already prints:
+    the scoreboard, the line score, and FREE_BOX_COLS.
+
+    Returns the house verdict-line shape, [(badge, n, html)].
+    """
+    hp = sum(quarters[q].get(t1id, 0) for q in qs)
+    ap = sum(quarters[q].get(t2id, 0) for q in qs)
+    lines = []
+    if hp != ap:
+        win, ws, ls = ((t1name, hp, ap) if hp > ap else (t2name, ap, hp))
+        mg = ws - ls
+        how = ("in a one-possession game" if mg <= 3 else
+               "comfortably" if mg <= 12 else "in a rout")
+        lines.append((
+            "the result", None,
+            f"<b>{html.escape(win)}</b> won <b>{ws}–{ls}</b>, {how}."))
+    # the shooting line — every term is a Free column
+    _hf, _af = 100 * S.efg(htb), 100 * S.efg(atb)
+    if htb["FGA"] and atb["FGA"]:
+        _bw, _lw = ((t1name, t2name) if _hf >= _af else (t2name, t1name))
+        lines.append((
+            "shooting", htb["FGA"] + atb["FGA"],
+            f"<b>{html.escape(_bw)}</b> shot it better — eFG% "
+            f"<b>{max(_hf, _af):.0f}%</b> against "
+            f"{min(_hf, _af):.0f}% for {html.escape(_lw)} "
+            f"({htb['FGM']}-{htb['FGA']} vs {atb['FGM']}-{atb['FGA']} "
+            "from the floor)."))
+    # the two counting battles a scorebook settles: the glass and the ball
+    _rd = htb["TRB"] - atb["TRB"]
+    _td = atb["TOV"] - htb["TOV"]
+    _bits = []
+    if abs(_rd) >= 4:
+        _bits.append(
+            f"<b>{html.escape(t1name if _rd > 0 else t2name)}</b> won the "
+            f"glass by <b>{abs(_rd)}</b>")
+    if abs(_td) >= 4:
+        _bits.append(
+            f"<b>{html.escape(t1name if _td > 0 else t2name)}</b> gave it "
+            f"away <b>{abs(_td)}</b> fewer times")
+    if _bits:
+        lines.append(("the margins", None, " and ".join(_bits) + "."))
+    # the period that moved it, straight off the line score
+    if qs:
+        _qn = [(q, quarters[q].get(t1id, 0) - quarters[q].get(t2id, 0))
+               for q in qs]
+        _big = max(_qn, key=lambda t: abs(t[1]))
+        if _big[1]:
+            _bw = t1name if _big[1] > 0 else t2name
+            _bl = t2name if _big[1] > 0 else t1name
+            _bwp = max(quarters[_big[0]].get(t1id, 0),
+                       quarters[_big[0]].get(t2id, 0))
+            _blp = min(quarters[_big[0]].get(t1id, 0),
+                       quarters[_big[0]].get(t2id, 0))
+            lines.append((
+                "the swing", None,
+                f"<b>{_q_label(_big[0])}</b> decided it — "
+                f"<b>{html.escape(_bw)} {_bwp}–{_blp} "
+                f"{html.escape(_bl)}</b>, a {abs(_big[1])}-point period."))
+    # top scorer, by the PTS column the Free table already prints
+    _top = max(boxes.values(), key=lambda b: b["PTS"], default=None)
+    if _top and _top["PTS"]:
+        lines.append((
+            "who", None,
+            f"Game high <b>{_top['PTS']}</b> — "
+            f"{html.escape(S.player_label(_top, team=''))}."))
+    return lines
 
 
 def _render_line_score(game_id, quarters, qs, teams):
@@ -523,6 +623,18 @@ def render_box_score(game_id: int):
         # column list is projected through player_ratings' event-derived rule,
         # so MIN, +/- and SC (which need the lineup log) are absent and every
         # counting stat a scorebook already holds is present.
+        # The read leads the Free stage too, for the same reason it leads
+        # the paid Overview — and because THE BOOK §12.1 says the post-game
+        # sentence belongs where a coach reads. `_free_read`, not
+        # `postgame.game_report`: the latter prices the four-factors battle
+        # in TOV% and ORB%, which this tier does not get to see, and a
+        # sentence built on numbers the screen below it refuses to show is
+        # worse than no sentence.
+        _fr = _free_read(htb, atb, t1name, t2name, quarters, qs,
+                         t1id, t2id, boxes)
+        if _fr:
+            st.markdown(CARDS.verdict_card(_fr), unsafe_allow_html=True)
+
         st.markdown("<div class='lab-hdr'>Line score</div>",
                     unsafe_allow_html=True)
         _render_line_score(game_id, quarters, qs, [(t2id, t2name), (t1id, t1name)])
@@ -602,9 +714,14 @@ def render_box_score(game_id: int):
     # ALREADY a closure function defined against shared state computed ABOVE this
     # line, so no body can be leaning on a name a sibling body defined. The defs
     # below still all execute (they are cheap); only the CALL is now gated.
-    _SECTIONS = ["Overview", "Flow", "Shooting", "Quarters",
-                 "Lineups", "Box Score", "Four Factors", "Play Types",
-                 "Defense"]
+    # ORDER IS THE ARGUMENT. "Box Score" sat sixth in a thing called a box
+    # score, behind four analytics sections — so the one artefact every
+    # coach already knows how to read was the hardest thing here to reach,
+    # and the Free tier renders it FIRST. Overview keeps the lead because it
+    # is the sentence; the box follows it; Lineups goes last because it is
+    # the most specialised section and the most expensive one.
+    _SECTIONS = ["Overview", "Box Score", "Flow", "Shooting", "Quarters",
+                 "Four Factors", "Play Types", "Defense", "Lineups"]
     _open = _ui_seg("Section", _SECTIONS, default="Overview",
                     key=f"bs{game_id}_section", label_visibility="collapsed")
     if _open not in _SECTIONS:              # segmented_control allows a deselect
@@ -615,10 +732,33 @@ def render_box_score(game_id: int):
     # All shared game state above is captured by closure.
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 0 — OVERVIEW
+    #  SECTION — OVERVIEW  (the read, then the comparison)
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_overview():
+        # THE READ FIRST. This paragraph is the best prose the app writes
+        # and it sat in an expander under five metric tiles — the shape
+        # every other surface was moved AWAY from (Insights, the scout
+        # sheet, the player profile all lead with the sentence). Same
+        # engine, now keyed, so each bullet is badged like every other
+        # verdict box instead of being a bare markdown list.
+        try:
+            import helpers.postgame as PG
+            _lines = PG.game_report_lines(
+                game_id, events=events,
+                gei=((summ["gei"], summ["label"]) if summ else None))
+        except Exception:
+            _lines = []
+        if _lines:
+            _BADGE = {"result": "the result", "factors": "four factors",
+                      "run": "the run", "who": "who",
+                      "excitement": "excitement"}
+            st.markdown(CARDS.verdict_card(
+                [(_BADGE.get(k, k), None, CARDS.md_bold(t))
+                 for k, t in _lines]), unsafe_allow_html=True)
+            st.caption("Auto-generated from the four-factors, RATING and runs "
+                       "engines — the same numbers as the sections below.")
+
         m = st.columns(5)
         m[0].metric("Game Excitement", summ["gei"] if summ else "—",
                     summ["label"] if summ else None, delta_color="off")
@@ -637,56 +777,85 @@ def render_box_score(game_id: int):
         _render_line_score(game_id, quarters, qs,
                            [(t2id, t2name), (t1id, t1name)])
 
-        # ── post-game read: the "what happened" paragraph, engine-derived ──────
-        try:
-            import helpers.postgame as PG
-            _bul = PG.game_report(
-                game_id, events=events,
-                gei=((summ["gei"], summ["label"]) if summ else None))
-            if _bul:
-                with st.expander("📋 Post-game read", expanded=True):
-                    for _b in _bul:
-                        st.markdown("- " + _b)
-                    st.caption("Auto-generated from the four-factors, RATING and "
-                               "runs engines — the same numbers as the tabs below.")
-        except Exception:
-            pass
 
         c1, c2 = st.columns([3, 2])
         with c1:
             st.markdown("**Team comparison**")
+            # Each row carries the NUMBER it is compared on and which way
+            # is better, so the table can say who won it. Four Factors,
+            # eight inches down this same screen, has had an Edge column
+            # since it was written; the bigger table above it made a coach
+            # read thirteen pairs of strings and do the comparing.
+            #
+            # `None` for `better` is a real answer, not a gap: 3PA rate, FT
+            # rate and possessions are style, and a winner there would be
+            # an invented verdict.
+            _COMP = [
+                ("Field goals", S._safe(atb["FGM"], atb["FGA"]),
+                 S._safe(htb["FGM"], htb["FGA"]), True,
+                 f"{atb['FGM']}-{atb['FGA']} ({_pct(atb['FGM'], atb['FGA'])})",
+                 f"{htb['FGM']}-{htb['FGA']} ({_pct(htb['FGM'], htb['FGA'])})"),
+                ("3-pointers", S._safe(atb["3PM"], atb["3PA"]),
+                 S._safe(htb["3PM"], htb["3PA"]), True,
+                 f"{atb['3PM']}-{atb['3PA']} ({_pct(atb['3PM'], atb['3PA'])})",
+                 f"{htb['3PM']}-{htb['3PA']} ({_pct(htb['3PM'], htb['3PA'])})"),
+                ("Free throws", S._safe(atb["FTM"], atb["FTA"]),
+                 S._safe(htb["FTM"], htb["FTA"]), True,
+                 f"{atb['FTM']}-{atb['FTA']} ({_pct(atb['FTM'], atb['FTA'])})",
+                 f"{htb['FTM']}-{htb['FTA']} ({_pct(htb['FTM'], htb['FTA'])})"),
+                ("eFG% / TS%", S.efg(atb), S.efg(htb), True,
+                 f"{100 * S.efg(atb):.1f}% / {100 * S.ts(atb):.1f}%",
+                 f"{100 * S.efg(htb):.1f}% / {100 * S.ts(htb):.1f}%"),
+                ("Rebounds (O-D)", atb["TRB"], htb["TRB"], True,
+                 f"{atb['TRB']} ({atb['ORB']}-{atb['DRB']})",
+                 f"{htb['TRB']} ({htb['ORB']}-{htb['DRB']})"),
+                ("Assists", atb["AST"], htb["AST"], True,
+                 f"{atb['AST']}", f"{htb['AST']}"),
+                ("Steals / Blocks", atb["STL"] + atb["BLK"],
+                 htb["STL"] + htb["BLK"], True,
+                 f"{atb['STL']} / {atb['BLK']}", f"{htb['STL']} / {htb['BLK']}"),
+                ("Turnovers", atb["TOV"], htb["TOV"], False,
+                 f"{atb['TOV']}", f"{htb['TOV']}"),
+                ("Fouls", atb["PF"], htb["PF"], False,
+                 f"{atb['PF']}", f"{htb['PF']}"),
+                ("Paint points", atb["paint_PTS"], htb["paint_PTS"], True,
+                 f"{atb['paint_PTS']}", f"{htb['paint_PTS']}"),
+                ("3PA rate / FT rate", None, None, None,
+                 f"{100 * S.three_par(atb):.0f}% / {100 * S.ftr(atb):.0f}%",
+                 f"{100 * S.three_par(htb):.0f}% / {100 * S.ftr(htb):.0f}%"),
+                ("Points per shot (PPS)", S.pps(atb), S.pps(htb), True,
+                 f"{S.pps(atb):.2f}", f"{S.pps(htb):.2f}"),
+                ("Turnover %", S.tov_pct(atb), S.tov_pct(htb), False,
+                 f"{S.tov_pct(atb):.1f}%", f"{S.tov_pct(htb):.1f}%"),
+                ("Possessions", None, None, None,
+                 f"{a_poss:.0f}", f"{h_poss:.0f}"),
+                ("Off. rating (pts/100)",
+                 (100 * away_pts / a_poss) if a_poss else None,
+                 (100 * home_pts / h_poss) if h_poss else None, True,
+                 f"{100 * away_pts / a_poss:.1f}" if a_poss else "—",
+                 f"{100 * home_pts / h_poss:.1f}" if h_poss else "—"),
+            ]
+
+            def _edge(av, hv, better):
+                if better is None or av is None or hv is None or av == hv:
+                    return "—"
+                return (t1name if (hv > av) == better else t2name)
+
             comp = pd.DataFrame([
-                {"Stat": "Field goals", t2name: f"{atb['FGM']}-{atb['FGA']} ({_pct(atb['FGM'],atb['FGA'])})",
-                 t1name: f"{htb['FGM']}-{htb['FGA']} ({_pct(htb['FGM'],htb['FGA'])})"},
-                {"Stat": "3-pointers", t2name: f"{atb['3PM']}-{atb['3PA']} ({_pct(atb['3PM'],atb['3PA'])})",
-                 t1name: f"{htb['3PM']}-{htb['3PA']} ({_pct(htb['3PM'],htb['3PA'])})"},
-                {"Stat": "Free throws", t2name: f"{atb['FTM']}-{atb['FTA']} ({_pct(atb['FTM'],atb['FTA'])})",
-                 t1name: f"{htb['FTM']}-{htb['FTA']} ({_pct(htb['FTM'],htb['FTA'])})"},
-                {"Stat": "eFG% / TS%", t2name: f"{100*S.efg(atb):.1f}% / {100*S.ts(atb):.1f}%",
-                 t1name: f"{100*S.efg(htb):.1f}% / {100*S.ts(htb):.1f}%"},
-                {"Stat": "Rebounds (O-D)", t2name: f"{atb['TRB']} ({atb['ORB']}-{atb['DRB']})",
-                 t1name: f"{htb['TRB']} ({htb['ORB']}-{htb['DRB']})"},
-                {"Stat": "Assists / Steals / Blocks",
-                 t2name: f"{atb['AST']} / {atb['STL']} / {atb['BLK']}",
-                 t1name: f"{htb['AST']} / {htb['STL']} / {htb['BLK']}"},
-                {"Stat": "Turnovers / Fouls", t2name: f"{atb['TOV']} / {atb['PF']}",
-                 t1name: f"{htb['TOV']} / {htb['PF']}"},
-                {"Stat": "Paint points", t2name: f"{atb['paint_PTS']}", t1name: f"{htb['paint_PTS']}"},
-                {"Stat": "3PA rate / FT rate",
-                 t2name: f"{100*S.three_par(atb):.0f}% / {100*S.ftr(atb):.0f}%",
-                 t1name: f"{100*S.three_par(htb):.0f}% / {100*S.ftr(htb):.0f}%"},
-                {"Stat": "Points per shot (PPS)",
-                 t2name: f"{S.pps(atb):.2f}", t1name: f"{S.pps(htb):.2f}"},
-                {"Stat": "Turnover %", t2name: f"{S.tov_pct(atb):.1f}%", t1name: f"{S.tov_pct(htb):.1f}%"},
-                {"Stat": "Possessions", t2name: f"{a_poss:.0f}", t1name: f"{h_poss:.0f}"},
-                {"Stat": "Off. rating (pts/100)",
-                 t2name: f"{100*away_pts/a_poss:.1f}" if a_poss else "—",
-                 t1name: f"{100*home_pts/h_poss:.1f}" if h_poss else "—"},
-            ])
+                {"Stat": lbl, t2name: at, t1name: ht,
+                 "Edge": _edge(av, hv, better)}
+                for lbl, av, hv, better, at, ht in _COMP])
             comp[t1name] = comp[t1name].astype(str)
             comp[t2name] = comp[t2name].astype(str)
             st.dataframe(comp, hide_index=True, width="stretch",
                          key=f"bs{game_id}_comp")
+            _won = [r for r in _COMP if _edge(r[1], r[2], r[3]) == t1name]
+            _lost = [r for r in _COMP if _edge(r[1], r[2], r[3]) == t2name]
+            st.caption(
+                f"**{t1name} {len(_won)} · {t2name} {len(_lost)}** on the "
+                f"{len(_won) + len(_lost)} rows that have a better "
+                "direction. 3PA rate, FT rate and possessions are style, "
+                "not a contest, so they take no edge.")
         with c2:
             st.markdown("**Shooting profile**")
             cats = ["FG%", "3P%", "FT%", "eFG%", "TS%"]
@@ -762,7 +931,7 @@ def render_box_score(game_id: int):
         _tab_overview()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 1 — FLOW
+    #  SECTION — FLOW
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_flow():
@@ -932,7 +1101,7 @@ def render_box_score(game_id: int):
         _tab_flow()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 2 — SHOOTING
+    #  SECTION — SHOOTING
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_shooting():
@@ -1261,7 +1430,7 @@ def render_box_score(game_id: int):
         _tab_shooting()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 3 — QUARTERS
+    #  SECTION — QUARTERS
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_quarters():
@@ -1272,8 +1441,55 @@ def render_box_score(game_id: int):
             st.info("No per-quarter data yet.")
         else:
             xlab = [_q_label(q) for q in qsq]
-            st.caption(f"Every stat by period · {t1name} (accent) vs {t2name} (red). "
-                       "Counts as bars, rates as lines.")
+            # WHO WON EACH PERIOD, before fourteen unlabelled charts of it.
+            # Single game, so this is description and the caption says so —
+            # the quarter TENDENCY read (and what of it repeats) lives on
+            # the Team Dashboard, over the season.
+            _qnet = [(q, qb[q]["team"]["PTS"] - qb[q]["opp"]["PTS"])
+                     for q in qsq]
+            _won = [q for q, n in _qnet if n > 0]
+            _lost = [q for q, n in _qnet if n < 0]
+            _big = max(_qnet, key=lambda t: abs(t[1]))
+            _qv = [("periods", None,
+                    f"<b>{t1name}</b> took "
+                    f"<b>{len(_won)}</b> of {len(_qnet)} periods, "
+                    f"<b>{t2name}</b> {len(_lost)}"
+                    + (f" ({len(_qnet) - len(_won) - len(_lost)} even)."
+                       if len(_qnet) - len(_won) - len(_lost) else "."))]
+            if _big[1]:
+                # named for the team that WON the period, with that team's
+                # score first — "-24 for Washington" is arithmetic leaking
+                # onto the screen, not a sentence.
+                _bw = t1name if _big[1] > 0 else t2name
+                _bl = t2name if _big[1] > 0 else t1name
+                _bwp = (qb[_big[0]]["team"]["PTS"] if _big[1] > 0
+                        else qb[_big[0]]["opp"]["PTS"])
+                _blp = (qb[_big[0]]["opp"]["PTS"] if _big[1] > 0
+                        else qb[_big[0]]["team"]["PTS"])
+                _qv.append((
+                    "the swing", None,
+                    f"<b>{_q_label(_big[0])}</b> moved it — "
+                    f"<b>{html.escape(_bw)} {_bwp}–{_blp} "
+                    f"{html.escape(_bl)}</b>, a {abs(_big[1])}-point "
+                    "period."))
+            st.markdown(CARDS.verdict_card(_qv), unsafe_allow_html=True)
+
+            # A colour KEY, because every chart below sets showlegend=False
+            # (fourteen legends on one screen is worse than none) and the
+            # caption used to name the colours as "accent" and "red" — words
+            # for two variables that hold each team's OWN identity colour,
+            # so on most games it described nothing that was on screen.
+            st.markdown(
+                "<div style='font-size:12px;color:#8b949e;margin:2px 0 6px'>"
+                f"<span style='display:inline-block;width:10px;height:10px;"
+                f"border-radius:2px;background:{accent};margin-right:5px'>"
+                f"</span>{html.escape(t1name)}"
+                "&nbsp;&nbsp;&nbsp;"
+                f"<span style='display:inline-block;width:10px;height:10px;"
+                f"border-radius:2px;background:{away};margin-right:5px'>"
+                f"</span>{html.escape(t2name)}"
+                "&nbsp;&nbsp;·&nbsp; counts as bars, rates as lines"
+                "</div>", unsafe_allow_html=True)
 
             def qchart(label, kind, fn, key):
                 fig = go.Figure()
@@ -1354,7 +1570,7 @@ def render_box_score(game_id: int):
         _tab_quarters()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 4 — LINEUPS
+    #  SECTION — LINEUPS  (last in _SECTIONS: the most expensive)
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_lineups():
@@ -1506,7 +1722,7 @@ def render_box_score(game_id: int):
         _tab_lineups()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 5 — BOX SCORE
+    #  SECTION — BOX SCORE  (second in _SECTIONS)
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_box():
@@ -1520,7 +1736,7 @@ def render_box_score(game_id: int):
         _tab_box()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 6 — FOUR FACTORS
+    #  SECTION — FOUR FACTORS
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_factors():
@@ -1584,7 +1800,7 @@ def render_box_score(game_id: int):
         _tab_factors()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 7 — PLAY TYPES  (explicit one-tap set-call tags, league-ranked)
+    #  SECTION — PLAY TYPES  (one-tap set-call tags, league-ranked)
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_playtypes():
@@ -1599,7 +1815,9 @@ def render_box_score(game_id: int):
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
             "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
             "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
-            "Pct": st.column_config.NumberColumn("Pct", format="%.0f"),
+            # a TextColumn now: the cell carries the pool ("64th of 22"),
+            # and a NumberColumn would strip that back to "64".
+            "Pct": st.column_config.TextColumn("Pct"),
         }
         _rcfg = {
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
@@ -1671,12 +1889,19 @@ def render_box_score(game_id: int):
                     "Play call": r["label"], "Poss": r["poss"],
                     "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
                     "Share": round(r["share"] * 100, 0),
-                    "Pct": r["pct"], "Tier": r["tier"]} for r in rows])
+                    "Pct": _pct_pool(r), "Tier": r["tier"]} for r in rows])
                 st.dataframe(df, hide_index=True, width="stretch",
                              column_config=_ptcfg, key=f"bs{game_id}_pt_tbl_{tid}")
-                st.caption(f"{pt['total_tagged']} tagged · {pt['untagged']} untagged. "
-                           "Pct = league percentile · Tier shades good→poor (shot-"
-                           "quality color encodes the bar above).")
+                st.caption(
+                    f"{pt['total_tagged']} tagged · {pt['untagged']} "
+                    "untagged. **Pct** is the league percentile for that "
+                    "set call AND the pool it was ranked in — a per-action "
+                    "pool is not the team pool, and under ten teams it "
+                    "shows the rank instead, because a percentile from five "
+                    "observations is not a fact. `thin` = the action has too "
+                    "few possessions to rank at all. Tier shades good→poor "
+                    "(shot-quality colour encodes the bar above)."
+                )
 
                 # ── set fingerprint (how each set is GENERATED) ─────────────
                 _prof = PT.team_playtype_shot_profiles(
@@ -1757,7 +1982,7 @@ def render_box_score(game_id: int):
         _tab_playtypes()
 
     # ════════════════════════════════════════════════════════════════════════
-    #  TAB 8 — DEFENSE  (the one-tap defense-scheme tag, this game)
+    #  SECTION — DEFENSE  (the one-tap defense-scheme tag, this game)
     # ════════════════════════════════════════════════════════════════════════
     # The defensive companion to Play Types: PPP by the explicit `defense` scheme
     # tag for THIS game, per team, with the play-type × defense cross-tab and the
@@ -1776,7 +2001,9 @@ def render_box_score(game_id: int):
             "PPP": st.column_config.NumberColumn("PPP", format="%.2f"),
             "FG%": st.column_config.NumberColumn("FG%", format="%.0f%%"),
             "Share": st.column_config.NumberColumn("Share", format="%.0f%%"),
-            "Pct": st.column_config.NumberColumn("Pct", format="%.0f"),
+            # a TextColumn now: the cell carries the pool ("64th of 22"),
+            # and a NumberColumn would strip that back to "64".
+            "Pct": st.column_config.TextColumn("Pct"),
         }
         _fpcfg = {
             "3PA%": st.column_config.NumberColumn("3PA%", format="%.0f%%"),
@@ -1842,11 +2069,16 @@ def render_box_score(game_id: int):
                     "Defense": r["label"], "Poss": r["poss"],
                     "PPP": round(r["PPP"], 2), "FG%": round(r["FG%"] * 100, 0),
                     "Share": round(r["share"] * 100, 0),
-                    "Pct": r["pct"], "Tier": r["tier"]} for r in rows])
+                    "Pct": _pct_pool(r), "Tier": r["tier"]} for r in rows])
                 st.dataframe(df, hide_index=True, width="stretch",
                              column_config=_dcfg, key=f"bs{game_id}_def_tbl_{tid}")
-                st.caption(f"{dv['total_tagged']} tagged · {dv['untagged']} untagged. "
-                           "Pct = league percentile · Tier shades good→poor.")
+                st.caption(
+                    f"{dv['total_tagged']} tagged · {dv['untagged']} "
+                    "untagged. **Pct** is the league percentile for that "
+                    "scheme AND the pool it was ranked in; under ten it "
+                    "shows the rank instead. `thin` = too few possessions "
+                    "to rank. Tier shades good→poor."
+                )
 
                 # family rollup (man / zone / press …)
                 fam = DEF.team_defense_families(

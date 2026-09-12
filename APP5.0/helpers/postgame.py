@@ -91,11 +91,19 @@ def _top_performers(game_id, events, id2team, id2name, hn, an):
     return "Top game RATING — " + ", ".join(parts) + "."
 
 
-def game_report(game_id, *, events=None, gei=None):
-    """Return a list of markdown bullet strings — the post-game read for one game.
-    `gei` is an optional (value, label) tuple (the caller usually already has the
-    WP summary); when given it adds an excitement line. Empty list on a game with
-    nothing logged."""
+def game_report_lines(game_id, *, events=None, gei=None):
+    """The post-game read as [(key, markdown)] — the keyed primitive.
+
+    `key` names what each bullet IS ("result", "factors", "run", "who",
+    "excitement") so a renderer can badge it the way every other verdict
+    box on the app does, instead of matching on the prose. `game_report`
+    below returns the same bullets as bare strings for the four surfaces
+    that print them as a list.
+
+    `gei` is an optional (value, label) tuple (the caller usually already
+    has the WP summary); when given it adds an excitement line. Empty list
+    on a game with nothing logged.
+    """
     g = query(
         "SELECT g.team1_id, g.team2_id, g.home_score, g.away_score, "
         "       t1.name AS hn, t2.name AS an "
@@ -110,9 +118,15 @@ def game_report(game_id, *, events=None, gei=None):
     if not events:
         return []
     id2name, id2team = {}, {}
+    # `player_label`, not `name`: 539 of 608 players on this book carry a
+    # jersey number where a name goes, and the only sentence this module
+    # writes about a person rendered one of them as "25" (THE BOOK §10).
+    # The team rides along so a scouted opponent is identifiable.
     for p in query(
-            "SELECT id, name, team_id FROM players WHERE team_id IN (?,?)", (t1, t2)):
-        id2name[p["id"]] = p["name"]
+            "SELECT p.id, p.name, p.number, p.team_id, t.name AS team "
+            "FROM players p JOIN teams t ON t.id = p.team_id "
+            "WHERE p.team_id IN (?,?)", (t1, t2)):
+        id2name[p["id"]] = S.player_label(p, number=False)
         id2team[p["id"]] = p["team_id"]
     tname = {t1: hn, t2: an}
 
@@ -125,7 +139,7 @@ def game_report(game_id, *, events=None, gei=None):
         margin = ws - ls
         how = ("in a nail-biter" if margin <= 3 else
                "comfortably" if margin <= 12 else "in a rout")
-        bullets.append(f"**{win}** won **{ws}–{ls}**, {how}.")
+        bullets.append(("result", f"**{win}** won **{ws}–{ls}**, {how}."))
 
     # four factors (offense box for each side)
     try:
@@ -135,7 +149,7 @@ def game_report(game_id, *, events=None, gei=None):
         ff_a = TA.four_factors(ob, tb)["off"]
         fb = _factor_battle(ff_h, ff_a, hn, an)
         if fb:
-            bullets.append(fb)
+            bullets.append(("factors", fb))
     except Exception:
         pass
 
@@ -143,7 +157,7 @@ def game_report(game_id, *, events=None, gei=None):
     try:
         rb = _runs_bullet(events, tname)
         if rb:
-            bullets.append(rb)
+            bullets.append(("run", rb))
     except Exception:
         pass
 
@@ -151,7 +165,7 @@ def game_report(game_id, *, events=None, gei=None):
     try:
         tp = _top_performers(game_id, events, id2team, id2name, hn, an)
         if tp:
-            bullets.append(tp)
+            bullets.append(("who", tp))
     except Exception:
         pass
 
@@ -159,6 +173,19 @@ def game_report(game_id, *, events=None, gei=None):
     if gei and isinstance(gei, (tuple, list)) and gei[0] is not None:
         val, lbl = gei[0], (gei[1] if len(gei) > 1 else "")
         tail = f" — {lbl}" if lbl else ""
-        bullets.append(f"Game Excitement Index **{val:.1f}**{tail}.")
+        bullets.append(("excitement",
+                        f"Game Excitement Index **{val:.1f}**{tail}."))
 
     return bullets
+
+
+def game_report(game_id, *, events=None, gei=None):
+    """The post-game read as a list of markdown bullet strings.
+
+    The shape four surfaces already print (Schedule, the Team Dashboard
+    schedule, the Game Tracker, the season feed). `game_report_lines`
+    carries the same bullets with a key on each, for renderers that badge
+    them.
+    """
+    return [t for _k, t in game_report_lines(game_id, events=events,
+                                             gei=gei)]

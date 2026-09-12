@@ -86,6 +86,20 @@ SCOUT_SECTIONS = [
      "Overview"),
     ("engine_reads", "Engine reads — foul clock, run anatomy, giveaways, glue",
      "Overview"),
+    # ── Charts → Scout, Tier A (SCOUT_TAB_ROADMAP Part 10, 2026-09-12) ───────
+    # Four blocks the Charts tab already draws about your own team, aimed at
+    # the opponent through scout_deep (which computes nothing). All four are
+    # SCREEN ON / PAPER OFF by default — see _NEW_PRINT_OFF below. That is the
+    # split doing its job: depth on the tab, zero printed pages until a coach
+    # promotes one for THIS opponent.
+    ("winning_formula", "Winning formula — what has to be true for them to win",
+     "Overview"),
+    ("strength_split", "Top half vs bottom half — beater or stat-padder",
+     "Overview"),
+    ("force_profile", "Where they force shots (their defensive shot chart)",
+     "Defense (schemes)"),
+    ("shot_lab", "Shot making vs shot quality (contest or concede)",
+     "Shooting"),
     ("manual_intel", "Manual scouting (key players)", "Extras"),
     ("notes", "Game-plan notes", "Extras"),
     ("play_diagrams", "Blank play diagrams (draw by hand)", "Extras"),
@@ -109,9 +123,18 @@ PRINT_DEFAULT_OFF = frozenset({
     "shot_by_play_def", "shot_by_def_def",   # def_concession says this in rows
     "impact_splits",                         # a league leaderboard inside a scout
     "personnel_deep",                        # the appendix behind the 5-line card
-})
+}) | frozenset(SD.TIER_A_KEYS)               # new depth costs no printed pages
 
-_PREF_V = "2"          # bump when the stored shape changes; seeds the migration
+#: Keys added AFTER a coach's split preferences were first written. The hidden
+#: sets are stored as explicit CSV, so a brand-new key is absent from both and
+#: therefore defaults to visible on BOTH — which would silently add pages to
+#: every coach's hand-out. `PRINT_DEFAULT_OFF` only applies at the one-time v2
+#: seed, and re-running that seed would throw away every print choice made
+#: since. So new keys get an ADDITIVE migration instead: union into
+#: `scout_hidden_print` once, touch `scout_hidden_screen` never.
+_NEW_PRINT_OFF = {"3": frozenset(SD.TIER_A_KEYS)}
+
+_PREF_V = "3"          # bump when the stored shape changes; seeds the migration
 
 
 def _csv_set(raw):
@@ -128,7 +151,8 @@ def _section_prefs():
     shallow. Now depth lives on screen and the coach promotes the three blocks
     that matter for *this* opponent onto paper.
     """
-    if SU.get_setting("scout_sections_v", "") != _PREF_V:
+    _v = SU.get_setting("scout_sections_v", "")
+    if _v not in ("2", _PREF_V):
         # first read after the split: the old single set becomes the screen set,
         # and the print set starts from it plus the default-off blocks.
         _old = _csv_set(SU.get_setting("scout_hidden_sections", ""))
@@ -140,7 +164,15 @@ def _section_prefs():
             SU.set_setting("scout_layout",
                            SC.resolve_layout(
                                None, SU.get_setting("scout_compact", "1") != "0"))
-        SU.set_setting("scout_sections_v", _PREF_V)
+        _v = "2"
+    if _v != _PREF_V:
+        # additive only — see _NEW_PRINT_OFF. A coach who has already tuned
+        # their sheet keeps every choice; the new blocks arrive on screen and
+        # off paper.
+        _pr = _csv_set(SU.get_setting("scout_hidden_print", ""))
+        SU.set_setting("scout_hidden_print",
+                       ",".join(sorted(_pr | _NEW_PRINT_OFF[_PREF_V])))
+    SU.set_setting("scout_sections_v", _PREF_V)
     _lay = SU.get_setting("scout_layout", "") or SC.LAYOUT_DEFAULT
     try:
         _diag = int(SU.get_setting("scout_diagrams", "") or SC.DIAGRAMS_DEFAULT)
@@ -1180,6 +1212,26 @@ def render(ctx):
         # are rows in the four-factor bars directly above. It restated six numbers
         # already on screen, in prose, and did it on the printable too.)
 
+        # ── Charts → Winning Formula, inverted (Part 10 Tier A) ─────────────
+        # "What has to be true for them to win" IS "what to take away", and the
+        # engine already writes the forward sentence. Beside the four factors
+        # because it is the verdict those bars are evidence for.
+        if _show("winning_formula") and ctx.has_tracked:
+            st.markdown(
+                "<div class='lab-hdr'>Winning formula — what has to be true "
+                + ("for us to win" if _self else "for them to win")
+                + "</div>", unsafe_allow_html=True)
+            SD.render_winning_formula(ctx)
+
+        # ── Charts → Trends, vs top half / bottom half (Part 10 Tier A) ─────
+        if _show("strength_split") and ctx.has_tracked:
+            st.markdown(
+                "<div class='lab-hdr'>Top half vs bottom half — "
+                + ("do we beat good teams" if _self
+                   else "beater or stat-padder")
+                + "</div>", unsafe_allow_html=True)
+            SD.render_strength_split(ctx)
+
 
     if _sec == "Sets & schemes":
         # ── how they get their shots: tagged play calls (one-tap from tracker) ───
@@ -1378,6 +1430,16 @@ def render(ctx):
                            "(cells with ≥10 poss; blank = thin). Which defense to "
                            "throw at which action.")
 
+        # ── Charts → Defense, opponent shot profile (Part 10 Tier A) ────────
+        # Their defensive shot chart, which read about THEM is our offensive
+        # game plan: where they will force us to shoot.
+        if _show("force_profile") and ctx.has_tracked:
+            st.markdown(
+                "<div class='lab-hdr'>Where "
+                + ("we force shots" if _self else "they force shots")
+                + "</div>", unsafe_allow_html=True)
+            SD.render_force_profile(ctx)
+
 
     if _sec == "Situational & shooting":
         # ── situational tendencies (play/defense usage by quarter / score / run) ──
@@ -1520,6 +1582,15 @@ def render(ctx):
             zfig.update_yaxes(title="Attempts")
             ctx.style(zfig, 320)
             st.plotly_chart(zfig, width="stretch", key="scout_zones")
+
+        # ── Charts → Offense, Shot Lab (Part 10 Tier A) ─────────────────────
+        # Directly under the zone charts, because it is the question those
+        # charts raise and cannot answer: are the looks good, or is the SHOOTING
+        # good? That is the contest-or-concede call, and Scout had no line on it.
+        if _show("shot_lab") and ctx.has_tracked:
+            st.markdown("<div class='lab-hdr'>Shot making vs shot quality — "
+                        "contest or concede</div>", unsafe_allow_html=True)
+            SD.render_shot_lab(ctx)
 
         # ── spatial: defense concession (opponent) / shot selection (self) ───────
         # (Tier 2, ML_LAYER_ROADMAP) — rides on the league xPP-Q model; per-zone over
@@ -1699,6 +1770,10 @@ def render(ctx):
                 SD.game_plan(ctx, _my_team_id, my_game_ids=_my_gp)),
             "engine_reads": (SD.print_blocks(ctx)
                              if _show("engine_reads") else []),
+            # Charts Part 10 Tier A. Gated on the PRINT hidden set, not the
+            # screen one — that is the split's whole point, and all four start
+            # paper-off so promoting one is a deliberate act.
+            "tier_a": SD.print_tier_a(ctx, hidden=_prefs["print"]),
             # the same per-player depth lines the tab prints under each tile
             "player_depth": (SD.player_depth(ctx)
                              if _show("personnel") else {}),

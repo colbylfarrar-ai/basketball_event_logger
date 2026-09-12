@@ -110,6 +110,12 @@ SECTION_WEIGHT = {
     "shot_wall": 0.30, "zones": 0.14, "guarded_split": 0.05,
     "quarter_split": 0.06, "poss_length": 0.05, "manual_intel": 0.07,
     "notes": 0.09, "play_diagrams": 0.0, "saved_plays": 0.30,
+    # Charts Part 10 Tier A (2026-09-12). All four print as verdict LINES, not
+    # as their charts — the sentences are what change a game plan and a chart
+    # costs a third of a page. All four also default to paper-OFF, so these
+    # weights only enter the budget for a block a coach deliberately promoted.
+    "winning_formula": 0.07, "strength_split": 0.05,
+    "force_profile": 0.07, "shot_lab": 0.07,
 }
 # Fixed cost of the band + snapshot strip + footer, whatever else is on.
 CHROME_PAGES = 0.22
@@ -1102,6 +1108,16 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
             f"<h2>{e(hdr)}</h2><div class='vcard'>{_vcard(lines)}</div>"
             for hdr, lines in _eng)
 
+    # ── Charts Part 10 Tier A, promoted to paper ─────────────────────────────
+    # Each block already filtered by its OWN key in scout_deep.print_tier_a
+    # before it got here, so this is a straight render. They print as verdict
+    # LINES and never as their charts: the sentence is what changes a game plan,
+    # and a chart costs a third of a page. All four default to paper-off, so
+    # this is empty unless a coach deliberately promoted one for this opponent.
+    tier_a_html = "".join(
+        f"<h2>{e(hdr)}</h2><div class='vcard'>{_vcard(lines)}</div>"
+        for hdr, lines in (extra.get("tier_a") or []))
+
     # ── defensive matchups (who guards whom; shared with War Room planner) ──
     mu_html = ""
     mus = extra.get("matchups") or []
@@ -2004,6 +2020,7 @@ table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;backg
         f"{z_html}"
         f"{gs_html}"
         f"{engines_html}"
+        f"{tier_a_html}"
         f"{intel_html}"
         f"{notes_html}"
         f"{_flow_close}"

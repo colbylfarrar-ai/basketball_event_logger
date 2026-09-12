@@ -431,3 +431,479 @@ def section_picker(labels, key="scout_section"):
     every interaction. One open section instead."""
     return _UI.seg("Section", labels, default=labels[0], key=key,
                    label_visibility="collapsed") or labels[0]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CHARTS → SCOUT, TIER A  (SCOUT_TAB_ROADMAP Part 10)
+# ══════════════════════════════════════════════════════════════════════════════
+# Four blocks the Charts tab already draws about YOUR team, aimed at the
+# opponent. Same rule as everything above: nothing here computes a new number.
+# Each one is an existing engine result that already rides on `_opp_scout_ctx` —
+# the zone tables, the xFG baseline, the team box, the guarded split — plus the
+# sentence for the other direction.
+#
+# Screen-first by founder rule: all four default to SCREEN ON / PAPER OFF, which
+# is the whole point of splitting `scout_hidden_screen` from
+# `scout_hidden_print`. Each still HAS a paper form, because a print toggle that
+# renders nothing is its own bug.
+
+def _zone_rows(z2, z3):
+    """[(label, fga2, fg2, fga3, fg3)] over the five zones — the numbers behind
+    the two zone charts, in the order the court reads."""
+    import helpers.team_analytics as TA
+    out = []
+    for z in TA.ZONES:
+        a, b = z2.get(z) or {}, z3.get(z) or {}
+        out.append((TA.ZONE_LABELS[z].split("/")[0].strip(),
+                    a.get("FGA", 0), a.get("FG%"), b.get("FGA", 0), b.get("FG%")))
+    return out
+
+
+def _force_verdict(rows):
+    """One sentence: where their defense sends the ball, and whether going there
+    actually hurts.
+
+    Written off SHARE of attempts allowed, not raw counts — a scout needs "they
+    funnel you to the corner", and a count says that only if you already know
+    their pace. The efficiency half is stated ONLY where the sample can carry
+    it: five attempts from a zone is not an FG%, and saying it is would be the
+    kind of line that costs a coach a game.
+    """
+    tot2 = sum(r[1] for r in rows)
+    tot3 = sum(r[3] for r in rows)
+    tot = tot2 + tot3
+    if not tot:
+        return []
+    by_zone = sorted(((r[0], r[1] + r[3]) for r in rows), key=lambda kv: -kv[1])
+    top, n = by_zone[0]
+    low, ln = by_zone[-1]
+    lines = [("Where they send it", tot,
+              f"Most of what they allow comes from <b>{e(top)}</b> "
+              f"(<b>{n / tot * 100:.0f}%</b> of shots allowed); they give up "
+              f"least from <b>{e(low)}</b> (<b>{ln / tot * 100:.0f}%</b>). "
+              "That is where they will force us to shoot.")]
+    _share3 = tot3 / tot
+    lines.append(("Shot value allowed", tot,
+                  f"<b>{_share3 * 100:.0f}%</b> of the shots they allow are "
+                  "threes — "
+                  + ("they concede the arc to protect the rim"
+                     if _share3 >= 0.35 else
+                     "they run shooters off the line and live with twos"
+                     if _share3 <= 0.22 else
+                     "a balanced shot chart allowed") + "."))
+    # the zone they are genuinely bad at defending — stated only on real volume
+    _punish = [r for r in rows if (r[1] + r[3]) >= 15 and r[2] is not None]
+    if _punish:
+        worst = max(_punish, key=lambda r: r[2])
+        lines.append(("Their softest zone", worst[1] + worst[3],
+                      f"The highest two-point FG% they allow from any zone with "
+                      f"real volume is <b>{worst[2] * 100:.0f}%</b>, from "
+                      f"<b>{e(worst[0])}</b>. Softest is relative to their own "
+                      "chart — read it against the other zones above, not "
+                      "against a league average."))
+    return lines
+
+
+def render_force_profile(ctx):
+    """Defense → opponent shot profile, aimed at them: WHERE THEY FORCE SHOTS.
+
+    The roadmap calls this the single best chart on the Charts tab for a scout,
+    and the reason is worth stating: read about yourself it is "what our defense
+    allows"; read about them it is *where they will force US to shoot*, which is
+    the offensive game plan in one image.
+
+    `zones_by_type["def"]` and `zone_pair_bars` are both already on the ctx, so
+    this is a call and not a port.
+    """
+    zdt = (getattr(ctx, "bundle", {}) or {}).get("zones_by_type", {}).get("def")
+    if not zdt:
+        st.caption("Not enough located shots against them yet — this fills in "
+                   "as their games are tracked.")
+        return
+    lines = _force_verdict(_zone_rows(zdt.get("2") or {}, zdt.get("3") or {}))
+    if lines:
+        st.markdown(CARDS.verdict_card(lines), unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Attempts they allow, by zone**")
+        st.plotly_chart(ctx.zone_pair_bars(
+            zdt["2"], zdt["3"], "2-pt", "3-pt",
+            lambda a: a["FGA"], "Attempts allowed",
+            text_fn=lambda a: a["FGA"] or ""),
+            width="stretch", key="scout_force_fga")
+    with c2:
+        st.markdown("**FG% they allow, by zone**")
+        st.plotly_chart(ctx.zone_pair_bars(
+            zdt["2"], zdt["3"], "2P% allowed", "3P% allowed",
+            lambda a: (a["FG%"] or 0) * 100, "FG% allowed",
+            text_fn=lambda a: f"{a['FG%']*100:.0f}%" if a["FGA"] else "—"),
+            width="stretch", key="scout_force_fg")
+    st.caption("Their defensive shot chart, which is our offensive one. Tall "
+               "bars are where they are content to let the ball go; the FG% "
+               "chart beside it says whether being sent there actually hurts.")
+
+
+def force_profile_rows(ctx):
+    """The same five zones as a table for the hand-out, or []."""
+    zdt = (getattr(ctx, "bundle", {}) or {}).get("zones_by_type", {}).get("def")
+    if not zdt:
+        return []
+    return _zone_rows(zdt.get("2") or {}, zdt.get("3") or {})
+
+
+def force_profile_print(ctx):
+    """`[(badge, n, html)]` — the verdict half only. The zone table is large and
+    the sentences are what change a game plan, so paper gets the sentences."""
+    return _force_verdict(force_profile_rows(ctx))
+
+
+def _scoped_ids(ctx):
+    """The subject team's entitlement-filtered tracked ids as a hashable tuple,
+    or None when the ctx does not carry one.
+
+    `as_scope` rather than `tuple(...) or None`: an EMPTY pool is this viewer's
+    answer, not a missing argument, and collapsing it to None is the widening
+    class the September sweep closed."""
+    import helpers.stats as S
+    t = getattr(ctx, "tracked_ids", None)
+    return S.as_scope(t)
+
+
+# ── Winning Formula, inverted: what has to be true for THEM to win ────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _formula(gender, season, team_id, gids=None, fp=None):
+    """(team fit, league fit, suppressors) for one team.
+
+    Two pools on purpose, unlike `insights_deck._formula`, which is a SELF-scout
+    and has only one:
+
+      · the TEAM fit reads `gids` — the opponent's entitlement-filtered tracked
+        ids off the ctx. Fitting it over the season would derive a read about
+        this opponent from games the viewer is not entitled to see, which is the
+        read filter leaking through a model instead of through a table. An empty
+        pool therefore yields NO team fit rather than a season-wide one.
+      · the LEAGUE fit stays league-wide. It is a property of the competition,
+        not of any team — the same number Charts and Insights already print for
+        everybody — so it discloses nothing about whose games are pooled.
+
+    ONE `game_rows` walk still feeds the league half, because `league_formula`
+    takes prebuilt `rows` for exactly that reason.
+    """
+    import helpers.winning_formula as WF
+    rows = WF.game_rows(gender=gender, season=season)
+    lg = WF.league_formula(rows=rows)
+    if gids is None:
+        tm = WF.team_formula(team_id, rows=rows)
+    elif not gids:
+        tm = None
+    else:
+        tm = WF.team_formula(team_id, gender=gender, season=season,
+                             game_ids=list(gids))
+    return tm, lg, WF.suppressors(tm or {})
+
+
+def _md_bold(text):
+    """`**x**` -> `<b>x</b>`. The engine speaks markdown; verdict_card takes
+    HTML. Same two-line helper `insights_team_read` uses, for the same reason."""
+    import re as _re
+    return _re.sub(r"\*\*(.+?)\*\*", r"<b>\g<1></b>", str(text or ""))
+
+
+def formula_lines(ctx):
+    """`[(badge, n, html)]` for the winning formula at the RIGHT SCOPE.
+
+    Built from `WF.verdict(fit, scope=...)` rather than borrowed from
+    `WF.verdict_lines`, which hard-codes "Your games" and "a quirk of your
+    roster" because its only caller until now was the self-scout. On an opponent
+    sheet that badge is not a wording nit — it labels THEIR fit as ours, on the
+    one surface whose whole job is telling the two apart.
+    """
+    import helpers.winning_formula as WF
+    try:
+        tm, lg, _supp = _formula(ctx.gender, getattr(ctx, "season", "Current"),
+                                 ctx.team_id, _scoped_ids(ctx))
+    except Exception:
+        return []
+    _self = bool(getattr(ctx, "is_self", False))
+    _scope = "our games" if _self else "their games"
+    out = []
+    tv = WF.verdict(tm, scope=_scope) if tm else None
+    if tv and tv.get("kind") == "verdict":
+        out.append(("Our games" if _self else "Their games",
+                    tm.get("n_games", 0), _md_bold(tv["text"])))
+    lv = WF.verdict(lg, scope="this league") if lg else None
+    if lv and lv.get("kind") == "verdict":
+        _same = (tv and tv.get("kind") == "verdict"
+                 and tv["top"]["key"] == lv["top"]["key"])
+        out.append(("The league", (lg or {}).get("n_games", 0),
+                    "Same lever league-wide — this is how the whole competition "
+                    "plays, not a quirk of one roster."
+                    if _same else _md_bold(lv["text"])))
+    return out
+
+
+def render_winning_formula(ctx):
+    """"What has to be true for them to win" — and therefore what to take away.
+
+    The engine already writes the forward sentence, so the inversion is one line
+    of prose on top of it rather than a second engine. `suppressors` ships
+    verbatim: it is already written as coach-speak and is literally the scout
+    answer to "why do these two columns disagree".
+    """
+    try:
+        import helpers.winning_formula as WF
+        tm, lg, supp = _formula(ctx.gender, getattr(ctx, "season", "Current"),
+                                ctx.team_id, _scoped_ids(ctx))
+    except Exception as exc:
+        st.caption(f"Winning formula unavailable — {type(exc).__name__}: {exc}")
+        return
+    lines = formula_lines(ctx)
+    if not lines:
+        st.caption("Not enough of their games are tracked to fit a formula — "
+                   "the fit needs a real sample before it means anything.")
+        return
+    st.markdown(CARDS.verdict_card(lines), unsafe_allow_html=True)
+    _self = bool(getattr(ctx, "is_self", False))
+    _v = WF.verdict(tm, scope="our games" if _self else "their games")         if tm else None
+    _top = _v.get("top") if _v and _v.get("kind") == "verdict" else None
+    if _top:
+        st.markdown(
+            ("**Our lever:** " if _self else "**Take away:** ")
+            + f"{e(_top['noun'])}. One standard deviation of it is worth "
+              f"**{abs(_top['beta']):.1f} points** of margin in "
+            + ("our games" if _self else "their games")
+            + " — more than any other factor. Everything else on this sheet is "
+              "second.")
+    # Only alongside a fit that actually produced a verdict. The suppressor note
+    # explains a clash between a fitted column and a raw one, and BOTH columns
+    # live on the Charts tab — printing the footnote here without the verdict it
+    # annotates is a warning about a table this surface does not show.
+    if supp and _top:
+        st.caption(
+            "⚠ " + ", ".join(f"**{f['noun']}**" for f in supp)
+            + " fits POSITIVE but correlates NEGATIVE with margin in the raw "
+              "column — game state, not a real inversion (losing teams get "
+              "fouled late). The fit is what removes it.")
+
+
+def winning_formula_print(ctx):
+    """`[(badge, n, html)]` for the sheet — the same lines the tab renders."""
+    return formula_lines(ctx)
+
+
+# ── Shot Lab: do they get good looks, or do they make tough ones? ─────────────
+def _smoe(zmap, zxmap):
+    """(over-expected pp, made, expected, attempts) for one shot value."""
+    import helpers.team_analytics as TA
+    exp = sum((zmap.get(z) or {}).get("FGA", 0)
+              * ((zxmap.get(z) or {}).get("xFG%") or 0) for z in TA.ZONES)
+    act = sum((zmap.get(z) or {}).get("FGM", 0) for z in TA.ZONES)
+    fga = sum((zmap.get(z) or {}).get("FGA", 0) for z in TA.ZONES)
+    return ((act - exp) / fga * 100 if fga else 0), act, exp, fga
+
+
+def shot_lab(ctx):
+    """The Shot Lab numbers, data-only so the tab and the sheet cannot disagree.
+
+    {'two','three','look','pps','sceff','contest'} or None. Every input is
+    already on the ctx bundle — this adds no metric."""
+    b = getattr(ctx, "bundle", {}) or {}
+    zbt = (b.get("zones_by_type") or {}).get("off")
+    zxbt = b.get("zone_xfg_by_type")
+    if not (zbt and zxbt):
+        return None
+    import helpers.stats as S
+    import helpers.team_analytics as TA
+    zo = (b.get("zones") or {}).get("off") or {}
+    zx = b.get("zone_xfg") or {}
+    _fga = sum((zo.get(z) or {}).get("FGA", 0) for z in TA.ZONES)
+    _exp = sum((zo.get(z) or {}).get("FGA", 0)
+               * ((zx.get(z) or {}).get("xFG%") or 0) for z in TA.ZONES)
+    tb = getattr(ctx, "tb", None) or b.get("team_box") or {}
+    return {
+        "two": _smoe(zbt.get("2") or {}, zxbt.get("2") or {}),
+        "three": _smoe(zbt.get("3") or {}, zxbt.get("3") or {}),
+        "look": (_exp / _fga) if _fga else None,
+        "pps": S.pps(tb) if tb else None,
+        "sceff": S.shot_efficiency(tb) if tb else None,
+        "contest": (b.get("guarded") or {}).get("guard_share"),
+    }
+
+
+def _shot_lab_read(sl):
+    """The contest-or-concede line, or None.
+
+    Deliberately states the two numbers and the rule for reading them rather
+    than announcing which side of a cut-off this team falls on. A first draft
+    graded look quality against `>= 0.45 xFG` and shot-making against
+    `>= +2.0pp`; both constants were invented here, neither is in
+    `reliability.MEASURED`, and the house rule is explicit — no verdict, badge
+    or threshold on an unmeasured quantity. Render the number, skip the
+    sentence. Over-expected keeps its SIGN because the zero is the engine's own
+    expectation, not a constant anybody chose.
+    """
+    _2, _3 = sl["two"], sl["three"]
+    n = _2[3] + _3[3]
+    if sl["look"] is None or not n:
+        return None
+    make = ((_2[1] + _3[1]) - (_2[2] + _3[2])) / n * 100
+    return ("Look quality vs making", int(n),
+            f"Average look <b>{sl['look'] * 100:.0f}% xFG</b> on {n:.0f} shots; "
+            f"they finish <b>{make:+.1f}pp</b> against that expectation. "
+            "Above the line is shot-making you have to contest; below it, the "
+            "looks are better than the results and taking the looks away is "
+            "the lever.")
+
+
+def render_shot_lab(ctx):
+    """Offense → Shot Lab, aimed at them: shot-MAKING vs shot QUALITY.
+
+    This is the contest-or-concede decision and Scout could not answer it at
+    all. A team getting easy looks and converting them at expectation is beaten
+    by taking the looks away; a team generating ordinary looks and making them
+    anyway has to be contested, and no amount of scheme fixes that.
+    """
+    sl = shot_lab(ctx)
+    if not sl:
+        st.caption("Needs located shots and a league expectation model for "
+                   "their games — fills in as they are tracked.")
+        return
+    lines = []
+    _read = _shot_lab_read(sl)
+    if _read:
+        lines.append(_read)
+    for _lbl, _v in (("2-pointers", sl["two"]), ("3-pointers", sl["three"])):
+        if _v[3] >= 15:
+            lines.append((_lbl, int(_v[3]),
+                          f"<b>{_v[0]:+.1f}%</b> over expected ({_v[1]:.0f} "
+                          f"made vs {_v[2]:.0f} expected on {_v[3]:.0f} "
+                          "shots)"))
+    if lines:
+        st.markdown(CARDS.verdict_card(lines), unsafe_allow_html=True)
+    m = st.columns(4)
+    m[0].metric("Their look quality (xFG%)",
+                "—" if sl["look"] is None else f"{sl['look'] * 100:.0f}%",
+                help="Expected FG% of the shots they generate. Higher = easier "
+                     "looks, which is a scheme answer rather than a contest "
+                     "one.")
+    m[1].metric("Points / shot",
+                "—" if sl["pps"] is None else f"{sl['pps']:.2f}",
+                help="Field-goal points per FGA (free throws excluded).")
+    m[2].metric("Scoring efficiency (ScEff)",
+                "—" if sl["sceff"] is None else f"{sl['sceff']:.3f}")
+    m[3].metric("Contested rate",
+                "—" if sl["contest"] is None
+                else f"{sl['contest'] * 100:.0f}%",
+                help="Share of their shots logged with a contest. Low = they "
+                     "are getting clean looks off the scheme.")
+    st.caption("Look quality measures the difficulty of what they create; "
+               "over-expected measures whether they convert it. The two "
+               "together are the contest-or-concede call.")
+
+
+def shot_lab_print(ctx):
+    """`[(badge, n, html)]` — the same sentences, for paper."""
+    sl = shot_lab(ctx)
+    if not sl:
+        return []
+    out = []
+    _read = _shot_lab_read(sl)
+    if _read:
+        out.append(_read)
+    for _lbl, _v in (("2-pointers", sl["two"]), ("3-pointers", sl["three"])):
+        if _v[3] >= 15:
+            out.append((_lbl, int(_v[3]),
+                        f"<b>{_v[0]:+.1f}%</b> over expected on "
+                        f"{_v[3]:.0f} shots"))
+    return out
+
+
+# ── Trends → vs top-half / bottom-half: good-team beater or stat-padder ───────
+def strength_lines(ctx):
+    """`[(badge, n, html)]` for the top-half / bottom-half read, or [].
+
+    Runs `insights_team.strength_splits` through `ctx.strength_split`, which the
+    page binds with the opponent's gender, read-filtered ids and season — the
+    engine is never called from here with a pool this module chose.
+    """
+    fn = getattr(ctx, "strength_split", None)
+    if fn is None:
+        return []
+    try:
+        ss = fn(ctx.team_id)
+    except Exception:
+        return []
+    if not (ss and ss.get("available")):
+        return []
+    tp, bt = ss["top"], ss["bottom"]
+    d = (tp.get("PPP") or 0) - (bt.get("PPP") or 0)
+    n = ss["top_games"] + ss["bottom_games"]
+    # The split ITSELF is a number and always prints. The directional sentence
+    # is a verdict, and a verdict off two games on one side is the superlative
+    # THE BOOK's B1 bans — "no superlative on a sample that cannot support it".
+    # Three a side is the floor a difference of means needs before the word
+    # "beater" is worth writing on a coach's sheet.
+    _split = ("The split", n,
+              f"<b>{tp.get('PPP') or 0:.2f} PPP</b> vs the top half "
+              f"({ss['top_games']}g) · <b>{bt.get('PPP') or 0:.2f}</b> vs the "
+              f"bottom half ({ss['bottom_games']}g)")
+    _thin = min(ss["top_games"], ss["bottom_games"])
+    if _thin < 3:
+        return [_split,
+                ("Not yet a read", n,
+                 f"Only {_thin} tracked game{'' if _thin == 1 else 's'} on the "
+                 "thinner side — the numbers are above, but which way they "
+                 "lean is not something this sample can say.")]
+    read = (f"their offense <b>drops {abs(d):.2f} PPP</b> against top-half "
+            "teams — a stat-padder, and the tape against weak opponents is not "
+            "what you will see" if d <= -0.12 else
+            f"their offense <b>rises {d:+.2f} PPP</b> against top-half teams — "
+            "a good-team beater; they bring their best against the better "
+            "opponents" if d >= 0.12 else
+            "their offense holds up about the same against strong and weak "
+            "opponents — an opponent-proof profile, so the book travels")
+    return [("Who they beat", n, f"By power rank, {read}."), _split]
+
+
+def render_strength_split(ctx):
+    """One row and one line of prose, which is all the roadmap asked for."""
+    lines = strength_lines(ctx)
+    if not lines:
+        st.caption("Needs tracked games on both sides of the league's power "
+                   "median before a split means anything.")
+        return
+    st.markdown(CARDS.verdict_card(lines), unsafe_allow_html=True)
+    st.caption("Split at the league's own power-rank median. A team whose "
+               "numbers collapse against the top half has a book that does not "
+               "travel — and the film you watched may be the wrong half of "
+               "their season.")
+
+
+#: Tier A, for paper. Every one of these defaults to PAPER OFF; this is what a
+#: coach gets when they promote one in the ⚙ panel.
+TIER_A_PRINT = (
+    ("force_profile", "Where they force shots", force_profile_print),
+    ("winning_formula", "What has to be true for them to win",
+     winning_formula_print),
+    ("shot_lab", "Shot making vs shot quality", shot_lab_print),
+    ("strength_split", "Top half vs bottom half", strength_lines),
+)
+#: The Tier A keys, in the order they are read. Shared with scout_tab so the
+#: section list and the print list cannot drift.
+TIER_A_KEYS = tuple(k for k, _h, _f in TIER_A_PRINT)
+
+
+def print_tier_a(ctx, hidden=frozenset()):
+    """`[(header, [(badge, n, html)])]` for the sheet — the promoted Tier A
+    blocks only, so the hand-out cannot say something the screen does not."""
+    out = []
+    for key, header, fn in TIER_A_PRINT:
+        if key in hidden:
+            continue
+        try:
+            got = fn(ctx)
+        except Exception:
+            got = []
+        if got:
+            out.append((header, got))
+    return out

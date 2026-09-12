@@ -6092,6 +6092,12 @@ def _opp_scout_ctx(opp_tid):
         pp_zone_tables=lambda: _pp_zone_tables(_ogp),
         badges=lambda: _badges(gender, _ogp),
         quick_view=_scout_card_opener(_ogp, o_has),
+        # Charts Part 10 Tier A: the one binder the four ports needed. Bound
+        # with the OPPONENT's read-filtered ids so a League-wide coach's split
+        # is still computed over the games they may see; an empty tuple stays
+        # empty (`_ovk` is already the entitlement answer).
+        strength_split=lambda _t: _strength_split(
+            gender, _t, tuple(ob["tracked_ids"]), season_pick),
         is_self=False)
 
 # The Scout tab's per-player pool for YOUR OWN team. `_vis_key is None` means
@@ -6127,6 +6133,9 @@ _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                              badges=lambda: _badges(gender, _scout_gp),
                              quick_view=_scout_card_opener(_scout_gp,
                                                            has_tracked),
+                             strength_split=lambda _t: _strength_split(
+                                 gender, _t, tuple(bundle["tracked_ids"]),
+                                 season_pick),
                              is_self=True,
                              # opponent scout: pick & scout any team, keep yours
                              opp_ctx=_opp_scout_ctx, all_teams=_all_teams,

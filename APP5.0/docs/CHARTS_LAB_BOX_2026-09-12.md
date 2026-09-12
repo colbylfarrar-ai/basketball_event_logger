@@ -272,6 +272,55 @@ table.
 
 ---
 
+### 1.12 · The one I did not fix — a player has two league ranks on one page
+
+Chasing the ~15-second floor (§3.2) turned up something that is not a
+performance problem. One cold render calls `_pure_rapm_cached` **twice**,
+with two different pools and the same gender:
+
+```
+player_ratings:1487 < player_stat_table < team_player_rows < team_bundle
+    gender=F   63 games   <- EVERY tracked game that season, both genders
+player_ratings:1487 < player_stat_table < _ptable_full < _matchup_grid
+    gender=F   43 games   <- the girls' tracked pool
+```
+
+`team_analytics.team_player_rows` builds its pool as
+`SELECT id FROM games WHERE tracked=1 AND season=?` — **no gender
+predicate** — and then passes `gender=gender` down. So the gender filter
+reaches the players and never reaches the possessions the RAPM leaf is
+solved over. The other path is gender-scoped. Both tables are labelled
+"girls" and both render on the same page.
+
+Measured on production, 261 rated girls:
+
+```
+OVERALL delta (63-pool minus 43-pool)
+    -0.4   8 players     -0.1  26      +0.1  53
+    -0.3   4 players      0.0 167      +0.2   3
+league RANK differs for 136 of 261; biggest move 10 places (#127 -> #117)
+the top ten is NOT identical
+
+and the players it moves most are ADAIR GIRLS — every one of them 0.3-0.4
+LOWER in the wide pool, with Kylin Lemons ten league places lower.
+```
+
+The magnitudes are small; the property is not. A player has two league ranks
+on one screen depending on which code path drew the table — THE BOOK §8.3's
+"two engines that answer the same question differently", in a new place.
+
+**I did not fix it, deliberately.** The gender-scoped pool is the obvious
+candidate — a girls' league rank computed against boys' possessions is hard
+to defend — but the fix moves published OVERALL numbers on your own roster,
+and the standing rule (`recal-round2`) is that nothing that moves a rating
+ships without its own gate. `tools/rating_pool_diff.py` **is** that gate:
+one command, holds every constant still, moves only the pool, prints both
+columns side by side.
+
+```bash
+APP5_DATA_DIR=~/app5_prod python -m tools.rating_pool_diff
+```
+
 ## 2 · What shipped
 
 Eight commits on `main`, each green on both suites.
@@ -388,6 +437,9 @@ recorded here so nobody spends another session shaving figures.
 * **Touching the Overview view.** It was offered as open to change and it did
   not come up: it leads with a verdict, it was the fastest view measured, and
   nothing in the scrub pointed at it.
+* **The RAPM pool (§1.12).** Measured, written up, and handed over with the
+  script that reproduces it. Changing it moves published ratings, and that
+  is a decision, not a cleanup.
 * **Any constant.** `recal-round2` stands: nothing moves without its own gate.
 
 ---
@@ -396,12 +448,19 @@ recorded here so nobody spends another session shaving figures.
 
 Ranked, with the reason each waited.
 
+0. **The founder call in §1.12** — does a girls' league rank get computed
+   against boys' possessions? It is one line in
+   `team_analytics.team_player_rows`, it moves your own roster's OVERALL by
+   0.3–0.4 and one player ten league places, and
+   `tools/rating_pool_diff.py` shows both columns. **Before October**, not
+   because it is urgent but because four new readers should not learn two
+   different ranks for one player.
+
 1. **The `team_bundle` floor** (§3.2), and inside it the ridge solve that
    runs twice. ~9 s of `player_stat_table` and ~15 s of
    `_pure_rapm_cached` on every view of every team. It is the largest
    number on this page and it is not in any of the three surfaces scoped
-   here, which is exactly why it should be its own session. Start by
-   printing the two `(gender, game-set)` keys the RAPM memo is asked for on
-   one cold render: if they resolve to the same pool, the second solve is
-   free to delete.
-   a file is done.
+   here, which is exactly why it should be its own session. §1.12 already
+   printed both RAPM keys: they are 63 games and 43 games,
+   so the two solves are not redundant — they are inconsistent, and
+   resolving that is what collapses them to one.

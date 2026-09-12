@@ -56,6 +56,15 @@ from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 # so the number a coach reads and the number the engine applies are one thing.
 from helpers.passing_chains import MIN_EDGE_FEEDS as _PC_MIN_FEEDS
 
+#: The card's sections, in the order a coach asks the questions: does she help
+#: us win, how does she score, what is her form, where does she rank, where is
+#: she going, and the written strengths/watch read. The fold and the Verdict are
+#: above this selector and always render.
+CARD_SECTIONS = ["Does the team win with her on?", "How does she score?",
+                 "What is her form?", "Where does she rank?",
+                 "Where is she going?", "Strengths & watch"]
+
+
 #: The league-percentile rail, ONCE. This 21-row list was copy-pasted verbatim
 #: into the paid Overview rail and the free-tier rail 890 lines apart, so every
 #: stat added, renamed or re-pointed had to be done twice and the two drifted.
@@ -430,10 +439,18 @@ def _projection(gender, season=SEAS_DEFAULT, game_ids=None):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _insight_feed(gender, season=SEAS_DEFAULT, game_ids=None):
-    """League insight feed (helpers/insights.build_feed) for the card's "What
-    the data says" lines — computed once per (gender, season), NOT per player;
-    the card looks its pid up in the result. top=3 = the surface cap (the
-    Insights tab is the deep-dive home with every line).
+    """League insight feed (helpers/insights.build_feed) for the card's verdict
+    lines — computed once per (gender, season), NOT per player; the card looks
+    its pid up in the result.
+
+    NOT capped at three any more. `helpers/insights` holds 39 player generators
+    — shot-making, selection, force-left/right, space dependence, Q4,
+    consistency, on-ball defense, signature play type, PnR role, gravity,
+    assignment difficulty, rim finishing, usage, stints, form, on/off … — and
+    the card rendered at most three of them, in a grey box, at the very bottom
+    of the page. The Insights tab runs the same feed through
+    `insights_severity.rank()` and shows EVERY line, ordered: the rank-never-hide
+    rule. The card does that now too, at the top.
 
     `impact` is passed because the on/off generators now REQUIRE the adjusted
     estimate to fire (raw on/off is teammate-confounded and measured
@@ -455,7 +472,59 @@ def _insight_feed(gender, season=SEAS_DEFAULT, game_ids=None):
                             war=_war(gender, season, game_ids))
     except Exception:
         pass
-    return IN.build_feed(table, ev, top=3, impact=imp)
+    # top=None: rank, never hide. The renderer spotlights and says it is
+    # spotlighting; truncating here would decide for it.
+    return IN.build_feed(table, ev, top=None, impact=imp)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _matchup_reads(gender, game_ids=None):
+    """(matchup_table, matchup_difficulty) over the pool — who each defender
+    guarded, shot by shot, and how hard the assignments were.
+
+    Already built for Lab → Matchups, behind its own defender picker, and the
+    card never asked for it. Two reads come out of one table: who SHE guarded,
+    and — free, by inverting it — who guarded HER, which existed nowhere.
+    """
+    import helpers.matchups as MU
+    gids = (list(game_ids) if game_ids is not None
+            else PT._tracked_game_ids(gender))
+    ev = S.fetch_events(gids) if gids else []
+    tbl = PR.player_stat_table(
+        gender=gender, min_games=1,
+        game_ids=(set(gids) if game_ids is not None else None))
+    return (MU.matchup_table(events=ev),
+            MU.matchup_difficulty(events=ev, table=tbl))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _turnover_types(gender, game_ids=None):
+    """{pid: giveaway mix}. The engine shipped to the Insights feed only, and
+    "which kind of turnover" is the one turnover read a coach can drill."""
+    import helpers.turnovers as TO
+    return TO.player_turnover_types(gender=gender, game_ids=(
+        list(game_ids) if game_ids is not None else None))
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ind_ratings(gender, game_ids=None):
+    """(ORtg by pid, DRtg by pid) — Oliver individual ratings. Computed in
+    team_analytics for its own table and nowhere near this card."""
+    gids = (list(game_ids) if game_ids is not None
+            else PT._tracked_game_ids(gender))
+    ev = S.fetch_events(gids) if gids else []
+    drtg = S.individual_defensive_rating_all(game_ids=gids, events=ev)
+    return {}, drtg
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _team_on_off(team_id, game_ids=None):
+    """{pid: on/off ORtg + DRtg + net}. The card's On/Off section carried
+    rebounding and AST/TOV and had NO SCORING in it — the one number the phrase
+    "on/off" means to a coach."""
+    import helpers.lineups as LU
+    return LU.player_on_off(team_id, game_ids=(
+        list(game_ids) if game_ids is not None else None))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -494,6 +563,180 @@ def _game_rtg_bundle(gender, game_ids=None, season=SEAS_DEFAULT):
         return _GR.season_game_ratings(game_ids=gids or None)
     except Exception:
         return {}
+
+
+def _render_matchups(ctx, P, pid, gender, gp):
+    """Who she guarded, who guarded her, and how hard the assignment was.
+
+    `matchups.matchup_table` has existed behind the Lab's own defender picker
+    the whole time; the inverse read — who guarded HER — falls out of the same
+    table for free and was on no surface at all.
+    """
+    try:
+        tbl, diff = _matchup_reads(gender, gp)
+    except Exception as exc:
+        st.caption(f"Matchup reads unavailable — {type(exc).__name__}: {exc}")
+        return
+    _names = {r["id"]: r["name"] for r in query("SELECT id, name FROM players")}
+    mine = tbl.get(pid) or {}
+    st.markdown("<div class='pl-hdr'>Matchups — who she guarded, who guarded "
+                "her</div>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**She contested**")
+        _rows = sorted(((sh, c) for sh, c in (mine.get("by_shooter") or {}).items()
+                        if c["FGA"] >= 3), key=lambda kv: -kv[1]["FGA"])[:8]
+        if _rows:
+            st.dataframe(pd.DataFrame([{
+                "Shooter": _names.get(sh, f"#{sh}"), "FGA": c["FGA"],
+                "Made": c["FGM"], "FG% allowed": (c["FG%"] or 0) * 100,
+                "Pts": c["pts"]} for sh, c in _rows]),
+                hide_index=True, width="stretch",
+                column_config={"FG% allowed":
+                               st.column_config.NumberColumn(format="%.0f%%")})
+            _d = diff.get(pid) or {}
+            if _d.get("Difficulty100") is not None:
+                st.caption(
+                    f"Assignment difficulty **{_d['Difficulty100']:.0f}/100** "
+                    f"over {_d.get('shots_faced', 0)} contested shots — 50 is an "
+                    "average night's assignment. High = she drew their scorers.")
+        else:
+            st.caption("No contested shots tagged to her yet — tap who "
+                       "contested the shot in the Game Tracker.")
+    with c2:
+        st.markdown("**Who guarded her**")
+        _inv = []
+        for did, cell in tbl.items():
+            c = (cell.get("by_shooter") or {}).get(pid)
+            if c and c["FGA"] >= 3:
+                _inv.append((did, c))
+        _inv.sort(key=lambda kv: -kv[1]["FGA"])
+        if _inv:
+            st.dataframe(pd.DataFrame([{
+                "Defender": _names.get(d, f"#{d}"), "FGA": c["FGA"],
+                "Made": c["FGM"], "Her FG%": (c["FG%"] or 0) * 100,
+                "Pts": c["pts"]} for d, c in _inv[:8]]),
+                hide_index=True, width="stretch",
+                column_config={"Her FG%":
+                               st.column_config.NumberColumn(format="%.0f%%")})
+            st.caption("The same table, inverted — how she shot against each "
+                       "defender who took her.")
+        else:
+            st.caption("Nobody is tagged as contesting her shots yet.")
+
+
+def _render_giveaways(pid, gender, gp):
+    """Her giveaway mix — which kind, not just how many."""
+    try:
+        mix = (_turnover_types(gender, gp) or {}).get(pid)
+    except Exception:
+        return
+    if not mix or not mix.get("rows"):
+        return
+    st.markdown("<div class='pl-hdr'>Giveaways — which kind</div>",
+                unsafe_allow_html=True)
+    _rows = [r for r in mix["rows"] if r["n"]]
+    if not _rows:
+        return
+    _top = max(_rows, key=lambda r: r["n"])
+    st.markdown(verdict_card([(
+        "Giveaway mix", mix.get("total_tagged"),
+        f"Her most common giveaway is <b>{html_escape(_top['label'])}</b> — "
+        f"{_top['n']} of {mix.get('total_tagged') or 0} tagged "
+        f"({_top['share'] * 100:.0f}%). That is the one to drill.")]),
+        unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame([{
+        "Kind": r["label"], "Count": r["n"], "Share": r["share"] * 100}
+        for r in sorted(_rows, key=lambda r: -r["n"])]),
+        hide_index=True, width="stretch",
+        column_config={"Share": st.column_config.NumberColumn(format="%.0f%%")})
+    if mix.get("untagged"):
+        st.caption(f"{mix['untagged']} of her turnovers carry no kind tag yet.")
+
+
+def _render_verdict(ctx, P, pid, rows, paid, lab_badges, archetype, feed):
+    """§0 — the verdict, directly under the fold.
+
+    Two scrub findings cashed in at once.
+
+    **It was last.** "Scouting report" and "What the data says" rendered after
+    roughly twenty screens of tables, so the page opened with numbers and ended
+    with meaning. This is the first thing under the fold now.
+
+    **Three archetype labels disagreed in public.** The card carried a
+    data-driven cluster chip, a badges-vs-style agreement line, AND an
+    eleven-branch if/elif ladder on percentile cutoffs that knew about neither
+    of the other two — so it could label a "Glass Cleaner" whose cluster said
+    Perimeter creator, and it was the most prominent-looking of the three. The
+    ladder is demoted to the one case it is actually good at: naming the role
+    when the cluster has nothing to say. When the cluster and the badge
+    archetype both exist, they lead, and whether they AGREE is the scouting
+    note — which is a real read, and free.
+    """
+    import helpers.insights_severity as SEV
+    import helpers.badges as _BG
+    from helpers.cards import verdict_card as _vc
+
+    lines = []
+
+    # the role, reconciled
+    _barch = (_BG.badge_archetype(lab_badges or [])["archetype"]
+              if lab_badges else None)
+    if archetype and _barch:
+        _agree = archetype == _barch
+        lines.append((
+            "Role", None,
+            f"<b>{html_escape(archetype)}</b> by play profile, "
+            f"<b>{html_escape(_barch)}</b> by badges — "
+            + ("the two lenses agree, which is the strongest read this card "
+               "makes about who she is."
+               if _agree else
+               "the two lenses disagree, so treat the role as unsettled and "
+               "read the lines below rather than the label.")))
+    elif archetype or _barch:
+        lines.append(("Role", None,
+                      f"<b>{html_escape(archetype or _barch)}</b>"))
+
+    # the ranked feed
+    _ranked = []
+    if paid and feed:
+        try:
+            _ranked = SEV.rank(
+                SEV.collect(player_feed={pid: feed},
+                            names={pid: P.get("name") or f"#{pid}"}),
+                gp=P.get("GP") or 0)
+        except Exception:
+            _ranked = []
+    for f in _ranked[:6]:
+        lines.append((f.get("metric") or "Read", f.get("n"),
+                      _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>",
+                              f.get("text") or "")))
+    if lines:
+        st.markdown("<div class='pl-hdr' style='margin-top:6px'>Verdict</div>",
+                    unsafe_allow_html=True)
+        st.markdown(_vc(lines), unsafe_allow_html=True)
+
+    # Monday: the lines that point the wrong way on a metric a coach can
+    # actually rehearse. A display grouping only — nothing is removed from the
+    # full list below, which is the whole feed, ordered.
+    if _ranked:
+        _mon = SEV.monday(_ranked)[:3]
+        if _mon:
+            st.markdown("<div class='pl-hdr'>Monday — what to drill</div>",
+                        unsafe_allow_html=True)
+            st.markdown(_vc([(f.get("metric") or "Drill", f.get("n"),
+                              _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>",
+                                      f.get("text") or ""))
+                             for f in _mon]), unsafe_allow_html=True)
+        if len(_ranked) > 6:
+            with st.expander(f"Every read the engines have on her "
+                             f"({len(_ranked)} lines, most material first)"):
+                st.markdown(_vc([
+                    (f.get("metric") or "Read", f.get("n"),
+                     _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>",
+                             f.get("text") or ""))
+                    for f in _ranked]), unsafe_allow_html=True)
+    return bool(lines)
 
 
 def render_card(ctx):
@@ -894,1215 +1137,1298 @@ def render_card(ctx):
                                      n=_pctile_n(_key, rows))
             _gpc[_ci].markdown(_html, unsafe_allow_html=True)
 
-    # ── "why this OVERALL" (ratings live as bars in the grid) ────────────
-    # The seven-metric tile row that used to sit here is gone. Five of the seven
-    # — USG%, +/-, EFF, FIC, VPS — are rows in the league-percentile rail
-    # directly above, where each carries its league percentile AND the pool it
-    # was ranked against; the tile gave the same number with no context at all.
-    # The two that were NOT in the rail, MIN/G and PRF, are rail entries now.
-    if paid:
-        _why = PR.overall_blurb(P.get("OFFENSE"), P.get("DEFENSE"),
-                                P.get("PLAYMAKING"), P.get("REBOUNDING"))
-        if _why:
-            st.markdown(f"<div style='color:{accent};font-weight:600;margin:2px 0 4px'>"
-                        f"Why this OVERALL: {html_escape(_why)}</div>",
-                        unsafe_allow_html=True)
-
-    # ── Impact — RAPM · WPA (directional on a short book) → Paid ──────────────
-    if paid:
-        _g = getattr(ctx, "gender", None)
-        _rp = _rapm(_g, _gp).get(pid, {})
-        _wpm = _wpa(_g, _szn, _gp)      # same read-filter as _rapm / _war above
-        _ws = (_wpm.get("scoring") or {}).get(pid, {})
-        _wq = (_wpm.get("possession") or {}).get(pid, {})
-
-        def _sv(d, k, fmt="{:+.1f}"):
-            v = d.get(k)
-            return fmt.format(v) if v is not None else "—"
-
-        _wr = _war(_g, _szn, _gp).get(pid, {})
-        _imp = [
-            ("HoopWAR", _sv(_wr, "WAR", "{:+.2f}"), "wins vs replacement"),
-            ("ORAPM", _sv(_rp, "ORAPM"), "off pts/100"),
-            ("DRAPM", _sv(_rp, "DRAPM"), "def pts/100"),
-            ("RAPM", _sv(_rp, "RAPM"), "net pts/100"),
-            ("WPA", _sv(_ws, "wpa", "{:+.2f}"), "wins added"),
-            ("Clutch WPA", _sv(_ws, "clutch_wpa", "{:+.2f}"), "high-leverage"),
-            ("Off WPA", _sv(_wq, "off_wpa", "{:+.2f}"), "offense value"),
-            ("Def WPA", _sv(_wq, "def_wpa", "{:+.2f}"), "defense value"),
-        ]
-        if any(v != "—" for _, v, _ in _imp):
-            st.markdown("<div class='pl-hdr'>Impact — HoopWAR &middot; RAPM "
-                        "&middot; WPA</div>",
-                        unsafe_allow_html=True)
-            _itiles = "".join(
-                f"<div style='background:var(--card-bg-2);border:1px solid var(--track);"
-                f"border-radius:8px;padding:6px 9px'>"
-                f"<div style='font-size:10px;color:var(--subtext)'>{l}</div>"
-                f"<div style='font-size:16px;font-weight:700;color:var(--text)'>{v}</div>"
-                f"<div style='font-size:9px;color:#6e7681'>{s}</div></div>"
-                for l, v, s in _imp)
-            st.markdown(
-                "<div style='display:grid;grid-template-columns:repeat(8,1fr);"
-                "gap:6px'>" + _itiles + "</div>", unsafe_allow_html=True)
-            st.caption("HoopWAR = RAPM impact paid out over floor time, vs a "
-                       "replacement-level player, converted to wins (≈14 pts/win "
-                       "at HS scoring). RAPM shrinks toward a box-score prior; WPA "
-                       "credits the shots (and stops) that swung win probability. "
-                       "Directional on a short book — read the sign and rough size, "
-                       "not the decimals.")
-
-    # ── impact & rating splits (rebuilt engine: possession impact + defense /
-    #    rebounding sub-ratings + passer depth) → Paid ─────────────────────────
-    import helpers.advanced_ratings as ADV
-    ADV.player_panel(P, paid)
-
-    # ── signature / invented metrics (glass tiles) ────────────────────────────
-    #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.
-    st.markdown("<div class='pl-hdr'>Signature metrics</div>",
-                unsafe_allow_html=True)
-    tile_specs = [
-        ("VERSATILITY", _fmt(P["VERSATILITY"], "f1"), "even box impact", accent),
-    ]
-    if paid:
-        tile_specs += [
-            ("2-WAY", _fmt(P["2WAY"], "f1"), "offense + defense", "#56d4dd"),
-            ("SMOE", _fmt(P["SMOE"], "spp"), "shot-making vs exp.", "#00e5ff"),
-            ("Q4 PPG", _fmt(P["Q4PPG"], "f1"),
-             f"{_fmt(P['Q4%'], 'pct')} of points", "#ff7b72"),
-            # (no SELF-CR% tile: the Signature pill in the fold already carries
-            #  it, and the pill is the one a coach sees first.)
-            ("STOCKS/32", _fmt(P["STOCKS/32"], "f1"), "defensive disruption", "var(--good)"),
-            # (no DOM-SIDE% tile: "Dominant vs weak hand side" below owns the
-            #  whole split — share, FG% on each side, and the edge between them.)
-        ]
-    tiles = st.columns(len(tile_specs))
-    for col, (lbl, val, sub, clr) in zip(tiles, tile_specs):
-        col.markdown(_glass(lbl, val, sub, clr), unsafe_allow_html=True)
-
-    # ── dominant vs weak hand side (event-derived → Paid) ─────────────────────
-    if paid and _hand_dom and _hand_weak and (_hand_dom["FGA"] or _hand_weak["FGA"]):
-        st.markdown("<div class='pl-hdr'>Dominant vs weak hand side</div>",
-                    unsafe_allow_html=True)
-        dom, wk = _hand_dom, _hand_weak
-        hm = st.columns(4)
-        hm[0].metric("Dominant FG%", f"{dom['pct']*100:.0f}%" if dom["FGA"] else "—",
-                     help=f"{dom['FGM']}/{dom['FGA']} on the strong-hand half")
-        hm[1].metric("Weak FG%", f"{wk['pct']*100:.0f}%" if wk["FGA"] else "—",
-                     help=f"{wk['FGM']}/{wk['FGA']} on the off-hand half")
-        hm[2].metric("Dominant share",
-                     f"{_dom_share*100:.0f}%" if _dom_share is not None else "—",
-                     help=f"{dom['FGA']} dominant / {wk['FGA']} weak attempts")
-        hm[3].metric("FG% edge",
-                     f"{(dom['pct']-wk['pct'])*100:+.0f}pp" if (dom["FGA"] and wk["FGA"]) else "—",
-                     help="Dominant minus weak FG% — how much better on the strong side")
-
-        def _po(c):
-            return f"{c['pct']*100:.0f}% ({c['FGM']}/{c['FGA']})" if c["FGA"] else "—"
-        dg, do = _hand["dominant"]["guarded"], _hand["dominant"]["open"]
-        wg, wo = _hand["weak"]["guarded"], _hand["weak"]["open"]
-        st.caption(
-            f"Dominant — guarded {_po(dg)} · open {_po(do)}   ·   "
-            f"Weak — guarded {_po(wg)} · open {_po(wo)}.  "
-            "Right-handers' right half = dominant (lefties mirrored); "
-            "dead-center shots ignored.")
-
-    # ── shot detail (event-derived → Paid). The located shot map + defended map
-    #    moved INTO the overview grid's 4th column (phase E); this section keeps
-    #    the reads the fold can't carry — shot-length buckets, hot zones, and
-    #    the zone-chart fallback for legacy zone-only games.
-    if paid:
-        st.markdown("<div class='pl-hdr'>Shot detail</div>", unsafe_allow_html=True)
-        sc_l, sc_r = st.columns([3, 2])
-        with sc_l:
-            if located:
-                _ls = S.shot_location_summary(located)
-                if _ls:
-                    def _seg(lbl, n, fg):
-                        return f"{lbl} {n}" + (f" ({fg*100:.0f}%)" if fg is not None
-                                               else "")
-                    st.caption(
-                        f"Avg distance **{_ls['avg_dist']:.1f} ft** · "
-                        + _seg("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
-                        + _seg("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
-                        + _seg("Three", _ls["three_n"], _ls["three_fg"])
-                        + " — the shot map lives up in the Overview grid.")
-                _dbl = S.distance_buckets(located)
-                if _dbl:
-                    st.caption("By length — " + S.distance_buckets_caption(_dbl))
-            else:
-                fig, ok = _shot_chart(zsplits.get(pid, {}),
-                                      f"{P['name']} — FG% by zone")
-                if ok:
-                    st.plotly_chart(fig, width="stretch", key=f"{_kp}_court")
-                    st.caption("Zone chart (older games) — ≥45% · 30–44% · <30% · "
-                               "bubble size = attempts. Tap-captured shots show "
-                               "as a precise shot map in the Overview grid.")
-                else:
-                    empty_state("No shot locations yet",
-                                "Shots logged with a court tap (phone or Game "
-                                "Tracker) build the shot map; zone-only shots "
-                                "feed the zone chart.")
-        with sc_r:
-            st.markdown("**Hot zones**")
-            pz = zsplits.get(pid, {})
-            if pz:
-                _hot_zones(pz)
-            else:
-                st.caption("No zone data.")
-            # defended-shot map — the scouting read, deliberately BELOW the
-            # fold (founder call): where opponents shot when this player was
-            # the contester/blocker, with the guarded/open split.
-            _dshots = _defended_located(pid, _gp)
-            if _dshots:
-                dfig, _dn = _shot_map(
-                    _dshots, f"Shots defended · {len(_dshots)} located")
-                st.plotly_chart(dfig, width="stretch", key=f"{_kp}_defcourt")
-                _gd4 = zguard.get(pid, {})
-                _gg = (_gd4 or {}).get("guarded", {})
-                _go = (_gd4 or {}).get("open", {})
-                if _gg.get("FGA") and _go.get("FGA"):
-                    st.caption(
-                        f"Guarded FG% {_gg['pct']*100:.0f}% "
-                        f"({_gg['FGM']}/{_gg['FGA']}) · open "
-                        f"{_go['pct']*100:.0f}% ({_go['FGM']}/{_go['FGA']}). "
-                        "Rim vs arc feeds the DEFENSE rating.")
-
-    left, right = st.columns([2, 3])
-    with left:
-        # The five-rating radar is gone. It plotted the same five ratings as the
-        # Overview bars in the fold — which additionally carry a confidence band
-        # and a form chip the radar had no way to show — and the only thing it
-        # added was a pool-average ring at 50. The bars draw that 50 mark now,
-        # so the radar's one real contribution outlived it.
-        # points by source
-        pts2, pts3, ptsf = P["2PM"] * 2, P["3PM"] * 3, P["FTM"]
-        if pts2 + pts3 + ptsf > 0:
-            dn = _donut(pts2, pts3, ptsf, colors=(accent, "#58a6ff", "var(--subtext)"),
-                        height=260, margin_top=30, ft_label="FT",
-                        title="Points by source")
-            st.plotly_chart(dn, width="stretch", key=f"{_kp}_src")
-
-    with right:
-        def _row(stat, key, fmt):
-            return {"Stat": stat, "Value": _fmt(P.get(key), fmt)}
-
-        def _ci(lo_key, hi_key):
-            """' · 95% CI 35-49%' band string, or '' when the rate has no attempts."""
-            lo, hi = P.get(lo_key), P.get(hi_key)
-            return (f"  ·  95% CI {lo:.0f}-{hi:.0f}%"
-                    if lo is not None and hi is not None else "")
-
-        st.markdown("**Scoring & shooting**")
-        # box rows always; event-derived rows (Paint/ShotRating/xPPS/xFG%/SMOE)
-        # only for Paid.
-        _shoot_rows = [
-            _row("Points (PPG)", "PTS", "int") | {"Value":
-                f"{P['PTS']} ({P['PPG']:.1f}/g)"},
-            _row("FG", "FG%", "pct") | {"Value":
-                f"{P['FGM']}/{P['FGA']} ({_fmt(P['FG%'],'pct')}){_ci('FG%lo','FG%hi')}"},
-            _row("Three", "3P%", "pct") | {"Value":
-                f"{P['3PM']}/{P['3PA']} ({_fmt(P['3P%'],'pct')}){_ci('3P%lo','3P%hi')}"},
-            _row("Free throw", "FT%", "pct") | {"Value":
-                f"{P['FTM']}/{P['FTA']} ({_fmt(P['FT%'],'pct')}){_ci('FT%lo','FT%hi')}"},
-            _row("eFG% / TS%", "TS%", "pct") | {"Value":
-                f"{_fmt(P['eFG%'],'pct')} / {_fmt(P['TS%'],'pct')}"},
-            _row("Scoring Eff. (ScEff)", "ScEff", "pct"),
-            _row("Pts/shot (PPS)", "PPS", "f2"),
-            _row("Free throw rate", "FTR", "f2"),
-        ]
-        if paid:
-            _shoot_rows += [
-                _row("Paint FG% (pts)", "Paint%", "pct") | {"Value":
-                    f"{_fmt(P['Paint%'],'pct')}  ({P['PaintPTS']} pts)"},
-                _row("Shot difficulty", "ShotRating", "f1"),
-                _row("Expected pts/shot", "xPPS", "f2"),
-                # SMOE is the Signature-metrics tile's whole job (it is one of
-                # the invented metrics) — the table gives expected FG% only.
-                _row("Expected FG%", "xFG%", "pct"),
-            ]
-        st.dataframe(pd.DataFrame(_shoot_rows), hide_index=True, width="stretch")
-        st.caption(
-            "Shooting lines carry a 95% Wilson confidence interval — the range a "
-            "sample this size actually supports. (How trustworthy the book is "
-            "overall is stated once, in the Overview header at the top.)")
-
-        st.markdown("**Rebounding · Playmaking · Defense**")
-        # box rows always; on-court rate stats (REB%/SC/Guarded%/DSHOT%) → Paid.
-        _rpd_rows = [
-            _row("Rebounds (RPG)", "REB", "int") | {"Value":
-                f"{P['REB']} ({P['RPG']:.1f}/g)"},
-            _row("OREB / DREB", "OREB", "int") | {"Value":
-                f"{P['OREB']} / {P['DREB']}"},
-            _row("Assists (APG)", "AST", "int") | {"Value":
-                f"{P['AST']} ({P['APG']:.1f}/g)"},
-            _row("Assist/turnover", "AST/TOV", "f2"),
-            _row("Steals / Blocks", "STL", "int") | {"Value":
-                f"{P['STL']} / {P['BLK']}"},
-            _row("Turnovers (TPG)", "TOV", "int") | {"Value":
-                f"{P['TOV']} ({P['TPG']:.1f}/g · {_fmt(P['TOV%'],'pct')})"},
-            _row("Fouls (FPG)", "PF", "int") | {"Value":
-                f"{P['PF']} ({P['PF/G']:.1f}/g)"},
-            _row("Game Score / game", "GS/G", "f1"),
-            _row("Value Point System (VPS)", "VPS", "f2"),
-        ]
-        if paid:
-            _rpd_rows[2:2] = [_row("REB% (on court)", "REB%", "pct")]
-            _rpd_rows += [
-                _row("Shots created", "SC", "int"),
-                # feeds = every pass into a shot (make or miss); conv% = the
-                # share teammates finished (the assists that could have been)
-                _row("Potential assists", "PotAST", "int") | {"Value":
-                    f"{P['PotAST']} ({P['PotAST/G']:.1f}/g"
-                    + (f" · {_fmt(P['FeedConv%'], 'pct')} finished)"
-                       if P.get("FeedConv%") is not None else ")")},
-                # xA = expected assists (feeds scored by look quality, make-
-                # independent) with the finishing-luck gap AST − xA. Only for
-                # players who fed shots (None otherwise).
-                *([_row("Expected assists (xA)", "xA", "f1") | {"Value":
-                    f"{P['xA']:.1f}  (AST {P['AST']} · "
-                    f"{'+' if P['AST-xA'] >= 0 else ''}{P['AST-xA']:.1f} vs xA)"}]
-                  if P.get("xA") is not None else []),
-                _row("Screen assists", "ScrAST", "int") | {"Value":
-                    f"{P['ScrAST']} ({P['ScrAST/G']:.1f}/g)"},
-                # hockey assist (pass before the assist) — opt-in capture, so the
-                # row appears only once a player has one (0 for everyone until a
-                # coach starts tagging it would be pure clutter)
-                # Hockey assists — opt-in capture, so the row appears only once
-                # a player has one (0 for everyone until a coach starts tagging
-                # would be pure clutter). Keyed on PotHAST, not HAST: the tag is
-                # logged on makes AND misses, so a player can have tagged second
-                # passes that simply never dropped, and keying on HAST would
-                # hide their tagging entirely.
-                *([_row("Hockey assists", "HAST", "int") | {"Value":
-                    f"{P['HAST']} ({P['HAST/G']:.1f}/g)"
-                    + (f" · {P['PotHAST']} tagged incl. misses"
-                       if P.get("PotHAST", 0) > P.get("HAST", 0) else "")}]
-                  if P.get("PotHAST") else []),
-                # xA2 — secondary expected assists, beside xA rather than inside
-                # it (xA/G is a gate-adopted leaf; folding secondary credit in
-                # would be an unguarded rating change). Coverage-gated, so this
-                # row is absent until the team has tags in XA2_MIN_GAMES games.
-                *([_row("Secondary xA (xA2)", "xA2", "f1") | {"Value":
-                    f"{P['xA2']:.1f}  ({P['xA2pts']:.1f} pts · "
-                    f"{P['xA2Games']} tagged games)"}]
-                  if P.get("xA2") is not None else []),
-                _row("Guarded% (on court)", "Guarded%", "pct"),
-                _row("Defended FG% allowed", "DSHOT%", "pct"),
-                # Corsi — on-floor shot-attempt differential, a lower-variance
-                # running mate to +/- (only when the player logged floor time)
-                *([_row("Corsi (attempt ±)", "Corsi", "int") | {"Value":
-                    f"{'+' if P['Corsi'] >= 0 else ''}{P['Corsi']} "
-                    f"({P['CorsiFor']}/{P['CorsiAgainst']} · {_fmt(P['Corsi%'], 'pct')})"}]
-                  if P.get("Corsi") is not None else []),
-            ]
-            # rim / perimeter defended splits (only when the player has faced
-            # shots in the bucket); ± = FG points saved vs a league-average
-            # contest — the values that feed the DEFENSE rating
-            if P.get("RimDShots"):
-                _rpd_rows.append(
-                    _row("Rim defense (FG% allowed)", "RimDFG%", "pct") | {
-                        "Value": f"{_fmt(P['RimDFG%'], 'pct')} on "
-                                 f"{P['RimDShots']} shots"
-                                 + (f" ({P['RimProt']:+.1f} vs lg)"
-                                    if P.get("RimProt") is not None else "")})
-            if P.get("PerimDShots"):
-                _rpd_rows.append(
-                    _row("Perimeter defense (3P% allowed)", "PerimDFG%", "pct") | {
-                        "Value": f"{_fmt(P['PerimDFG%'], 'pct')} on "
-                                 f"{P['PerimDShots']} threes"
-                                 + (f" ({P['PerimD']:+.1f} vs lg)"
-                                    if P.get("PerimD") is not None else "")})
-            # box-out payoff + board mix — from guarded_by × rebound_by, so the
-            # rows appear only for a team that tags both (None otherwise, which
-            # is why these are conditional rather than showing a misleading 0)
-            if P.get("onball_misses"):
-                _rpd_rows.append(
-                    _row("Box-out payoff (team secures)", "BoxOut%stab", "pct") | {
-                        "Value": f"{_fmt(P['BoxOut%stab'], 'pct')} stabilized "
-                                 f"({_fmt(P['BoxOut%'], 'pct')} raw on "
-                                 f"{P['onball_misses']} contests)"})
-            if P.get("OnBallDREB%") is not None:
-                _rpd_rows.append(
-                    _row("On-ball share of DREB", "OnBallDREB%", "pct") | {
-                        "Value": f"{_fmt(P['OnBallDREB%'], 'pct')} of "
-                                 f"{P['TaggedDREB']} tagged boards"})
-        st.dataframe(pd.DataFrame(_rpd_rows), hide_index=True, width="stretch")
-
-        # ── rebounding verdict (spec Part 1 §2 "do it all") ──────────────
-        # Ranks against the SAME pool the card was built from, so "best on the
-        # team" means what it says. Silent when nothing clears its gate.
-        if paid:
-            import helpers.rebounding as _RB
-            _rv = _RB.rebounding_verdict(P, pool=rows)
-            if _rv:
-                st.markdown(verdict_card(_rv), unsafe_allow_html=True)
-                st.caption(
-                    "Box-out payoff credits sealing the shooter off even when a "
-                    "TEAMMATE gets the board — that is the point of a box-out, so "
-                    "a player's own DREB count can undersell it. Board mix is a "
-                    "style read, not a grade: weak-side crashing and cleaning up "
-                    "your own assignment are different jobs. Thin samples are "
-                    "shrunk toward the pool mean (the stabilized value).")
-
-        # ── "who they feed" — the 2-node passer→shooter graph (§12.5) ────
-        # This card showed the 3-NODE hockey graph and nothing else, so a
-        # player's passing read was gated on an opt-in tag. Measured on the
-        # production book: 3,957 shots carry a plain pass_from_id against 317
-        # carrying a hockey tag, and the card's top feeder has 222 rendered
-        # feeds beside 8 tagged chains — the card showed her the 8. Thirty-six
-        # players clear the feed bar with no hockey chain at all and got
-        # nothing here. The hockey table below still renders when it can; it is
-        # the enrichment, not the entry point.
-        if paid:
-            _edges = [r for r in _conn_edges(tuple(_gp) if _gp is not None
-                                             else None)
-                      if r["passer"] == pid]
-            if _edges:
-                _ids = {r["shooter"] for r in _edges}
-                _nm = {r["id"]: r["name"] for r in query(
-                    "SELECT id, name FROM players WHERE id IN "
-                    f"({','.join('?' * len(_ids))})", tuple(_ids))}
-                st.markdown("**Who they feed** — passes that became a shot")
-                st.dataframe(pd.DataFrame([{
-                    "Shooter": _nm.get(r["shooter"], f"#{r['shooter']}"),
-                    "Feeds": r["feeds"],
-                    "Made": r["made"],
-                    "xA": r["xa"],
-                    "Finish vs xA": r["finish_delta"],
-                } for r in _edges]), hide_index=True, width="stretch",
-                    column_config={
-                        "xA": st.column_config.NumberColumn(format="%.2f"),
-                        "Finish vs xA": st.column_config.NumberColumn(
-                            format="%+.2f"),
-                    })
-                st.caption(
-                    f"Every pass this player made that produced a shot, made "
-                    f"or missed — an edge needs {_PC_MIN_FEEDS} feeds to draw. "
-                    "**xA** is what those looks were worth to an average "
-                    "finisher, so a pair that generates good shots the shooter "
-                    "misses still reads as a connection. **Finish vs xA** is a "
-                    "read about the SHOOTER, not the passer, and small samples "
-                    "dominate it below about ten feeds.")
-
-        # ── "who ignites whom" — hockey-assist chains (spec Part 1 §3) ────
-        # Opt-in capture, so this renders ONLY for a player who has tagged
-        # chains. Everyone else sees nothing rather than an empty grid.
-        if paid and P.get("PotHAST"):
-            import helpers.passing_chains as _PC
-            # season-scoped like every other card fetcher (a bare default reads
-            # Current only, which is zero for an archive view)
-            _ch = [c for c in _PC.hockey_chains(
-                       game_ids=(list(_gp) if _gp is not None else None))
-                   if c["hockey_from"] == pid]
-            if _ch:
-                # player_stat_table rows carry no id (the pid is the dict key),
-                # so resolve assister names straight from the roster table
-                _ids = {c["assister"] for c in _ch}
-                _nm = {r["id"]: r["name"] for r in query(
-                    "SELECT id, name FROM players WHERE id IN "
-                    f"({','.join('?' * len(_ids))})", tuple(_ids))} if _ids else {}
-                st.markdown("**Who they ignite** — hockey-assist chains")
-                st.dataframe(pd.DataFrame([{
-                    "Assister": _nm.get(c["assister"], f"#{c['assister']}"),
-                    "Chains": c["pot_hast"],
-                    "Finished (HAST)": c["hast"],
-                    "Points": c["pts"],
-                } for c in _ch]), hide_index=True, width="stretch")
-                st.caption(
-                    "The pass BEFORE the assist: this player → the assister → "
-                    "the shot. **Chains** counts every tagged sequence, make or "
-                    "miss, because a pair can move the ball well and still be "
-                    "let down by the finish; **Finished** is the subset that "
-                    "dropped, which is the HAST stat proper.")
-
-    # ── Shot diet · shot creation · quarter scoring (event-derived → Paid) ────
-    if paid:
-        st.markdown("<div class='pl-hdr'>Shot diet & impact mix</div>",
-                    unsafe_allow_html=True)
-        # season-scope like every other fetcher — the bare default is
-        # Current-season only, which reads ZERO for an archive/fallback pid
-        _gp_list = list(_gp) if _gp is not None else None
-        pbox = S.player_box(pid, game_ids=_gp_list)
-        d1, d2, d3 = st.columns(3)
-        with d1:
-            st.markdown("**Shot diet** — how their shots are created")
-            diet = S.shot_breakdown_pct(pbox)
-            dl = {"self": "Self", "pass": "Off pass", "sc": "Off screen",
-                  "both": "Pass+screen"}
-            dv = [(dl[k], diet[k] * 100) for k in ("self", "pass", "sc", "both")]
-            df_ = go.Figure(go.Bar(
-                x=[v for _, v in dv], y=[l for l, _ in dv], orientation="h",
-                marker_color="#58a6ff", marker_line_width=0,
-                text=[f"{v:.0f}%" for _, v in dv], textposition="auto"))
-            df_.update_xaxes(visible=False)
-            _style(df_, 240)
-            df_.update_layout(margin=dict(l=4, r=14, t=10, b=6))
-            st.plotly_chart(df_, width="stretch", key=f"{_kp}_diet")
-        with d2:
-            st.markdown("**Shots created** — how SC is earned")
-            comp = S.sc_composition(pbox)
-            if pbox["SC"] > 0:
-                cd = go.Figure(go.Pie(
-                    labels=["Shooting", "Passing", "Screening"],
-                    values=[comp["shoot"], comp["pass"], comp["sc"]], hole=0.55,
-                    sort=False, marker=dict(colors=[accent, "#bc8cff", "#3fb950"]),
-                    textinfo="label+percent"))
-                cd.update_layout(template="plotly_dark", height=240,
-                                 paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
-                                 margin=dict(l=10, r=10, t=10, b=10))
-                st.plotly_chart(cd, width="stretch", key=f"{_kp}_sccomp")
-            else:
-                st.caption("No shots created.")
-        with d3:
-            st.markdown("**Scoring by quarter**")
-            qb = S.quarter_boxes(game_ids=_gp_list).get(pid, {})
-            qs = sorted(qb)
-            if qs:
-                qfig = go.Figure(go.Bar(
-                    x=[f"Q{q}" if q <= 4 else f"OT{q-4}" for q in qs],
-                    y=[qb[q]["PTS"] for q in qs], marker_color=accent,
-                    marker_line_width=0,
-                    text=[qb[q]["PTS"] for q in qs], textposition="auto"))
-                qfig.update_yaxes(title="Points")
-                _style(qfig, 240)
-                qfig.update_layout(margin=dict(l=30, r=10, t=10, b=24))
-                st.plotly_chart(qfig, width="stretch", key=f"{_kp}_qtr")
-            else:
-                st.caption("No quarter data.")
-
-    # ── Set-call profile (one-tap play_type tags → Paid) ──────────────────────
-    _named = getattr(ctx, "named_sets", None)
-    _roles = getattr(ctx, "role_splits", None)
-    _setprof = getattr(ctx, "set_profiles", None)  # {key: shot-profile} or None
-    _ZL = {"LC": "left corner", "LW": "left wing", "C": "the paint",
-           "RW": "right wing", "RC": "right corner"}
-
-    def _howline(pr):
-        """Gender-neutral 'how they score it' sub-line from a shot profile."""
-        if not pr or (pr.get("poss") or 0) < 5:
-            return ""
-        bits = [f"{pr['PPP']:.2f} PPP"]
-        if pr.get("3PA_rate") is not None:
-            bits.append(f"{round(pr['3PA_rate']*100)}% 3PA")
-        if pr.get("rim_rate") is not None:
-            bits.append(f"{round(pr['rim_rate']*100)}% rim")
-        if pr.get("ast_rate") is not None:
-            bits.append(f"{round(pr['ast_rate']*100)}% assisted")
-        if pr.get("open_rate") is not None:
-            bits.append(f"{round(pr['open_rate']*100)}% open")
-        _tz = pr.get("top_zone")
-        if _tz:
-            bits.append(f"mostly {_ZL.get(_tz, str(_tz))}")
-        return " · ".join(bits) + f" ({pr['poss']} poss)"
-
-    if paid and (_named or _roles):
-        _ptlbl = dict(PT.NAMED_PLAY_TYPES)
-        st.markdown("<div class='pl-hdr'>Set-call profile</div>",
-                    unsafe_allow_html=True)
-        if _named:
-            # Go-to / take-away chip pair (real-volume sets only, ≥8 poss).
-            # GO-TO = the set they RUN MOST (usage — their bread-and-butter);
-            # TAKE-AWAY = the set they're MOST EFFICIENT on (highest PPP — the
-            # weapon to deny). Percentile is shown for context but no longer
-            # drives the pick: a player can rank high-percentile on a low-value
-            # set (iso) it isn't their go-to.
-            _ranked = {k: c for k, c in _named.items() if c["poss"] >= 8}
-            if _ranked:
-                _go_k = max(_ranked, key=lambda k: _ranked[k]["poss"])
-                _aw_k = max(_ranked, key=lambda k: _ranked[k]["PPP"])
-
-                def _chip(k):
-                    c = _ranked[k]
-                    _pctbit = (f" · {_ORD(c['pct'])} pct"
-                               if c.get("pct") is not None else "")
-                    return _glass(
-                        "GO-TO SET" if k == _go_k else "TAKE-AWAY",
-                        _ptlbl.get(k, k.title()),
-                        f"{c['PPP']:.2f} PPP · {c['poss']} poss{_pctbit}",
-                        c["color"])
-                _keys = [_go_k] + ([_aw_k] if _aw_k != _go_k else [])
-                _cc = st.columns(len(_keys))
-                for _col, _k in zip(_cc, _keys):
-                    _col.markdown(_chip(_k), unsafe_allow_html=True)
-
-            # Per-set percentile rows, sorted by PPP desc.  Each row carries an
-            # optional "how they score it" sub-line from the set shot profile.
-            html = ""
-            for _k, c in sorted(_named.items(), key=lambda kv: kv[1]["PPP"],
-                                reverse=True):
-                _lbl = _ptlbl.get(_k, _k.title())
-                _v = f"{c['PPP']:.2f} PPP · {c['FG%']*100:.0f}% · {c['poss']} poss"
-                if c.get("pct") is None:
-                    _v += " · thin sample"
-                html += _pctile_bar(_lbl, _v, c.get("pct"),
-                                    n=c.get("pool_n"))
-                _hl = _howline((_setprof or {}).get(_k)) if _setprof else ""
-                if _hl:
-                    html += ("<div style='font-size:11px;color:var(--subtext);"
-                             "margin:-5px 0 9px 0'>"
-                             f"{html_escape(_hl)}</div>")
-            if html:
-                st.markdown(html, unsafe_allow_html=True)
-
-        # Screen-action role split (handler vs roller on screen sets).
-        if _roles:
-            _role_keys = [k for k in ("pnr", "dho", "offscreen")
-                          if (_roles.get(k) or {}).get("all", {}).get("poss", 0) > 0]
-            if _role_keys:
-                st.markdown("**Screen-action role** — finishing as the ball-handler "
-                            "vs the screen-setter who rolls/pops")
-                for _k in _role_keys:
-                    rc = _roles[_k]
-                    h, r = rc.get("handler", {}), rc.get("roller", {})
-                    st.markdown(f"**{_ptlbl.get(_k, _k.title())}**")
-                    rcols = st.columns(2)
-                    rcols[0].metric(
-                        "Handler", f"{h.get('PPP', 0):.2f} PPP",
-                        f"{h.get('poss', 0)} poss", delta_color="off",
-                        help=f"As the ball-handler off the screen — "
-                             f"{h.get('FG%', 0)*100:.0f}% FG · "
-                             f"{h.get('eFG', 0)*100:.0f}% eFG")
-                    # Roll-vs-pop: roller 3PA_rate splits a rim-roller from a
-                    # pick-and-pop big (high 3PA% = they pop for the three).
-                    _r3 = r.get("3PA_rate")
-                    _rsub = (f"pops 3 on {round(_r3*100)}% of finishes"
-                             if _r3 is not None else "")
-                    _rhelp = (f"As the screen-setter who finishes — "
-                              f"{r.get('FG%', 0)*100:.0f}% FG · "
-                              f"{r.get('eFG', 0)*100:.0f}% eFG")
-                    if _r3 is not None:
-                        _rhelp += (f" · pops for 3 on {round(_r3*100)}% of "
-                                   f"finishes (high = pick-and-pop)")
-                    rcols[1].metric(
-                        "Roller", f"{r.get('PPP', 0):.2f} PPP",
-                        f"{r.get('poss', 0)} poss", delta_color="off",
-                        help=_rhelp)
-                    if _rsub:
-                        rcols[1].caption(_rsub)
-        if _named and not any(c.get("pct") is not None for c in _named.values()) \
-                and not _roles:
-            st.caption("No play types tagged yet — add a one-tap Play type to a "
-                       "shot in the Game Tracker to light this up.")
-
-    # ── Across seasons — development (Tier 3, ML_LAYER_ROADMAP) ───────────────
-    # Season-by-season lines + YoY progression/regression + a rough next-season
-    # projection. Auto-lights-up as rollovers link more seasons; on one season it
-    # shows the single line + the "unlocks after a 2nd season" note.
-    if paid:
-        _dv = _dev(pid, getattr(ctx, "gender", None))
-        _prog, _proj = _dv["progression"], _dv["projection"]
-        _lines = _prog["lines"]
-        st.markdown("<div class='pl-hdr'>Across seasons — development</div>",
-                    unsafe_allow_html=True)
-        if _lines:
-            st.dataframe(pd.DataFrame([{
-                "Season": L["label"], "Class": L.get("klass") or "—",
-                "Team": L["team"], "GP": L["gp"], "PPG": L["PPG"], "RPG": L["RPG"],
-                "APG": L["APG"], "SPG": L["SPG"], "BPG": L["BPG"],
-                "TPG": L.get("TPG"), "FPG": L.get("FPG"),
-                "FG%": L["FG%"], "3P%": L["3P%"], "TS%": L["TS%"],
-            } for L in _lines]), hide_index=True, width="stretch")
-        # progression / regression (two+ rated seasons)
-        if _prog["deltas"]:
-            if _prog["headline"]:
-                st.markdown(f"**Trajectory:** {_prog['headline']}")
-            _dcols = st.columns(len(_DEV_STATS))
-            for _col, _lab in zip(_dcols, _DEV_STATS):
-                _d = _prog["deltas"].get(_lab)
-                _cur = (_prog["cur"] or {}).get(_lab)
-                if _d is not None and _cur is not None:
-                    _col.metric(_lab, f"{_cur:g}",
-                                f"{_d['delta']:+.1f} {_d['trend']}",
-                                delta_color="inverse" if _lab in _DEV_INVERTED
-                                else "normal")
-        # rest-of-THIS-season projection — works from the player's first
-        # season (3+ games), no linked past season needed
-        _ros = _dv.get("rest_of_season") or {}
-        if _ros.get("ok"):
-            st.markdown(
-                f"<div class='pl-hdr'>Rest of season "
-                f"<span style='font-size:11px;color:var(--subtext);font-weight:400'>"
-                f"· {_ros['gp']} played · {_ros['remaining']} left — projected "
-                f"season-end totals (per-game)</span></div>",
-                unsafe_allow_html=True)
-            _rcols = st.columns(len(_DEV_STATS))
-            for _col, _lab in zip(_rcols, _DEV_STATS):
-                _t = _ros["season_end"].get(_lab)
-                _r = _ros["per_game"].get(_lab)
-                if _t is not None:
-                    _col.metric(_lab.replace("PG", ""), f"{_t:g}",
-                                f"{_r:g}/g", delta_color="off")
-            st.caption(_ros["note"])
-        # projection (two+ rated seasons) or the unlock note
-        if _proj.get("ok"):
-            st.markdown("<div class='pl-hdr'>Projected next season</div>",
-                        unsafe_allow_html=True)
-            _pcols = st.columns(len(_DEV_STATS))
-            for _col, _lab in zip(_pcols, _DEV_STATS):
-                _v = _proj["proj"].get(_lab)
-                if _v is not None:
-                    _col.metric(_lab, f"{_v:g}")
-            _fc = (f" · {_proj['from_class']}→{_proj['to_class']}"
-                   if _proj.get("from_class") and _proj.get("to_class") else "")
-            st.caption(f"{_proj['note']} Basis: {_proj['basis']}{_fc}.")
-        else:
-            st.caption(_proj.get("reason", ""))
-
-    # ── Career highs & milestones — Free tier (Paid gets them in the grid) ─────
-    if not paid:
-        st.markdown("<div class='pl-hdr'>Career highs &amp; milestones</div>",
-                    unsafe_allow_html=True)
-        cap_steady = ("steady" if (P["PTSsd"] or 0) < 5 else
-                      "streaky" if (P["PTSsd"] or 0) > 9 else "moderate")
-        ch = st.columns(6)
-        ch[0].markdown(_glass("HIGH PTS", P["bestPTS"], "single game", accent),
-                       unsafe_allow_html=True)
-        ch[1].markdown(_glass("HIGH REB", P["bestREB"], "single game", "var(--good)"),
-                       unsafe_allow_html=True)
-        ch[2].markdown(_glass("HIGH AST", P["bestAST"], "single game", "#bc8cff"),
-                       unsafe_allow_html=True)
-        ch[3].markdown(_glass("DOUBLE-DBL", P["DD"], "games", "#58a6ff"),
-                       unsafe_allow_html=True)
-        ch[4].markdown(_glass("TRIPLE-DBL", P["TD"], "games", "#f0a500"),
-                       unsafe_allow_html=True)
-        ch[5].markdown(_glass("SCORING σ", _fmt(P["PTSsd"], "f1"),
-                              f"game-to-game · {cap_steady}", "#ff7b72"),
-                       unsafe_allow_html=True)
-
-    # ── Game log ──────────────────────────────────────────────────────────────
-    st.markdown("<div class='pl-hdr'>Game log</div>",
-                unsafe_allow_html=True)
-    gids = [r["gid"] for r in query(
-        """SELECT DISTINCT ge.game_id AS gid
-           FROM game_event_lineup gel
-           JOIN game_events ge ON ge.id = gel.event_id
-           WHERE gel.player_id = ?""", (pid,))]
-    games = query(
-        """SELECT g.id, g.date, g.team1_id, g.team2_id, g.home_score,
-                  g.away_score
-           FROM games g WHERE g.id IN ({})""".format(
-            ",".join("?" * len(gids)) or "NULL"), tuple(gids)) if gids else []
-    name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
-    # WHICH TEAM WAS SHE ON. `P["team_id"]` is the CURRENT roster row, so for a
-    # player who transferred, an archive season's log resolved every opponent
-    # against her NEW team — and printed her OLD team as the opponent in the
-    # games she actually played for it. The On/Off section 270 lines below
-    # already fixed exactly this and says why; the log needs the same
-    # resolution. Falls back to the roster row when the lineup rows can't say.
-    _log_team = (S.player_lineup_team(pid, list(_gp) if _gp else None)
-                 or P["team_id"])
-    # RTG (per-game 0-10) is event-delta — tracked depth, so Paid only. The box
-    # game log itself (PTS/REB/… + GS) is box-derivable and stays Free.
-    _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp, _szn) if paid else {}
-    log = []
-    _boxes = pgb.get(pid, {})
-    for g in sorted(games, key=lambda x: x["date"]):
-        b = _boxes.get(g["id"])
-        if not b:
-            continue
-        _home = g["team1_id"] == _log_team
-        opp = g["team2_id"] if _home else g["team1_id"]
-        _rtg = _rtg_all.get(g["id"], {}).get(pid, {}).get("rating")
-        # `home_score` / `away_score` were SELECTed and then discarded, so the
-        # first column a coach looks for was not on the page at all. Result and
-        # margin are from HER team's side.
-        _us = g["home_score"] if _home else g["away_score"]
-        _them = g["away_score"] if _home else g["home_score"]
-        _res, _margin = "", None
-        if _us is not None and _them is not None:
-            _res = "W" if _us > _them else "L" if _us < _them else "T"
-            _margin = _us - _them
-        log.append({
-            "Date": g["date"], "Opp": name_of.get(opp, "?"),
-            "W/L": _res, "Margin": _margin,
-            "RTG": _rtg,
-            "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
-            "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
-            "FG": f"{b['FGM']}/{b['FGA']}", "3P": f"{b['3PM']}/{b['3PA']}",
-            "FT": f"{b['FTM']}/{b['FTA']}",
-            "GS": round(S.game_score(b), 1),
-        })
-    if log:
-        # ── Form strip: avg of the last-5 game ratings (soccer-style) ──────────
-        _rvals = [x["RTG"] for x in log if x["RTG"] is not None]
-        if _rvals:
-            _last5 = _rvals[-5:]
-            _form = sum(_last5) / len(_last5)
-            _season_rtg = sum(_rvals) / len(_rvals)
-            _role = None                       # role from any rated game for this player
-            for _gid, _pm in _rtg_all.items():
-                if pid in _pm:
-                    _role = _pm[pid].get("role")
-                    break
-            # Form and season rating moved into the one Recent-form block below;
-            # the ROLE is what this strip uniquely says, and it belongs beside
-            # the RTG column it explains.
-            fc1, fc2 = st.columns(2)
-            fc1.metric("Season rating", f"{_season_rtg:.1f}",
-                       help="Average game rating across all tracked games "
-                            "(0-10, 6.0 = average).")
-            fc2.metric("Rating role", _role or "—",
-                       help="Fixed role the game rating grades this player against.")
-        # ── ONE points-per-game chart ──────────────────────────────
-        # This chart and the "Rolling form (3-game average)" chart below it were
-        # the SAME points series drawn twice with a different smoother — two
-        # 300px charts, forty lines apart, answering one question. A seg picks
-        # the smoother instead; "Raw" also carries Game Score and the 0-10
-        # rating, which the rolling version never had.
-        import helpers.ui as _UI
-        _sm = _UI.seg("Smoothing", ["Raw", "3-game average"], default="Raw",
-                      key=f"{_kp}_ptsmooth", label_visibility="collapsed") or "Raw"
-        gx = [f"{g['Date'][5:]} {g['Opp'][:8]}" for g in log]
-        _pts = [g["PTS"] for g in log]
-        tr = go.Figure()
-        tr.add_trace(go.Bar(x=gx, y=_pts, name="PTS",
-                            marker_color=(accent if _sm == "Raw" else "#30363d"),
-                            marker_line_width=0))
-        if _sm == "Raw":
-            tr.add_trace(go.Scatter(x=gx, y=[g["GS"] for g in log],
-                                    name="Game Score", mode="lines+markers",
-                                    line=dict(color="#56d4dd", width=2)))
-            if any(g["RTG"] is not None for g in log):
-                tr.add_trace(go.Scatter(
-                    x=gx, y=[g["RTG"] for g in log], name="Rating (0-10)",
-                    mode="lines+markers", yaxis="y2",
-                    line=dict(color="#f5a623", width=2, dash="dot")))
-                tr.update_layout(yaxis2=dict(title="Rating", overlaying="y",
-                                             side="right", range=[0, 10],
-                                             showgrid=False))
-            tr.update_yaxes(title="Points / Game Score")
-        else:
-            tr.add_trace(go.Scatter(x=gx, y=TRD.rolling(_pts), name="3-game avg",
-                                    mode="lines+markers",
-                                    line=dict(color=accent, width=3)))
-            tr.update_yaxes(title="Points")
-        tr.update_xaxes(tickangle=-40)
-        _style(tr, 320)
-        st.plotly_chart(tr, width="stretch", key=f"{_kp}_log")
-
-        _ldf = pd.DataFrame(log)
-        if not paid:                      # RTG column is Paid — drop, don't blank
-            _ldf = _ldf.drop(columns=["RTG"], errors="ignore")
-        st.dataframe(_ldf, hide_index=True,
-                     width="stretch",
-                     height=min(560, 60 + 35 * len(log)),
-                     column_config={
-                         "RTG": st.column_config.NumberColumn(
-                             "RTG", format="%.1f",
-                             help="Per-game rating 0-10 (6.0 = average, "
-                                  "role-adjusted)"),
-                         "Margin": st.column_config.NumberColumn(
-                             "Margin", format="%+d",
-                             help="Final margin from her team's side.")})
-        st.caption(f"{len(log)} tracked games. Box scores are per game from "
-                   "tracked events.")
-
-        # ── rolling form · season highs · last-5 · foul & FT ────────────────
-        _tlog = TRD.player_game_log(pid, boxes=pgb)
-        if _tlog:
-            # (no second points chart: the 3-game average is a smoothing
-            #  option on the one above.)
-            # ── highs: season AND career, one table ───────────────────────
-            # Two real concepts (career best vs this season's best) used to be
-            # presented as three blocks: this one, a _kv list in the fold, and a
-            # free-tier "Career highs & milestones". Two columns, one table, and
-            # the opponent the high came against — which only this version had.
-            _hi = TRD.season_highs(_tlog)
-            # player_stat_table only carries a career best for the three it
-            # tracks; the others show a season best and an empty career cell
-            # rather than a fabricated one. Kept as a nullable column so the
-            # mixed int/blank does not force the whole column to text.
-            _CAREER = {"PTS": "bestPTS", "TRB": "bestREB", "AST": "bestAST"}
-            _hrows = []
-            for _k, _lbl in TRD.HIGH_KEYS:
-                _h = _hi.get(_k)
-                _cb = P.get(_CAREER[_k]) if _k in _CAREER else None
-                _hrows.append({
-                    "Stat": _lbl,
-                    "Season best": _h["value"] if _h else 0,
-                    "vs": (_h["opp"][:14] if _h else ""),
-                    "Career best": (int(_cb) if _cb is not None else None),
-                })
-            st.markdown("<div class='pl-hdr'>Highs — season vs career</div>",
-                        unsafe_allow_html=True)
-            st.dataframe(pd.DataFrame(_hrows), hide_index=True, width="stretch")
-
-            # ── recent form, ONCE ───────────────────────────────────
-            # Last-5-vs-season was read three ways on this card, in three
-            # styles: the trajectory chips on the rating bars, a "Form (last 5)"
-            # RTG metric up in the game log, and this block. The chips stay
-            # (they are about the RATINGS, and they sit in the fold); the RTG
-            # form metric folds in here, so counting stats and game rating are
-            # one answer to one question.
-            _l5 = TRD.last_n_split(_tlog, n=5)
-            _stk = TRD.streaks(_tlog)
-            st.markdown("<div class='pl-hdr'>Recent form — last 5 vs season</div>",
-                        unsafe_allow_html=True)
-            _fc = st.columns(5)
-            for _col, _k in zip(_fc[:3], ("PTS", "TRB", "AST")):
-                _rec, _seas = _l5.get(_k, (0, 0))
-                _col.metric(f"{_k} (last 5)", f"{_rec:.1f}",
-                            f"{_rec - _seas:+.1f} vs season")
-            if _rvals:
-                _fc[3].metric("Game rating (last 5)", f"{_form:.1f}",
-                              f"{_form - _season_rtg:+.1f} vs season",
-                              help="Average of the last 5 game ratings "
-                                   "(0-10, 6.0 = average, role-adjusted).")
-            _fc[4].metric("Double-figure scoring", f"{_stk['current']} in a row",
-                          f"longest {_stk['longest']}", delta_color="off")
-
-        _ff = foulft
-        if _ff and (_ff["FTA"] or _ff["PF"] or _ff["drawn"]):
-            st.markdown("<div class='pl-hdr'>Fouls &amp; free throws</div>",
-                        unsafe_allow_html=True)
-            _h1 = (_ff["FTM_1h"] / _ff["FTA_1h"] * 100) if _ff["FTA_1h"] else None
-            _h2 = (_ff["FTM_2h"] / _ff["FTA_2h"] * 100) if _ff["FTA_2h"] else None
-            _ffc = st.columns(7)
-            _ffc[0].metric("Fouls drawn", _ff["drawn"])
-            _ffc[1].metric("Fouls committed", _ff["PF"])
-            _ffc[2].metric("Free throws", f"{_ff['FTM']}/{_ff['FTA']}")
-            _ffc[3].metric("FT%", f"{_ff['FT%']:.0f}%")
-            _ffc[4].metric(
-                "FT% 1st / 2nd",
-                f"{_h1:.0f} / {_h2:.0f}" if (_h1 is not None and _h2 is not None)
-                else (f"{_h1:.0f} / —" if _h1 is not None else "—"))
-            _ffc[5].metric(
-                "Clutch FT", (f"{_ff['cFTM']}/{_ff['cFTA']} "
-                              f"({_ff['ClutchFT%']:.0f}%)")
-                if _ff.get("cFTA") else "—",
-                help="Free throws in high-leverage moments (win-probability "
-                     "swing ≥ 1.5× the game's average — the Clutch WPA bar).")
-            _ffc[6].metric(
-                "And-1s", (f"{_ff.get('and1_made', 0)}/{_ff.get('and1', 0)}"
-                           if _ff.get("and1") else "—"),
-                help="Made basket + the bonus free throw: trips and conversions "
-                     "(linked from the event stream).")
-            st.caption("Fouls drawn = times this player was fouled · FT% split by "
-                       "half (1st = Q1–2) · Clutch FT = the line when it matters · "
-                       "And-1s = three-point-play trips (converted/earned).")
-    else:
-        empty_state("No tracked games yet",
-                    "Track a game with this player in the Game Tracker and "
-                    "their game log will show up here.")
-
-    # ── League percentiles — Free tier only (Paid gets the Overview grid rail) ──
-    if not paid:
-        st.markdown("<div class='pl-hdr'>League percentiles</div>",
-                    unsafe_allow_html=True)
-        # Free tier: keep box percentiles only (drop event-derived rows).
-        PROF_PCT = [s for s in PCT_RAIL
-                    if s[0] not in PR.EVENT_DERIVED_STATS]
-        pcol = st.columns(2)
-        half = (len(PROF_PCT) + 1) // 2
-        for ci, chunk in enumerate((PROF_PCT[:half], PROF_PCT[half:])):
-            html = ""
-            for key, lbl, fmt, lb in chunk:
-                p = _pctile(P.get(key), key, rows, lower_better=lb)
-                html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p,
-                                    n=_pctile_n(key, rows))
-            pcol[ci].markdown(html, unsafe_allow_html=True)
-
-    # ── League ranking (rides on OVERALL → Paid) ──────────────────────────────
-    if paid:
-        st.markdown("<div class='pl-hdr'>League ranking</div>",
-                    unsafe_allow_html=True)
-        n = len(rows)
-        pctile_ovr = round((n - P["Rank"]) / max(n - 1, 1) * 100)
-        # No OVERALL metric here: it is the 60px number in the banner, a rating
-        # bar in the fold, and the first row of the rank table directly below.
-        # A fourth printing is not a fourth fact.
-        rk = st.columns(2)
-        rk[0].metric("League rank", f"#{P['Rank']} of {n}")
-        rk[1].metric("Percentile", f"{_ORD(pctile_ovr)}")
-
-        rank_stats = [("OVERALL", "f1"), ("OFFENSE", "f1"), ("DEFENSE", "f1"),
-                      ("PLAYMAKING", "f1"), ("REBOUNDING", "f1"), ("PPG", "f1"),
-                      ("RPG", "f1"), ("APG", "f1"), ("STOCKS", "int"), ("EFF", "int"),
-                      ("TS%", "pct"), ("GS/G", "f1")]
-        rrows = []
-        for key, fmt in rank_stats:
-            pool = [r for r in rows if r.get(key) is not None]
-            if P.get(key) is None or not pool:
-                continue
-            sr = sorted(pool, key=lambda r: r[key], reverse=True)
-            pos = next(i for i, r in enumerate(sr, 1) if r is P)
-            rrows.append({"Stat": key, "Value": _fmt(P[key], fmt),
-                          "Rank": f"#{pos} of {len(pool)}",
-                          "Pctile": f"{_ORD((len(pool)-pos)/max(len(pool)-1,1)*100)}"})
-        st.dataframe(pd.DataFrame(rrows), hide_index=True, width="stretch")
-
-        with st.expander("OVERALL league bar — this player highlighted"):
-            order_ovr = sorted([r for r in rows if r["OVERALL"] is not None],
-                               key=lambda r: r["OVERALL"])
-            bar = go.Figure(go.Bar(
-                x=[r["OVERALL"] for r in order_ovr],
-                y=[f"{r['name']}" for r in order_ovr], orientation="h",
-                marker_color=[hue if r is P else "#30363d" for r in order_ovr],
-                text=[f"{r['OVERALL']:.1f}" if r is P else "" for r in order_ovr],
-                textposition="outside", textfont=dict(color=hue, size=12)))
-            bar.update_layout(
-                template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)", height=max(380, n * 22),
-                margin=dict(l=4, r=40, t=10, b=10), showlegend=False,
-                font=dict(size=10, color="#c9d1d9"))
-            bar.update_xaxes(visible=False)
-            bar.update_yaxes(showgrid=False, automargin=True, tickfont=dict(size=9))
-            st.plotly_chart(bar, width="stretch", key=f"{_kp}_leaguebar")
-
-    # ── Projection (career-stabilized intrinsic rates → Paid) ─────────────────
-    # A player's SKILL rates pulled toward an archetype-else-league prior by how
-    # much tracked evidence backs them: a thin sample reads as its prior, a deep
-    # one keeps its edge. Skill only (usage/minutes are the team layer's job) and
-    # flagged directional. See helpers/projection.py.
-    if paid:
-        _pj = _projection(getattr(ctx, "gender", None), _szn, _gp).get(pid)
-        if _pj and _pj.get("stats"):
-            st.markdown("<div class='pl-hdr'>Projection — stabilized skill rates</div>",
-                        unsafe_allow_html=True)
-            st.caption(
-                f"Archetype: **{_pj['archetype']}** · {_pj['games']} tracked games · "
-                f"confidence **{_pj['confidence']['label']}**. Each rate is blended "
-                "toward its prior by evidence; Δ is vs the average tracked team. "
-                "Skill only — usage/minutes live in the team Projection view. "
-                "Directional.")
-            _PJ_LABELS = {
-                "eFG%": "Effective FG%", "TS%": "True shooting", "3P%": "Three-point %",
-                "SMOE": "Shot-making v exp", "ScEff": "Scoring eff",
-                "SCE": "Self-creation %", "PassFG%": "Passing FG%", "AST%": "Assist %",
-                "TOV%": "Ball security", "FTR": "FT rate",
-                "OREB%": "Off. rebound %", "DREB%": "Def. rebound %",
-                "RimDFG%": "Rim D (allowed)", "PerimDFG%": "Perimeter D (allowed)"}
-            _flag_ico = {"solid": "🟢", "directional": "🟡", "thin": "⚪"}
-            prows = []
-            for key, lbl in _PJ_LABELS.items():
-                s = _pj["stats"].get(key)
-                if not s or s.get("proj") is None:
-                    continue
-                d = s.get("delta")
-                prows.append({
-                    "Skill": lbl,
-                    "Now": ("—" if s["own"] is None else f"{s['own']:.1f}"),
-                    "Projected": f"{s['proj']:.1f}",
-                    "Δ vs avg": ("—" if d is None else f"{d:+.1f}"),
-                    "Anchor": s["prior_src"],
-                    "": _flag_ico.get(s["flag"], ""),
-                })
-            if prows:
-                st.dataframe(pd.DataFrame(prows), hide_index=True, width="stretch")
-                st.caption("🟢 solid sample · 🟡 directional · ⚪ thin — reads as its prior.")
-
-    # ── Per-32 minutes (MIN-based → Paid) ─────────────────────────────────────
-    if paid:
-        st.markdown("<div class='pl-hdr'>Per-32 minutes</div>",
-                    unsafe_allow_html=True)
-        if (P["MPG"] or 0) >= 5 and (P["MIN"] or 0) > 0:
-            scale = 32.0 / P["MIN"]
-            per32 = [("PTS", P["PTS"]), ("REB", P["REB"]), ("AST", P["AST"]),
-                     ("STL", P["STL"]), ("BLK", P["BLK"]), ("TOV", P["TOV"]),
-                     ("SC", P["SC"])]
-            p32 = go.Figure(go.Bar(
-                x=[k for k, _ in per32], y=[v * scale for _, v in per32],
-                marker_color=["#f0a500", "#3498db", "#2ecc71", "#58a6ff",
-                              "#e74c3c", "#e67e22", "#9b59b6"],
-                text=[f"{v*scale:.1f}" for _, v in per32], textposition="outside",
-                marker_line_width=0))
-            p32.update_yaxes(title="Per 32 min")
-            _style(p32, 300)
-            st.plotly_chart(p32, width="stretch", key=f"{_kp}_per32")
-            st.caption("Totals × 32 ÷ tracked minutes. HS games run ≈32 min here, so "
-                       "per-32 ≈ a full game's production. Minutes come from tracked "
-                       "possession time (a slight undercount).")
-        else:
-            st.caption("Per-32 needs ≥5 minutes per game of tracked floor time.")
-
-    # ── On / Off court impact (lineup-based → Paid) ───────────────────────────
-    if paid:
-        st.markdown("<div class='pl-hdr'>On / Off court impact</div>",
-                    unsafe_allow_html=True)
-        st.caption("Does the **team** rebound, share the ball, and protect "
-                   "possessions better with this player on the floor? Covers every "
-                   "game the team played; small samples are directional.")
-
-        # Team for the split: on a PAST-season pool, resolve from the lineup
-        # snapshots — players.team_id is the CURRENT roster, so a transferred
-        # player (Vinita → Adair) would otherwise get the NEW team's on/off
-        # over a season they played somewhere else.
-        _oot = ((S.player_lineup_team(pid, list(_gp)) if _gp is not None
-                 else None) or P["team_id"])
-        ro = S.player_rebound_onoff(pid, _oot,
-                                    game_ids=(list(_gp) if _gp is not None else None))
-        pm = S.player_playmaking_onoff(
-            pid, _oot, game_ids=(list(_gp) if _gp is not None else None))
-
-        if ro and ro.get("on_oreb_opps", 0) >= 5:
-            st.markdown("**Team rebounding**")
-            oc1, oc2 = st.columns(2)
-            oc1.markdown(_onoff_html(
-                "Team OREB%", ro["on_oreb_pct"], ro["off_oreb_pct"],
-                ro["on_oreb_opps"], ro["off_oreb_opps"], "opps", True),
-                unsafe_allow_html=True)
-            oc2.markdown(_onoff_html(
-                "Team DREB%", ro["on_dreb_pct"], ro["off_dreb_pct"],
-                ro["on_dreb_opps"], ro["off_dreb_opps"], "opps", True),
-                unsafe_allow_html=True)
-        else:
-            st.info("Not enough tracked rebound opportunities for a reliable "
-                    "rebounding on/off split yet (need ≥5 on-court).")
-
-        if pm and pm.get("on_fgm", 0) >= 5:
-            st.markdown("**Team playmaking & ball security**")
-            pc1, pc2 = st.columns(2)
-            pc1.markdown(_onoff_html(
-                "Team AST%", pm["on_ast_pct"], pm["off_ast_pct"],
-                pm["on_fgm"], pm["off_fgm"], "FGM", True),
-                unsafe_allow_html=True)
-            pc2.markdown(_onoff_html(
-                "Team TOV%", pm["on_tov_pct"], pm["off_tov_pct"],
-                pm["on_tov"], pm["off_tov"], "TOV", False),
-                unsafe_allow_html=True)
-            st.caption("AST% = assisted made FGs ÷ made FGs.  TOV% = turnovers ÷ "
-                       "possessions.  Lower TOV% is better — green means the team "
-                       "turns it over **less** with this player on.")
-        else:
-            st.info("Not enough tracked possessions for a reliable playmaking on/off "
-                    "split yet (need ≥5 team FGM on-court).")
-
-    # ── Scouting report — rides on the category ratings → Paid ────────────────
-    if paid:
-        st.markdown("<div class='pl-hdr'>Scouting report</div>",
-                    unsafe_allow_html=True)
-
-        def pc(key, lb=False):
-            return _pctile(P.get(key), key, rows, lower_better=lb) or 0
-
-        OFF, DEF, PLY, REB_R = (P["OFFENSE"] or 0, P["DEFENSE"] or 0,
-                                P["PLAYMAKING"] or 0, P["REBOUNDING"] or 0)
-        OVR = P["OVERALL"] or 0
-
-        if OVR >= 65 and DEF >= 60:
-            arch = ("Two-Way Force",
-                    "Produces on offense and disrupts on defense — a rare both-ends impact.")
-        elif OFF >= 62 and pc("PPG") >= 80:
-            arch = ("Scoring Machine",
-                    "A primary offensive weapon who creates and converts at volume.")
-        elif PLY >= 62 and pc("APG") >= 80:
-            arch = ("Floor General",
-                    "Runs the offense through vision and distribution.")
-        elif REB_R >= 62 or pc("REB") >= 85:
-            arch = ("Glass Cleaner",
-                    "Owns the boards and generates extra possessions.")
-        elif DEF >= 62 or pc("STOCKS") >= 85:
-            arch = ("Defensive Anchor",
-                    "Disrupts opponents with steals, blocks, and contests.")
-        elif pc("3P%") >= 70 and P["3PA"] >= 15 and pc("DSHOT%", True) >= 55:
-            arch = ("3-and-D Wing",
-                    "Spaces the floor and holds up defensively — a valuable role.")
-        elif pc("3P%") >= 70 and P["3PA"] >= 20:
-            arch = ("Spot-Up Shooter",
-                    "An off-ball threat who punishes help defense from deep.")
-        elif pc("Paint%") >= 70 and pc("REB") >= 60:
-            arch = ("Interior Presence",
-                    "Finishes inside efficiently and commands the paint.")
-        elif OVR >= 56:
-            arch = ("Versatile Contributor",
-                    "Well-rounded across the board without one dominant trait.")
-        elif pc("+/-") >= 75:
-            arch = ("High-Impact Role Player",
-                    "The team plays better with them on the floor.")
-        else:
-            arch = ("Developing Player",
-                    "Still building their game — more tracked games will sharpen it.")
-
-        st.markdown(
-            f"<div style='background:linear-gradient(135deg,#1a1200,var(--card-bg-2));"
-            f"border:1px solid {accent};border-radius:12px;padding:14px 18px;"
-            f"margin-bottom:14px;display:flex;align-items:center;gap:14px'>"
-            f"<div>"
-            f"<div style='font-size:10px;font-weight:700;letter-spacing:.08em;"
-            f"color:var(--subtext);text-transform:uppercase'>Scouting role</div>"
-            f"<div style='font-size:15px;font-weight:800;color:{accent}'>{arch[0]}</div>"
-            f"<div style='font-size:12px;color:var(--subtext);margin-top:3px'>{arch[1]}</div>"
-            f"</div></div>", unsafe_allow_html=True)
-
-        strengths, weaknesses = [], []
-        if pc("PPG") >= 85:
-            strengths.append(("Elite scorer", f"{P['PPG']:.1f} PPG — top of the league."))
-        elif pc("PPG") >= 65:
-            strengths.append(("Consistent scorer", f"{P['PPG']:.1f} PPG."))
-        if pc("TS%") >= 80:
-            strengths.append(("Efficient shooter", f"{_fmt(P['TS%'],'pct')} TS% — high value per shot."))
-        if pc("3P%") >= 80 and P["3PA"] >= 12:
-            strengths.append(("3-point threat", f"{_fmt(P['3P%'],'pct')} on {P['3PA']} attempts."))
-        if pc("REB") >= 85:
-            strengths.append(("Dominant rebounder", f"{P['RPG']:.1f} RPG."))
-        if pc("APG") >= 85:
-            strengths.append(("Elite facilitator", f"{P['APG']:.1f} APG."))
-        if pc("AST/TOV") >= 80 and (P["AST/TOV"] or 0) >= 1.5:
-            strengths.append(("Great ball security", f"{P['AST/TOV']:.2f} AST/TOV."))
-        if pc("STOCKS") >= 85:
-            strengths.append(("Disruptive defender", f"{P['STL']} STL / {P['BLK']} BLK."))
-        if pc("+/-") >= 85:
-            strengths.append(("Strong net impact", f"{P['+/-']:+d} plus/minus."))
-        strengths = strengths[:4]
-
-        if pc("TS%", ) <= 25 and P["FGA"] >= 20:
-            weaknesses.append(("Below-average efficiency", f"{_fmt(P['TS%'],'pct')} TS%."))
-        if pc("TOV%", True) <= 25 and P["TOV%"] is not None:
-            weaknesses.append(("Turnover-prone", f"{_fmt(P['TOV%'],'pct')} turnover rate."))
-        if pc("3P%") <= 25 and P["3PA"] >= 15:
-            weaknesses.append(("Streaky from three", f"{_fmt(P['3P%'],'pct')} on {P['3PA']} attempts."))
-        if P["FT%"] is not None and pc("FT%") <= 25 and P["FTA"] >= 10:
-            weaknesses.append(("Shaky at the line", f"{_fmt(P['FT%'],'pct')} FT%."))
-        if pc("REB%") <= 20 and (P["MPG"] or 0) >= 12:
-            weaknesses.append(("Limited on the glass", "Low rebound rate for the minutes."))
-        if pc("STOCKS") <= 15 and (P["MPG"] or 0) >= 14:
-            weaknesses.append(("Low defensive activity", "Few steals or blocks for the minutes."))
-        weaknesses = weaknesses[:3]
-
-        def _bullets(items, empty):
-            if not items:
-                return f"<div style='font-size:12px;color:#484f58;font-style:italic'>{empty}</div>"
-            return "".join(
-                f"<div style='margin-bottom:9px'>"
-                f"<div style='font-size:13px;font-weight:700;color:var(--text)'>{l}</div>"
-                f"<div style='font-size:12px;color:var(--subtext)'>{d}</div></div>"
-                for l, d in items)
-
-        sc1, sc2 = st.columns(2)
-        sc1.markdown(
-            f"<div class='pl-scout'><div style='font-size:13px;font-weight:700;"
-            f"color:#2ea043;margin-bottom:10px'>Strengths</div>"
-            f"{_bullets(strengths, 'No standout strengths in this sample yet.')}</div>",
-            unsafe_allow_html=True)
-        sc2.markdown(
-            f"<div class='pl-scout'><div style='font-size:13px;font-weight:700;"
-            f"color:#f0a500;margin-bottom:10px'>Areas to watch</div>"
-            f"{_bullets(weaknesses, 'No clear weaknesses in this sample yet.')}</div>",
-            unsafe_allow_html=True)
-
-    # ── What the data says — this player's auto-mined insight lines ───────────
-    # The same league-relative feed as the Team Dashboard Insights tab, capped
-    # at 3 lines (the surface cap; the tab stays the deep-dive home). Paid: the
-    # feed reads tracked splits. Fails silent — the card renders without it.
+    # ══ §0 · VERDICT — directly under the fold, before any table ══════════
+    # This used to be the LAST thing on the page, twenty screens of tables
+    # below. Ordering principle: verdict first, then the things a coach changes
+    # practice over, then history, then the league, then the future.
+    _feed = []
     if paid:
         try:
-            _g = getattr(ctx, "gender", None) or P.get("gender") or "F"
-            _ins = _insight_feed(_g, _szn, _gp).get(pid, [])
+            _feed = _insight_feed(
+                getattr(ctx, "gender", None) or P.get("gender") or "F",
+                _szn, _gp).get(pid, [])
         except Exception:
-            _ins = []
-        if _ins:
-            from helpers.cards import conf_dot as _conf_dot
-            st.markdown("<div class='pl-hdr'>What the data says</div>",
+            _feed = []
+    _has_verdict = _render_verdict(ctx, P, pid, rows, paid, lab_badges,
+                                   archetype if paid else None, _feed)
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  THE SECTIONS — cut by the question a coach asks, one open at a time
+    # ══════════════════════════════════════════════════════════════════════
+    # The card was cut by DATA CATEGORY and rendered all 26 sections
+    # eagerly on every rerun — 12 plotly charts and 9 dataframes of work for
+    # whichever one the coach was looking at. It had no controls at all:
+    # nothing lazy, nothing gated, nothing scopeable. Insights is cut by the
+    # question instead, which is why it reads better, and it went lazy for
+    # exactly this reason. This matters most inside quick_view, where the
+    # whole card renders in a modal.
+    import helpers.ui as _UIseg
+    _sec = _UIseg.seg("Section", CARD_SECTIONS, default=CARD_SECTIONS[0],
+                      key=f"{_kp}_sec", label_visibility="collapsed") \
+        or CARD_SECTIONS[0]
+
+    if _sec == "Does the team win with her on?":
+        # ── "why this OVERALL" (ratings live as bars in the grid) ────────────
+        # The seven-metric tile row that used to sit here is gone. Five of the seven
+        # — USG%, +/-, EFF, FIC, VPS — are rows in the league-percentile rail
+        # directly above, where each carries its league percentile AND the pool it
+        # was ranked against; the tile gave the same number with no context at all.
+        # The two that were NOT in the rail, MIN/G and PRF, are rail entries now.
+        if paid:
+            _why = PR.overall_blurb(P.get("OFFENSE"), P.get("DEFENSE"),
+                                    P.get("PLAYMAKING"), P.get("REBOUNDING"))
+            if _why:
+                st.markdown(f"<div style='color:{accent};font-weight:600;margin:2px 0 4px'>"
+                            f"Why this OVERALL: {html_escape(_why)}</div>",
+                            unsafe_allow_html=True)
+
+        # ── Impact — RAPM · WPA (directional on a short book) → Paid ──────────────
+        if paid:
+            _g = getattr(ctx, "gender", None)
+            _rp = _rapm(_g, _gp).get(pid, {})
+            _wpm = _wpa(_g, _szn, _gp)      # same read-filter as _rapm / _war above
+            _ws = (_wpm.get("scoring") or {}).get(pid, {})
+            _wq = (_wpm.get("possession") or {}).get(pid, {})
+
+            def _sv(d, k, fmt="{:+.1f}"):
+                v = d.get(k)
+                return fmt.format(v) if v is not None else "—"
+
+            _wr = _war(_g, _szn, _gp).get(pid, {})
+            _imp = [
+                ("HoopWAR", _sv(_wr, "WAR", "{:+.2f}"), "wins vs replacement"),
+                ("ORAPM", _sv(_rp, "ORAPM"), "off pts/100"),
+                ("DRAPM", _sv(_rp, "DRAPM"), "def pts/100"),
+                ("RAPM", _sv(_rp, "RAPM"), "net pts/100"),
+                ("WPA", _sv(_ws, "wpa", "{:+.2f}"), "wins added"),
+                ("Clutch WPA", _sv(_ws, "clutch_wpa", "{:+.2f}"), "high-leverage"),
+                ("Off WPA", _sv(_wq, "off_wpa", "{:+.2f}"), "offense value"),
+                ("Def WPA", _sv(_wq, "def_wpa", "{:+.2f}"), "defense value"),
+            ]
+            if any(v != "—" for _, v, _ in _imp):
+                st.markdown("<div class='pl-hdr'>Impact — HoopWAR &middot; RAPM "
+                            "&middot; WPA</div>",
+                            unsafe_allow_html=True)
+                _itiles = "".join(
+                    f"<div style='background:var(--card-bg-2);border:1px solid var(--track);"
+                    f"border-radius:8px;padding:6px 9px'>"
+                    f"<div style='font-size:10px;color:var(--subtext)'>{l}</div>"
+                    f"<div style='font-size:16px;font-weight:700;color:var(--text)'>{v}</div>"
+                    f"<div style='font-size:9px;color:#6e7681'>{s}</div></div>"
+                    for l, v, s in _imp)
+                st.markdown(
+                    "<div style='display:grid;grid-template-columns:repeat(8,1fr);"
+                    "gap:6px'>" + _itiles + "</div>", unsafe_allow_html=True)
+                st.caption("HoopWAR = RAPM impact paid out over floor time, vs a "
+                           "replacement-level player, converted to wins (≈14 pts/win "
+                           "at HS scoring). RAPM shrinks toward a box-score prior; WPA "
+                           "credits the shots (and stops) that swung win probability. "
+                           "Directional on a short book — read the sign and rough size, "
+                           "not the decimals.")
+
+        # ── impact & rating splits (rebuilt engine: possession impact + defense /
+        #    rebounding sub-ratings + passer depth) → Paid ─────────────────────────
+        import helpers.advanced_ratings as ADV
+        ADV.player_panel(P, paid)
+
+        # ── On / Off court impact (lineup-based → Paid) ───────────────────────────
+        if paid:
+            st.markdown("<div class='pl-hdr'>On / Off court impact</div>",
                         unsafe_allow_html=True)
-            _body = "".join(
-                f"<div style='margin-top:4px;font-size:12px'>"
-                f"<span class='badge accent'>{ln['metric']}</span> "
-                f"{_conf_dot(ln.get('n'), k=8) if isinstance(ln.get('n'), (int, float)) else ''}"
-                f"<span style='color:var(--subtext);font-size:10px'>n={ln.get('n')}"
-                f"</span> "
-                + _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", ln["text"])
-                + "</div>"
-                for ln in _ins)
-            st.markdown(f"<div class='gloss-card'>{_body}</div>",
+            st.caption("Does the **team** rebound, share the ball, and protect "
+                       "possessions better with this player on the floor? Covers every "
+                       "game the team played; small samples are directional.")
+
+            # Team for the split: on a PAST-season pool, resolve from the lineup
+            # snapshots — players.team_id is the CURRENT roster, so a transferred
+            # player (Vinita → Adair) would otherwise get the NEW team's on/off
+            # over a season they played somewhere else.
+            _oot = ((S.player_lineup_team(pid, list(_gp)) if _gp is not None
+                     else None) or P["team_id"])
+            ro = S.player_rebound_onoff(pid, _oot,
+                                        game_ids=(list(_gp) if _gp is not None else None))
+            pm = S.player_playmaking_onoff(
+                pid, _oot, game_ids=(list(_gp) if _gp is not None else None))
+
+            # ── the scoring split ─────────────────────────────────────
+            # This section carried rebounding and AST/TOV and NO SCORING — the one
+            # number "on/off" means to a coach. `lineups.player_on_off` has computed
+            # it all along and only the Insights feed was reading it.
+            try:
+                _oo = (_team_on_off(_oot, _gp) or {}).get(pid) or {}
+            except Exception:
+                _oo = {}
+            if _oo.get("on_poss"):
+                st.markdown("**Team scoring**")
+                _n1, _n2 = st.columns(2)
+                _n1.markdown(_onoff_html(
+                    "Team ORtg", _oo.get("on_ortg"), _oo.get("off_ortg"),
+                    _oo.get("on_poss"), _oo.get("off_poss"), "poss", True),
+                    unsafe_allow_html=True)
+                _n2.markdown(_onoff_html(
+                    "Team DRtg", _oo.get("on_drtg"), _oo.get("off_drtg"),
+                    _oo.get("on_poss"), _oo.get("off_poss"), "poss", False),
+                    unsafe_allow_html=True)
+                if _oo.get("net_diff") is not None:
+                    st.caption(
+                        f"Net **{_oo['net_diff']:+.1f}** points per 100 possessions "
+                        "with her on the floor versus off it, over the games she "
+                        "played. Raw on/off is teammate-confounded and measured "
+                        "barely repeatable on a book this size — read the sign and "
+                        "the rough size, and let the adjusted RAPM in the Impact "
+                        "block above carry the argument.")
+
+            # ── Oliver individual DRtg ────────────────────────────────
+            try:
+                _, _drtg_all = _ind_ratings(
+                    getattr(ctx, "gender", None) or P.get("gender") or "F", _gp)
+                _dr = (_drtg_all or {}).get(pid)
+            except Exception:
+                _dr = None
+            if _dr is not None:
+                st.markdown(_glass("Individual DRtg", f"{_dr:.0f}",
+                                   "pts allowed / 100 · lower is better"),
+                            unsafe_allow_html=True)
+
+            if ro and ro.get("on_oreb_opps", 0) >= 5:
+                st.markdown("**Team rebounding**")
+                oc1, oc2 = st.columns(2)
+                oc1.markdown(_onoff_html(
+                    "Team OREB%", ro["on_oreb_pct"], ro["off_oreb_pct"],
+                    ro["on_oreb_opps"], ro["off_oreb_opps"], "opps", True),
+                    unsafe_allow_html=True)
+                oc2.markdown(_onoff_html(
+                    "Team DREB%", ro["on_dreb_pct"], ro["off_dreb_pct"],
+                    ro["on_dreb_opps"], ro["off_dreb_opps"], "opps", True),
+                    unsafe_allow_html=True)
+            else:
+                st.info("Not enough tracked rebound opportunities for a reliable "
+                        "rebounding on/off split yet (need ≥5 on-court).")
+
+            if pm and pm.get("on_fgm", 0) >= 5:
+                st.markdown("**Team playmaking & ball security**")
+                pc1, pc2 = st.columns(2)
+                pc1.markdown(_onoff_html(
+                    "Team AST%", pm["on_ast_pct"], pm["off_ast_pct"],
+                    pm["on_fgm"], pm["off_fgm"], "FGM", True),
+                    unsafe_allow_html=True)
+                pc2.markdown(_onoff_html(
+                    "Team TOV%", pm["on_tov_pct"], pm["off_tov_pct"],
+                    pm["on_tov"], pm["off_tov"], "TOV", False),
+                    unsafe_allow_html=True)
+                st.caption("AST% = assisted made FGs ÷ made FGs.  TOV% = turnovers ÷ "
+                           "possessions.  Lower TOV% is better — green means the team "
+                           "turns it over **less** with this player on.")
+            else:
+                st.info("Not enough tracked possessions for a reliable playmaking on/off "
+                        "split yet (need ≥5 team FGM on-court).")
+
+        # ── Per-32 minutes (MIN-based → Paid) ─────────────────────────────────────
+        if paid:
+            st.markdown("<div class='pl-hdr'>Per-32 minutes</div>",
                         unsafe_allow_html=True)
+            if (P["MPG"] or 0) >= 5 and (P["MIN"] or 0) > 0:
+                scale = 32.0 / P["MIN"]
+                per32 = [("PTS", P["PTS"]), ("REB", P["REB"]), ("AST", P["AST"]),
+                         ("STL", P["STL"]), ("BLK", P["BLK"]), ("TOV", P["TOV"]),
+                         ("SC", P["SC"])]
+                p32 = go.Figure(go.Bar(
+                    x=[k for k, _ in per32], y=[v * scale for _, v in per32],
+                    marker_color=["#f0a500", "#3498db", "#2ecc71", "#58a6ff",
+                                  "#e74c3c", "#e67e22", "#9b59b6"],
+                    text=[f"{v*scale:.1f}" for _, v in per32], textposition="outside",
+                    marker_line_width=0))
+                p32.update_yaxes(title="Per 32 min")
+                _style(p32, 300)
+                st.plotly_chart(p32, width="stretch", key=f"{_kp}_per32")
+                st.caption("Totals × 32 ÷ tracked minutes. HS games run ≈32 min here, so "
+                           "per-32 ≈ a full game's production. Minutes come from tracked "
+                           "possession time (a slight undercount).")
+            else:
+                st.caption("Per-32 needs ≥5 minutes per game of tracked floor time.")
+
+
+        # Who she guarded, who guarded her, and how hard the assignment was.
+        _render_matchups(ctx, P, pid,
+                         getattr(ctx, "gender", None) or P.get("gender") or "F",
+                         _gp)
+
+    if _sec == "How does she score?":
+        # ── signature / invented metrics (glass tiles) ────────────────────────────
+        #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.
+        st.markdown("<div class='pl-hdr'>Signature metrics</div>",
+                    unsafe_allow_html=True)
+        tile_specs = [
+            ("VERSATILITY", _fmt(P["VERSATILITY"], "f1"), "even box impact", accent),
+        ]
+        if paid:
+            tile_specs += [
+                ("2-WAY", _fmt(P["2WAY"], "f1"), "offense + defense", "#56d4dd"),
+                ("SMOE", _fmt(P["SMOE"], "spp"), "shot-making vs exp.", "#00e5ff"),
+                ("Q4 PPG", _fmt(P["Q4PPG"], "f1"),
+                 f"{_fmt(P['Q4%'], 'pct')} of points", "#ff7b72"),
+                # (no SELF-CR% tile: the Signature pill in the fold already carries
+                #  it, and the pill is the one a coach sees first.)
+                ("STOCKS/32", _fmt(P["STOCKS/32"], "f1"), "defensive disruption", "var(--good)"),
+                # (no DOM-SIDE% tile: "Dominant vs weak hand side" below owns the
+                #  whole split — share, FG% on each side, and the edge between them.)
+            ]
+        tiles = st.columns(len(tile_specs))
+        for col, (lbl, val, sub, clr) in zip(tiles, tile_specs):
+            col.markdown(_glass(lbl, val, sub, clr), unsafe_allow_html=True)
+
+        # ── dominant vs weak hand side (event-derived → Paid) ─────────────────────
+        if paid and _hand_dom and _hand_weak and (_hand_dom["FGA"] or _hand_weak["FGA"]):
+            st.markdown("<div class='pl-hdr'>Dominant vs weak hand side</div>",
+                        unsafe_allow_html=True)
+            dom, wk = _hand_dom, _hand_weak
+            hm = st.columns(4)
+            hm[0].metric("Dominant FG%", f"{dom['pct']*100:.0f}%" if dom["FGA"] else "—",
+                         help=f"{dom['FGM']}/{dom['FGA']} on the strong-hand half")
+            hm[1].metric("Weak FG%", f"{wk['pct']*100:.0f}%" if wk["FGA"] else "—",
+                         help=f"{wk['FGM']}/{wk['FGA']} on the off-hand half")
+            hm[2].metric("Dominant share",
+                         f"{_dom_share*100:.0f}%" if _dom_share is not None else "—",
+                         help=f"{dom['FGA']} dominant / {wk['FGA']} weak attempts")
+            hm[3].metric("FG% edge",
+                         f"{(dom['pct']-wk['pct'])*100:+.0f}pp" if (dom["FGA"] and wk["FGA"]) else "—",
+                         help="Dominant minus weak FG% — how much better on the strong side")
+
+            def _po(c):
+                return f"{c['pct']*100:.0f}% ({c['FGM']}/{c['FGA']})" if c["FGA"] else "—"
+            dg, do = _hand["dominant"]["guarded"], _hand["dominant"]["open"]
+            wg, wo = _hand["weak"]["guarded"], _hand["weak"]["open"]
+            st.caption(
+                f"Dominant — guarded {_po(dg)} · open {_po(do)}   ·   "
+                f"Weak — guarded {_po(wg)} · open {_po(wo)}.  "
+                "Right-handers' right half = dominant (lefties mirrored); "
+                "dead-center shots ignored.")
+
+        # ── shot detail (event-derived → Paid). The located shot map + defended map
+        #    moved INTO the overview grid's 4th column (phase E); this section keeps
+        #    the reads the fold can't carry — shot-length buckets, hot zones, and
+        #    the zone-chart fallback for legacy zone-only games.
+        if paid:
+            st.markdown("<div class='pl-hdr'>Shot detail</div>", unsafe_allow_html=True)
+            sc_l, sc_r = st.columns([3, 2])
+            with sc_l:
+                if located:
+                    _ls = S.shot_location_summary(located)
+                    if _ls:
+                        def _seg(lbl, n, fg):
+                            return f"{lbl} {n}" + (f" ({fg*100:.0f}%)" if fg is not None
+                                                   else "")
+                        st.caption(
+                            f"Avg distance **{_ls['avg_dist']:.1f} ft** · "
+                            + _seg("Rim", _ls["rim_n"], _ls["rim_fg"]) + " · "
+                            + _seg("Mid", _ls["mid_n"], _ls["mid_fg"]) + " · "
+                            + _seg("Three", _ls["three_n"], _ls["three_fg"])
+                            + " — the shot map lives up in the Overview grid.")
+                    _dbl = S.distance_buckets(located)
+                    if _dbl:
+                        st.caption("By length — " + S.distance_buckets_caption(_dbl))
+                else:
+                    fig, ok = _shot_chart(zsplits.get(pid, {}),
+                                          f"{P['name']} — FG% by zone")
+                    if ok:
+                        st.plotly_chart(fig, width="stretch", key=f"{_kp}_court")
+                        st.caption("Zone chart (older games) — ≥45% · 30–44% · <30% · "
+                                   "bubble size = attempts. Tap-captured shots show "
+                                   "as a precise shot map in the Overview grid.")
+                    else:
+                        empty_state("No shot locations yet",
+                                    "Shots logged with a court tap (phone or Game "
+                                    "Tracker) build the shot map; zone-only shots "
+                                    "feed the zone chart.")
+            with sc_r:
+                st.markdown("**Hot zones**")
+                pz = zsplits.get(pid, {})
+                if pz:
+                    _hot_zones(pz)
+                else:
+                    st.caption("No zone data.")
+                # defended-shot map — the scouting read, deliberately BELOW the
+                # fold (founder call): where opponents shot when this player was
+                # the contester/blocker, with the guarded/open split.
+                _dshots = _defended_located(pid, _gp)
+                if _dshots:
+                    dfig, _dn = _shot_map(
+                        _dshots, f"Shots defended · {len(_dshots)} located")
+                    st.plotly_chart(dfig, width="stretch", key=f"{_kp}_defcourt")
+                    _gd4 = zguard.get(pid, {})
+                    _gg = (_gd4 or {}).get("guarded", {})
+                    _go = (_gd4 or {}).get("open", {})
+                    if _gg.get("FGA") and _go.get("FGA"):
+                        st.caption(
+                            f"Guarded FG% {_gg['pct']*100:.0f}% "
+                            f"({_gg['FGM']}/{_gg['FGA']}) · open "
+                            f"{_go['pct']*100:.0f}% ({_go['FGM']}/{_go['FGA']}). "
+                            "Rim vs arc feeds the DEFENSE rating.")
+
+        left, right = st.columns([2, 3])
+        with left:
+            # The five-rating radar is gone. It plotted the same five ratings as the
+            # Overview bars in the fold — which additionally carry a confidence band
+            # and a form chip the radar had no way to show — and the only thing it
+            # added was a pool-average ring at 50. The bars draw that 50 mark now,
+            # so the radar's one real contribution outlived it.
+            # points by source
+            pts2, pts3, ptsf = P["2PM"] * 2, P["3PM"] * 3, P["FTM"]
+            if pts2 + pts3 + ptsf > 0:
+                dn = _donut(pts2, pts3, ptsf, colors=(accent, "#58a6ff", "var(--subtext)"),
+                            height=260, margin_top=30, ft_label="FT",
+                            title="Points by source")
+                st.plotly_chart(dn, width="stretch", key=f"{_kp}_src")
+
+        with right:
+            def _row(stat, key, fmt):
+                return {"Stat": stat, "Value": _fmt(P.get(key), fmt)}
+
+            def _ci(lo_key, hi_key):
+                """' · 95% CI 35-49%' band string, or '' when the rate has no attempts."""
+                lo, hi = P.get(lo_key), P.get(hi_key)
+                return (f"  ·  95% CI {lo:.0f}-{hi:.0f}%"
+                        if lo is not None and hi is not None else "")
+
+            st.markdown("**Scoring & shooting**")
+            # box rows always; event-derived rows (Paint/ShotRating/xPPS/xFG%/SMOE)
+            # only for Paid.
+            _shoot_rows = [
+                _row("Points (PPG)", "PTS", "int") | {"Value":
+                    f"{P['PTS']} ({P['PPG']:.1f}/g)"},
+                _row("FG", "FG%", "pct") | {"Value":
+                    f"{P['FGM']}/{P['FGA']} ({_fmt(P['FG%'],'pct')}){_ci('FG%lo','FG%hi')}"},
+                _row("Three", "3P%", "pct") | {"Value":
+                    f"{P['3PM']}/{P['3PA']} ({_fmt(P['3P%'],'pct')}){_ci('3P%lo','3P%hi')}"},
+                _row("Free throw", "FT%", "pct") | {"Value":
+                    f"{P['FTM']}/{P['FTA']} ({_fmt(P['FT%'],'pct')}){_ci('FT%lo','FT%hi')}"},
+                _row("eFG% / TS%", "TS%", "pct") | {"Value":
+                    f"{_fmt(P['eFG%'],'pct')} / {_fmt(P['TS%'],'pct')}"},
+                _row("Scoring Eff. (ScEff)", "ScEff", "pct"),
+                _row("Pts/shot (PPS)", "PPS", "f2"),
+                _row("Free throw rate", "FTR", "f2"),
+            ]
+            if paid:
+                _shoot_rows += [
+                    _row("Paint FG% (pts)", "Paint%", "pct") | {"Value":
+                        f"{_fmt(P['Paint%'],'pct')}  ({P['PaintPTS']} pts)"},
+                    _row("Shot difficulty", "ShotRating", "f1"),
+                    _row("Expected pts/shot", "xPPS", "f2"),
+                    # SMOE is the Signature-metrics tile's whole job (it is one of
+                    # the invented metrics) — the table gives expected FG% only.
+                    _row("Expected FG%", "xFG%", "pct"),
+                ]
+            st.dataframe(pd.DataFrame(_shoot_rows), hide_index=True, width="stretch")
+            st.caption(
+                "Shooting lines carry a 95% Wilson confidence interval — the range a "
+                "sample this size actually supports. (How trustworthy the book is "
+                "overall is stated once, in the Overview header at the top.)")
+
+            st.markdown("**Rebounding · Playmaking · Defense**")
+            # box rows always; on-court rate stats (REB%/SC/Guarded%/DSHOT%) → Paid.
+            _rpd_rows = [
+                _row("Rebounds (RPG)", "REB", "int") | {"Value":
+                    f"{P['REB']} ({P['RPG']:.1f}/g)"},
+                _row("OREB / DREB", "OREB", "int") | {"Value":
+                    f"{P['OREB']} / {P['DREB']}"},
+                _row("Assists (APG)", "AST", "int") | {"Value":
+                    f"{P['AST']} ({P['APG']:.1f}/g)"},
+                _row("Assist/turnover", "AST/TOV", "f2"),
+                _row("Steals / Blocks", "STL", "int") | {"Value":
+                    f"{P['STL']} / {P['BLK']}"},
+                _row("Turnovers (TPG)", "TOV", "int") | {"Value":
+                    f"{P['TOV']} ({P['TPG']:.1f}/g · {_fmt(P['TOV%'],'pct')})"},
+                _row("Fouls (FPG)", "PF", "int") | {"Value":
+                    f"{P['PF']} ({P['PF/G']:.1f}/g)"},
+                _row("Game Score / game", "GS/G", "f1"),
+                _row("Value Point System (VPS)", "VPS", "f2"),
+            ]
+            if paid:
+                _rpd_rows[2:2] = [_row("REB% (on court)", "REB%", "pct")]
+                _rpd_rows += [
+                    _row("Shots created", "SC", "int"),
+                    # feeds = every pass into a shot (make or miss); conv% = the
+                    # share teammates finished (the assists that could have been)
+                    _row("Potential assists", "PotAST", "int") | {"Value":
+                        f"{P['PotAST']} ({P['PotAST/G']:.1f}/g"
+                        + (f" · {_fmt(P['FeedConv%'], 'pct')} finished)"
+                           if P.get("FeedConv%") is not None else ")")},
+                    # xA = expected assists (feeds scored by look quality, make-
+                    # independent) with the finishing-luck gap AST − xA. Only for
+                    # players who fed shots (None otherwise).
+                    *([_row("Expected assists (xA)", "xA", "f1") | {"Value":
+                        f"{P['xA']:.1f}  (AST {P['AST']} · "
+                        f"{'+' if P['AST-xA'] >= 0 else ''}{P['AST-xA']:.1f} vs xA)"}]
+                      if P.get("xA") is not None else []),
+                    _row("Screen assists", "ScrAST", "int") | {"Value":
+                        f"{P['ScrAST']} ({P['ScrAST/G']:.1f}/g)"},
+                    # hockey assist (pass before the assist) — opt-in capture, so the
+                    # row appears only once a player has one (0 for everyone until a
+                    # coach starts tagging it would be pure clutter)
+                    # Hockey assists — opt-in capture, so the row appears only once
+                    # a player has one (0 for everyone until a coach starts tagging
+                    # would be pure clutter). Keyed on PotHAST, not HAST: the tag is
+                    # logged on makes AND misses, so a player can have tagged second
+                    # passes that simply never dropped, and keying on HAST would
+                    # hide their tagging entirely.
+                    *([_row("Hockey assists", "HAST", "int") | {"Value":
+                        f"{P['HAST']} ({P['HAST/G']:.1f}/g)"
+                        + (f" · {P['PotHAST']} tagged incl. misses"
+                           if P.get("PotHAST", 0) > P.get("HAST", 0) else "")}]
+                      if P.get("PotHAST") else []),
+                    # xA2 — secondary expected assists, beside xA rather than inside
+                    # it (xA/G is a gate-adopted leaf; folding secondary credit in
+                    # would be an unguarded rating change). Coverage-gated, so this
+                    # row is absent until the team has tags in XA2_MIN_GAMES games.
+                    *([_row("Secondary xA (xA2)", "xA2", "f1") | {"Value":
+                        f"{P['xA2']:.1f}  ({P['xA2pts']:.1f} pts · "
+                        f"{P['xA2Games']} tagged games)"}]
+                      if P.get("xA2") is not None else []),
+                    _row("Guarded% (on court)", "Guarded%", "pct"),
+                    _row("Defended FG% allowed", "DSHOT%", "pct"),
+                    # Corsi — on-floor shot-attempt differential, a lower-variance
+                    # running mate to +/- (only when the player logged floor time)
+                    *([_row("Corsi (attempt ±)", "Corsi", "int") | {"Value":
+                        f"{'+' if P['Corsi'] >= 0 else ''}{P['Corsi']} "
+                        f"({P['CorsiFor']}/{P['CorsiAgainst']} · {_fmt(P['Corsi%'], 'pct')})"}]
+                      if P.get("Corsi") is not None else []),
+                ]
+                # rim / perimeter defended splits (only when the player has faced
+                # shots in the bucket); ± = FG points saved vs a league-average
+                # contest — the values that feed the DEFENSE rating
+                if P.get("RimDShots"):
+                    _rpd_rows.append(
+                        _row("Rim defense (FG% allowed)", "RimDFG%", "pct") | {
+                            "Value": f"{_fmt(P['RimDFG%'], 'pct')} on "
+                                     f"{P['RimDShots']} shots"
+                                     + (f" ({P['RimProt']:+.1f} vs lg)"
+                                        if P.get("RimProt") is not None else "")})
+                if P.get("PerimDShots"):
+                    _rpd_rows.append(
+                        _row("Perimeter defense (3P% allowed)", "PerimDFG%", "pct") | {
+                            "Value": f"{_fmt(P['PerimDFG%'], 'pct')} on "
+                                     f"{P['PerimDShots']} threes"
+                                     + (f" ({P['PerimD']:+.1f} vs lg)"
+                                        if P.get("PerimD") is not None else "")})
+                # box-out payoff + board mix — from guarded_by × rebound_by, so the
+                # rows appear only for a team that tags both (None otherwise, which
+                # is why these are conditional rather than showing a misleading 0)
+                if P.get("onball_misses"):
+                    _rpd_rows.append(
+                        _row("Box-out payoff (team secures)", "BoxOut%stab", "pct") | {
+                            "Value": f"{_fmt(P['BoxOut%stab'], 'pct')} stabilized "
+                                     f"({_fmt(P['BoxOut%'], 'pct')} raw on "
+                                     f"{P['onball_misses']} contests)"})
+                if P.get("OnBallDREB%") is not None:
+                    _rpd_rows.append(
+                        _row("On-ball share of DREB", "OnBallDREB%", "pct") | {
+                            "Value": f"{_fmt(P['OnBallDREB%'], 'pct')} of "
+                                     f"{P['TaggedDREB']} tagged boards"})
+            st.dataframe(pd.DataFrame(_rpd_rows), hide_index=True, width="stretch")
+
+            # ── rebounding verdict (spec Part 1 §2 "do it all") ──────────────
+            # Ranks against the SAME pool the card was built from, so "best on the
+            # team" means what it says. Silent when nothing clears its gate.
+            if paid:
+                import helpers.rebounding as _RB
+                _rv = _RB.rebounding_verdict(P, pool=rows)
+                if _rv:
+                    st.markdown(verdict_card(_rv), unsafe_allow_html=True)
+                    st.caption(
+                        "Box-out payoff credits sealing the shooter off even when a "
+                        "TEAMMATE gets the board — that is the point of a box-out, so "
+                        "a player's own DREB count can undersell it. Board mix is a "
+                        "style read, not a grade: weak-side crashing and cleaning up "
+                        "your own assignment are different jobs. Thin samples are "
+                        "shrunk toward the pool mean (the stabilized value).")
+
+            # ── "who they feed" — the 2-node passer→shooter graph (§12.5) ────
+            # This card showed the 3-NODE hockey graph and nothing else, so a
+            # player's passing read was gated on an opt-in tag. Measured on the
+            # production book: 3,957 shots carry a plain pass_from_id against 317
+            # carrying a hockey tag, and the card's top feeder has 222 rendered
+            # feeds beside 8 tagged chains — the card showed her the 8. Thirty-six
+            # players clear the feed bar with no hockey chain at all and got
+            # nothing here. The hockey table below still renders when it can; it is
+            # the enrichment, not the entry point.
+            if paid:
+                _edges = [r for r in _conn_edges(tuple(_gp) if _gp is not None
+                                                 else None)
+                          if r["passer"] == pid]
+                if _edges:
+                    _ids = {r["shooter"] for r in _edges}
+                    _nm = {r["id"]: r["name"] for r in query(
+                        "SELECT id, name FROM players WHERE id IN "
+                        f"({','.join('?' * len(_ids))})", tuple(_ids))}
+                    st.markdown("**Who they feed** — passes that became a shot")
+                    st.dataframe(pd.DataFrame([{
+                        "Shooter": _nm.get(r["shooter"], f"#{r['shooter']}"),
+                        "Feeds": r["feeds"],
+                        "Made": r["made"],
+                        "xA": r["xa"],
+                        "Finish vs xA": r["finish_delta"],
+                    } for r in _edges]), hide_index=True, width="stretch",
+                        column_config={
+                            "xA": st.column_config.NumberColumn(format="%.2f"),
+                            "Finish vs xA": st.column_config.NumberColumn(
+                                format="%+.2f"),
+                        })
+                    st.caption(
+                        f"Every pass this player made that produced a shot, made "
+                        f"or missed — an edge needs {_PC_MIN_FEEDS} feeds to draw. "
+                        "**xA** is what those looks were worth to an average "
+                        "finisher, so a pair that generates good shots the shooter "
+                        "misses still reads as a connection. **Finish vs xA** is a "
+                        "read about the SHOOTER, not the passer, and small samples "
+                        "dominate it below about ten feeds.")
+
+            # ── "who ignites whom" — hockey-assist chains (spec Part 1 §3) ────
+            # Opt-in capture, so this renders ONLY for a player who has tagged
+            # chains. Everyone else sees nothing rather than an empty grid.
+            if paid and P.get("PotHAST"):
+                import helpers.passing_chains as _PC
+                # season-scoped like every other card fetcher (a bare default reads
+                # Current only, which is zero for an archive view)
+                _ch = [c for c in _PC.hockey_chains(
+                           game_ids=(list(_gp) if _gp is not None else None))
+                       if c["hockey_from"] == pid]
+                if _ch:
+                    # player_stat_table rows carry no id (the pid is the dict key),
+                    # so resolve assister names straight from the roster table
+                    _ids = {c["assister"] for c in _ch}
+                    _nm = {r["id"]: r["name"] for r in query(
+                        "SELECT id, name FROM players WHERE id IN "
+                        f"({','.join('?' * len(_ids))})", tuple(_ids))} if _ids else {}
+                    st.markdown("**Who they ignite** — hockey-assist chains")
+                    st.dataframe(pd.DataFrame([{
+                        "Assister": _nm.get(c["assister"], f"#{c['assister']}"),
+                        "Chains": c["pot_hast"],
+                        "Finished (HAST)": c["hast"],
+                        "Points": c["pts"],
+                    } for c in _ch]), hide_index=True, width="stretch")
+                    st.caption(
+                        "The pass BEFORE the assist: this player → the assister → "
+                        "the shot. **Chains** counts every tagged sequence, make or "
+                        "miss, because a pair can move the ball well and still be "
+                        "let down by the finish; **Finished** is the subset that "
+                        "dropped, which is the HAST stat proper.")
+
+        # ── Shot diet · shot creation · quarter scoring (event-derived → Paid) ────
+        if paid:
+            st.markdown("<div class='pl-hdr'>Shot diet & impact mix</div>",
+                        unsafe_allow_html=True)
+            # season-scope like every other fetcher — the bare default is
+            # Current-season only, which reads ZERO for an archive/fallback pid
+            _gp_list = list(_gp) if _gp is not None else None
+            pbox = S.player_box(pid, game_ids=_gp_list)
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                st.markdown("**Shot diet** — how their shots are created")
+                diet = S.shot_breakdown_pct(pbox)
+                dl = {"self": "Self", "pass": "Off pass", "sc": "Off screen",
+                      "both": "Pass+screen"}
+                dv = [(dl[k], diet[k] * 100) for k in ("self", "pass", "sc", "both")]
+                df_ = go.Figure(go.Bar(
+                    x=[v for _, v in dv], y=[l for l, _ in dv], orientation="h",
+                    marker_color="#58a6ff", marker_line_width=0,
+                    text=[f"{v:.0f}%" for _, v in dv], textposition="auto"))
+                df_.update_xaxes(visible=False)
+                _style(df_, 240)
+                df_.update_layout(margin=dict(l=4, r=14, t=10, b=6))
+                st.plotly_chart(df_, width="stretch", key=f"{_kp}_diet")
+            with d2:
+                st.markdown("**Shots created** — how SC is earned")
+                comp = S.sc_composition(pbox)
+                if pbox["SC"] > 0:
+                    cd = go.Figure(go.Pie(
+                        labels=["Shooting", "Passing", "Screening"],
+                        values=[comp["shoot"], comp["pass"], comp["sc"]], hole=0.55,
+                        sort=False, marker=dict(colors=[accent, "#bc8cff", "#3fb950"]),
+                        textinfo="label+percent"))
+                    cd.update_layout(template="plotly_dark", height=240,
+                                     paper_bgcolor="rgba(0,0,0,0)", showlegend=False,
+                                     margin=dict(l=10, r=10, t=10, b=10))
+                    st.plotly_chart(cd, width="stretch", key=f"{_kp}_sccomp")
+                else:
+                    st.caption("No shots created.")
+            with d3:
+                st.markdown("**Scoring by quarter**")
+                qb = S.quarter_boxes(game_ids=_gp_list).get(pid, {})
+                qs = sorted(qb)
+                if qs:
+                    qfig = go.Figure(go.Bar(
+                        x=[f"Q{q}" if q <= 4 else f"OT{q-4}" for q in qs],
+                        y=[qb[q]["PTS"] for q in qs], marker_color=accent,
+                        marker_line_width=0,
+                        text=[qb[q]["PTS"] for q in qs], textposition="auto"))
+                    qfig.update_yaxes(title="Points")
+                    _style(qfig, 240)
+                    qfig.update_layout(margin=dict(l=30, r=10, t=10, b=24))
+                    st.plotly_chart(qfig, width="stretch", key=f"{_kp}_qtr")
+                else:
+                    st.caption("No quarter data.")
+
+        # ── Set-call profile (one-tap play_type tags → Paid) ──────────────────────
+        _named = getattr(ctx, "named_sets", None)
+        _roles = getattr(ctx, "role_splits", None)
+        _setprof = getattr(ctx, "set_profiles", None)  # {key: shot-profile} or None
+        _ZL = {"LC": "left corner", "LW": "left wing", "C": "the paint",
+               "RW": "right wing", "RC": "right corner"}
+
+        def _howline(pr):
+            """Gender-neutral 'how they score it' sub-line from a shot profile."""
+            if not pr or (pr.get("poss") or 0) < 5:
+                return ""
+            bits = [f"{pr['PPP']:.2f} PPP"]
+            if pr.get("3PA_rate") is not None:
+                bits.append(f"{round(pr['3PA_rate']*100)}% 3PA")
+            if pr.get("rim_rate") is not None:
+                bits.append(f"{round(pr['rim_rate']*100)}% rim")
+            if pr.get("ast_rate") is not None:
+                bits.append(f"{round(pr['ast_rate']*100)}% assisted")
+            if pr.get("open_rate") is not None:
+                bits.append(f"{round(pr['open_rate']*100)}% open")
+            _tz = pr.get("top_zone")
+            if _tz:
+                bits.append(f"mostly {_ZL.get(_tz, str(_tz))}")
+            return " · ".join(bits) + f" ({pr['poss']} poss)"
+
+        if paid and (_named or _roles):
+            _ptlbl = dict(PT.NAMED_PLAY_TYPES)
+            st.markdown("<div class='pl-hdr'>Set-call profile</div>",
+                        unsafe_allow_html=True)
+            if _named:
+                # Go-to / take-away chip pair (real-volume sets only, ≥8 poss).
+                # GO-TO = the set they RUN MOST (usage — their bread-and-butter);
+                # TAKE-AWAY = the set they're MOST EFFICIENT on (highest PPP — the
+                # weapon to deny). Percentile is shown for context but no longer
+                # drives the pick: a player can rank high-percentile on a low-value
+                # set (iso) it isn't their go-to.
+                _ranked = {k: c for k, c in _named.items() if c["poss"] >= 8}
+                if _ranked:
+                    _go_k = max(_ranked, key=lambda k: _ranked[k]["poss"])
+                    _aw_k = max(_ranked, key=lambda k: _ranked[k]["PPP"])
+
+                    def _chip(k):
+                        c = _ranked[k]
+                        _pctbit = (f" · {_ORD(c['pct'])} pct"
+                                   if c.get("pct") is not None else "")
+                        return _glass(
+                            "GO-TO SET" if k == _go_k else "TAKE-AWAY",
+                            _ptlbl.get(k, k.title()),
+                            f"{c['PPP']:.2f} PPP · {c['poss']} poss{_pctbit}",
+                            c["color"])
+                    _keys = [_go_k] + ([_aw_k] if _aw_k != _go_k else [])
+                    _cc = st.columns(len(_keys))
+                    for _col, _k in zip(_cc, _keys):
+                        _col.markdown(_chip(_k), unsafe_allow_html=True)
+
+                # Per-set percentile rows, sorted by PPP desc.  Each row carries an
+                # optional "how they score it" sub-line from the set shot profile.
+                html = ""
+                for _k, c in sorted(_named.items(), key=lambda kv: kv[1]["PPP"],
+                                    reverse=True):
+                    _lbl = _ptlbl.get(_k, _k.title())
+                    _v = f"{c['PPP']:.2f} PPP · {c['FG%']*100:.0f}% · {c['poss']} poss"
+                    if c.get("pct") is None:
+                        _v += " · thin sample"
+                    html += _pctile_bar(_lbl, _v, c.get("pct"),
+                                        n=c.get("pool_n"))
+                    _hl = _howline((_setprof or {}).get(_k)) if _setprof else ""
+                    if _hl:
+                        html += ("<div style='font-size:11px;color:var(--subtext);"
+                                 "margin:-5px 0 9px 0'>"
+                                 f"{html_escape(_hl)}</div>")
+                if html:
+                    st.markdown(html, unsafe_allow_html=True)
+
+            # Screen-action role split (handler vs roller on screen sets).
+            if _roles:
+                _role_keys = [k for k in ("pnr", "dho", "offscreen")
+                              if (_roles.get(k) or {}).get("all", {}).get("poss", 0) > 0]
+                if _role_keys:
+                    st.markdown("**Screen-action role** — finishing as the ball-handler "
+                                "vs the screen-setter who rolls/pops")
+                    for _k in _role_keys:
+                        rc = _roles[_k]
+                        h, r = rc.get("handler", {}), rc.get("roller", {})
+                        st.markdown(f"**{_ptlbl.get(_k, _k.title())}**")
+                        rcols = st.columns(2)
+                        rcols[0].metric(
+                            "Handler", f"{h.get('PPP', 0):.2f} PPP",
+                            f"{h.get('poss', 0)} poss", delta_color="off",
+                            help=f"As the ball-handler off the screen — "
+                                 f"{h.get('FG%', 0)*100:.0f}% FG · "
+                                 f"{h.get('eFG', 0)*100:.0f}% eFG")
+                        # Roll-vs-pop: roller 3PA_rate splits a rim-roller from a
+                        # pick-and-pop big (high 3PA% = they pop for the three).
+                        _r3 = r.get("3PA_rate")
+                        _rsub = (f"pops 3 on {round(_r3*100)}% of finishes"
+                                 if _r3 is not None else "")
+                        _rhelp = (f"As the screen-setter who finishes — "
+                                  f"{r.get('FG%', 0)*100:.0f}% FG · "
+                                  f"{r.get('eFG', 0)*100:.0f}% eFG")
+                        if _r3 is not None:
+                            _rhelp += (f" · pops for 3 on {round(_r3*100)}% of "
+                                       f"finishes (high = pick-and-pop)")
+                        rcols[1].metric(
+                            "Roller", f"{r.get('PPP', 0):.2f} PPP",
+                            f"{r.get('poss', 0)} poss", delta_color="off",
+                            help=_rhelp)
+                        if _rsub:
+                            rcols[1].caption(_rsub)
+            if _named and not any(c.get("pct") is not None for c in _named.values()) \
+                    and not _roles:
+                st.caption("No play types tagged yet — add a one-tap Play type to a "
+                           "shot in the Game Tracker to light this up.")
+
+
+        _render_giveaways(pid,
+                          getattr(ctx, "gender", None) or P.get("gender") or "F",
+                          _gp)
+
+    if _sec == "What is her form?":
+        # ── Game log ──────────────────────────────────────────────────────────────
+        st.markdown("<div class='pl-hdr'>Game log</div>",
+                    unsafe_allow_html=True)
+        gids = [r["gid"] for r in query(
+            """SELECT DISTINCT ge.game_id AS gid
+               FROM game_event_lineup gel
+               JOIN game_events ge ON ge.id = gel.event_id
+               WHERE gel.player_id = ?""", (pid,))]
+        games = query(
+            """SELECT g.id, g.date, g.team1_id, g.team2_id, g.home_score,
+                      g.away_score
+               FROM games g WHERE g.id IN ({})""".format(
+                ",".join("?" * len(gids)) or "NULL"), tuple(gids)) if gids else []
+        name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
+        # WHICH TEAM WAS SHE ON. `P["team_id"]` is the CURRENT roster row, so for a
+        # player who transferred, an archive season's log resolved every opponent
+        # against her NEW team — and printed her OLD team as the opponent in the
+        # games she actually played for it. The On/Off section 270 lines below
+        # already fixed exactly this and says why; the log needs the same
+        # resolution. Falls back to the roster row when the lineup rows can't say.
+        _log_team = (S.player_lineup_team(pid, list(_gp) if _gp else None)
+                     or P["team_id"])
+        # RTG (per-game 0-10) is event-delta — tracked depth, so Paid only. The box
+        # game log itself (PTS/REB/… + GS) is box-derivable and stays Free.
+        _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp, _szn) if paid else {}
+        log = []
+        _boxes = pgb.get(pid, {})
+        for g in sorted(games, key=lambda x: x["date"]):
+            b = _boxes.get(g["id"])
+            if not b:
+                continue
+            _home = g["team1_id"] == _log_team
+            opp = g["team2_id"] if _home else g["team1_id"]
+            _rtg = _rtg_all.get(g["id"], {}).get(pid, {}).get("rating")
+            # `home_score` / `away_score` were SELECTed and then discarded, so the
+            # first column a coach looks for was not on the page at all. Result and
+            # margin are from HER team's side.
+            _us = g["home_score"] if _home else g["away_score"]
+            _them = g["away_score"] if _home else g["home_score"]
+            _res, _margin = "", None
+            if _us is not None and _them is not None:
+                _res = "W" if _us > _them else "L" if _us < _them else "T"
+                _margin = _us - _them
+            log.append({
+                "Date": g["date"], "Opp": name_of.get(opp, "?"),
+                "W/L": _res, "Margin": _margin,
+                "RTG": _rtg,
+                "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
+                "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
+                "FG": f"{b['FGM']}/{b['FGA']}", "3P": f"{b['3PM']}/{b['3PA']}",
+                "FT": f"{b['FTM']}/{b['FTA']}",
+                "GS": round(S.game_score(b), 1),
+            })
+        if log:
+            # ── Form strip: avg of the last-5 game ratings (soccer-style) ──────────
+            _rvals = [x["RTG"] for x in log if x["RTG"] is not None]
+            if _rvals:
+                _last5 = _rvals[-5:]
+                _form = sum(_last5) / len(_last5)
+                _season_rtg = sum(_rvals) / len(_rvals)
+                _role = None                       # role from any rated game for this player
+                for _gid, _pm in _rtg_all.items():
+                    if pid in _pm:
+                        _role = _pm[pid].get("role")
+                        break
+                # Form and season rating moved into the one Recent-form block below;
+                # the ROLE is what this strip uniquely says, and it belongs beside
+                # the RTG column it explains.
+                fc1, fc2 = st.columns(2)
+                fc1.metric("Season rating", f"{_season_rtg:.1f}",
+                           help="Average game rating across all tracked games "
+                                "(0-10, 6.0 = average).")
+                fc2.metric("Rating role", _role or "—",
+                           help="Fixed role the game rating grades this player against.")
+            # ── ONE points-per-game chart ──────────────────────────────
+            # This chart and the "Rolling form (3-game average)" chart below it were
+            # the SAME points series drawn twice with a different smoother — two
+            # 300px charts, forty lines apart, answering one question. A seg picks
+            # the smoother instead; "Raw" also carries Game Score and the 0-10
+            # rating, which the rolling version never had.
+            import helpers.ui as _UI
+            _sm = _UI.seg("Smoothing", ["Raw", "3-game average"], default="Raw",
+                          key=f"{_kp}_ptsmooth", label_visibility="collapsed") or "Raw"
+            gx = [f"{g['Date'][5:]} {g['Opp'][:8]}" for g in log]
+            _pts = [g["PTS"] for g in log]
+            tr = go.Figure()
+            tr.add_trace(go.Bar(x=gx, y=_pts, name="PTS",
+                                marker_color=(accent if _sm == "Raw" else "#30363d"),
+                                marker_line_width=0))
+            if _sm == "Raw":
+                tr.add_trace(go.Scatter(x=gx, y=[g["GS"] for g in log],
+                                        name="Game Score", mode="lines+markers",
+                                        line=dict(color="#56d4dd", width=2)))
+                if any(g["RTG"] is not None for g in log):
+                    tr.add_trace(go.Scatter(
+                        x=gx, y=[g["RTG"] for g in log], name="Rating (0-10)",
+                        mode="lines+markers", yaxis="y2",
+                        line=dict(color="#f5a623", width=2, dash="dot")))
+                    tr.update_layout(yaxis2=dict(title="Rating", overlaying="y",
+                                                 side="right", range=[0, 10],
+                                                 showgrid=False))
+                tr.update_yaxes(title="Points / Game Score")
+            else:
+                tr.add_trace(go.Scatter(x=gx, y=TRD.rolling(_pts), name="3-game avg",
+                                        mode="lines+markers",
+                                        line=dict(color=accent, width=3)))
+                tr.update_yaxes(title="Points")
+            tr.update_xaxes(tickangle=-40)
+            _style(tr, 320)
+            st.plotly_chart(tr, width="stretch", key=f"{_kp}_log")
+
+            _ldf = pd.DataFrame(log)
+            if not paid:                      # RTG column is Paid — drop, don't blank
+                _ldf = _ldf.drop(columns=["RTG"], errors="ignore")
+            st.dataframe(_ldf, hide_index=True,
+                         width="stretch",
+                         height=min(560, 60 + 35 * len(log)),
+                         column_config={
+                             "RTG": st.column_config.NumberColumn(
+                                 "RTG", format="%.1f",
+                                 help="Per-game rating 0-10 (6.0 = average, "
+                                      "role-adjusted)"),
+                             "Margin": st.column_config.NumberColumn(
+                                 "Margin", format="%+d",
+                                 help="Final margin from her team's side.")})
+            st.caption(f"{len(log)} tracked games. Box scores are per game from "
+                       "tracked events.")
+
+            # ── rolling form · season highs · last-5 · foul & FT ────────────────
+            _tlog = TRD.player_game_log(pid, boxes=pgb)
+            if _tlog:
+                # (no second points chart: the 3-game average is a smoothing
+                #  option on the one above.)
+                # ── highs: season AND career, one table ───────────────────────
+                # Two real concepts (career best vs this season's best) used to be
+                # presented as three blocks: this one, a _kv list in the fold, and a
+                # free-tier "Career highs & milestones". Two columns, one table, and
+                # the opponent the high came against — which only this version had.
+                _hi = TRD.season_highs(_tlog)
+                # player_stat_table only carries a career best for the three it
+                # tracks; the others show a season best and an empty career cell
+                # rather than a fabricated one. Kept as a nullable column so the
+                # mixed int/blank does not force the whole column to text.
+                _CAREER = {"PTS": "bestPTS", "TRB": "bestREB", "AST": "bestAST"}
+                _hrows = []
+                for _k, _lbl in TRD.HIGH_KEYS:
+                    _h = _hi.get(_k)
+                    _cb = P.get(_CAREER[_k]) if _k in _CAREER else None
+                    _hrows.append({
+                        "Stat": _lbl,
+                        "Season best": _h["value"] if _h else 0,
+                        "vs": (_h["opp"][:14] if _h else ""),
+                        "Career best": (int(_cb) if _cb is not None else None),
+                    })
+                st.markdown("<div class='pl-hdr'>Highs — season vs career</div>",
+                            unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame(_hrows), hide_index=True, width="stretch")
+
+                # ── recent form, ONCE ───────────────────────────────────
+                # Last-5-vs-season was read three ways on this card, in three
+                # styles: the trajectory chips on the rating bars, a "Form (last 5)"
+                # RTG metric up in the game log, and this block. The chips stay
+                # (they are about the RATINGS, and they sit in the fold); the RTG
+                # form metric folds in here, so counting stats and game rating are
+                # one answer to one question.
+                _l5 = TRD.last_n_split(_tlog, n=5)
+                _stk = TRD.streaks(_tlog)
+                st.markdown("<div class='pl-hdr'>Recent form — last 5 vs season</div>",
+                            unsafe_allow_html=True)
+                _fc = st.columns(5)
+                for _col, _k in zip(_fc[:3], ("PTS", "TRB", "AST")):
+                    _rec, _seas = _l5.get(_k, (0, 0))
+                    _col.metric(f"{_k} (last 5)", f"{_rec:.1f}",
+                                f"{_rec - _seas:+.1f} vs season")
+                if _rvals:
+                    _fc[3].metric("Game rating (last 5)", f"{_form:.1f}",
+                                  f"{_form - _season_rtg:+.1f} vs season",
+                                  help="Average of the last 5 game ratings "
+                                       "(0-10, 6.0 = average, role-adjusted).")
+                _fc[4].metric("Double-figure scoring", f"{_stk['current']} in a row",
+                              f"longest {_stk['longest']}", delta_color="off")
+
+            _ff = foulft
+            if _ff and (_ff["FTA"] or _ff["PF"] or _ff["drawn"]):
+                st.markdown("<div class='pl-hdr'>Fouls &amp; free throws</div>",
+                            unsafe_allow_html=True)
+                _h1 = (_ff["FTM_1h"] / _ff["FTA_1h"] * 100) if _ff["FTA_1h"] else None
+                _h2 = (_ff["FTM_2h"] / _ff["FTA_2h"] * 100) if _ff["FTA_2h"] else None
+                _ffc = st.columns(7)
+                _ffc[0].metric("Fouls drawn", _ff["drawn"])
+                _ffc[1].metric("Fouls committed", _ff["PF"])
+                _ffc[2].metric("Free throws", f"{_ff['FTM']}/{_ff['FTA']}")
+                _ffc[3].metric("FT%", f"{_ff['FT%']:.0f}%")
+                _ffc[4].metric(
+                    "FT% 1st / 2nd",
+                    f"{_h1:.0f} / {_h2:.0f}" if (_h1 is not None and _h2 is not None)
+                    else (f"{_h1:.0f} / —" if _h1 is not None else "—"))
+                _ffc[5].metric(
+                    "Clutch FT", (f"{_ff['cFTM']}/{_ff['cFTA']} "
+                                  f"({_ff['ClutchFT%']:.0f}%)")
+                    if _ff.get("cFTA") else "—",
+                    help="Free throws in high-leverage moments (win-probability "
+                         "swing ≥ 1.5× the game's average — the Clutch WPA bar).")
+                _ffc[6].metric(
+                    "And-1s", (f"{_ff.get('and1_made', 0)}/{_ff.get('and1', 0)}"
+                               if _ff.get("and1") else "—"),
+                    help="Made basket + the bonus free throw: trips and conversions "
+                         "(linked from the event stream).")
+                st.caption("Fouls drawn = times this player was fouled · FT% split by "
+                           "half (1st = Q1–2) · Clutch FT = the line when it matters · "
+                           "And-1s = three-point-play trips (converted/earned).")
+        else:
+            empty_state("No tracked games yet",
+                        "Track a game with this player in the Game Tracker and "
+                        "their game log will show up here.")
+
+
+    if _sec == "Where does she rank?":
+        # ── League percentiles — Free tier only (Paid gets the Overview grid rail) ──
+        if not paid:
+            st.markdown("<div class='pl-hdr'>League percentiles</div>",
+                        unsafe_allow_html=True)
+            # Free tier: keep box percentiles only (drop event-derived rows).
+            PROF_PCT = [s for s in PCT_RAIL
+                        if s[0] not in PR.EVENT_DERIVED_STATS]
+            pcol = st.columns(2)
+            half = (len(PROF_PCT) + 1) // 2
+            for ci, chunk in enumerate((PROF_PCT[:half], PROF_PCT[half:])):
+                html = ""
+                for key, lbl, fmt, lb in chunk:
+                    p = _pctile(P.get(key), key, rows, lower_better=lb)
+                    html += _pctile_bar(lbl, _fmt(P.get(key), fmt), p,
+                                        n=_pctile_n(key, rows))
+                pcol[ci].markdown(html, unsafe_allow_html=True)
+
+        # ── League ranking (rides on OVERALL → Paid) ──────────────────────────────
+        if paid:
+            st.markdown("<div class='pl-hdr'>League ranking</div>",
+                        unsafe_allow_html=True)
+            n = len(rows)
+            pctile_ovr = round((n - P["Rank"]) / max(n - 1, 1) * 100)
+            # No OVERALL metric here: it is the 60px number in the banner, a rating
+            # bar in the fold, and the first row of the rank table directly below.
+            # A fourth printing is not a fourth fact.
+            rk = st.columns(2)
+            rk[0].metric("League rank", f"#{P['Rank']} of {n}")
+            rk[1].metric("Percentile", f"{_ORD(pctile_ovr)}")
+
+            rank_stats = [("OVERALL", "f1"), ("OFFENSE", "f1"), ("DEFENSE", "f1"),
+                          ("PLAYMAKING", "f1"), ("REBOUNDING", "f1"), ("PPG", "f1"),
+                          ("RPG", "f1"), ("APG", "f1"), ("STOCKS", "int"), ("EFF", "int"),
+                          ("TS%", "pct"), ("GS/G", "f1")]
+            rrows = []
+            for key, fmt in rank_stats:
+                pool = [r for r in rows if r.get(key) is not None]
+                if P.get(key) is None or not pool:
+                    continue
+                sr = sorted(pool, key=lambda r: r[key], reverse=True)
+                pos = next(i for i, r in enumerate(sr, 1) if r is P)
+                rrows.append({"Stat": key, "Value": _fmt(P[key], fmt),
+                              "Rank": f"#{pos} of {len(pool)}",
+                              "Pctile": f"{_ORD((len(pool)-pos)/max(len(pool)-1,1)*100)}"})
+            st.dataframe(pd.DataFrame(rrows), hide_index=True, width="stretch")
+
+            with st.expander("OVERALL league bar — this player highlighted"):
+                order_ovr = sorted([r for r in rows if r["OVERALL"] is not None],
+                                   key=lambda r: r["OVERALL"])
+                bar = go.Figure(go.Bar(
+                    x=[r["OVERALL"] for r in order_ovr],
+                    y=[f"{r['name']}" for r in order_ovr], orientation="h",
+                    marker_color=[hue if r is P else "#30363d" for r in order_ovr],
+                    text=[f"{r['OVERALL']:.1f}" if r is P else "" for r in order_ovr],
+                    textposition="outside", textfont=dict(color=hue, size=12)))
+                bar.update_layout(
+                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)", height=max(380, n * 22),
+                    margin=dict(l=4, r=40, t=10, b=10), showlegend=False,
+                    font=dict(size=10, color="#c9d1d9"))
+                bar.update_xaxes(visible=False)
+                bar.update_yaxes(showgrid=False, automargin=True, tickfont=dict(size=9))
+                st.plotly_chart(bar, width="stretch", key=f"{_kp}_leaguebar")
+
+
+    if _sec == "Where is she going?":
+        # ── Across seasons — development (Tier 3, ML_LAYER_ROADMAP) ───────────────
+        # Season-by-season lines + YoY progression/regression + a rough next-season
+        # projection. Auto-lights-up as rollovers link more seasons; on one season it
+        # shows the single line + the "unlocks after a 2nd season" note.
+        if paid:
+            _dv = _dev(pid, getattr(ctx, "gender", None))
+            _prog, _proj = _dv["progression"], _dv["projection"]
+            _lines = _prog["lines"]
+            st.markdown("<div class='pl-hdr'>Across seasons — development</div>",
+                        unsafe_allow_html=True)
+            if _lines:
+                st.dataframe(pd.DataFrame([{
+                    "Season": L["label"], "Class": L.get("klass") or "—",
+                    "Team": L["team"], "GP": L["gp"], "PPG": L["PPG"], "RPG": L["RPG"],
+                    "APG": L["APG"], "SPG": L["SPG"], "BPG": L["BPG"],
+                    "TPG": L.get("TPG"), "FPG": L.get("FPG"),
+                    "FG%": L["FG%"], "3P%": L["3P%"], "TS%": L["TS%"],
+                } for L in _lines]), hide_index=True, width="stretch")
+            # progression / regression (two+ rated seasons)
+            if _prog["deltas"]:
+                if _prog["headline"]:
+                    st.markdown(f"**Trajectory:** {_prog['headline']}")
+                _dcols = st.columns(len(_DEV_STATS))
+                for _col, _lab in zip(_dcols, _DEV_STATS):
+                    _d = _prog["deltas"].get(_lab)
+                    _cur = (_prog["cur"] or {}).get(_lab)
+                    if _d is not None and _cur is not None:
+                        _col.metric(_lab, f"{_cur:g}",
+                                    f"{_d['delta']:+.1f} {_d['trend']}",
+                                    delta_color="inverse" if _lab in _DEV_INVERTED
+                                    else "normal")
+            # rest-of-THIS-season projection — works from the player's first
+            # season (3+ games), no linked past season needed
+            _ros = _dv.get("rest_of_season") or {}
+            if _ros.get("ok"):
+                st.markdown(
+                    f"<div class='pl-hdr'>Rest of season "
+                    f"<span style='font-size:11px;color:var(--subtext);font-weight:400'>"
+                    f"· {_ros['gp']} played · {_ros['remaining']} left — projected "
+                    f"season-end totals (per-game)</span></div>",
+                    unsafe_allow_html=True)
+                _rcols = st.columns(len(_DEV_STATS))
+                for _col, _lab in zip(_rcols, _DEV_STATS):
+                    _t = _ros["season_end"].get(_lab)
+                    _r = _ros["per_game"].get(_lab)
+                    if _t is not None:
+                        _col.metric(_lab.replace("PG", ""), f"{_t:g}",
+                                    f"{_r:g}/g", delta_color="off")
+                st.caption(_ros["note"])
+            # projection (two+ rated seasons) or the unlock note
+            if _proj.get("ok"):
+                st.markdown("<div class='pl-hdr'>Projected next season</div>",
+                            unsafe_allow_html=True)
+                _pcols = st.columns(len(_DEV_STATS))
+                for _col, _lab in zip(_pcols, _DEV_STATS):
+                    _v = _proj["proj"].get(_lab)
+                    if _v is not None:
+                        _col.metric(_lab, f"{_v:g}")
+                _fc = (f" · {_proj['from_class']}→{_proj['to_class']}"
+                       if _proj.get("from_class") and _proj.get("to_class") else "")
+                st.caption(f"{_proj['note']} Basis: {_proj['basis']}{_fc}.")
+            else:
+                st.caption(_proj.get("reason", ""))
+
+        # ── Career highs & milestones — Free tier (Paid gets them in the grid) ─────
+        if not paid:
+            st.markdown("<div class='pl-hdr'>Career highs &amp; milestones</div>",
+                        unsafe_allow_html=True)
+            cap_steady = ("steady" if (P["PTSsd"] or 0) < 5 else
+                          "streaky" if (P["PTSsd"] or 0) > 9 else "moderate")
+            ch = st.columns(6)
+            ch[0].markdown(_glass("HIGH PTS", P["bestPTS"], "single game", accent),
+                           unsafe_allow_html=True)
+            ch[1].markdown(_glass("HIGH REB", P["bestREB"], "single game", "var(--good)"),
+                           unsafe_allow_html=True)
+            ch[2].markdown(_glass("HIGH AST", P["bestAST"], "single game", "#bc8cff"),
+                           unsafe_allow_html=True)
+            ch[3].markdown(_glass("DOUBLE-DBL", P["DD"], "games", "#58a6ff"),
+                           unsafe_allow_html=True)
+            ch[4].markdown(_glass("TRIPLE-DBL", P["TD"], "games", "#f0a500"),
+                           unsafe_allow_html=True)
+            ch[5].markdown(_glass("SCORING σ", _fmt(P["PTSsd"], "f1"),
+                                  f"game-to-game · {cap_steady}", "#ff7b72"),
+                           unsafe_allow_html=True)
+
+        # ── Projection (career-stabilized intrinsic rates → Paid) ─────────────────
+        # A player's SKILL rates pulled toward an archetype-else-league prior by how
+        # much tracked evidence backs them: a thin sample reads as its prior, a deep
+        # one keeps its edge. Skill only (usage/minutes are the team layer's job) and
+        # flagged directional. See helpers/projection.py.
+        if paid:
+            _pj = _projection(getattr(ctx, "gender", None), _szn, _gp).get(pid)
+            if _pj and _pj.get("stats"):
+                st.markdown("<div class='pl-hdr'>Projection — stabilized skill rates</div>",
+                            unsafe_allow_html=True)
+                st.caption(
+                    f"Archetype: **{_pj['archetype']}** · {_pj['games']} tracked games · "
+                    f"confidence **{_pj['confidence']['label']}**. Each rate is blended "
+                    "toward its prior by evidence; Δ is vs the average tracked team. "
+                    "Skill only — usage/minutes live in the team Projection view. "
+                    "Directional.")
+                _PJ_LABELS = {
+                    "eFG%": "Effective FG%", "TS%": "True shooting", "3P%": "Three-point %",
+                    "SMOE": "Shot-making v exp", "ScEff": "Scoring eff",
+                    "SCE": "Self-creation %", "PassFG%": "Passing FG%", "AST%": "Assist %",
+                    "TOV%": "Ball security", "FTR": "FT rate",
+                    "OREB%": "Off. rebound %", "DREB%": "Def. rebound %",
+                    "RimDFG%": "Rim D (allowed)", "PerimDFG%": "Perimeter D (allowed)"}
+                _flag_ico = {"solid": "🟢", "directional": "🟡", "thin": "⚪"}
+                prows = []
+                for key, lbl in _PJ_LABELS.items():
+                    s = _pj["stats"].get(key)
+                    if not s or s.get("proj") is None:
+                        continue
+                    d = s.get("delta")
+                    prows.append({
+                        "Skill": lbl,
+                        "Now": ("—" if s["own"] is None else f"{s['own']:.1f}"),
+                        "Projected": f"{s['proj']:.1f}",
+                        "Δ vs avg": ("—" if d is None else f"{d:+.1f}"),
+                        "Anchor": s["prior_src"],
+                        "": _flag_ico.get(s["flag"], ""),
+                    })
+                if prows:
+                    st.dataframe(pd.DataFrame(prows), hide_index=True, width="stretch")
+                    st.caption("🟢 solid sample · 🟡 directional · ⚪ thin — reads as its prior.")
+
+
+    if _sec == "Strengths & watch":
+        # ── Scouting report — rides on the category ratings → Paid ────────────────
+        if paid:
+            st.markdown("<div class='pl-hdr'>Scouting report</div>",
+                        unsafe_allow_html=True)
+
+            def pc(key, lb=False):
+                return _pctile(P.get(key), key, rows, lower_better=lb) or 0
+
+            OFF, DEF, PLY, REB_R = (P["OFFENSE"] or 0, P["DEFENSE"] or 0,
+                                    P["PLAYMAKING"] or 0, P["REBOUNDING"] or 0)
+            OVR = P["OVERALL"] or 0
+
+            if OVR >= 65 and DEF >= 60:
+                arch = ("Two-Way Force",
+                        "Produces on offense and disrupts on defense — a rare both-ends impact.")
+            elif OFF >= 62 and pc("PPG") >= 80:
+                arch = ("Scoring Machine",
+                        "A primary offensive weapon who creates and converts at volume.")
+            elif PLY >= 62 and pc("APG") >= 80:
+                arch = ("Floor General",
+                        "Runs the offense through vision and distribution.")
+            elif REB_R >= 62 or pc("REB") >= 85:
+                arch = ("Glass Cleaner",
+                        "Owns the boards and generates extra possessions.")
+            elif DEF >= 62 or pc("STOCKS") >= 85:
+                arch = ("Defensive Anchor",
+                        "Disrupts opponents with steals, blocks, and contests.")
+            elif pc("3P%") >= 70 and P["3PA"] >= 15 and pc("DSHOT%", True) >= 55:
+                arch = ("3-and-D Wing",
+                        "Spaces the floor and holds up defensively — a valuable role.")
+            elif pc("3P%") >= 70 and P["3PA"] >= 20:
+                arch = ("Spot-Up Shooter",
+                        "An off-ball threat who punishes help defense from deep.")
+            elif pc("Paint%") >= 70 and pc("REB") >= 60:
+                arch = ("Interior Presence",
+                        "Finishes inside efficiently and commands the paint.")
+            elif OVR >= 56:
+                arch = ("Versatile Contributor",
+                        "Well-rounded across the board without one dominant trait.")
+            elif pc("+/-") >= 75:
+                arch = ("High-Impact Role Player",
+                        "The team plays better with them on the floor.")
+            else:
+                arch = ("Developing Player",
+                        "Still building their game — more tracked games will sharpen it.")
+
+            # DEMOTED. This eleven-branch if/elif ladder on percentile cutoffs is
+            # the weakest engine on the card and it looked the most authoritative:
+            # it knows nothing about the data-driven cluster or the badge archetype
+            # and could label a "Glass Cleaner" whose cluster said Perimeter
+            # creator. It now speaks only in the one case it is actually good at —
+            # naming a role when the cluster has nothing to say — and it says on
+            # screen that that is what is happening.
+            if not archetype:
+                st.markdown(
+                    f"<div style='border:1px solid var(--track);border-radius:12px;"
+                    f"padding:12px 16px;margin-bottom:14px'>"
+                    f"<div style='font-size:10px;font-weight:700;letter-spacing:.08em;"
+                    f"color:var(--subtext);text-transform:uppercase'>"
+                    f"Rule-based role</div>"
+                    f"<div style='font-size:15px;font-weight:800;color:{accent}'>"
+                    f"{arch[0]}</div>"
+                    f"<div style='font-size:12px;color:var(--subtext);margin-top:3px'>"
+                    f"{arch[1]}</div>"
+                    f"<div style='font-size:11px;color:var(--subtext);margin-top:6px'>"
+                    f"Named from percentile cutoffs because the play-profile "
+                    f"cluster has too little to group her on yet — the Verdict at "
+                    f"the top uses the measured lenses as soon as they exist."
+                    f"</div></div>", unsafe_allow_html=True)
+
+            strengths, weaknesses = [], []
+            if pc("PPG") >= 85:
+                strengths.append(("Elite scorer", f"{P['PPG']:.1f} PPG — top of the league."))
+            elif pc("PPG") >= 65:
+                strengths.append(("Consistent scorer", f"{P['PPG']:.1f} PPG."))
+            if pc("TS%") >= 80:
+                strengths.append(("Efficient shooter", f"{_fmt(P['TS%'],'pct')} TS% — high value per shot."))
+            if pc("3P%") >= 80 and P["3PA"] >= 12:
+                strengths.append(("3-point threat", f"{_fmt(P['3P%'],'pct')} on {P['3PA']} attempts."))
+            if pc("REB") >= 85:
+                strengths.append(("Dominant rebounder", f"{P['RPG']:.1f} RPG."))
+            if pc("APG") >= 85:
+                strengths.append(("Elite facilitator", f"{P['APG']:.1f} APG."))
+            if pc("AST/TOV") >= 80 and (P["AST/TOV"] or 0) >= 1.5:
+                strengths.append(("Great ball security", f"{P['AST/TOV']:.2f} AST/TOV."))
+            if pc("STOCKS") >= 85:
+                strengths.append(("Disruptive defender", f"{P['STL']} STL / {P['BLK']} BLK."))
+            if pc("+/-") >= 85:
+                strengths.append(("Strong net impact", f"{P['+/-']:+d} plus/minus."))
+            strengths = strengths[:4]
+
+            if pc("TS%", ) <= 25 and P["FGA"] >= 20:
+                weaknesses.append(("Below-average efficiency", f"{_fmt(P['TS%'],'pct')} TS%."))
+            if pc("TOV%", True) <= 25 and P["TOV%"] is not None:
+                weaknesses.append(("Turnover-prone", f"{_fmt(P['TOV%'],'pct')} turnover rate."))
+            if pc("3P%") <= 25 and P["3PA"] >= 15:
+                weaknesses.append(("Streaky from three", f"{_fmt(P['3P%'],'pct')} on {P['3PA']} attempts."))
+            if P["FT%"] is not None and pc("FT%") <= 25 and P["FTA"] >= 10:
+                weaknesses.append(("Shaky at the line", f"{_fmt(P['FT%'],'pct')} FT%."))
+            if pc("REB%") <= 20 and (P["MPG"] or 0) >= 12:
+                weaknesses.append(("Limited on the glass", "Low rebound rate for the minutes."))
+            if pc("STOCKS") <= 15 and (P["MPG"] or 0) >= 14:
+                weaknesses.append(("Low defensive activity", "Few steals or blocks for the minutes."))
+            weaknesses = weaknesses[:3]
+
+            def _bullets(items, empty):
+                if not items:
+                    return f"<div style='font-size:12px;color:#484f58;font-style:italic'>{empty}</div>"
+                return "".join(
+                    f"<div style='margin-bottom:9px'>"
+                    f"<div style='font-size:13px;font-weight:700;color:var(--text)'>{l}</div>"
+                    f"<div style='font-size:12px;color:var(--subtext)'>{d}</div></div>"
+                    for l, d in items)
+
+            sc1, sc2 = st.columns(2)
+            sc1.markdown(
+                f"<div class='pl-scout'><div style='font-size:13px;font-weight:700;"
+                f"color:#2ea043;margin-bottom:10px'>Strengths</div>"
+                f"{_bullets(strengths, 'No standout strengths in this sample yet.')}</div>",
+                unsafe_allow_html=True)
+            sc2.markdown(
+                f"<div class='pl-scout'><div style='font-size:13px;font-weight:700;"
+                f"color:#f0a500;margin-bottom:10px'>Areas to watch</div>"
+                f"{_bullets(weaknesses, 'No clear weaknesses in this sample yet.')}</div>",
+                unsafe_allow_html=True)
+
+        # ("What the data says" is gone from the bottom of the page. It was the
+        #  same feed, truncated to three lines, printed after twenty screens of
+        #  tables — the verdict under the fold is that block, ranked, uncapped
+        #  and first.)
+

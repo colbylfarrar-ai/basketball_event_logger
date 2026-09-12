@@ -163,6 +163,27 @@ def pctile_bar(label, value_str, p, n=None):
             f"style='width:{w}%;background:{c}'></div></div></div>")
 
 
+def pctile_or_thin(label, value_str, p, n=None):
+    """`pctile_bar`, or a "thin sample" row when there is no percentile.
+
+    A per-ACTION pool is not the team pool — only the teams that ran a set
+    call (or a scheme) enough times qualify — so a row can legitimately
+    have a value and no rank. Saying "thin sample" is the honest render;
+    printing the value with no rank beside it reads as a missing number,
+    and printing a rank over three teams is worse than either (B1).
+
+    Lived twice, identically, in playstyle_tab and defense_tab, with each
+    docstring pointing at the other as the reason it matched.
+    """
+    if p is None:
+        return ("<div class='pl-pct'><div class='pl-pct-top'>"
+                f"<span class='pl-pct-lbl'>{label}</span>"
+                f"<span class='pl-pct-val'>{value_str} · "
+                "<span style='color:#8b949e'>thin sample</span>"
+                "</span></div></div>")
+    return pctile_bar(label, value_str, round(p), n=n)
+
+
 def tier(ovrl):
     """(color, label) tier off an OVERALL rating (50 = pool average)."""
     if ovrl is None:

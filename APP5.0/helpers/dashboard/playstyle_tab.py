@@ -32,7 +32,9 @@ import helpers.playtypes as PT
 import helpers.stats as S
 import helpers.team_analytics as TA
 import helpers.court as court
-from helpers.cards import pctile_bar, glass, dense_table
+from helpers.cards import glass, dense_table
+import helpers.cards as _CARDS
+from helpers.stats import pctile_badge as _PCTB
 from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
@@ -72,19 +74,9 @@ def _present_sets(shots):
     return {_PTL[k]: k for k, _ in PT.NAMED_PLAY_TYPES if k in present}
 
 
-def _pctile_or_thin(label, value_str, pct, n=None):
-    """Percentile bar, or the 'thin sample' row when pct is None.
-
-    `n` is the pool the percentile was ranked against — `playtypes.py` carries
-    it out as `pool_n` on every row. A per-action pool is not the team pool, so
-    the bar has to say which one it means (B1)."""
-    if pct is None:
-        return (f"<div class='pl-pct'><div class='pl-pct-top'>"
-                f"<span class='pl-pct-lbl'>{label}</span>"
-                f"<span class='pl-pct-val'>{value_str} · "
-                f"<span style='color:#8b949e'>thin sample</span>"
-                f"</span></div></div>")
-    return pctile_bar(label, value_str, round(pct), n=n)
+#: Percentile bar, or the "thin sample" row. One copy, in helpers/cards.py
+#: beside the bar it wraps. Do not re-add a private one.
+_pctile_or_thin = _CARDS.pctile_or_thin
 
 
 def _profile_howline(pr):
@@ -650,7 +642,10 @@ def render(ctx):
         best = max(lead, key=lambda x: x["PPP"]) if lead else None
         _lr.append({
             "Set": blk["label"], "Your PPP": f"{mine['PPP']:.2f}",
-            "Pctile": (f"{mine['pct']:.0f}"
+            # the pool, not a bare number: this rank is over the teams that
+            # ran THIS set enough to qualify, which is a different (and
+            # usually much smaller) pool than the team rankings (B1).
+            "Pctile": (_PCTB(mine["pct"], mine.get("pool_n"))[0]
                        if mine.get("pct") is not None else None),
             "_p": mine.get("pct") or -1,
             "Lg avg": (f"{blk['lg_ppp']:.2f}"

@@ -1118,14 +1118,38 @@ def _season_wpa(g, mode, season=SEAS.DEFAULT, vis=None):
                          game_ids=(list(vis) if vis is not None else None))
 
 
+@st.cache_resource(show_spinner=False)
+def _player_quality(_tids, _fp):
+    """{pid: OVERALL} for the opponent adjustment — cached on the results
+    fingerprint.
+
+    `lineups.unit_ratings` and `networks.chemistry_network` auto-fetch this
+    when it is omitted, and that fetch is a full `player_stat_table` over
+    the season's whole league pool: measured on the production book it is
+    11.3s, against 0.32s for `unit_ratings` once it is supplied. Every
+    consumer on this page asks for the SAME table (it is league-wide by
+    definition), so it was being rebuilt once per consumer.
+
+    `cache_resource`, not `cache_data`, for the reason box_score's identical
+    wrapper gives: the app clears cache_data on every write, and this
+    recomputes only when a game SCORE moves — which is what the fingerprint
+    in the key is for.
+    """
+    return LU.player_quality(game_ids=list(_tids))
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _chemistry(tid, _tids):
-    return NW.chemistry_network(tid, list(_tids))
+    return NW.chemistry_network(
+        tid, list(_tids),
+        quality=_player_quality(_tids, TR.results_fingerprint()))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _units(tid, _tids):
-    return LU.unit_ratings(tid, list(_tids))
+    return LU.unit_ratings(
+        tid, list(_tids),
+        quality=_player_quality(_tids, TR.results_fingerprint()))
 
 
 @st.cache_data(ttl=600, show_spinner=False)

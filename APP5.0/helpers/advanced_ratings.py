@@ -185,24 +185,13 @@ def player_panel(P, paid):
         st.info(LOCK_MSG)
         return
 
-    # headline: possession impact + the confidence/depth read
-    imp = P.get("Impact")
-    conf = P.get("Confidence") or "—"
-    gp, box = P.get("GP") or 0, P.get("ManualGP", 0) or 0
-    c1, c2, c3 = st.columns(3)
-    c1.markdown(C.glass(
-        "Impact (RAPM)", f"{imp:+.1f}" if imp is not None else "—",
-        "pts / 100 poss",
-        color=("#3fb950" if (imp or 0) > 0 else "#f85149") if imp is not None
-        else "var(--text)"), unsafe_allow_html=True)
-    c2.markdown(C.glass("Confidence", conf,
-                        f"{gp} tracked" + (f" · {box} box" if box else "")),
-                unsafe_allow_html=True)
-    c3.markdown(C.glass(
-        "OVERALL", f"{P['OVERALL']:.0f}" if P.get("OVERALL") is not None else "—",
-        "rating",
-        color=C.tier(P["OVERALL"])[0] if P.get("OVERALL") is not None
-        else "var(--text)"), unsafe_allow_html=True)
+    # NO headline tiles. This section used to open with three glass tiles —
+    # Impact (RAPM), Confidence and OVERALL — and every one of them was the
+    # third or fourth printing of a number already on the card above it:
+    # OVERALL is the 60px banner figure AND a rating bar, RAPM is a tile in the
+    # Impact row twenty lines earlier, and Confidence is stated in the Overview
+    # header the fold opens with. The splits below are what this section is for
+    # and they appear nowhere else.
 
     # the two rating splits, side by side
     lc, rc = st.columns(2)

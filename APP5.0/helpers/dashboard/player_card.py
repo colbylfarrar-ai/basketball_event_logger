@@ -56,6 +56,31 @@ from helpers.seasons import DEFAULT as SEAS_DEFAULT, resolve_read_season
 # so the number a coach reads and the number the engine applies are one thing.
 from helpers.passing_chains import MIN_EDGE_FEEDS as _PC_MIN_FEEDS
 
+#: The league-percentile rail, ONCE. This 21-row list was copy-pasted verbatim
+#: into the paid Overview rail and the free-tier rail 890 lines apart, so every
+#: stat added, renamed or re-pointed had to be done twice and the two drifted.
+#: The free tier renders the same list filtered by PR.EVENT_DERIVED_STATS.
+#: (key, label, format, lower_is_better)
+PCT_RAIL = [
+    ("PPG", "Points", "f1", False), ("RPG", "Rebounds", "f1", False),
+    ("APG", "Assists", "f1", False), ("SPG", "Steals", "f1", False),
+    ("BPG", "Blocks", "f1", False), ("STOCKS/G", "Stocks", "f1", False),
+    ("TS%", "True shooting", "pct", False), ("eFG%", "Effective FG", "pct", False),
+    ("3P%", "Three-point %", "pct", False), ("PPS", "Points / shot", "f2", False),
+    ("USG%", "Usage", "pct", False), ("TOV%", "Ball security", "pct", True),
+    ("AST/TOV", "Assist / TO", "f2", False), ("REB%", "Rebound %", "pct", False),
+    ("Guarded%", "Contest rate", "pct", False),
+    ("DSHOT%", "Defended FG%", "pct", True),
+    ("EFF", "Efficiency", "f1", False), ("FIC", "Floor impact", "f1", False),
+    ("+/-", "Plus/minus", "int", False), ("GS/G", "Game Score", "f1", False),
+    ("VPS", "Value Point System", "f2", False),
+    # MIN/G and PRF were the only two the deleted impact-tile row carried that
+    # this rail did not, so they moved here rather than being dropped.
+    ("MPG", "Minutes / game", "f1", False),
+    ("PRF", "Production", "f1", False),
+]
+
+
 # ── shared ctx builder (Tier 2 item 13) ─────────────────────────────────────────
 # The heavy per-player feed set behind the card, cached HERE so the Players page,
 # the Team Dashboard profile and the quick-view dialog share one build instead of
@@ -575,16 +600,17 @@ def render_card(ctx):
     _tc = {"Gold": "#f0c000", "Silver": "#c0c8d0", "Bronze": "#cd7f32"}
     _arch = (archetype
              if paid else None)
-    _pg_chips = "".join(
-        f"<span class='stat-chip'>{lbl} <b>{P[k]:.1f}</b></span>"
-        for k, lbl in [("PPG", "PPG"), ("RPG", "RPG"), ("APG", "APG"),
-                       ("SPG", "SPG"), ("BPG", "BPG"), ("TPG", "TPG"),
-                       ("PF/G", "FPG")]
-        if P.get(k) is not None)
+    # The per-game chip strip that used to sit here is gone. PPG/RPG/APG/SPG/
+    # BPG/TPG/FPG were printed FOUR times on this card — here, in the Overview
+    # grid's "Per game" column, in the Rebounding/Playmaking table, and in the
+    # league-percentile rail (where each one also carries its percentile). This
+    # was the weakest of the four: no context, no percentile, no pool. The
+    # Overview column is the fold's job and keeps it.
     _arch_chip = (f"<span class='stat-chip' style='border-color:{accent}'>"
                   f"Cluster <b>{_arch}</b></span>" if _arch else "")
-    st.markdown(f"<div class='form-strip' style='margin:-8px 0 10px'>"
-                f"{_arch_chip}{_pg_chips}</div>", unsafe_allow_html=True)
+    if _arch_chip:
+        st.markdown(f"<div class='form-strip' style='margin:-8px 0 10px'>"
+                    f"{_arch_chip}</div>", unsafe_allow_html=True)
     if paid:
         _pbadges = lab_badges
         if _pbadges:
@@ -684,12 +710,15 @@ def render_card(ctx):
                 + _kv("3P% · TS%", f"{_fmt(P.get('3P%'),'pct')} · {_fmt(P.get('TS%'),'pct')}"))
             st.markdown("<div class='pl-hdr' style='margin-top:0'>Per game</div>"
                         + pg, unsafe_allow_html=True)
-            ch = (
-                _kv("PTS", P.get("bestPTS", "—")) + _kv("REB", P.get("bestREB", "—"))
-                + _kv("AST", P.get("bestAST", "—")) + _kv("Double-dbl", P.get("DD", 0))
-                + _kv("Triple-dbl", P.get("TD", 0))
-                + _kv("Scoring σ", _fmt(P.get("PTSsd"), "f1")))
-            st.markdown("<div class='pl-hdr'>Career highs</div>" + ch,
+            # Career highs moved down beside the season highs — they are two
+            # columns of one table, not two blocks 900 lines apart, and the
+            # version down there carries the opponent and the date this one
+            # could not. What stays in the fold is the consistency read, which
+            # has no other home.
+            st.markdown("<div class='pl-hdr'>Consistency</div>"
+                        + _kv("Double-dbl", P.get("DD", 0))
+                        + _kv("Triple-dbl", P.get("TD", 0))
+                        + _kv("Scoring σ", _fmt(P.get("PTSsd"), "f1")),
                         unsafe_allow_html=True)
 
         # ── col 2: rating bars (+CI band, +trajectory chips) + signature tiles ──
@@ -822,13 +851,13 @@ def render_card(ctx):
                     f"<div class='pl-hdr' style='margin-top:0'>Shot map · "
                     f"{len(located)} located</div>", unsafe_allow_html=True)
                 st.plotly_chart(sfig, width="stretch", key=f"{_kp}_court_fold")
-                _ls = S.shot_location_summary(located)
-                if _ls:
-                    st.markdown(
-                        f"<div style='font-size:10px;color:var(--subtext);margin-top:-6px'>"
-                        f"avg {_ls['avg_dist']:.1f} ft · rim {_ls['rim_n']} · "
-                        f"mid {_ls['mid_n']} · three {_ls['three_n']} — hover a "
-                        f"dot for the shot</div>", unsafe_allow_html=True)
+                # (no rim/mid/three counts here — "Shot detail" below prints the
+                #  same three buckets WITH their FG%, which is the version worth
+                #  reading. The fold keeps the accuracy line the map cannot show.)
+                st.markdown(
+                    "<div style='font-size:10px;color:var(--subtext);"
+                    "margin-top:-6px'>Hover a dot for the shot.</div>",
+                    unsafe_allow_html=True)
                 # the accuracy line the map itself can't show
                 st.markdown(
                     f"<div style='font-size:11px;color:#c9d1d9;margin-top:2px'>"
@@ -851,19 +880,7 @@ def render_card(ctx):
         # ── full league-percentile rail (all 21, three columns) ──────────────
         st.markdown("<div class='pl-hdr'>League percentiles</div>",
                     unsafe_allow_html=True)
-        _PPG = [
-            ("PPG", "Points", "f1", False), ("RPG", "Rebounds", "f1", False),
-            ("APG", "Assists", "f1", False), ("SPG", "Steals", "f1", False),
-            ("BPG", "Blocks", "f1", False), ("STOCKS/G", "Stocks", "f1", False),
-            ("TS%", "True shooting", "pct", False), ("eFG%", "Effective FG", "pct", False),
-            ("3P%", "Three-point %", "pct", False), ("PPS", "Points / shot", "f2", False),
-            ("USG%", "Usage", "pct", False), ("TOV%", "Ball security", "pct", True),
-            ("AST/TOV", "Assist / TO", "f2", False), ("REB%", "Rebound %", "pct", False),
-            ("Guarded%", "Contest rate", "pct", False), ("DSHOT%", "Defended FG%", "pct", True),
-            ("EFF", "Efficiency", "f1", False), ("FIC", "Floor impact", "f1", False),
-            ("+/-", "Plus/minus", "int", False), ("GS/G", "Game Score", "f1", False),
-            ("VPS", "Value Point System", "f2", False),
-        ]
+        _PPG = PCT_RAIL
         _third = (len(_PPG) + 2) // 3
         _gpc = st.columns(3)
         for _ci, _chunk in enumerate((_PPG[:_third], _PPG[_third:2*_third],
@@ -877,17 +894,13 @@ def render_card(ctx):
                                      n=_pctile_n(_key, rows))
             _gpc[_ci].markdown(_html, unsafe_allow_html=True)
 
-    # ── impact tiles + "why this OVERALL" (ratings live as bars in the grid) ──
+    # ── "why this OVERALL" (ratings live as bars in the grid) ────────────
+    # The seven-metric tile row that used to sit here is gone. Five of the seven
+    # — USG%, +/-, EFF, FIC, VPS — are rows in the league-percentile rail
+    # directly above, where each carries its league percentile AND the pool it
+    # was ranked against; the tile gave the same number with no context at all.
+    # The two that were NOT in the rail, MIN/G and PRF, are rail entries now.
     if paid:
-        im = st.columns(7)
-        im[0].metric("MIN/G", f"{P['MPG']:.1f}" if P["MPG"] else "—")
-        im[1].metric("USG%", f"{P['USG%']:.1f}%" if P["USG%"] is not None else "—")
-        im[2].metric("+/-", f"{P['+/-']:+d}")
-        im[3].metric("EFF", P["EFF"] if P["EFF"] is not None else "—")
-        im[4].metric("FIC", P["FIC"] if P["FIC"] is not None else "—")
-        im[5].metric("PRF", P["PRF"])
-        im[6].metric("VPS", f"{P['VPS']:.2f}" if P.get("VPS") is not None else "—",
-                     help="Hudl Value Point System — value ÷ mistakes.")
         _why = PR.overall_blurb(P.get("OFFENSE"), P.get("DEFENSE"),
                                 P.get("PLAYMAKING"), P.get("REBOUNDING"))
         if _why:
@@ -957,10 +970,11 @@ def render_card(ctx):
             ("SMOE", _fmt(P["SMOE"], "spp"), "shot-making vs exp.", "#00e5ff"),
             ("Q4 PPG", _fmt(P["Q4PPG"], "f1"),
              f"{_fmt(P['Q4%'], 'pct')} of points", "#ff7b72"),
-            ("SELF-CR%", _fmt(P["SCE"], "pct"), "shot independence", "#d2a8ff"),
+            # (no SELF-CR% tile: the Signature pill in the fold already carries
+            #  it, and the pill is the one a coach sees first.)
             ("STOCKS/32", _fmt(P["STOCKS/32"], "f1"), "defensive disruption", "var(--good)"),
-            ("DOM-SIDE%", f"{_dom_share*100:.0f}%" if _dom_share is not None else "—",
-             "strong-hand shot share", "#f0a500"),
+            # (no DOM-SIDE% tile: "Dominant vs weak hand side" below owns the
+            #  whole split — share, FG% on each side, and the edge between them.)
         ]
     tiles = st.columns(len(tile_specs))
     for col, (lbl, val, sub, clr) in zip(tiles, tile_specs):
@@ -1056,30 +1070,11 @@ def render_card(ctx):
 
     left, right = st.columns([2, 3])
     with left:
-        # ratings radar is event-derived → Paid; points-by-source is box (Free)
-        if paid:
-            ar, ag, ab = _rgb(accent)
-            vals = [P[c] or 0 for c in RATING_COLS]
-            rad = go.Figure()
-            rad.add_trace(go.Scatterpolar(
-                r=[50] * (len(RATING_COLS) + 1),
-                theta=RATING_COLS + [RATING_COLS[0]],
-                line=dict(color="#8b949e", width=1, dash="dot"),
-                name="Pool avg", hoverinfo="skip"))
-            rad.add_trace(go.Scatterpolar(
-                r=vals + [vals[0]], theta=RATING_COLS + [RATING_COLS[0]],
-                fill="toself", name=P["name"], line=dict(color=accent, width=2),
-                fillcolor=f"rgba({ar},{ag},{ab},0.25)"))
-            rad.update_layout(
-                template="plotly_dark", height=360, paper_bgcolor="rgba(0,0,0,0)",
-                polar=dict(bgcolor=_uit.CARD_BG,
-                           radialaxis=dict(range=[0, 100], gridcolor=_uit.GRID,
-                                           tickfont=dict(size=9)),
-                           angularaxis=dict(gridcolor=_uit.GRID)),
-                margin=dict(l=50, r=50, t=40, b=30),
-                legend=dict(orientation="h", y=1.12, x=0, bgcolor="rgba(0,0,0,0)"))
-            st.plotly_chart(rad, width="stretch", key=f"{_kp}_radar")
-
+        # The five-rating radar is gone. It plotted the same five ratings as the
+        # Overview bars in the fold — which additionally carry a confidence band
+        # and a form chip the radar had no way to show — and the only thing it
+        # added was a pool-average ring at 50. The bars draw that 50 mark now,
+        # so the radar's one real contribution outlived it.
         # points by source
         pts2, pts3, ptsf = P["2PM"] * 2, P["3PM"] * 3, P["FTM"]
         if pts2 + pts3 + ptsf > 0:
@@ -1122,15 +1117,15 @@ def render_card(ctx):
                     f"{_fmt(P['Paint%'],'pct')}  ({P['PaintPTS']} pts)"},
                 _row("Shot difficulty", "ShotRating", "f1"),
                 _row("Expected pts/shot", "xPPS", "f2"),
-                _row("Expected FG% (SMOE)", "xFG%", "pct") | {"Value":
-                    f"{_fmt(P['xFG%'],'pct')}  ({_fmt(P['SMOE'],'spp')})"},
+                # SMOE is the Signature-metrics tile's whole job (it is one of
+                # the invented metrics) — the table gives expected FG% only.
+                _row("Expected FG%", "xFG%", "pct"),
             ]
         st.dataframe(pd.DataFrame(_shoot_rows), hide_index=True, width="stretch")
-        _conf = P.get("Confidence", "—")
         st.caption(
-            f"Sample confidence: **{_conf}** ({P['GP']} game"
-            f"{'s' if P['GP'] != 1 else ''}). Shooting lines carry a 95% Wilson "
-            "confidence interval — the range a sample this size actually supports.")
+            "Shooting lines carry a 95% Wilson confidence interval — the range a "
+            "sample this size actually supports. (How trustworthy the book is "
+            "overall is stated once, in the Overview header at the top.)")
 
         st.markdown("**Rebounding · Playmaking · Defense**")
         # box rows always; on-court rate stats (REB%/SC/Guarded%/DSHOT%) → Paid.
@@ -1589,6 +1584,14 @@ def render_card(ctx):
            FROM games g WHERE g.id IN ({})""".format(
             ",".join("?" * len(gids)) or "NULL"), tuple(gids)) if gids else []
     name_of = {t["id"]: t["name"] for t in query("SELECT id, name FROM teams")}
+    # WHICH TEAM WAS SHE ON. `P["team_id"]` is the CURRENT roster row, so for a
+    # player who transferred, an archive season's log resolved every opponent
+    # against her NEW team — and printed her OLD team as the opponent in the
+    # games she actually played for it. The On/Off section 270 lines below
+    # already fixed exactly this and says why; the log needs the same
+    # resolution. Falls back to the roster row when the lineup rows can't say.
+    _log_team = (S.player_lineup_team(pid, list(_gp) if _gp else None)
+                 or P["team_id"])
     # RTG (per-game 0-10) is event-delta — tracked depth, so Paid only. The box
     # game log itself (PTS/REB/… + GS) is box-derivable and stays Free.
     _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp, _szn) if paid else {}
@@ -1598,10 +1601,21 @@ def render_card(ctx):
         b = _boxes.get(g["id"])
         if not b:
             continue
-        opp = g["team2_id"] if g["team1_id"] == P["team_id"] else g["team1_id"]
+        _home = g["team1_id"] == _log_team
+        opp = g["team2_id"] if _home else g["team1_id"]
         _rtg = _rtg_all.get(g["id"], {}).get(pid, {}).get("rating")
+        # `home_score` / `away_score` were SELECTed and then discarded, so the
+        # first column a coach looks for was not on the page at all. Result and
+        # margin are from HER team's side.
+        _us = g["home_score"] if _home else g["away_score"]
+        _them = g["away_score"] if _home else g["home_score"]
+        _res, _margin = "", None
+        if _us is not None and _them is not None:
+            _res = "W" if _us > _them else "L" if _us < _them else "T"
+            _margin = _us - _them
         log.append({
             "Date": g["date"], "Opp": name_of.get(opp, "?"),
+            "W/L": _res, "Margin": _margin,
             "RTG": _rtg,
             "PTS": b["PTS"], "REB": b["TRB"], "AST": b["AST"],
             "STL": b["STL"], "BLK": b["BLK"], "TOV": b["TOV"], "PF": b["PF"],
@@ -1621,28 +1635,48 @@ def render_card(ctx):
                 if pid in _pm:
                     _role = _pm[pid].get("role")
                     break
-            fc1, fc2, fc3 = st.columns(3)
-            fc1.metric("Form (last 5)", f"{_form:.1f}",
-                       help="Average of the last 5 game ratings (0-10, 6.0 = average).")
-            fc2.metric("Season rating", f"{_season_rtg:.1f}",
-                       help="Average game rating across all tracked games.")
-            fc3.metric("Rating role", _role or "—",
+            # Form and season rating moved into the one Recent-form block below;
+            # the ROLE is what this strip uniquely says, and it belongs beside
+            # the RTG column it explains.
+            fc1, fc2 = st.columns(2)
+            fc1.metric("Season rating", f"{_season_rtg:.1f}",
+                       help="Average game rating across all tracked games "
+                            "(0-10, 6.0 = average).")
+            fc2.metric("Rating role", _role or "—",
                        help="Fixed role the game rating grades this player against.")
-        # trend across games
+        # ── ONE points-per-game chart ──────────────────────────────
+        # This chart and the "Rolling form (3-game average)" chart below it were
+        # the SAME points series drawn twice with a different smoother — two
+        # 300px charts, forty lines apart, answering one question. A seg picks
+        # the smoother instead; "Raw" also carries Game Score and the 0-10
+        # rating, which the rolling version never had.
+        import helpers.ui as _UI
+        _sm = _UI.seg("Smoothing", ["Raw", "3-game average"], default="Raw",
+                      key=f"{_kp}_ptsmooth", label_visibility="collapsed") or "Raw"
         gx = [f"{g['Date'][5:]} {g['Opp'][:8]}" for g in log]
+        _pts = [g["PTS"] for g in log]
         tr = go.Figure()
-        tr.add_trace(go.Bar(x=gx, y=[g["PTS"] for g in log], name="PTS",
-                            marker_color=accent, marker_line_width=0))
-        tr.add_trace(go.Scatter(x=gx, y=[g["GS"] for g in log], name="Game Score",
-                                mode="lines+markers", line=dict(color="#56d4dd",
-                                                                width=2)))
-        if any(g["RTG"] is not None for g in log):
-            tr.add_trace(go.Scatter(x=gx, y=[g["RTG"] for g in log], name="Rating (0-10)",
-                                    mode="lines+markers", yaxis="y2",
-                                    line=dict(color="#f5a623", width=2, dash="dot")))
-            tr.update_layout(yaxis2=dict(title="Rating", overlaying="y", side="right",
-                                         range=[0, 10], showgrid=False))
-        tr.update_yaxes(title="Points / Game Score")
+        tr.add_trace(go.Bar(x=gx, y=_pts, name="PTS",
+                            marker_color=(accent if _sm == "Raw" else "#30363d"),
+                            marker_line_width=0))
+        if _sm == "Raw":
+            tr.add_trace(go.Scatter(x=gx, y=[g["GS"] for g in log],
+                                    name="Game Score", mode="lines+markers",
+                                    line=dict(color="#56d4dd", width=2)))
+            if any(g["RTG"] is not None for g in log):
+                tr.add_trace(go.Scatter(
+                    x=gx, y=[g["RTG"] for g in log], name="Rating (0-10)",
+                    mode="lines+markers", yaxis="y2",
+                    line=dict(color="#f5a623", width=2, dash="dot")))
+                tr.update_layout(yaxis2=dict(title="Rating", overlaying="y",
+                                             side="right", range=[0, 10],
+                                             showgrid=False))
+            tr.update_yaxes(title="Points / Game Score")
+        else:
+            tr.add_trace(go.Scatter(x=gx, y=TRD.rolling(_pts), name="3-game avg",
+                                    mode="lines+markers",
+                                    line=dict(color=accent, width=3)))
+            tr.update_yaxes(title="Points")
         tr.update_xaxes(tickangle=-40)
         _style(tr, 320)
         st.plotly_chart(tr, width="stretch", key=f"{_kp}_log")
@@ -1653,51 +1687,69 @@ def render_card(ctx):
         st.dataframe(_ldf, hide_index=True,
                      width="stretch",
                      height=min(560, 60 + 35 * len(log)),
-                     column_config={"RTG": st.column_config.NumberColumn(
-                         "RTG", format="%.1f",
-                         help="Per-game rating 0-10 (6.0 = average, role-adjusted)")})
+                     column_config={
+                         "RTG": st.column_config.NumberColumn(
+                             "RTG", format="%.1f",
+                             help="Per-game rating 0-10 (6.0 = average, "
+                                  "role-adjusted)"),
+                         "Margin": st.column_config.NumberColumn(
+                             "Margin", format="%+d",
+                             help="Final margin from her team's side.")})
         st.caption(f"{len(log)} tracked games. Box scores are per game from "
                    "tracked events.")
 
         # ── rolling form · season highs · last-5 · foul & FT ────────────────
         _tlog = TRD.player_game_log(pid, boxes=pgb)
         if _tlog:
-            _pseries = [g["box"].get("PTS", 0) or 0 for g in _tlog]
-            _roll = TRD.rolling(_pseries)
-            _gx2 = [f"{g['date'][5:]} {g['opp'][:8]}" for g in _tlog]
-            st.markdown("<div class='pl-hdr'>Rolling form (3-game average)</div>",
-                        unsafe_allow_html=True)
-            rf = go.Figure()
-            rf.add_trace(go.Bar(x=_gx2, y=_pseries, name="PTS",
-                                marker_color="#30363d", marker_line_width=0))
-            rf.add_trace(go.Scatter(x=_gx2, y=_roll, name="3-game avg",
-                                    mode="lines+markers",
-                                    line=dict(color=accent, width=3)))
-            rf.update_yaxes(title="Points")
-            rf.update_xaxes(tickangle=-40)
-            _style(rf, 280)
-            st.plotly_chart(rf, width="stretch", key=f"{_kp}_rolling")
-
+            # (no second points chart: the 3-game average is a smoothing
+            #  option on the one above.)
+            # ── highs: season AND career, one table ───────────────────────
+            # Two real concepts (career best vs this season's best) used to be
+            # presented as three blocks: this one, a _kv list in the fold, and a
+            # free-tier "Career highs & milestones". Two columns, one table, and
+            # the opponent the high came against — which only this version had.
             _hi = TRD.season_highs(_tlog)
-            st.markdown("<div class='pl-hdr'>Season highs</div>",
-                        unsafe_allow_html=True)
-            _hc = st.columns(len(TRD.HIGH_KEYS))
-            for _col, (_k, _lbl) in zip(_hc, TRD.HIGH_KEYS):
+            # player_stat_table only carries a career best for the three it
+            # tracks; the others show a season best and an empty career cell
+            # rather than a fabricated one. Kept as a nullable column so the
+            # mixed int/blank does not force the whole column to text.
+            _CAREER = {"PTS": "bestPTS", "TRB": "bestREB", "AST": "bestAST"}
+            _hrows = []
+            for _k, _lbl in TRD.HIGH_KEYS:
                 _h = _hi.get(_k)
-                _col.metric(_lbl, _h["value"] if _h else 0,
-                            f"vs {_h['opp'][:10]}" if _h else None,
-                            delta_color="off")
+                _cb = P.get(_CAREER[_k]) if _k in _CAREER else None
+                _hrows.append({
+                    "Stat": _lbl,
+                    "Season best": _h["value"] if _h else 0,
+                    "vs": (_h["opp"][:14] if _h else ""),
+                    "Career best": (int(_cb) if _cb is not None else None),
+                })
+            st.markdown("<div class='pl-hdr'>Highs — season vs career</div>",
+                        unsafe_allow_html=True)
+            st.dataframe(pd.DataFrame(_hrows), hide_index=True, width="stretch")
 
+            # ── recent form, ONCE ───────────────────────────────────
+            # Last-5-vs-season was read three ways on this card, in three
+            # styles: the trajectory chips on the rating bars, a "Form (last 5)"
+            # RTG metric up in the game log, and this block. The chips stay
+            # (they are about the RATINGS, and they sit in the fold); the RTG
+            # form metric folds in here, so counting stats and game rating are
+            # one answer to one question.
             _l5 = TRD.last_n_split(_tlog, n=5)
             _stk = TRD.streaks(_tlog)
             st.markdown("<div class='pl-hdr'>Recent form — last 5 vs season</div>",
                         unsafe_allow_html=True)
-            _fc = st.columns(4)
+            _fc = st.columns(5)
             for _col, _k in zip(_fc[:3], ("PTS", "TRB", "AST")):
                 _rec, _seas = _l5.get(_k, (0, 0))
                 _col.metric(f"{_k} (last 5)", f"{_rec:.1f}",
                             f"{_rec - _seas:+.1f} vs season")
-            _fc[3].metric("Double-figure scoring", f"{_stk['current']} in a row",
+            if _rvals:
+                _fc[3].metric("Game rating (last 5)", f"{_form:.1f}",
+                              f"{_form - _season_rtg:+.1f} vs season",
+                              help="Average of the last 5 game ratings "
+                                   "(0-10, 6.0 = average, role-adjusted).")
+            _fc[4].metric("Double-figure scoring", f"{_stk['current']} in a row",
                           f"longest {_stk['longest']}", delta_color="off")
 
         _ff = foulft
@@ -1739,19 +1791,8 @@ def render_card(ctx):
         st.markdown("<div class='pl-hdr'>League percentiles</div>",
                     unsafe_allow_html=True)
         # Free tier: keep box percentiles only (drop event-derived rows).
-        PROF_PCT = [s for s in [
-            ("PPG", "Points", "f1", False), ("RPG", "Rebounds", "f1", False),
-            ("APG", "Assists", "f1", False), ("SPG", "Steals", "f1", False),
-            ("BPG", "Blocks", "f1", False), ("STOCKS/G", "Stocks", "f1", False),
-            ("TS%", "True shooting", "pct", False), ("eFG%", "Effective FG", "pct", False),
-            ("3P%", "Three-point %", "pct", False), ("PPS", "Points / shot", "f2", False),
-            ("USG%", "Usage", "pct", False), ("TOV%", "Ball security", "pct", True),
-            ("AST/TOV", "Assist / TO", "f2", False), ("REB%", "Rebound %", "pct", False),
-            ("Guarded%", "Contest rate", "pct", False), ("DSHOT%", "Defended FG%", "pct", True),
-            ("EFF", "Efficiency", "f1", False), ("FIC", "Floor impact", "f1", False),
-            ("+/-", "Plus/minus", "int", False), ("GS/G", "Game Score", "f1", False),
-            ("VPS", "Value Point System", "f2", False),
-        ] if s[0] not in PR.EVENT_DERIVED_STATS]
+        PROF_PCT = [s for s in PCT_RAIL
+                    if s[0] not in PR.EVENT_DERIVED_STATS]
         pcol = st.columns(2)
         half = (len(PROF_PCT) + 1) // 2
         for ci, chunk in enumerate((PROF_PCT[:half], PROF_PCT[half:])):
@@ -1768,10 +1809,12 @@ def render_card(ctx):
                     unsafe_allow_html=True)
         n = len(rows)
         pctile_ovr = round((n - P["Rank"]) / max(n - 1, 1) * 100)
-        rk = st.columns(3)
+        # No OVERALL metric here: it is the 60px number in the banner, a rating
+        # bar in the fold, and the first row of the rank table directly below.
+        # A fourth printing is not a fourth fact.
+        rk = st.columns(2)
         rk[0].metric("League rank", f"#{P['Rank']} of {n}")
-        rk[1].metric("OVERALL", f"{P['OVERALL']:.1f}")
-        rk[2].metric("Percentile", f"{_ORD(pctile_ovr)}")
+        rk[1].metric("Percentile", f"{_ORD(pctile_ovr)}")
 
         rank_stats = [("OVERALL", "f1"), ("OFFENSE", "f1"), ("DEFENSE", "f1"),
                       ("PLAYMAKING", "f1"), ("REBOUNDING", "f1"), ("PPG", "f1"),

@@ -122,6 +122,16 @@ STYLE_PRESETS = {
 # Stored as "u:<email>:<key>"; a coach with no override inherits the global value.
 USER_SCOPED = {"default_team", "accent_color", "color_scheme", "app_style",
                "wide_mode", "cb_safe", "scout_hidden_sections",
+               # The rest of the scout sheet's per-coach print choices. These
+               # belong beside scout_hidden_sections and `scout_compact` was
+               # simply missed when that one was scoped — so until now one
+               # coach turning compact off turned it off for the whole program.
+               # `_screen` / `_print` are the split halves of the old single
+               # hidden-set (one flag used to gate the tab AND the hand-out,
+               # which is why "more depth" and "fewer pages" read as opposites).
+               "scout_compact", "scout_layout", "scout_hidden_screen",
+               "scout_hidden_print", "scout_diagrams", "scout_shotwall",
+               "scout_sections_v",
                # per-coach {team_id: {insight-line hash: first-seen date}} JSON
                # blob behind the Insights tab's NEW chips (one key, one blob —
                # USER_SCOPED is an exact-key set, so no per-team keys).

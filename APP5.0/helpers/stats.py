@@ -336,6 +336,70 @@ def ordinal(n):
     return f"{n}{suf}"
 
 
+# ── the percentile-pool decision, in one Streamlit-free place ────────────────
+#: Pool size below which a PERCENTILE is not a statement about anything and the
+#: RANK is shown instead (founder ruling Q4). One constant, named once, because
+#: the Officiating Lab once ran three different sample floors on a single screen
+#: and nobody could tell which one was biting.
+#:
+#: This lives here rather than in helpers.cards because the printable scout
+#: sheet has to make the SAME call and the engine layer cannot import a module
+#: that imports streamlit. `cards` re-exports both names, so every existing
+#: call site (and tracker/test_pctile_pool.py) still reads them from there.
+POOL_FLOOR = 10
+
+
+def rank_from_pctile(p, n):
+    """1-based rank implied by a percentile over a pool of `n`, or None.
+
+    `stats.percentile` is `100 * (count strictly below) / n`, so the count below
+    is recoverable exactly and the rank is `n - below`. Ties share a rank — the
+    competition convention, and the honest one: three teams on the same DRtg are
+    all second, and pretending an order exists between them would be inventing
+    precision the pool cannot carry.
+
+    `cards.pctile` uses the MIDRANK convention instead (`below + 0.5 * equal`),
+    so a rank recovered from one of its percentiles lands in the MIDDLE of a tie
+    group rather than at its top. That is the same claim, made about a tie, and
+    it is the reason this returns a position rather than a medal — but it is
+    worth knowing before quoting one of these to a coach who is counting.
+    """
+    if p is None or not n:
+        return None
+    below = int(round(float(p) * n / 100.0))
+    return max(1, min(n, n - below))
+
+
+def pctile_badge(p, n=None):
+    """``(badge_text, thin, fill_pct)`` for one percentile against its pool.
+
+    The shared half of the percentile-bar grammar — what the bar SAYS and how
+    far it fills — with the colour left to the caller, because that is the half
+    that differs: a screen bar reads the viewer's colorblind-safe palette at
+    call time, a printed one is ink.
+
+        n >= POOL_FLOOR   "80th of 22"   a percentile, and its pool
+        0 < n < FLOOR     "2nd of 5"     the rank, because a percentile from
+                                         five observations is not a fact, and
+                                         `thin` is True so the caller can draw
+                                         it neutral rather than let the eye read
+                                         a five-team ranking as an achievement
+        n is None         "80th"         the pre-pool shape, legal only so a
+                                         missed call site degrades to the old
+                                         output instead of raising
+    """
+    thin = n is not None and 0 < n < POOL_FLOOR
+    if thin:
+        rk = rank_from_pctile(p, n)
+        if rk is not None:
+            return f"{ordinal(rk)} of {n}", True, max(2, min(100, round(
+                100 * (n - rk + 1) / n)))
+    badge = ordinal(p) or "—"
+    if p is not None and n:
+        badge = f"{badge} of {n}"
+    return badge, False, (0 if p is None else max(2, min(100, p)))
+
+
 # ── one label for a player, everywhere ──────────────────────────────────────────
 #: A name that is not a name. Scouting produces players nobody has a book for,
 #: and the row that comes back carries the jersey number in the `name` column —

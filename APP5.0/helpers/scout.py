@@ -54,6 +54,110 @@ def expand_hidden(hidden):
     return out
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  PRINT LAYOUT — the page is a budget, so say what the paper actually is
+# ══════════════════════════════════════════════════════════════════════════════
+# Letter at the shared .4in margin. The wrap used to be 840 CSS px = 8.75in on a
+# 7.7in printable width, so every portrait print was shrink-to-fit at ~88% and
+# the 12% was paid in content. These are the real numbers.
+LAYOUTS = {
+    #  key:  (label,                    page size,          wrap,  columns)
+    "p1": ("Portrait · 1 column", "Letter portrait", "7.7in", 1),
+    "p2": ("Portrait · 2 columns", "Letter portrait", "7.7in", 2),
+    "l3": ("Landscape · 3 columns", "Letter landscape", "10.2in", 3),
+}
+LAYOUT_DEFAULT = "p2"
+
+
+def resolve_layout(layout=None, compact=True):
+    """Layout key, tolerating the pre-2026-09 ``compact`` boolean. A caller that
+    still passes only ``compact`` gets the two-column portrait it always got."""
+    if layout in LAYOUTS:
+        return layout
+    return "p2" if compact else "p1"
+
+
+# Blank half-courts to print. Eight was hard-coded and cost close to a page on
+# every print whether or not the coach drew on one.
+DIAGRAM_CHOICES = (0, 2, 4, 8)
+DIAGRAMS_DEFAULT = 4
+
+# The shot wall: ONE split of small courts instead of the five sections that
+# could stack ~20 of them. Keys match the per-split section keys so a coach's
+# existing opt-outs still mean something.
+SHOTWALL_SPLITS = [
+    ("", "None — main chart only"),
+    ("shot_by_play", "By play type (their offense)"),
+    ("shot_by_def", "By defense faced (their offense)"),
+    ("shot_by_play_def", "Allowed by play type (their defense)"),
+    ("shot_by_def_def", "Allowed by scheme (their defense)"),
+]
+SHOTWALL_CAP = 6          # a coach reads two or three of these, never twenty
+
+# Rough printed height of each section, in pages, at the two-column portrait
+# default. Summed over the visible sections this turns 38 disconnected
+# checkboxes into a budget the coach can see. Deliberately coarse — it is a
+# budget, not a typesetter, and it says "≈" on screen.
+SECTION_WEIGHT = {
+    "keys": 0.16, "matchups": 0.10, "four_factors": 0.10, "breakeven": 0.07,
+    "predictability": 0.07, "personnel": 0.55, "personnel_deep": 0.45,
+    "player_plays": 0.0, "custom_notes": 0.05, "three_profile": 0.07,
+    "impact_splits": 0.0, "pc_offense": 0.10, "pc_defense": 0.10,
+    "pc_tendencies": 0.10, "pc_handoff": 0.14, "creation": 0.05,
+    "def_run": 0.07, "def_attack": 0.07, "def_cross": 0.10,
+    "def_concession": 0.09, "situational": 0.22, "shot_chart": 0.30,
+    "shot_wall": 0.30, "zones": 0.14, "guarded_split": 0.05,
+    "quarter_split": 0.06, "poss_length": 0.05, "manual_intel": 0.07,
+    "notes": 0.09, "play_diagrams": 0.0, "saved_plays": 0.30,
+}
+# Fixed cost of the band + snapshot strip + footer, whatever else is on.
+CHROME_PAGES = 0.22
+
+
+def estimate_pages(hidden=None, *, layout=None, compact=True, personnel=7,
+                   diagrams=DIAGRAMS_DEFAULT, shotwall="") -> float:
+    """≈ printed pages for the current section picks. The point is that the
+    toggle list stops being 38 independent yes/nos and starts being a budget."""
+    hidden = expand_hidden(hidden or set())
+    lay = resolve_layout(layout, compact)
+    total = CHROME_PAGES
+    for key, w in SECTION_WEIGHT.items():
+        if key in ("personnel", "personnel_deep", "shot_wall", "play_diagrams"):
+            continue
+        if key not in hidden:
+            total += w
+    if "personnel" not in hidden:
+        per_row = 3 if LAYOUTS[lay][3] >= 3 else 2
+        rows = (max(0, personnel) + per_row - 1) // per_row
+        total += rows * (SECTION_WEIGHT["personnel"] / 4)
+        if "personnel_deep" not in hidden:
+            total += rows * (SECTION_WEIGHT["personnel_deep"] / 4)
+    if shotwall and shotwall not in hidden:
+        total += SECTION_WEIGHT["shot_wall"]
+    total += (diagrams or 0) * 0.055
+    # columns buy density on everything that flows; the card / court grids and
+    # the chrome do not flow, so only discount the flowed share.
+    cols = LAYOUTS[lay][3]
+    if cols > 1:
+        total -= (total - CHROME_PAGES) * (0.30 if cols == 2 else 0.46)
+    return max(0.3, round(total, 1))
+
+
+# Named section sets on top of the per-key toggles: the same stored CSV, three
+# starting points. "Everything" is today's default (nothing hidden).
+_ALL_KEYS = tuple(SECTION_WEIGHT)
+PRESETS = {
+    "Bench card": tuple(k for k in _ALL_KEYS if k not in (
+        "keys", "matchups", "personnel", "custom_notes", "notes",
+        "manual_intel", "breakeven")),
+    "Staff sheet": tuple(k for k in _ALL_KEYS if k in (
+        "personnel_deep", "impact_splits", "def_cross", "pc_handoff",
+        "poss_length", "guarded_split", "three_profile", "saved_plays",
+        "shot_by_play", "shot_by_def", "shot_by_play_def", "shot_by_def_def")),
+    "Everything": (),
+}
+
+
 def _mean(pool):
     pool = [v for v in pool if v is not None]
     return sum(pool) / len(pool) if pool else 0.0
@@ -135,8 +239,15 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         ]
         for label, key, hib, side in specs:
             val = me.get(key)
-            pct = LA.percentile(val, pool(key), hib)
-            factors.append({"label": label, "value": val, "pct": pct, "side": side})
+            _pl = pool(key)
+            pct = LA.percentile(val, _pl, hib)
+            # `n` is the size of the pool the percentile was ranked over. The
+            # sheet renders these through the shared percentile-bar grammar
+            # (helpers.cards.pctile_bar), which states its pool and falls back
+            # to a bare rank under POOL_FLOOR — so a percentile from five
+            # tracked teams can never print as "80th percentile".
+            factors.append({"label": label, "value": val, "pct": pct,
+                            "side": side, "n": len(_pl)})
 
     strengths = [f for f in factors if f["pct"] is not None and f["pct"] >= 70]
     weaknesses = [f for f in factors if f["pct"] is not None and f["pct"] <= 30]
@@ -642,40 +753,63 @@ def usage_map_html(situations, kind, title, row_hdr="Set"):
             f"<tr><td style='{_ax}'>{e(row_hdr)}</td>{th}</tr>{body}</table>")
 
 
-def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
+def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
+                   layout=None, diagrams=None, shotwall=""):
     """A print-ready scouting sheet (browser → Print → PDF, or the in-app
     preview). Zero hard dependencies — table-based so the xhtml2pdf fallback
-    renders it; inline-SVG shot charts / blank courts print from the browser and
-    WeasyPrint (xhtml2pdf simply omits the vector art, keeping every table).
+    renders it; inline-SVG saved plays print from the browser and WeasyPrint
+    (xhtml2pdf omits the vector art and keeps every table; the shot charts and
+    blank courts are PNG, so they survive both engines).
 
     `extra` carries the page-derived blocks the build_scout engine doesn't own
-    (breakeven, efficiency, auto-report, 3-pt profile, possession length, notes,
-    diagram layout); each section is independently guarded so the sheet still
-    renders if a block is missing. Honours the same per-coach `hidden` toggles as
-    the on-screen tab."""
+    (breakeven, auto-report, 3-pt profile, possession length, notes); each
+    section is independently guarded so the sheet still renders if a block is
+    missing. Honours the same per-coach `hidden` toggles as the on-screen tab.
+
+    `layout` is a key of LAYOUTS — it chooses the PAGE (portrait / landscape)
+    and the column count together, because those two decisions are one decision.
+    `compact` is the pre-2026-09 boolean and is honoured when `layout` is None.
+    `diagrams` = how many blank half-courts to print; `shotwall` = which single
+    shot-chart split to print (see SHOTWALL_SPLITS), '' for none."""
     e = html.escape
     extra = extra or {}
     hidden = expand_hidden(hidden or set())
+    lay = resolve_layout(layout, compact)
+    _lay_label, _page_size, _wrap_w, _cols = LAYOUTS[lay]
+    n_courts = DIAGRAMS_DEFAULT if diagrams is None else max(0, int(diagrams))
 
     def _show(k):
         return k not in hidden
 
-    # Compact mode flows the middle text/table sections into two columns (wide
-    # visual blocks — keys, four-factor+zone row, shot chart, personnel cards,
-    # diagrams — stay full width outside the flow).
-    _flow_open = "<div class='flow2'>" if compact else ""
-    _flow_close = "</div>" if compact else ""
+    # Everything table- or text-shaped flows through the column engine. Only the
+    # blocks with their own grid (personnel cards, courts, saved plays) sit
+    # outside it — those carry their own N-up, which the layout also sets.
+    _flow_open = "<div class='flow'>" if _cols > 1 else ""
+    _flow_close = "</div>" if _cols > 1 else ""
 
     trk = sc["trk"]
 
     # ── keys: how to guard / attack ──
+    # The rule-based auto-report USED to print as its own "Scouting report"
+    # list directly under this one: a second bullet list, from a second code
+    # path, reading the same inputs at different thresholds — so the two could
+    # and did contradict each other on the same page. They are one section now.
+    # `extra["auto_report"]` is [(side, text), …] with side in {guard, attack}.
     keys_html = ""
     if _show("keys"):
-        guard = "".join(f"<li>{e(x)}</li>" for x in sc["guard"]) or "<li>—</li>"
-        attack = "".join(f"<li>{e(x)}</li>" for x in sc["attack"]) or "<li>—</li>"
+        _g = [("plain", x) for x in sc["guard"]]
+        _a = [("plain", x) for x in sc["attack"]]
+        for _side, _txt in (extra.get("auto_report") or []):
+            (_a if _side == "attack" else _g).append(("md", _txt))
+
+        def _li(items):
+            return "".join(
+                f"<li>{_md_bold(t) if kind == 'md' else e(t)}</li>"
+                for kind, t in items) or "<li>—</li>"
+
         keys_html = (f"<table class='cols'><tr>"
-                     f"<td class='col'><h2>Guard them</h2><ul>{guard}</ul></td>"
-                     f"<td class='col'><h2>Attack them</h2><ul>{attack}</ul></td>"
+                     f"<td class='col'><h2>Guard them</h2><ul>{_li(_g)}</ul></td>"
+                     f"<td class='col'><h2>Attack them</h2><ul>{_li(_a)}</ul></td>"
                      f"</tr></table>")
 
     # ── defensive matchups (who guards whom; shared with War Room planner) ──
@@ -699,39 +833,82 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             "<p class='note'>Edge = your defender's DEFENSE − their scorer's OFFENSE "
             "(0–100, 50 = league avg). ✅ Edge ≥ +8 · ⚠ Tough ≤ −8.</p>")
 
-    # ── four factors + shooting by zone (share one row) ──
-    ff_cell = ""
+    # ── four factors: percentile bars that state their pool ──
+    # Was a three-column table whose "Val" column reprinted the snapshot strip
+    # directly above it and whose "%ile" column was a bare number — a percentile
+    # over 22 tracked teams and one over 5 printed identically. Now the shared
+    # grammar: value + percentile + the pool it was ranked over, with the rank
+    # shown instead under stats.POOL_FLOOR.
+    ff_html = ""
     if _show("four_factors"):
-        rows_f = ""
+        _bars = []
         for f in sc["factors"]:
             if f["value"] is None:
                 continue
+            badge, thin, w = S.pctile_badge(f["pct"], f.get("n"))
             p = f["pct"]
-            rows_f += (f"<tr><td>{e(f['label'])}</td>"
-                       f"<td class='n'>{f['value']:.1f}</td>"
-                       f"<td class='n'>{('%.0f' % p) if p is not None else '—'}</td></tr>")
-        ff_cell = ("<td class='two-col'><h2>Four factors</h2><table><tr>"
-                   "<th>Factor</th><th class='n'>Val</th>"
-                   f"<th class='n'>%ile</th></tr>{rows_f}</table></td>")
-    z_cell = ""
+            col = ("#8b949e" if thin or p is None else
+                   "#1a7f37" if p >= 60 else "#b42318" if p <= 40 else "#5b6675")
+            _bars.append(
+                "<div class='pl-pct'><div class='pl-pct-top'>"
+                f"<span class='pl-pct-lbl'>{e(f['label'])}</span>"
+                f"<span class='pl-pct-val'>{f['value']:.1f} · "
+                f"<span style='color:{col}'>{e(badge)}</span></span></div>"
+                f"<div class='pl-pct-track'><div class='pl-pct-fill' "
+                f"style='width:{w}%;background:{col}'></div></div></div>")
+        if _bars:
+            _pool_n = next((f.get("n") for f in sc["factors"] if f.get("n")), 0)
+            ff_html = ("<h2>Four factors &amp; tendencies</h2>"
+                       + "".join(_bars)
+                       + f"<p class='note'>Ranked against {_pool_n or '—'} rated "
+                       "teams this gender. Green ≥60th (a strength), red ≤40th "
+                       f"(exploit it). Under {S.POOL_FLOOR} teams the bar shows "
+                       "the rank instead — a percentile over five observations "
+                       "is not a fact.</p>")
+
+    # ── shooting by zone, WITH the expected-FG baseline folded in ──
+    # "Shooting by zone" and "Zone shooting vs expected" were two tables over the
+    # same five zones with different columns. One table: attempts, FG%, and the
+    # (±) over a league baseline where the xFG model has an opinion.
+    z_html = ""
     if _show("zones"):
+        _zx = {r["label"]: r for r in (extra.get("zone_xfg") or [])}
+
+        def _zc(fga, fg, xfg):
+            if not fga:
+                return "—"
+            out = f"{fg * 100:.0f}%" if fg is not None else "—"
+            if fg is not None and xfg is not None:
+                out += f" <span class='dx'>({(fg - xfg) * 100:+.0f})</span>"
+            return out
+
         zrows = ""
         zbt = sc.get("zones_by_type", {})
         for z in S.ZONES:
+            lbl = ZONE_LABELS[z]
             zz = zbt.get(z, {})
-            for i, (tag, cell) in enumerate((("2", zz.get("2", {})),
-                                             ("3", zz.get("3", {})))):
-                fga, fgm = cell.get("FGA", 0), cell.get("FGM", 0)
-                pct = cell.get("pct", 0)
-                fg = f"{fgm}/{fga} · {pct:.0f}%" if fga else "—"
-                lab = (f"<td rowspan='2'><b>{e(ZONE_LABELS[z])}</b></td>"
-                       if i == 0 else "")
-                zrows += f"<tr>{lab}<td>{tag}P</td><td class='n'>{fg}</td></tr>"
-        z_cell = ("<td class='two-col'><h2>Shooting by zone</h2><table><tr>"
-                  "<th>Zone</th><th>Type</th>"
-                  f"<th class='n'>FG · %</th></tr>{zrows}</table></td>")
-    two_html = (f"<table class='two'><tr>{ff_cell}{z_cell}</tr></table>"
-                if (ff_cell or z_cell) else "")
+            x = _zx.get(lbl) or {}
+            c2, c3 = zz.get("2", {}), zz.get("3", {})
+            a2 = x.get("fga2", c2.get("FGA", 0))
+            a3 = x.get("fga3", c3.get("FGA", 0))
+            if not (a2 or a3):
+                continue
+            f2 = x.get("fg2", (c2.get("pct", 0) / 100) if c2.get("FGA") else None)
+            f3 = x.get("fg3", (c3.get("pct", 0) / 100) if c3.get("FGA") else None)
+            zrows += (f"<tr><td><b>{e(lbl)}</b></td>"
+                      f"<td class='n'>{a2}</td>"
+                      f"<td class='n'>{_zc(a2, f2, x.get('xfg2'))}</td>"
+                      f"<td class='n'>{a3}</td>"
+                      f"<td class='n'>{_zc(a3, f3, x.get('xfg3'))}</td></tr>")
+        if zrows:
+            z_html = ("<h2>Shooting by zone</h2><table><tr><th>Zone</th>"
+                      "<th class='n'>2P att</th><th class='n'>2P FG%</th>"
+                      "<th class='n'>3P att</th><th class='n'>3P FG%</th></tr>"
+                      f"{zrows}</table>"
+                      + ("<p class='note'>The (±) is FG% over a league baseline "
+                         "(xFG%) for those shots — positive = they beat the "
+                         "expectation from there, so take it away.</p>"
+                         if _zx else ""))
 
     # ── should they shoot 2s or 3s? (breakeven) ──
     breakeven_html = ""
@@ -759,29 +936,15 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             f"<td class='n'>{bk['ev2']:.2f}</td><td class='n'>{bk['ev3']:.2f}</td></tr>"
             f"</table><p class='note'>{e(verdict)}</p>")
 
-    # ── efficiency summary ──
-    eff_html = ""
-    ef = extra.get("efficiency")
-    if _show("efficiency") and ef:
-        pace = ef.get("POSS_pg", 0)
-        tempo = ("an up-tempo team." if pace >= 70 else
-                 "a controlled pace." if pace >= 60 else "a slow, grind-it-out pace.")
-        eff_html = (
-            "<h2>Efficiency summary</h2><ul>"
-            f"<li><b>Offense:</b> {ef['ORtg']:.1f} pts / 100 poss on "
-            f"{_pf(ef['off_eFG'])} eFG; turns it over on {_pf(ef['off_TOV'])} of trips "
-            f"and rebounds {_pf(ef['off_ORB'])} of its own misses.</li>"
-            f"<li><b>Defense:</b> {ef['DRtg']:.1f} pts / 100 poss allowed on "
-            f"{_pf(ef['def_eFG'])} eFG; forces a turnover on {_pf(ef['def_TOV'])} of "
-            "opponent trips.</li>"
-            f"<li><b>Tempo:</b> {pace:.1f} possessions/game — {tempo}</li></ul>")
+    # (The "Efficiency summary" section is gone. Its three bullets were ORtg /
+    # DRtg / Pace — already the band chips at the top of this page — plus eFG,
+    # TOV% and OREB%, which are already rows in the four-factor bars and tiles in
+    # the snapshot strip. Nothing on this sheet lost a number; the page lost a
+    # block. The tempo sentence now rides on the four-factor note.)
 
-    # ── auto scouting report ──
-    report_html = ""
-    tips = extra.get("auto_report")
-    if _show("auto_report") and tips:
-        li = "".join(f"<li>{_md_bold(t)}</li>" for t in tips)
-        report_html = f"<h2>Scouting report</h2><ul>{li}</ul>"
+    # (The stand-alone "Scouting report" section is gone too — its tips are
+    # merged into Guard them / Attack them above, which is where a coach was
+    # already reading the same claims from a different code path.)
 
     # ── coach's custom team note (the Custom notes editor; prints verbatim) ──
     coach_html = ""
@@ -982,42 +1145,45 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             f"<p class='note'>{fga} located attempts · {fgm}/{fga} · {pct:.0f}% "
             "— the spots to take away. ● make · ✕ miss.</p>")
 
-    # ── shot charts split by one-tap PLAY-TYPE and DEFENSE tag (filtered courts) ─
-    # A small court per tag (≥5 located shots). Self-hides when a team isn't tagged
-    # — so an entry-level coach never sees it and an all-in one gets the depth.
-    def _shot_grid(groups, labels, title, key):
-        if not (_show(key) and groups):
-            return ""
-        cells = []
-        for k, lbl in labels:
-            shots = groups.get(k) or []
-            if len(shots) < 5:
-                continue
-            fgm, fga = sum(1 for s in shots if s.get("make")), len(shots)
-            cells.append(
-                f"<td><div class='diaglabel'>{e(lbl)} — {fgm}/{fga} "
-                f"({100 * fgm / fga:.0f}%)</div>"
-                f"{CP.shot_chart_png(shots, width=150)}</td>")
-        if not cells:
-            return ""
-        grid = "".join(f"<tr>{''.join(cells[i:i + 3])}</tr>"
-                       for i in range(0, len(cells), 3))
-        return f"<h2>{title}</h2><table class='diag'>{grid}</table>"
-
+    # ── the shot wall: ONE split of small courts ─────────────────────────────
+    # This used to be four separate sections, each able to stack its own grid of
+    # courts — up to about twenty 150px charts on one sheet. A coach reads two
+    # or three. The coach now picks WHICH split prints; the rest stay on screen,
+    # where they cost nothing. Capped at SHOTWALL_CAP courts, widest-sample
+    # first, so the cap drops the tags nobody ran rather than the ones they did.
     _DEF_LABELS = [(k, lbl) for k, lbl, *_ in DEF.DEFENSES]
-    # offense: how THEY shoot, by the action they ran / the defense they faced
-    sbp_html = _shot_grid(sc.get("shots_by_play") or {}, PT.NAMED_PLAY_TYPES,
-                          "Shot charts by play type (their offense)", "shot_by_play")
-    sbd_html = _shot_grid(sc.get("shots_by_def") or {}, _DEF_LABELS,
-                          "Shot charts by defense faced (their offense)", "shot_by_def")
-    # defense: what they ALLOW — opponents' shots by the action run on them /
-    # by the scheme this team was running.
-    sbpd_html = _shot_grid(sc.get("shots_allowed_by_play") or {}, PT.NAMED_PLAY_TYPES,
-                           "Shots allowed by play type (their defense)",
-                           "shot_by_play_def")
-    sbdd_html = _shot_grid(sc.get("shots_allowed_by_def") or {}, _DEF_LABELS,
-                           "Shots allowed by defensive scheme (their defense)",
-                           "shot_by_def_def")
+    _WALL_SRC = {
+        "shot_by_play": ("shots_by_play", PT.NAMED_PLAY_TYPES,
+                         "Shot wall — by play type (their offense)"),
+        "shot_by_def": ("shots_by_def", _DEF_LABELS,
+                        "Shot wall — by defense faced (their offense)"),
+        "shot_by_play_def": ("shots_allowed_by_play", PT.NAMED_PLAY_TYPES,
+                             "Shot wall — allowed by play type (their defense)"),
+        "shot_by_def_def": ("shots_allowed_by_def", _DEF_LABELS,
+                            "Shot wall — allowed by scheme (their defense)"),
+    }
+    wall_html = ""
+    if shotwall and shotwall in _WALL_SRC and _show(shotwall):
+        _src, _labels, _title = _WALL_SRC[shotwall]
+        groups = sc.get(_src) or {}
+        picked = sorted(
+            ((lbl, groups.get(k) or []) for k, lbl in _labels),
+            key=lambda x: -len(x[1]))
+        _w = 110 if _cols >= 3 else 150
+        _per = 6 if _cols >= 3 else 3
+        cells = [
+            f"<td><div class='diaglabel'>{e(lbl)} — "
+            f"{sum(1 for s in shots if s.get('make'))}/{len(shots)} "
+            f"({100 * sum(1 for s in shots if s.get('make')) / len(shots):.0f}%)"
+            f"</div>{CP.shot_chart_png(shots, width=_w)}</td>"
+            for lbl, shots in picked[:SHOTWALL_CAP] if len(shots) >= 5]
+        if cells:
+            grid = "".join(f"<tr>{''.join(cells[i:i + _per])}</tr>"
+                           for i in range(0, len(cells), _per))
+            wall_html = (f"<h2>{_title}</h2><table class='diag'>{grid}</table>"
+                         "<p class='note'>The split you chose to print; the other "
+                         "three stay on the Scout tab. Courts with fewer than 5 "
+                         f"located shots are left out, {SHOTWALL_CAP} max.</p>")
 
     # ── personnel cards: identity + OVR & breakdown + GS% + shots + mini chart ──
     # Hand-entered key-player intel (coach's dropdown picks) is folded into the
@@ -1030,6 +1196,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
                       if str(r.get("name", "")).strip()}
     _matched_intel = set()
     pers_html = ""
+    _deep_cards = []
     if _show("personnel") and sc["personnel"]:
         mini_on = _show("shot_chart")
         cards = []
@@ -1123,17 +1290,51 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             mini = (f"<div class='mini'>"
                     f"{CP.shot_chart_png(shots, width=132)}</div>"
                     if mini_on and len(shots) >= 5 else "")
-            cards.append(f"<td class='pcard'>{head}{bio}{brk}{stat}{play}"
-                         f"{hand_html}{space_html}{spc_html}{cue_html}{note}"
-                         f"{inote}{cnote}{mini}</td>")
-        # two cards per row
-        rows = ""
-        for i in range(0, len(cards), 2):
-            pair = cards[i:i + 2]
-            if len(pair) == 1:
-                pair.append("<td class='pcard empty'></td>")
-            rows += f"<tr>{''.join(pair)}</tr>"
-        pers_html = f"<h2>Personnel</h2><table class='cards'>{rows}</table>"
+            # THE CARD — a fixed five-line shape, the same five lines for every
+            # player: identity, stat line, the one highest-severity tactical cue,
+            # the playmix, the coach's own note. Seven players used to run 8-10
+            # lines each and cost a page and a half; everything trimmed is still
+            # printed, in the deep-personnel appendix below, when a coach asks
+            # for it. Depth on screen, selection on paper.
+            _top_cue = ""
+            if _cues:
+                _top_cue = (f"<div class='pnote'>✋ {e(_cues[0])}</div>")
+            _play2 = ""
+            if _show("player_plays") and pm:
+                _play2 = ("<div class='brk'>" + e(" · ".join(
+                    f"{lbl} {pct:.0f}% ({ppp:.2f})" for lbl, pct, ppp, _fg
+                    in pm[:2])) + "</div>")
+            cards.append(f"<td class='pcard'>{head}{stat}{_top_cue}{_play2}"
+                         f"{note}{inote}{cnote}</td>")
+            # the appendix card keeps everything the five-line card dropped
+            _rest = (bio + brk + play + hand_html + space_html + spc_html
+                     + ("".join(f"<div class='pnote'>✋ {e(c)}</div>"
+                                for c in _cues[1:]))
+                     + mini)
+            if _rest:
+                _deep_cards.append(
+                    f"<td class='pcard'>{head}{_rest}</td>")
+        # N cards per row — 2-up in portrait, 3-up in landscape
+        _per_card = 3 if _cols >= 3 else 2
+
+        def _card_rows(cs):
+            out = ""
+            for i in range(0, len(cs), _per_card):
+                grp = cs[i:i + _per_card]
+                grp += ["<td class='pcard empty'></td>"] * (_per_card - len(grp))
+                out += f"<tr>{''.join(grp)}</tr>"
+            return out
+
+        pers_html = ("<h2>Personnel</h2>"
+                     f"<table class='cards'>{_card_rows(cards)}</table>")
+        if _show("personnel_deep") and _deep_cards:
+            pers_html += ("<h2>Personnel — the deep card</h2>"
+                          f"<table class='cards'>{_card_rows(_deep_cards)}</table>"
+                          "<p class='note'>Measurables, the 0–100 breakdown, the "
+                          "full play mix, hand and contest splits, floor spacing "
+                          "and the mini chart — everything the five-line cards "
+                          "above leave off. Turn this section off to save about "
+                          "half a page.</p>")
 
     # ── per-player 3-point profile ──
     three_html = ""
@@ -1194,27 +1395,9 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
             "<p class='note'>A big open − guarded gap = a shooter who needs space "
             "(close out hard); a small one = contest-proof (deny the catch).</p>")
 
-    # ── zone shooting vs a league baseline (xFG), split 2s vs 3s ──
-    zx_html = ""
-    zx = extra.get("zone_xfg")
-    if _show("zone_xfg") and zx:
-        def _xcell(fg, xfg):
-            if fg is None:
-                return "—"
-            d = (f" ({'%+.0f' % ((fg - xfg) * 100)})" if xfg is not None else "")
-            return f"{fg * 100:.0f}%{d}"
-        rows = "".join(
-            f"<tr><td>{e(r['label'])}</td>"
-            f"<td class='n'>{r['fga2']}</td><td class='n'>{_xcell(r['fg2'], r['xfg2'])}</td>"
-            f"<td class='n'>{r['fga3']}</td><td class='n'>{_xcell(r['fg3'], r['xfg3'])}</td></tr>"
-            for r in zx)
-        zx_html = (
-            "<h2>Zone shooting vs expected</h2><table><tr><th>Zone</th>"
-            "<th class='n'>2P att</th><th class='n'>2P FG% (vs x)</th>"
-            "<th class='n'>3P att</th><th class='n'>3P FG% (vs x)</th></tr>"
-            f"{rows}</table>"
-            "<p class='note'>FG% vs a league baseline (xFG%) for those shots, split "
-            "2s vs 3s. The (±) is over/under expected — positive = take it away.</p>")
+    # (The "Zone shooting vs expected" section is gone — its expected-FG deltas
+    # are now the (±) inside the one Shooting-by-zone table above, which was
+    # already printing the same five zones' attempts and FG%.)
 
     # ── self-created vs assisted ──
     cr_html = ""
@@ -1325,15 +1508,21 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     # × 2 rows = 8 courts in the same footprint the old 2×2 used; extra/unused
     # courts are intentional (better to have spare than run short).
     diag_html = ""
-    if _show("play_diagrams"):
+    if _show("play_diagrams") and n_courts:
         legend = ("<p class='note'>Write each play's name on the line, draw below. "
                   "○ offense · ✕ defense · → cut · ⇢ pass · ⊢ screen · "
                   "∿ dribble</p>")
         court = CP.blank_halfcourt_png(width=165)   # cached; reuse the one string
         cell = f"<td><div class='diagname'></div>{court}</td>"
-        per_row, n_courts = 4, 8
-        rows = "".join(f"<tr>{cell * per_row}</tr>"
-                       for _ in range(n_courts // per_row))
+        # The count is the coach's now (0 / 2 / 4 / 8). Eight was hard-coded and
+        # printed close to a full page every time, drawn on or not.
+        per_row = 6 if _cols >= 3 else 4
+        rows = ""
+        left = n_courts
+        while left > 0:
+            k = min(per_row, left)
+            rows += f"<tr>{cell * k}</tr>"
+            left -= k
         diag_html = ("<h2>Play diagrams — draw by hand</h2>" + legend +
                      f"<table class='diag'>{rows}</table>")
 
@@ -1412,8 +1601,15 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True):
     # must fit a page), the two-column layouts, personnel cards, blank-diagram
     # grid and the compact flow. Layout cells pin background:#fff so the base
     # zebra striping never paints a structural cell.
-    _extra_css = """
-.wrap{max-width:840px;padding:0 20px 24px}
+    _extra_css = f"""
+@page{{size:{_page_size};margin:.4in}}
+/* The wrap is the PAPER, not a guess at it. Letter at .4in margins is 7.7in
+   portrait / 10.2in landscape; the old 840px was 8.75in, so every portrait
+   print was shrink-to-fit and the overflow came out of the content. */
+.wrap{{max-width:{_wrap_w};padding:0 20px 24px}}
+.flow{{column-count:{_cols};column-gap:18px}}
+td.pcard{{width:{100 / (3 if _cols >= 3 else 2):.2f}%}}
+""" + """
 table{font-size:11px}
 th{font-size:9px;padding:3px 6px}
 td{padding:3px 6px;vertical-align:top}
@@ -1427,7 +1623,7 @@ table.two{width:100%;border-collapse:separate;border-spacing:10px 0}
 td.two-col{width:50%;vertical-align:top;border:none;padding:0;background:#fff}
 .chart{text-align:center;margin:4px 0}
 table.cards{border-collapse:separate;border-spacing:8px 8px;width:100%}
-td.pcard{width:50%;border:1px solid #e2e7ee;border-radius:9px;padding:7px 9px;
+td.pcard{border:1px solid #e2e7ee;border-radius:9px;padding:7px 9px;
   vertical-align:top;background:#fbfcfe}
 td.pcard.empty{border:none;background:#fff}
 .phead{font-size:12px;margin-bottom:1px}
@@ -1442,29 +1638,42 @@ td.pcard.empty{border:none;background:#fff}
 table.diag{border-collapse:separate;border-spacing:7px;width:100%}
 table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;background:#fff}
 .diagname{border-bottom:1px solid #999;height:13px;margin:0 3px 3px}
-/* Compact layout: flow the text/table sections into TWO columns so far more
-   fits per page (browser print honours column-count; xhtml2pdf ignores it and
-   falls back to a single column — still valid). Keep each h2+table together. */
-.flow2{column-count:2;column-gap:18px}
-.flow2>h2:first-child{margin-top:0}
-.flow2 h2{break-after:avoid;-webkit-column-break-after:avoid}
-.flow2 table,.flow2 ul,.flow2 .note,.flow2 .notes-box,.flow2 .hb{
+/* Flow the text/table sections into the layout's column count so far more fits
+   per page (browser print and WeasyPrint honour column-count; xhtml2pdf ignores
+   it and falls back to a single column — still valid, and it DOES honour the
+   @page size above, so a landscape pick degrades to 1-col landscape rather than
+   breaking). Keep each h2 with the block under it. */
+.flow>h2:first-child{margin-top:0}
+.flow h2{break-after:avoid;-webkit-column-break-after:avoid}
+.flow table,.flow ul,.flow .note,.flow .notes-box,.flow .hb,.flow .pl-pct{
   break-inside:avoid;-webkit-column-break-inside:avoid}
-@page{margin:.4in}
+/* Percentile bars — the same shape (and the same class names) as the on-screen
+   bar in helpers/cards.pctile_bar, drawn in ink. What the bar SAYS comes from
+   stats.pctile_badge, so screen and paper cannot state different pools. */
+.pl-pct{margin-bottom:6px;break-inside:avoid}
+.pl-pct-top{margin-bottom:2px}
+.pl-pct-lbl{font-size:10px;color:#5b6675}
+.pl-pct-val{font-size:10px;font-weight:700;float:right}
+.pl-pct-track{background:#e7ebf0;border-radius:3px;height:5px;overflow:hidden;clear:both}
+.pl-pct-fill{height:5px;border-radius:3px}
+.dx{color:#5b6675;font-size:9px}
 @media print{.wrap{padding:6px 12px} td.pcard,table.diag td{page-break-inside:avoid}}
 """
 
+    # Order = the order a coach reads it, and the SAME order as the Scout tab's
+    # sections on screen: keys & report · personnel · sets & schemes ·
+    # situational & shot geography · deep splits · notes. Everything text- or
+    # table-shaped is inside the flow; only the blocks that carry their own grid
+    # (personnel cards, courts, saved plays) sit outside, where they set their
+    # own N-up off the layout.
     body = (
         f"{_band}<div class='wrap'>"
         f"{snap_html}"
+        f"{_flow_open}"
         f"{keys_html}"
-        f"{report_html}"
         f"{coach_html}"
-        f"{pers_html}"
-        f"{intel_html}"
         f"{mu_html}"
-        f"{two_html}"
-        f"{_flow_open}{eff_html}"
+        f"{ff_html}"
         f"{breakeven_html}"
         f"{pred_html}"
         f"{pc_html}"
@@ -1475,14 +1684,14 @@ table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;backg
         f"{def_html}"
         f"{con_html}"
         f"{sit_html}"
+        f"{z_html}"
         f"{gs_html}"
-        f"{zx_html}"
-        f"{notes_html}{_flow_close}"
+        f"{intel_html}"
+        f"{notes_html}"
+        f"{_flow_close}"
+        f"{pers_html}"
         f"{shot_html}"
-        f"{sbp_html}"
-        f"{sbd_html}"
-        f"{sbpd_html}"
-        f"{sbdd_html}"
+        f"{wall_html}"
         f"{plays_html}"
         f"{diag_html}"
         "</div>")

@@ -113,28 +113,13 @@ def pctile_color(p):
 #: RANK is shown instead (founder ruling Q4). One constant, named once, because
 #: the Officiating Lab currently runs three different sample floors on a single
 #: screen and nobody can tell which one is biting.
-POOL_FLOOR = 10
-
-
-def rank_from_pctile(p, n):
-    """1-based rank implied by a percentile over a pool of `n`, or None.
-
-    `stats.percentile` is `100 * (count strictly below) / n`, so the count below
-    is recoverable exactly and the rank is `n - below`. Ties share a rank — the
-    competition convention, and the honest one: three teams on the same DRtg
-    are all second, and pretending an order exists between them would be
-    inventing precision the pool cannot carry.
-
-    `cards.pctile` uses the MIDRANK convention instead (`below + 0.5 * equal`),
-    so a rank recovered from one of its percentiles lands in the MIDDLE of a tie
-    group rather than at its top. That is the same claim, made about a tie, and
-    it is the reason this returns a position rather than a medal — but it is
-    worth knowing before quoting one of these to a coach who is counting.
-    """
-    if p is None or not n:
-        return None
-    below = int(round(float(p) * n / 100.0))
-    return max(1, min(n, n - below))
+#:
+#: Defined in helpers.stats (Streamlit-free) and re-exported here: the printable
+#: scout sheet makes the same call from the engine layer, which may not import
+#: a module that imports streamlit. Every existing reader — insights_identity,
+#: team_card, 5_Rankings, tracker/test_pctile_pool — keeps reading it from here.
+from helpers.stats import (POOL_FLOOR, rank_from_pctile,   # noqa: E402  (re-export)
+                           pctile_badge as _pctile_badge)
 
 
 def pctile_bar(label, value_str, p, n=None):
@@ -165,19 +150,10 @@ def pctile_bar(label, value_str, p, n=None):
     The FILL is drawn from the rank in the small-pool case too, so the bar
     encodes exactly what the text beside it says and no more.
     """
-    thin = n is not None and 0 < n < POOL_FLOOR
-    rk = rank_from_pctile(p, n) if thin else None
-    if thin and rk is not None:
-        # A neutral track: the position is real, the "elite" colour is not.
-        c = "#8b949e"
-        w = max(2, min(100, round(100 * (n - rk + 1) / n)))
-        badge = f"{_ORD(rk)} of {n}"
-    else:
-        c = pctile_color(p)
-        w = 0 if p is None else max(2, min(100, p))
-        badge = _ORD(p) or "—"
-        if p is not None and n:
-            badge = f"{badge} of {n}"
+    badge, thin, w = _pctile_badge(p, n)
+    # A neutral track when the pool is thin: the position is real, the "elite"
+    # colour is not.
+    c = "#8b949e" if thin else pctile_color(p)
     return (f"<div class='pl-pct'><div class='pl-pct-top'>"
             f"<span class='pl-pct-lbl'>{html.escape(str(label))}</span>"
             f"<span class='pl-pct-val'>{html.escape(str(value_str))} · "

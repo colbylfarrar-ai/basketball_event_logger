@@ -6,8 +6,10 @@ the 2s-vs-3s breakeven, personnel cards, shot chart / zones and a printable
 sheet. Extracted from pages/6_Team_Dashboard.py (see
 helpers/dashboard/__init__.py for the ctx convention).
 
-Coaches pick what shows via the "Customize sheet" panel — choices persist
-per-coach and gate both this tab and the printable hand-out (see SCOUT_SECTIONS).
+Coaches pick what shows via the "Customize sheet" panel. Choices persist
+per-coach and gate this tab and the printable hand-out SEPARATELY — one flag
+used to do both, which is why "give the tab more depth" and "print fewer pages"
+read as opposing goals. They are not (see SCOUT_SECTIONS and _section_prefs).
 """
 from __future__ import annotations
 
@@ -30,11 +32,14 @@ from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 from helpers.stats import player_label as _PLBL
 
 
-# Sections a coach can include / exclude on their scout sheet. Applies to BOTH
-# this interactive tab and the printable hand-out. Stored per-coach as a CSV of
-# HIDDEN keys in app_settings ("scout_hidden_sections", namespaced u:<email>:);
-# default = everything on. Keep keys in sync with the _show() guards below and
-# the same keys honoured in helpers/scout.py:printable_html().
+# Sections a coach can include / exclude. Each has TWO flags — one for this
+# interactive tab, one for the printable hand-out — stored per-coach as two CSVs
+# of HIDDEN keys in app_settings ("scout_hidden_screen" / "scout_hidden_print",
+# namespaced u:<email>:). Screen default = everything on; print default = every-
+# thing except PRINT_DEFAULT_OFF. The pre-2026-09 single key
+# ("scout_hidden_sections") seeds both on first read, so a coach's existing
+# opt-outs survive. Keep keys in sync with the _show() guards below and the same
+# keys honoured in helpers/scout.py:printable_html().
 # (key, label, group). Every individual table/chart is its own key so a coach
 # can print just the one or two they want (the charts are large — granular
 # selection is what keeps the sheet to one page). The play-calls and defense
@@ -42,14 +47,15 @@ from helpers.stats import player_label as _PLBL
 # kept as LEGACY parents (helpers/scout.SCOUT_LEGACY_KEYS) so an old opt-out
 # still hides the whole bundle.
 SCOUT_SECTIONS = [
-    ("keys", "Keys to the game (guard / attack)", "Overview"),
+    ("keys", "Keys to the game (guard / attack, incl. the auto report)",
+     "Overview"),
     ("matchups", "Defensive matchups (who guards whom)", "Overview"),
     ("four_factors", "Four factors & tendencies", "Overview"),
     ("breakeven", "Should they shoot 2s or 3s?", "Overview"),
-    ("auto_report", "Auto scouting report", "Overview"),
-    ("efficiency", "Efficiency summary", "Overview"),
     ("predictability", "How scoutable are they", "Overview"),
     ("personnel", "Personnel (player breakdown)", "Personnel"),
+    ("personnel_deep", "Personnel — the deep card (bio, breakdown, splits)",
+     "Personnel"),
     ("player_plays", "Player play-type mix (on personnel cards)", "Personnel"),
     ("custom_notes", "Custom notes (per player + a team note)", "Personnel"),
     ("three_profile", "Per-player 3-point profile", "Personnel"),
@@ -70,8 +76,7 @@ SCOUT_SECTIONS = [
     ("shot_by_def", "Shot charts by defense faced (their offense)", "Shooting"),
     ("shot_by_play_def", "Shots allowed by play type (their defense)", "Shooting"),
     ("shot_by_def_def", "Shots allowed by defensive scheme (their defense)", "Shooting"),
-    ("zones", "Shooting by zone", "Shooting"),
-    ("zone_xfg", "Zone shooting vs expected", "Shooting"),
+    ("zones", "Shooting by zone (incl. vs expected)", "Shooting"),
     ("guarded_split", "Contested vs open (eFG)", "Shooting"),
     ("quarter_split", "Scoring by quarter", "Shooting"),
     ("poss_length", "Scoring by possession length", "Shooting"),
@@ -80,6 +85,186 @@ SCOUT_SECTIONS = [
     ("play_diagrams", "Blank play diagrams (draw by hand)", "Extras"),
     ("saved_plays", "Saved whiteboard plays", "Extras"),
 ]
+
+
+# Sections that print OFF by default. Every one of them says on paper what a
+# section already beside it says in six table rows, so they cost pages for a
+# second opinion — worth having on screen, not worth having on the hand-out.
+# This is a PRINT default only: the tab still shows them.
+PRINT_DEFAULT_OFF = frozenset({
+    "shot_by_play_def", "shot_by_def_def",   # def_concession says this in rows
+    "impact_splits",                         # a league leaderboard inside a scout
+    "personnel_deep",                        # the appendix behind the 5-line card
+})
+
+_PREF_V = "2"          # bump when the stored shape changes; seeds the migration
+
+
+def _csv_set(raw):
+    return set(filter(None, (raw or "").split(",")))
+
+
+def _section_prefs():
+    """The coach's saved print/screen choices, migrated once from the single
+    pre-2026-09 key. Returns a mutable dict the customise panel writes back.
+
+    `hidden_screen` and `hidden_print` are separate on purpose: one flag used to
+    gate both, so every block added for depth was also a page added to the
+    hand-out, and the only way to keep the sheet short was to make the tab
+    shallow. Now depth lives on screen and the coach promotes the three blocks
+    that matter for *this* opponent onto paper.
+    """
+    if SU.get_setting("scout_sections_v", "") != _PREF_V:
+        # first read after the split: the old single set becomes the screen set,
+        # and the print set starts from it plus the default-off blocks.
+        _old = _csv_set(SU.get_setting("scout_hidden_sections", ""))
+        SU.set_setting("scout_hidden_screen", ",".join(sorted(_old)))
+        SU.set_setting("scout_hidden_print",
+                       ",".join(sorted(_old | PRINT_DEFAULT_OFF)))
+        # `scout_compact` was the only layout control; carry it to the picker.
+        if not SU.get_setting("scout_layout", ""):
+            SU.set_setting("scout_layout",
+                           SC.resolve_layout(
+                               None, SU.get_setting("scout_compact", "1") != "0"))
+        SU.set_setting("scout_sections_v", _PREF_V)
+    _lay = SU.get_setting("scout_layout", "") or SC.LAYOUT_DEFAULT
+    try:
+        _diag = int(SU.get_setting("scout_diagrams", "") or SC.DIAGRAMS_DEFAULT)
+    except ValueError:
+        _diag = SC.DIAGRAMS_DEFAULT
+    return {
+        "screen": SC.expand_hidden(_csv_set(
+            SU.get_setting("scout_hidden_screen", ""))),
+        "print": SC.expand_hidden(_csv_set(
+            SU.get_setting("scout_hidden_print", ""))),
+        "layout": _lay if _lay in SC.LAYOUTS else SC.LAYOUT_DEFAULT,
+        "diagrams": _diag if _diag in SC.DIAGRAM_CHOICES else SC.DIAGRAMS_DEFAULT,
+        "shotwall": SU.get_setting("scout_shotwall", ""),
+    }
+
+
+def _customize_panel(prefs, n_personnel):
+    """The ⚙ panel: the layout picker, the named presets, the live page budget
+    and the two-column (screen / paper) toggle grid. Writes straight through to
+    app_settings and mutates `prefs` so the rest of this render sees the change
+    without waiting for a rerun."""
+    _est = SC.estimate_pages(
+        prefs["print"], layout=prefs["layout"], personnel=n_personnel,
+        diagrams=prefs["diagrams"], shotwall=prefs["shotwall"])
+    with st.expander(f"⚙ Customize sheet — ≈ {_est:g} printed pages"):
+        st.caption("Two columns of toggles: **Screen** is what this tab shows, "
+                   "**Paper** is what the hand-out prints. They are separate, so "
+                   "the tab can carry every read while the sheet stays short.")
+        c1, c2, c3 = st.columns([2, 1, 1])
+        _lopts = list(SC.LAYOUTS)
+        _lay = c1.selectbox(
+            "Print layout", _lopts, index=_lopts.index(prefs["layout"]),
+            format_func=lambda k: SC.LAYOUTS[k][0], key="scout_layout_sel",
+            help="Letter at .4in margins is 7.7in of printable width portrait "
+                 "and 10.2in landscape. Three 3.2in columns hold these tables "
+                 "comfortably — about 1.5× the density of portrait-2-column, "
+                 "with nothing removed. The pure-pip PDF engine ignores the "
+                 "column count and falls back to one wide column, which is why "
+                 "landscape still degrades to something readable.")
+        if _lay != prefs["layout"]:
+            SU.set_setting("scout_layout", _lay)
+            prefs["layout"] = _lay
+        _dg = c2.selectbox(
+            "Blank courts", list(SC.DIAGRAM_CHOICES),
+            index=list(SC.DIAGRAM_CHOICES).index(prefs["diagrams"]),
+            key="scout_diag_sel",
+            help="Blank half-courts to draw on after printing. This was fixed "
+                 "at eight — close to a full page, every print.")
+        if _dg != prefs["diagrams"]:
+            SU.set_setting("scout_diagrams", str(_dg))
+            prefs["diagrams"] = _dg
+        _wopts = [k for k, _ in SC.SHOTWALL_SPLITS]
+        _wlab = dict(SC.SHOTWALL_SPLITS)
+        _wall = c3.selectbox(
+            "Shot wall", _wopts,
+            index=_wopts.index(prefs["shotwall"])
+            if prefs["shotwall"] in _wopts else 0,
+            format_func=lambda k: _wlab[k], key="scout_wall_sel",
+            help=f"Which ONE split of small courts prints, {SC.SHOTWALL_CAP} "
+                 "courts max. All four splits stay on this tab, where they are "
+                 "free; on paper they used to be able to stack about twenty.")
+        if _wall != prefs["shotwall"]:
+            SU.set_setting("scout_shotwall", _wall)
+            prefs["shotwall"] = _wall
+
+        st.markdown("**Presets** — a starting point for the paper column")
+        _pc = st.columns(len(SC.PRESETS))
+        for _i, (_pname, _pset) in enumerate(SC.PRESETS.items()):
+            if _pc[_i].button(_pname, key=f"scout_preset_{_i}",
+                              width="stretch"):
+                SU.set_setting("scout_hidden_print", ",".join(sorted(_pset)))
+                prefs["print"] = SC.expand_hidden(set(_pset))
+                st.rerun()
+
+        _new_screen, _new_print = set(), set()
+        _groups = []
+        for _k, _lbl, _grp in SCOUT_SECTIONS:
+            if _grp not in _groups:
+                _groups.append(_grp)
+        for _grp in _groups:
+            st.markdown(f"**{_grp}**")
+            for _k, _lbl in [(k, l) for k, l, g in SCOUT_SECTIONS if g == _grp]:
+                _lc, _sc, _pc2 = st.columns([6, 1, 1])
+                _lc.markdown(
+                    f"<span style='font-size:13px'>{html.escape(_lbl)}</span>"
+                    + (f"<span style='color:#8b949e;font-size:11px'> · "
+                       f"≈{SC.SECTION_WEIGHT[_k]:.2f}pp</span>"
+                       if SC.SECTION_WEIGHT.get(_k) else ""),
+                    unsafe_allow_html=True)
+                if not _sc.checkbox("Screen", value=(_k not in prefs["screen"]),
+                                    key=f"scout_sec_{_k}",
+                                    label_visibility="collapsed"):
+                    _new_screen.add(_k)
+                if not _pc2.checkbox("Paper", value=(_k not in prefs["print"]),
+                                     key=f"scout_prt_{_k}",
+                                     label_visibility="collapsed"):
+                    _new_print.add(_k)
+        if _new_screen != prefs["screen"]:
+            SU.set_setting("scout_hidden_screen", ",".join(sorted(_new_screen)))
+            prefs["screen"] = SC.expand_hidden(_new_screen)
+        if _new_print != prefs["print"]:
+            SU.set_setting("scout_hidden_print", ",".join(sorted(_new_print)))
+            prefs["print"] = SC.expand_hidden(_new_print)
+        st.caption("Left checkbox = show on this tab · right = print on the "
+                   "sheet. The ≈pp figure beside each section is its rough "
+                   "printed height, and the header above sums the ones you "
+                   "have on paper.")
+    return prefs
+
+
+def _sheet_download(sc, opp_label, extra, prefs, *, key):
+    """The Prepare / download pair plus the preview, for BOTH the tracked sheet
+    and the cold-opponent one.
+
+    There used to be two copies of this — the cold branch built its own download
+    with a second `printable_html` call site — so every change to the sheet had
+    two places to keep in sync and the cold sheet quietly drifted. One call site
+    now, and the print prefs reach it as a single object.
+    """
+    from helpers.ui import pdf_or_html_download, prepared_doc
+    _fp = (tuple(sorted(prefs["print"])), prefs["layout"], prefs["diagrams"],
+           prefs["shotwall"])
+    pdf_or_html_download(
+        "Scout sheet",
+        lambda: SC.printable_html(
+            sc, opp_label, hidden=prefs["print"], extra=extra,
+            layout=prefs["layout"], diagrams=prefs["diagrams"],
+            shotwall=prefs["shotwall"]),
+        f"scout_{sc['name'].replace(' ', '_')}", key=key, fp=_fp)
+    with st.expander("Preview printable sheet"):
+        # An expander body runs whether or not it is open, so building a second
+        # copy here would pay back the whole cost the builder just saved. The
+        # preview shows what the download prepared.
+        html_doc = prepared_doc(key, _fp)
+        if html_doc:
+            components.html(html_doc, height=620, scrolling=True)
+        else:
+            st.caption("Prepare the sheet above to preview it here.")
 
 
 def _saved_plays_for_sheet(limit=6):
@@ -109,59 +294,90 @@ def _xpp_model(g):
         shots=S.located_shots(events=S.fetch_events(PT._tracked_game_ids(g))))
 
 
+# How many tracked games an opponent needs before these absolute thresholds are
+# allowed to speak. They are rates with no shrinkage — a one-game opponent who
+# shot 52% eFG gets "efficient shooting team" in exactly the confident voice a
+# twenty-game one does, and thin books make plain rates extreme
+# ([[thin-books-inflate-plain-z]]). Under the floor the sheet says how thin the
+# book is instead of pretending it isn't.
+AUTO_TIP_MIN_GP = 3
+
+
+def _tracked_gp(ctx):
+    """Tracked games behind this scout — the sample every tip below is priced
+    on. `tracked_ids` is already the entitlement-filtered set, so a League-wide
+    coach is gated on what they can actually see, not on what exists."""
+    try:
+        return len(ctx.bundle.get("tracked_ids") or ())
+    except Exception:
+        return 0
+
+
 def _auto_report_tips(ctx):
-    """The rule-based auto scouting tips (markdown **bold**). Shared by the
-    on-screen 'Scouting report' block and the printable sheet so they never drift."""
+    """The rule-based auto scouting tips as ``[(side, text), …]`` with side in
+    {'guard', 'attack'} — markdown **bold**.
+
+    Sided because these merged into Keys (2026-09-11): they used to print as
+    their own "Scouting report" list immediately under Guard them / Attack them,
+    a second rule-based list from a different code path reading the same inputs
+    at different thresholds, free to contradict the first on the same page.
+    Returns [] under AUTO_TIP_MIN_GP tracked games rather than speaking from a
+    book too thin to have an opinion.
+    """
     tips = []
+    if _tracked_gp(ctx) < AUTO_TIP_MIN_GP:
+        return tips
     if ctx.ff["off"]["eFG"] >= 0.50:
-        tips.append("**Efficient shooting team** — eFG% "
+        tips.append(("guard", "**Efficient shooting team** — eFG% "
                     f"{ctx.pctf(ctx.ff['off']['eFG'])}; contest everything and keep "
-                    "them off the offensive glass.")
+                    "them off the offensive glass."))
     elif ctx.ff["off"]["eFG"] <= 0.42:
-        tips.append("**Below-average shooting** — eFG% "
+        tips.append(("guard", "**Below-average shooting** — eFG% "
                     f"{ctx.pctf(ctx.ff['off']['eFG'])}; pack the paint and live with "
-                    "contested jumpers.")
+                    "contested jumpers."))
     if ctx.ff["off"]["TOV"] >= 0.18:
-        tips.append("**Turnover-prone** — gives it away on "
+        tips.append(("guard", "**Turnover-prone** — gives it away on "
                     f"{ctx.pctf(ctx.ff['off']['TOV'])} of trips; pressure the ball "
-                    "to force live-ball turnovers.")
+                    "to force live-ball turnovers."))
     if ctx.ff["off"]["ORB"] >= 0.33:
-        tips.append("**Crashes the offensive glass** — OREB% "
+        tips.append(("guard", "**Crashes the offensive glass** — OREB% "
                     f"{ctx.pctf(ctx.ff['off']['ORB'])}; box out and secure the "
-                    "first rebound.")
+                    "first rebound."))
     if ctx.soff["pct_paint"] >= 0.50:
-        tips.append("**Paint-heavy offense** — "
+        tips.append(("guard", "**Paint-heavy offense** — "
                     f"{ctx.pctf(ctx.soff['pct_paint'])} of points in the paint; wall "
-                    "up the rim and make them prove the jumper.")
+                    "up the rim and make them prove the jumper."))
     elif ctx.brk["3PAr"] >= 0.40:
-        tips.append("**Lives behind the arc** — "
+        tips.append(("guard", "**Lives behind the arc** — "
                     f"{ctx.pctf(ctx.brk['3PAr'])} of shots are threes; run them off "
-                    "the line.")
+                    "the line."))
     if ctx.ff["def"]["TOV"] >= 0.18:
-        tips.append("**Forces turnovers** — takes it away on "
+        tips.append(("attack", "**Forces turnovers** — takes it away on "
                     f"{ctx.pctf(ctx.ff['def']['TOV'])} of opponent trips; value "
-                    "every possession and limit careless passes.")
+                    "every possession and limit careless passes."))
     if ctx.ff["def"]["eFG"] <= 0.44:
-        tips.append("**Locks down shots** — holds opponents to "
+        tips.append(("attack", "**Locks down shots** — holds opponents to "
                     f"{ctx.pctf(ctx.ff['def']['eFG'])} eFG; attack early before the "
-                    "defense sets.")
+                    "defense sets."))
     pace = ctx.summ.get("POSS_pg", 0)
     if pace >= 70:
-        tips.append("**Plays fast** — "
+        tips.append(("guard", "**Plays fast** — "
                     f"{pace:.0f} possessions/game; control tempo to shorten "
-                    "the game if you're the underdog.")
+                    "the game if you're the underdog."))
     elif pace and pace < 60:
-        tips.append("**Slow, deliberate pace** — "
+        tips.append(("attack", "**Slow, deliberate pace** — "
                     f"{pace:.0f} possessions/game; speed them up to drag them "
-                    "out of their comfort zone.")
+                    "out of their comfort zone."))
     rated_pl = [p for p in ctx.players if p["PPG"] is not None]
     if rated_pl:
         top = max(rated_pl, key=lambda p: p["PPG"])
         share = top["PTS"] / max(ctx.tb["PTS"], 1)
         if share >= 0.28:
-            tips.append(f"**Star-dependent** — #{top['number']} "
-                        f"{top['name']} scores {share*100:.0f}% of the team's "
-                        "points; key on them and force someone else to beat you.")
+            tips.append(("guard",
+                         f"**Star-dependent** — #{top['number']} "
+                         f"{top['name']} scores {share*100:.0f}% of the team's "
+                         "points; key on them and force someone else to beat "
+                         "you."))
     return tips
 
 
@@ -467,45 +683,12 @@ def render(ctx):
             st.caption("Off the scouting list: "
                        + ", ".join(_names[p] for p in _hide if p in _names) + ".")
 
-    # ── per-coach: pick what shows (this tab + the printable sheet) ───────────
-    # Legacy bundle keys are expanded to their child keys so an old opt-out still
-    # hides the whole bundle (the two coarse keys became per-table keys).
-    _hidden = SC.expand_hidden(set(filter(None,
-                  (SU.get_setting("scout_hidden_sections", "") or "").split(","))))
-    _compact = SU.get_setting("scout_compact", "1") != "0"
-    with st.expander("⚙ Customize sheet — pick what shows"):
-        st.caption("Every table and chart is its own toggle — print just the one "
-                   "or two you want. Picks save automatically and apply to this tab "
-                   "AND the printable hand-out.")
-        _new_compact = st.checkbox(
-            "Compact 2-column printable (fits much more per page)",
-            value=_compact, key="scout_compact_cb",
-            help="Flows the text tables into two columns on the printable sheet so "
-                 "more fits on one page. Wide blocks (shot chart, personnel) stay "
-                 "full width.")
-        if _new_compact != _compact:
-            SU.set_setting("scout_compact", "1" if _new_compact else "0")
-            _compact = _new_compact
-        _new_hidden = set()
-        # group the toggles so the longer per-table list stays navigable
-        _seen_groups = []
-        for _k, _lbl, _grp in SCOUT_SECTIONS:
-            if _grp not in _seen_groups:
-                _seen_groups.append(_grp)
-        for _grp in _seen_groups:
-            st.markdown(f"**{_grp}**")
-            _items = [(k, l) for k, l, g in SCOUT_SECTIONS if g == _grp]
-            _cc = st.columns(2)
-            for _i, (_k, _lbl) in enumerate(_items):
-                _on = _cc[_i % 2].checkbox(_lbl, value=(_k not in _hidden),
-                                           key=f"scout_sec_{_k}")
-                if not _on:
-                    _new_hidden.add(_k)
-        if _new_hidden != _hidden:
-            SU.set_setting("scout_hidden_sections", ",".join(sorted(_new_hidden)))
-            _hidden = _new_hidden
-        st.caption("The printable sheet ends with a grid of blank half-courts — "
-                   "write each play's name on the line and draw it by hand.")
+    # ── per-coach: pick what shows on SCREEN and what prints on PAPER ────────
+    # Two sets, not one. Legacy bundle keys are expanded to their child keys so
+    # an old opt-out still hides the whole bundle (the two coarse keys became
+    # per-table keys), and the pre-split single key seeds both on first read.
+    _prefs = _customize_panel(_section_prefs(), len(sc.get("personnel") or ()))
+    _hidden = _prefs["screen"]          # this tab; _prefs["print"] is the sheet
 
     def _show(key):
         return key not in _hidden
@@ -562,24 +745,14 @@ def render(ctx):
                            "plays": _saved_plays_for_sheet()}
             st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                         unsafe_allow_html=True)
-            from helpers.ui import pdf_or_html_download, prepared_doc
-            _fp = (tuple(_hidden), _compact)
-            pdf_or_html_download(
-                "Scout sheet",
-                lambda: SC.printable_html(sc, opp_label, hidden=_hidden,
-                                          extra=_extra_cold, compact=_compact),
-                f"scout_{sc['name'].replace(' ', '_')}",
-                key="scout_dl_cold", fp=_fp)
-            with st.expander("Preview printable sheet"):
-                # An expander body runs whether or not it is open, so building
-                # a second copy here would pay back the whole cost the builder
-                # just saved. The preview shows what the download prepared.
-                html_doc = prepared_doc("scout_dl_cold", _fp)
-                if html_doc:
-                    components.html(html_doc, height=620, scrolling=True)
-                else:
-                    st.caption("Prepare the sheet above to preview it here.")
+            _sheet_download(sc, opp_label, _extra_cold, _prefs,
+                            key="scout_dl_cold")
         return
+
+    # Zone shooting vs the expected-FG baseline. Computed once here because two
+    # places read it — the Shooting-by-zone section on screen and the printable's
+    # single zone table — since the two stopped being separate sections.
+    _zxfg = _zone_xfg_rows(ctx)
 
     # ── group dividers (UI alignment with the profile/overview zone grammar):
     #    pure display — no toggle keys, no printable change, every section keeps
@@ -592,31 +765,32 @@ def render(ctx):
             f"</div>", unsafe_allow_html=True)
 
     # ── keys to the game ─────────────────────────────────────────────────────
+    # ONE keys section. The rule-based auto-report used to render as its own
+    # "Scouting report" list directly underneath — a second bullet list, from a
+    # second code path, reading the same inputs at different thresholds, free to
+    # contradict the first on the same screen. Same merge as the printable.
     _group_hdr("Game keys & report")
+    _tips = _auto_report_tips(ctx)
+    _gp_n = _tracked_gp(ctx)
     if _show("keys"):
+        _gk = list(sc["guard"]) + [t for s, t in _tips if s == "guard"]
+        _ak = list(sc["attack"]) + [t for s, t in _tips if s == "attack"]
         k1, k2 = st.columns(2)
-        with k1:
-            st.markdown("<div class='lab-hdr'>How to guard them</div>",
-                        unsafe_allow_html=True)
-            for gtip in sc["guard"]:
-                st.markdown(f"- {gtip}")
-        with k2:
-            st.markdown("<div class='lab-hdr'>How to attack them</div>",
-                        unsafe_allow_html=True)
-            for atip in sc["attack"]:
-                st.markdown(f"- {atip}")
-
-    # ── auto scouting report ──────────────────────────────────────────────────
-    if _show("auto_report"):
-        st.markdown("<div class='lab-hdr'>Scouting report</div>",
-                    unsafe_allow_html=True)
-        tips = _auto_report_tips(ctx)
-        if tips:
-            for t in tips:
-                st.markdown(f"- {t}")
-        else:
-            st.caption("A balanced profile — no single factor stands out as a "
-                       "scouting key.")
+        for _col, _hdr, _lines in ((k1, "How to guard them", _gk),
+                                   (k2, "How to attack them", _ak)):
+            with _col:
+                st.markdown(f"<div class='lab-hdr'>{_hdr}</div>",
+                            unsafe_allow_html=True)
+                for _ln in _lines:
+                    st.markdown(f"- {_ln}")
+        if _gp_n < AUTO_TIP_MIN_GP:
+            st.caption(
+                f"Only {_gp_n} tracked game{'' if _gp_n == 1 else 's'} of this "
+                f"team are visible to you — under {AUTO_TIP_MIN_GP} the "
+                "rate-based keys (shooting, turnovers, pace, star share) are "
+                "held back rather than stated at full confidence off a book "
+                "too thin to have an opinion. The structural keys above still "
+                "apply.")
 
     # ── personnel ────────────────────────────────────────────────────────────
     _group_hdr("Personnel")
@@ -745,22 +919,23 @@ def render(ctx):
     if _show("four_factors") and sc["factors"]:
         st.markdown("<div class='lab-hdr'>Team profile — four factors & "
                     "tendencies</div>", unsafe_allow_html=True)
+        # The shared percentile-bar component, not a hand-rolled plotly bar with
+        # a bare "71 pctl" label: pctile_bar states the POOL it ranked against
+        # and falls back to a plain rank under cards.POOL_FLOOR, so a percentile
+        # over five tracked teams can no longer read as an achievement. Same
+        # component and same wording as the printable sheet.
+        import helpers.cards as CARDS
         ffx = [f for f in sc["factors"] if f["value"] is not None]
-        ffig = go.Figure(go.Bar(
-            x=[f["pct"] or 0 for f in ffx], y=[f["label"] for f in ffx],
-            orientation="h",
-            marker_color=[ctx.GOOD if (f["pct"] or 0) >= 60 else
-                          (ctx.BAD if (f["pct"] or 0) <= 40 else "#8b949e")
-                          for f in ffx],
-            text=[f"{f['value']:.1f} · "
-                  f"{('%.0f'%f['pct']) if f['pct'] is not None else '—'} pctl"
-                  for f in ffx], textposition="auto", marker_line_width=0))
-        ffig.add_vline(x=50, line=dict(color="#8b949e", width=1, dash="dot"))
-        ffig.update_xaxes(title="League percentile", range=[0, 100])
-        ctx.style(ffig, max(300, 40*len(ffx)))
-        st.plotly_chart(ffig, width="stretch", key="scout_factors")
-        st.caption("Green bars ≥60th percentile (a strength); red ≤40th (exploit). "
-                   "The percentile bar replaces the old strengths/exploit lists.")
+        st.markdown("".join(
+            CARDS.pctile_bar(f["label"], f"{f['value']:.1f}", f["pct"],
+                             n=f.get("n"))
+            for f in ffx), unsafe_allow_html=True)
+        _pool_n = next((f.get("n") for f in ffx if f.get("n")), 0)
+        st.caption(
+            f"Ranked against {_pool_n or '—'} rated teams this gender. Green "
+            "≥75th, blue ≥50th, amber ≥25th, red below. Under "
+            f"{CARDS.POOL_FLOOR} teams the bar shows the rank instead — a "
+            "percentile over five observations is not a fact.")
 
         # ── identity & tendencies (a couple meaningful extra reads) ─────────
         if ctx.has_tracked:
@@ -905,24 +1080,10 @@ def render(ctx):
         else:
             st.caption("Not enough 3-point volume to profile shooters yet.")
 
-    # ── efficiency summary ────────────────────────────────────────────────────
-    if _show("efficiency"):
-        st.markdown("<div class='lab-hdr'>Efficiency summary</div>",
-                    unsafe_allow_html=True)
-        st.markdown(
-            f"- **Offense:** {ctx.summ.get('ORtg', 0):.1f} pts / 100 poss on "
-            f"{ctx.pctf(ctx.ff['off']['eFG'])} eFG; turns it over on "
-            f"{ctx.pctf(ctx.ff['off']['TOV'])} of trips and rebounds "
-            f"{ctx.pctf(ctx.ff['off']['ORB'])} of its own misses.")
-        st.markdown(
-            f"- **Defense:** {ctx.summ.get('DRtg', 0):.1f} pts / 100 poss allowed on "
-            f"{ctx.pctf(ctx.ff['def']['eFG'])} eFG; forces a turnover on "
-            f"{ctx.pctf(ctx.ff['def']['TOV'])} of opponent trips.")
-        st.markdown(
-            f"- **Tempo:** {ctx.summ.get('POSS_pg', 0):.1f} possessions/game — "
-            + ("an up-tempo team." if ctx.summ.get("POSS_pg", 0) >= 70
-               else "a controlled pace." if ctx.summ.get("POSS_pg", 0) >= 60
-               else "a slow, grind-it-out pace."))
+    # (The "Efficiency summary" block is gone — its ORtg / DRtg / Pace are the
+    # three header metrics at the top of this tab, and its eFG / TOV% / OREB%
+    # are rows in the four-factor bars directly above. It restated six numbers
+    # already on screen, in prose, and did it on the printable too.)
 
     # ── how they get their shots: tagged play calls (one-tap from tracker) ───
     # how they get their shots — each table is its own toggle (pc_offense /
@@ -1231,6 +1392,22 @@ def render(ctx):
                 text_fn=lambda a: f"{a['FG%']*100:.0f}%" if a["FGA"] else "—"),
                 width="stretch", key="scout_zones_fg")
         st.caption("Where they shoot and how they finish, split by shot value.")
+        # …and the expected-FG baseline for the same five zones, which used to
+        # be its own section further down the page with its own toggle. One
+        # question, one place — matching the printable's single zone table.
+        if _zxfg:
+            st.dataframe(pd.DataFrame([
+                {"Zone": r["label"],
+                 "2P att": r["fga2"], "2P FG%": round((r["fg2"] or 0) * 100),
+                 "2P xFG%": round((r["xfg2"] or 0) * 100),
+                 "2P ±": round(((r["fg2"] or 0) - (r["xfg2"] or 0)) * 100),
+                 "3P att": r["fga3"], "3P FG%": round((r["fg3"] or 0) * 100),
+                 "3P xFG%": round((r["xfg3"] or 0) * 100),
+                 "3P ±": round(((r["fg3"] or 0) - (r["xfg3"] or 0)) * 100)}
+                for r in _zxfg]), hide_index=True, width="stretch")
+            st.caption("± is FG% over a league baseline (xFG%) for those shots. "
+                       "Positive = they beat the expectation from there, so take "
+                       "it away.")
     elif _show("zones") and sc["zones"] and any(z["FGA"] for z in sc["zones"].values()):
         st.markdown("<div class='lab-hdr'>Shooting by zone</div>",
                     unsafe_allow_html=True)
@@ -1320,7 +1497,6 @@ def render(ctx):
     #    the new printable tables — each self-hides when its data is empty) ──────
     _qsplit = _quarter_split(ctx)
     _gsplit = _guarded_split(ctx)
-    _zxfg = _zone_xfg_rows(ctx)
     _creat = _creation_rows(ctx)
     _conc = (None if _self else _concession(ctx))
     _pred = _predict(ctx, _self)
@@ -1359,16 +1535,9 @@ def render(ctx):
              "Open eFG": round(r["o_efg"] * 100),
              "Contested%": round(r["share"] * 100)} for r in _gsplit]),
             hide_index=True, width="stretch")
-    if _show("zone_xfg") and _zxfg:
-        st.markdown("<div class='lab-hdr'>Zone shooting vs expected (2s &amp; 3s)"
-                    "</div>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame([
-            {"Zone": r["label"],
-             "2P att": r["fga2"], "2P FG%": round((r["fg2"] or 0) * 100),
-             "2P xFG%": round((r["xfg2"] or 0) * 100),
-             "3P att": r["fga3"], "3P FG%": round((r["fg3"] or 0) * 100),
-             "3P xFG%": round((r["xfg3"] or 0) * 100)} for r in _zxfg]),
-            hide_index=True, width="stretch")
+    # (The stand-alone "Zone shooting vs expected" table is gone — it ranked the
+    # same five zones as Shooting by zone with different columns. The expected-FG
+    # baseline now rides inside that section, on screen and on paper alike.)
     if _show("creation") and _creat:
         st.markdown("<div class='lab-hdr'>Self-created vs assisted</div>",
                     unsafe_allow_html=True)
@@ -1388,22 +1557,18 @@ def render(ctx):
 
     # ── printable export (always available; honours the section picks above) ──
     # Page-derived blocks the build_scout engine doesn't own, fed to the printable
-    # sheet so it reaches parity with this tab (breakeven, efficiency, auto-report,
-    # 3-pt profile, possession length, notes) + the blank-diagram layout choice.
+    # sheet so it reaches parity with this tab (breakeven, the auto-report keys,
+    # the 3-pt profile, possession length, notes). The layout, blank-court count
+    # and shot-wall split are print PREFERENCES and ride in on `_prefs`.
     _extra = {
         "breakeven": {
             "2P%": ctx.brk["2P%"], "3P%": ctx.brk["3P%"], "be3": ctx.brk["be3"],
             "3PAr": ctx.brk["3PAr"], "ev2": ctx.brk["ev2"], "ev3": ctx.brk["ev3"],
             "edge": ctx.brk["edge"], "pct_paint": ctx.soff["pct_paint"],
         },
-        "efficiency": {
-            "ORtg": ctx.summ.get("ORtg", 0), "DRtg": ctx.summ.get("DRtg", 0),
-            "POSS_pg": ctx.summ.get("POSS_pg", 0),
-            "off_eFG": ctx.ff["off"]["eFG"], "off_TOV": ctx.ff["off"]["TOV"],
-            "off_ORB": ctx.ff["off"]["ORB"], "def_eFG": ctx.ff["def"]["eFG"],
-            "def_TOV": ctx.ff["def"]["TOV"],
-        },
-        "auto_report": _auto_report_tips(ctx),
+        # (no "efficiency" block: it restated the band chips and the four-factor
+        # rows, so the sheet dropped the section rather than the numbers)
+        "auto_report": _tips,           # [(side, text)] — merged into Keys
         "three_profile": _three_profile(ctx),
         "poss_length": [r for r in (ctx.bundle.get("poss_length") or [])
                         if r["label"] != "Untimed" and r["FGA"]],
@@ -1424,20 +1589,4 @@ def render(ctx):
     }
     st.markdown("<div class='lab-hdr'>Printable scout sheet</div>",
                 unsafe_allow_html=True)
-    from helpers.ui import pdf_or_html_download, prepared_doc
-    _fp = (tuple(_hidden), _compact)
-    pdf_or_html_download(
-        "Scout sheet",
-        lambda: SC.printable_html(sc, opp_label, hidden=_hidden, extra=_extra,
-                                  compact=_compact),
-        f"scout_{sc['name'].replace(' ', '_')}",
-        key="scout_dl", fp=_fp)
-    with st.expander("Preview printable sheet"):
-        # Same reason as the cold-start sheet above: the expander body runs
-        # even when closed, so the preview reads the prepared document rather
-        # than rendering its own.
-        html_doc = prepared_doc("scout_dl", _fp)
-        if html_doc:
-            components.html(html_doc, height=620, scrolling=True)
-        else:
-            st.caption("Prepare the sheet above to preview it here.")
+    _sheet_download(sc, opp_label, _extra, _prefs, key="scout_dl")

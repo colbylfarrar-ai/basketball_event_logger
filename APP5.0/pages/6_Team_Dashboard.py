@@ -6025,6 +6025,39 @@ if _tdview == "Lab":
 # report on a team you select while keeping YOUR team for the matchup planner.
 # The entitlement read-filter is recomputed for the opponent (League-wide coach →
 # their pooled games only; cold opponent → record/rank + your hand-entered intel).
+def _scout_card_opener(gp, paid):
+    """A `quick_view(pid)` bound to ONE team's read-filtered pool, for the Scout
+    tab's personnel cards (SCOUT_TAB_ROADMAP §9.1).
+
+    The full 30-block player card already renders in a modal, one click from any
+    table, no page switch — and the scout sheet's personnel card is the one
+    surface that never got it. Hanging it off each card is what reconciles "I
+    love how much information is on the sheet" with "I don't want four pages":
+    the depth lives on screen, on the one opponent player the coach cares about,
+    and the paper carries the selection.
+
+    `gp` is the entitlement-scoped game-id pool for THAT team — an empty tuple
+    is an empty pool and must stay one, never widen to None
+    ([[empty-gids-means-everything]]). None = own team / admin / current season.
+    """
+    if not paid:
+        return None
+
+    def _open(pid):
+        from helpers.dashboard.player_card import quick_view
+        pool = _ptable_full(gender, gp)
+        P = pool.get(pid)
+        if not P:
+            st.caption("No rated line for that player in the games you can see.")
+            return
+        _zs, _zg, _hs = _pp_zone_tables(gp)
+        quick_view(pid, gender, season=season_pick, season_gp=gp, P=P,
+                   rows=sorted(pool.values(), key=lambda r: (r["Rank"] or 1e9)),
+                   paid=True, accent=ACCENT, zsplits=_zs, zguard=_zg,
+                   hsplits=_hs, vis=gp)
+    return _open
+
+
 def _opp_scout_ctx(opp_tid):
     _ov = ENT.team_visible_tracked_ids(AUTH.current_user(), opp_tid,
                                        season=season_pick)
@@ -6033,6 +6066,12 @@ def _opp_scout_ctx(opp_tid):
     _oraw = any(g["tracked"] for g in ob["game_log"])
     o_has, _olock = ENT.tracked_gate(AUTH.current_user(), opp_tid, _oraw,
                                      season=season_pick)
+    # The pool every per-player read below ranks and scopes against. `_ovk` is
+    # already season-scoped by team_visible_tracked_ids, so it wins where it
+    # exists; None (own team / admin) falls back to the season's gender pool.
+    # Threaded into EVERY new field, not just the bundle — a League-wide coach
+    # must still see only their pooled games of this opponent.
+    _ogp = _ovk if _ovk is not None else _season_gp
     return SimpleNamespace(
         bundle=ob, players=ob["players"], team_id=opp_tid, gender=gender,
         has_tracked=o_has, summ=ob["summary"], soff=ob["scoring_off"],
@@ -6041,7 +6080,26 @@ def _opp_scout_ctx(opp_tid):
         scout=lambda _t, _g, _lim, _ex: _scout(_t, _g, _lim, _ex, _ovk,
                                                season_pick, _season_gp),
         archetypes=_archetypes, located_team=_located_team,
-        zone_pair_bars=_zone_pair_bars)
+        zone_pair_bars=_zone_pair_bars,
+        # ── widened 2026-09-11 (SCOUT_TAB_ROADMAP §7.2) ──────────────────────
+        # This returned a 13-field namespace, and every Insights / Player-Profile
+        # read the Scout tab wanted to borrow needed a field it did not carry —
+        # so each port was a rewrite instead of a call. These are the opponent's
+        # read-filtered equivalents of what the page already computes for the
+        # home team.
+        season=season_pick, season_gp=_ogp, tracked_ids=ob["tracked_ids"],
+        ptable_full=lambda: _ptable_full(gender, _ogp),
+        pp_zone_tables=lambda: _pp_zone_tables(_ogp),
+        badges=lambda: _badges(gender, _ogp),
+        quick_view=_scout_card_opener(_ogp, o_has),
+        is_self=False)
+
+# The Scout tab's per-player pool for YOUR OWN team. `_vis_key is None` means
+# own team / admin (unrestricted) and falls back to the season pool; an EMPTY
+# tuple means "entitled to nothing here" and must stay empty — `or` would widen
+# it back to the whole season, which is the class of bug in
+# [[empty-gids-means-everything]].
+_scout_gp = _season_gp if _vis_key is None else _vis_key
 
 # every rated team this gender (tid, name) for the opponent picker
 _all_teams = sorted(((tid, v.get("name", f"#{tid}")) for tid, v in scored.items()),
@@ -6059,6 +6117,17 @@ _scout_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
                                  season_pick, _season_gp),
                              archetypes=_archetypes, located_team=_located_team,
                              zone_pair_bars=_zone_pair_bars,
+                             # the same widened fields the opponent ctx carries,
+                             # so a self-scout renders every section an opponent
+                             # scout does (§7.2)
+                             season=season_pick, season_gp=_scout_gp,
+                             tracked_ids=bundle["tracked_ids"],
+                             ptable_full=lambda: _ptable_full(gender, _scout_gp),
+                             pp_zone_tables=lambda: _pp_zone_tables(_scout_gp),
+                             badges=lambda: _badges(gender, _scout_gp),
+                             quick_view=_scout_card_opener(_scout_gp,
+                                                           has_tracked),
+                             is_self=True,
                              # opponent scout: pick & scout any team, keep yours
                              opp_ctx=_opp_scout_ctx, all_teams=_all_teams,
                              my_team_id=team_id)

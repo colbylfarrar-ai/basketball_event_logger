@@ -100,6 +100,7 @@ SHOTWALL_CAP = 6          # a coach reads two or three of these, never twenty
 # budget, not a typesetter, and it says "≈" on screen.
 SECTION_WEIGHT = {
     "keys": 0.16, "matchups": 0.10, "four_factors": 0.10, "breakeven": 0.07,
+    "game_plan": 0.18, "engine_reads": 0.28,
     "predictability": 0.07, "personnel": 0.55, "personnel_deep": 0.45,
     "player_plays": 0.0, "custom_notes": 0.05, "three_profile": 0.07,
     "impact_splits": 0.0, "pc_offense": 0.10, "pc_defense": 0.10,
@@ -161,6 +162,70 @@ PRESETS = {
 def _mean(pool):
     pool = [v for v in pool if v is not None]
     return sum(pool) / len(pool) if pool else 0.0
+
+
+#: Scouting-key bands. Bands never interleave — the same rule
+#: `insights_severity` uses, and for the same reason: a key whose size was
+#: MEASURED against the league and one whose size is only "it happened a lot"
+#: are not on a common scale, and pretending they are would let an arbitrary
+#: constant decide which one a coach reads first.
+BAND_MEASURED = 0     # a league percentile exists for the quantity it fired on
+BAND_TAGGED = 1       # a tag-derived key with real possession volume
+BAND_PLAIN = 2        # fired on a threshold with nothing behind it to size
+
+
+def _tagkey(text, poss=0):
+    """A key derived from play-call / defense tags. No league pool exists for
+    these, so they carry their possession count instead and rank among
+    themselves by it."""
+    return {"text": text, "pct": None, "metric": None,
+            "band": BAND_TAGGED, "vol": poss or 0}
+
+
+def key_weight(k):
+    """How far from league-average the quantity behind a key sits, 0-50.
+
+    The effect size of a scouting key, in the only units the measured keys
+    share. A key with no pool behind it weighs 0 here and is ranked inside its
+    own band instead — not because it is wrong, but because nothing here knows
+    how big it is, and a claim of unknown size does not get to outrank a
+    measured one.
+    """
+    p = (k or {}).get("pct")
+    return abs(p - 50) if p is not None else 0.0
+
+
+def key_band(k):
+    k = k or {}
+    if k.get("band") is not None:
+        return k["band"]
+    return BAND_MEASURED if k.get("pct") is not None else BAND_PLAIN
+
+
+def rank_keys(keys):
+    """Scouting keys, biggest effect first, bands never interleaving. Nothing is
+    dropped — a caller that wants a top-3 slices the result and says so on
+    screen (the rank-never-hide rule the Insights feed already follows)."""
+    return sorted(keys or [], key=lambda k: (
+        key_band(k), -key_weight(k), -(k.get("vol") or 0),
+        str(k.get("text", ""))))
+
+
+def merge_keys(engine_keys, auto_tips, side):
+    """One ranked list of keys for one side.
+
+    `engine_keys` are build_scout's rule-based keys (dicts carrying a league
+    percentile); `auto_tips` is `[(side, markdown)]` from the page's own tip
+    rules. These were two lists, from two code paths, printed one under the
+    other, reading the same inputs at different thresholds — so they could say
+    opposite things about the same team on the same page. Merged and ranked by
+    effect size, with the tip rules sorted after the measured keys because they
+    are threshold hits with no pool behind them.
+    """
+    tips = [{"text": t, "pct": None, "metric": None, "md": True,
+             "band": BAND_PLAIN}
+            for s, t in (auto_tips or []) if s == side]
+    return rank_keys(list(engine_keys or [])) + tips
 
 
 def team_zone(game_ids, team_pids):
@@ -253,44 +318,60 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
     weaknesses = [f for f in factors if f["pct"] is not None and f["pct"] <= 30]
 
     # ── how to GUARD / how to ATTACK (rule-based) ──
+    # Each key carries the league PERCENTILE of the quantity it fired on, so the
+    # list can be ordered by effect size rather than by the order the `if`s
+    # happen to appear in the source. That ordering is what makes a top-3 keys
+    # section (and the one-page call sheet) honest: the top three are actually
+    # the three furthest from the league, not the three whose rules were typed
+    # first. A key with no pool behind it keeps pct=None and sorts last, which
+    # is the correct place for a claim whose size is unknown.
     guard, attack = [], []
+
+    def _k(side, text, key, hib):
+        p = LA.percentile(me.get(key), pool(key), hib) if me else None
+        (guard if side == "guard" else attack).append(
+            {"text": text, "pct": p, "metric": key,
+             "band": BAND_MEASURED if p is not None else BAND_PLAIN})
+
     if me:
         if me.get("three_share", 0) >= 30:
-            guard.append("They live beyond the arc — run shooters off the line, "
-                         "no open catch-and-shoot threes.")
+            _k("guard", "They live beyond the arc — run shooters off the line, "
+               "no open catch-and-shoot threes.", "three_share", True)
         if me.get("paint_share", 0) >= 48:
-            guard.append("Paint-heavy offense — wall up the lane and force "
-                         "contested jumpers.")
+            _k("guard", "Paint-heavy offense — wall up the lane and force "
+               "contested jumpers.", "paint_share", True)
         if me.get("TOVpct", 0) >= 22:
-            guard.append("Turnover-prone — pressure the ball and trap, they'll "
-                         "give possessions away.")
+            _k("guard", "Turnover-prone — pressure the ball and trap, they'll "
+               "give possessions away.", "TOVpct", False)
         if me.get("ORBpct", 0) >= 33:
-            guard.append("Crash the offensive glass hard — box out on every shot, "
-                         "limit second chances.")
+            _k("guard", "Crash the offensive glass hard — box out on every shot, "
+               "limit second chances.", "ORBpct", True)
         if me.get("ast_to", 0) >= 1.2:
-            guard.append("Good ball movement — jump passing lanes and disrupt the "
-                         "first action.")
+            _k("guard", "Good ball movement — jump passing lanes and disrupt the "
+               "first action.", "ast_to", True)
         if me.get("Pace", 0) >= _mean(pool("Pace")):
-            guard.append("They want to run — get back in transition and make them "
-                         "play in the half-court.")
+            _k("guard", "They want to run — get back in transition and make them "
+               "play in the half-court.", "Pace", True)
         if me.get("oeFG", 0) >= _mean(pool("oeFG")):
-            attack.append("They give up efficient shots — push the ball and hunt "
-                          "good looks early in the clock.")
+            _k("attack", "They give up efficient shots — push the ball and hunt "
+               "good looks early in the clock.", "oeFG", False)
         if me.get("DRBpct", 100) <= 62:
-            attack.append("Beatable on the defensive glass — send crashers, chase "
-                          "offensive rebounds.")
+            _k("attack", "Beatable on the defensive glass — send crashers, chase "
+               "offensive rebounds.", "DRBpct", True)
         if me.get("pf_pg", 0) >= _mean(pool("pf_pg")):
-            attack.append("Foul-prone — drive the ball, draw contact and get them "
-                          "in the bonus.")
+            _k("attack", "Foul-prone — drive the ball, draw contact and get them "
+               "in the bonus.", "pf_pg", False)
         if me.get("stl_pg", 0) <= 6:
-            attack.append("They don't force many steals — patient ball movement "
-                          "will get a clean look.")
+            _k("attack", "They don't force many steals — patient ball movement "
+               "will get a clean look.", "stl_pg", True)
     if not guard:
-        guard.append("Balanced attack — take away their top scorer and make "
-                     "role players beat you.")
+        guard.append({"text": "Balanced attack — take away their top scorer and "
+                              "make role players beat you.",
+                      "pct": None, "metric": None, "band": BAND_PLAIN})
     if not attack:
-        attack.append("Sound defense — value the ball, attack early before their "
-                      "defense is set.")
+        attack.append({"text": "Sound defense — value the ball, attack early "
+                               "before their defense is set.",
+                       "pct": None, "metric": None, "band": BAND_PLAIN})
 
     # ── personnel cards ──
     roster = sorted([r for r in table.values() if r["team_id"] == team_id],
@@ -559,18 +640,19 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
         _dtop = _drun[0] if _drun else None
         if _dtop and _dtop["share"] >= 0.4:
             # "what they run" is YOUR offense's problem -> attack[]
-            attack.append(
+            attack.append(_tagkey(
                 f"They sit in {_dtop['label'].lower()} "
                 f"({_dtop['share'] * 100:.0f}% of tagged trips) — have your "
-                f"{_dtop['family']} offense ready.")
+                f"{_dtop['family']} offense ready.", _dtop["poss"]))
     # a scheme THEY can't score against (high volume, low PPP) -> YOUR defense
     _dfaced = [r for r in defenses_faced.get("rows", []) if r["poss"] >= 10]
     if _dfaced:
         _weak = min(_dfaced, key=lambda r: r["PPP"])
         if _weak["PPP"] <= 0.85:
-            guard.append(
+            guard.append(_tagkey(
                 f"They stall against {_weak['label'].lower()} "
-                f"({_weak['PPP']:.2f} PPP on {_weak['poss']} poss) — show it.")
+                f"({_weak['PPP']:.2f} PPP on {_weak['poss']} poss) — show it.",
+                _weak["poss"]))
 
     # ── AUTO KEYS: high-volume + extreme set profile -> one prose scout key ────
     # Only fires when a set has real volume AND its profile is lopsided, so it
@@ -586,24 +668,28 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
             # NOT a set that is a 3 by nature (spot-up), where it states the tag.
             if (_k == "transition" and _poss >= 10
                     and (_pr.get("3PA_rate") or 0) >= 0.45):
-                guard.append("They hunt transition 3s — get back and find "
-                             "shooters before they spot up.")
+                guard.append(_tagkey(
+                    "They hunt transition 3s — get back and find shooters "
+                    "before they spot up.", _poss))
             elif (_poss >= 12 and _share >= 0.10
                     and (_pr.get("3PA_rate") or 0) >= 0.55
                     and not PT.is_inherent(_k, "three")):
-                guard.append(f"Their {_lbl.lower()} is a three-point hunt — "
-                             "chase shooters off the line.")
+                guard.append(_tagkey(
+                    f"Their {_lbl.lower()} is a three-point hunt — chase "
+                    "shooters off the line.", _poss))
             # a set that gets to the rim at real volume — but NOT a set that is a
             # rim attack by nature (iso / post / cut / putback / duck-in).
             if (_poss >= 12 and (_pr.get("rim_rate") or 0) >= 0.6
                     and not PT.is_inherent(_k, "rim")):
-                guard.append(f"Their {_lbl.lower()} attacks the rim — wall up "
-                             "the lane and force a kick-out.")
+                guard.append(_tagkey(
+                    f"Their {_lbl.lower()} attacks the rim — wall up the lane "
+                    "and force a kick-out.", _poss))
             # a set that gets clean, open looks
             if _poss >= 12 and (_pr.get("open_rate") or 0) >= 0.6:
-                guard.append(f"Their {_lbl.lower()} gets clean looks "
-                             f"({(_pr['open_rate'] * 100):.0f}% open) — close "
-                             "out hard and switch screens cleanly.")
+                guard.append(_tagkey(
+                    f"Their {_lbl.lower()} gets clean looks "
+                    f"({(_pr['open_rate'] * 100):.0f}% open) — close out hard "
+                    "and switch screens cleanly.", _poss))
 
     # ── situational tendencies: play_type/defense usage by quarter / score / run.
     # Reuses the events fetched + entitlement-scoped above, from team_id's own
@@ -615,6 +701,11 @@ def build_scout(team_id, gender, scored, tracked, pack, table,
             situational = SIT.team_situational(team_id, ev, gender=gender)
         except Exception:
             situational = None
+
+    # Rank LAST — the tag-derived keys above are appended hundreds of lines
+    # after the rate-based ones, and a top-3 that ignored them would not be a
+    # top-3 of anything.
+    guard, attack = rank_keys(guard), rank_keys(attack)
 
     return {
         "name": name, "class": s.get("class", "N/A"),
@@ -797,20 +888,44 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
     # `extra["auto_report"]` is [(side, text), …] with side in {guard, attack}.
     keys_html = ""
     if _show("keys"):
-        _g = [("plain", x) for x in sc["guard"]]
-        _a = [("plain", x) for x in sc["attack"]]
-        for _side, _txt in (extra.get("auto_report") or []):
-            (_a if _side == "attack" else _g).append(("md", _txt))
+        _g = merge_keys(sc["guard"], extra.get("auto_report"), "guard")
+        _a = merge_keys(sc["attack"], extra.get("auto_report"), "attack")
 
         def _li(items):
             return "".join(
-                f"<li>{_md_bold(t) if kind == 'md' else e(t)}</li>"
-                for kind, t in items) or "<li>—</li>"
+                f"<li>{_md_bold(k['text']) if k.get('md') else e(k['text'])}</li>"
+                for k in items) or "<li>—</li>"
 
         keys_html = (f"<table class='cols'><tr>"
                      f"<td class='col'><h2>Guard them</h2><ul>{_li(_g)}</ul></td>"
                      f"<td class='col'><h2>Attack them</h2><ul>{_li(_a)}</ul></td>"
                      f"</tr></table>")
+
+    # ── the game plan (helpers.exploit) + the ported engine reads ────────────
+    # Both arrive as [(badge, n, html)] — the SAME tuples the tab renders
+    # through cards.verdict_card — so a coach cannot read one sentence on
+    # screen and a different one on the sheet.
+    def _vcard(lines):
+        return "".join(
+            f"<div class='vline'><span class='vbadge'>{e(str(b))}</span>"
+            + (f"<span class='vn'>n={e(str(n))}</span>" if n else "")
+            + f" {t}</div>" for b, n, t in lines)
+
+    plan_html = ""
+    _plan_lines = extra.get("game_plan") or []
+    if _show("game_plan") and _plan_lines:
+        plan_html = ("<h2>Game plan — what to run, what to play</h2>"
+                     f"<div class='vcard'>{_vcard(_plan_lines)}</div>"
+                     "<p class='note'>Your set-call efficiency crossed with "
+                     "their vulnerability to the same set, and the schemes they "
+                     "stall against. The full matrix is on the Scout tab.</p>")
+
+    engines_html = ""
+    _eng = extra.get("engine_reads") or []
+    if _show("engine_reads") and _eng:
+        engines_html = "".join(
+            f"<h2>{e(hdr)}</h2><div class='vcard'>{_vcard(lines)}</div>"
+            for hdr, lines in _eng)
 
     # ── defensive matchups (who guards whom; shared with War Room planner) ──
     mu_html = ""
@@ -1657,6 +1772,16 @@ table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;backg
 .pl-pct-track{background:#e7ebf0;border-radius:3px;height:5px;overflow:hidden;clear:both}
 .pl-pct-fill{height:5px;border-radius:3px}
 .dx{color:#5b6675;font-size:9px}
+/* The verdict card, in ink — the same (badge, n, sentence) shape as the
+   on-screen cards.verdict_card, so the sheet cannot say something the tab
+   does not. */
+.vcard{border:1px solid #e7ebf0;border-left:3px solid #f0a500;border-radius:7px;
+  background:#fbfcfe;padding:6px 8px;margin:4px 0;break-inside:avoid}
+.vline{font-size:10.5px;margin:3px 0}
+.vbadge{display:inline-block;background:#fff3d6;border:1px solid #f0d692;
+  border-radius:4px;color:#6b4e00;font-size:9px;font-weight:700;padding:1px 5px;
+  margin-right:4px}
+.vn{color:#8a94a2;font-size:9px;margin-right:3px}
 @media print{.wrap{padding:6px 12px} td.pcard,table.diag td{page-break-inside:avoid}}
 """
 
@@ -1671,6 +1796,7 @@ table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;backg
         f"{snap_html}"
         f"{_flow_open}"
         f"{keys_html}"
+        f"{plan_html}"
         f"{coach_html}"
         f"{mu_html}"
         f"{ff_html}"
@@ -1686,6 +1812,7 @@ table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;backg
         f"{sit_html}"
         f"{z_html}"
         f"{gs_html}"
+        f"{engines_html}"
         f"{intel_html}"
         f"{notes_html}"
         f"{_flow_close}"

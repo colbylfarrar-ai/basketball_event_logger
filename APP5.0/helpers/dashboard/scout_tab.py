@@ -28,6 +28,7 @@ import helpers.scoutboard as SB
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
 import helpers.settings_utils as SU
+from helpers.dashboard import scout_deep as SD   # ported engines, aimed at them
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 from helpers.stats import player_label as _PLBL
 
@@ -80,6 +81,10 @@ SCOUT_SECTIONS = [
     ("guarded_split", "Contested vs open (eFG)", "Shooting"),
     ("quarter_split", "Scoring by quarter", "Shooting"),
     ("poss_length", "Scoring by possession length", "Shooting"),
+    ("game_plan", "Game plan — your sets vs their coverage, what to play on D",
+     "Overview"),
+    ("engine_reads", "Engine reads — foul clock, run anatomy, giveaways, glue",
+     "Overview"),
     ("manual_intel", "Manual scouting (key players)", "Extras"),
     ("notes", "Game-plan notes", "Extras"),
     ("play_diagrams", "Blank play diagrams (draw by hand)", "Extras"),
@@ -645,6 +650,10 @@ def render(ctx):
     # report rebinds onto the opponent below.
     _my_team_id = ctx.team_id
     _gender = ctx.gender
+    # YOUR read-filtered game pool, captured BEFORE the rebind below — the
+    # exploit matrix needs your tendencies and their vulnerability, and after
+    # `ctx.opp_ctx()` every field on ctx describes them, not you.
+    _my_gp = getattr(ctx, "season_gp", None)
     _opp_tid = None
 
     if _self:
@@ -704,6 +713,13 @@ def render(ctx):
     hcols[2].metric("Off. rating", f"{trk['ORtg']:.0f}" if trk else "—")
     hcols[3].metric("Def. rating", f"{trk['DRtg']:.0f}" if trk else "—")
     hcols[4].metric("Pace", f"{trk['Pace']:.0f}" if trk else "—")
+    # The masthead. Five bare metrics said what the numbers were; this says what
+    # they mean, carries the rest-days read Insights already computes, and names
+    # the sample the whole page is priced on.
+    try:
+        SD.render_deck(ctx, sc)
+    except Exception as _exc:
+        st.caption(f"Header read unavailable — {type(_exc).__name__}: {_exc}")
 
     # ── matchup planner (opponent scout only): your defenders ↔ their scorers,
     # saved per opponent + synced with the War Room planner; the resolved rows
@@ -773,16 +789,31 @@ def render(ctx):
     _tips = _auto_report_tips(ctx)
     _gp_n = _tracked_gp(ctx)
     if _show("keys"):
-        _gk = list(sc["guard"]) + [t for s, t in _tips if s == "guard"]
-        _ak = list(sc["attack"]) + [t for s, t in _tips if s == "attack"]
+        _gk = SC.merge_keys(sc["guard"], _tips, "guard")
+        _ak = SC.merge_keys(sc["attack"], _tips, "attack")
+        # Verdict first: the three biggest keys on each side, ranked by how far
+        # from league-average the quantity behind them sits — not by the order
+        # the rules happen to appear in the source. Then the full list, because
+        # ranking never hides.
+        _top = [("Guard", None, f"<b>{html.escape(k['text'])}</b>")
+                for k in _gk[:2] if not k.get("md")]
+        _top += [("Attack", None, f"<b>{html.escape(k['text'])}</b>")
+                 for k in _ak[:2] if not k.get("md")]
+        if _top:
+            import helpers.cards as CARDS
+            st.markdown(CARDS.verdict_card(_top), unsafe_allow_html=True)
         k1, k2 = st.columns(2)
         for _col, _hdr, _lines in ((k1, "How to guard them", _gk),
                                    (k2, "How to attack them", _ak)):
             with _col:
                 st.markdown(f"<div class='lab-hdr'>{_hdr}</div>",
                             unsafe_allow_html=True)
-                for _ln in _lines:
-                    st.markdown(f"- {_ln}")
+                for _k in _lines:
+                    _sz = (f" <span style='color:#8b949e;font-size:11px'>"
+                           f"({_ORD(_k['pct'])} pctl)</span>"
+                           if _k.get("pct") is not None else "")
+                    st.markdown(f"- {_k['text']}{_sz}",
+                                unsafe_allow_html=True)
         if _gp_n < AUTO_TIP_MIN_GP:
             st.caption(
                 f"Only {_gp_n} tracked game{'' if _gp_n == 1 else 's'} of this "
@@ -792,12 +823,31 @@ def render(ctx):
                 "too thin to have an opinion. The structural keys above still "
                 "apply.")
 
+    # ── the game plan: our sets × their vulnerability, and what to play on D ──
+    # `helpers/exploit` is the most scout-shaped engine in the codebase and the
+    # Scout tab did not import it — it lived only in the War Room, two pages
+    # from the sheet the coach carries. Opponent scout only: an exploit matrix
+    # of your own team against itself is not a thing.
+    _plan = None
+    if not _self and _opp_tid is not None and ctx.has_tracked and _show("game_plan"):
+        _plan = SD.render_game_plan(ctx, _my_team_id, my_game_ids=_my_gp)
+        with st.expander("Your defenders — what they actually allow"):
+            SD.render_defender_profiles(_my_team_id, _gender,
+                                        my_game_ids=_my_gp)
+
     # ── personnel ────────────────────────────────────────────────────────────
     _group_hdr("Personnel")
     if _show("personnel") and sc["personnel"]:
         st.markdown("<div class='lab-hdr'>Personnel</div>", unsafe_allow_html=True)
         sc_arch = ctx.archetypes(ctx.gender)
         prow_by_name = {p["name"]: p for p in ctx.players}
+        # Per-player depth the flat card cannot carry: the foul clock and the
+        # last-5 form delta. Computed once for the whole roster, not per tile.
+        try:
+            _pdepth = SD.player_depth(ctx)
+        except Exception:
+            _pdepth = {}
+        _qv = getattr(ctx, "quick_view", None)
         for p in sc["personnel"]:
             bdg = "  ".join(p["badges"])
             row = prow_by_name.get(p["name"])
@@ -883,6 +933,18 @@ def render(ctx):
                 + (f"<br><span style='font-size:12px;color:#8b949e'>"
                    f"{html.escape(bdg)}</span>" if bdg else "")
                 + "</div>", unsafe_allow_html=True)
+            # the reads that make THIS player different from the next one
+            _pid = row["_pid"] if row else None
+            if _pid is not None:
+                SD.render_player_depth(_pdepth, _pid)
+                # The full 30-block card, in a modal, one click, no page switch.
+                # This is the cleanest reconciliation of "I love how much
+                # information is on the sheet" with "I don't want four pages":
+                # the depth is here, on the one player the coach cares about,
+                # and the paper carries only the selection.
+                if _qv and st.button(f"Full card — {p['name']}",
+                                     key=f"scout_qv_{ctx.team_id}_{_pid}"):
+                    _qv(_pid)
 
     # ── impact & rating splits: the rebuilt-engine dimensions for this team's
     # personnel (possession impact + defense/rebounding sub-ratings + passer) ──
@@ -1467,6 +1529,19 @@ def render(ctx):
                            + " · ".join(r["label"] for r in con["leaks"][:3])
                            + f". {con['note']}")
 
+    # ── the engines that were already paid for, aimed at THEM ────────────────
+    # Insights runs thirteen ported engines as a self-scout. Scout rebinds its
+    # whole ctx onto the opponent, so the identical call answers the opposite
+    # question — and this tab was not making it. Screen-first by design: only
+    # the five that change a game plan default onto paper (scout_deep.PRINT_KEYS).
+    _group_hdr("What the engines say about them")
+    if _show("engine_reads"):
+        try:
+            SD.render_ported(ctx)
+        except Exception as _exc:
+            st.caption(f"Engine reads unavailable — "
+                       f"{type(_exc).__name__}: {_exc}")
+
     # ── scoring by possession length (when tracked) ──────────────────────────
     _group_hdr("Deep splits")
     if _show("poss_length") and ctx.bundle.get("poss_length"):
@@ -1569,6 +1644,10 @@ def render(ctx):
         # (no "efficiency" block: it restated the band chips and the four-factor
         # rows, so the sheet dropped the section rather than the numbers)
         "auto_report": _tips,           # [(side, text)] — merged into Keys
+        # print parity: the SAME verdict tuples the tab rendered above
+        "game_plan": SD.game_plan_print(_plan),
+        "engine_reads": (SD.print_blocks(ctx)
+                         if _show("engine_reads") else []),
         "three_profile": _three_profile(ctx),
         "poss_length": [r for r in (ctx.bundle.get("poss_length") or [])
                         if r["label"] != "Untimed" and r["FGA"]],

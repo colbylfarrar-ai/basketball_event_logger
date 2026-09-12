@@ -289,6 +289,76 @@ _TRAJ_SPEC = {
 }
 
 
+# ── the game window (PLAYER_PROFILE_SCRUB build step 6) ──────────────────────
+# The card could not answer "last five games only" at all, and the reason it was
+# refused a night ago IS the design: every cached read on the card takes
+# `game_ids`, so narrowing that one pool narrows the LEAGUE PERCENTILE POOLS
+# with it. "78th percentile among everyone's last five games" is a different and
+# much stranger claim than the bars make today, and [[pctile-pool-convention]]
+# says the pool a number was ranked over is part of the number.
+#
+# So there are TWO scopes on this card, not one:
+#
+#   `_gp`   — the RANKING pool. The season. Percentile rails, `_pctile_n`,
+#             `pctile_bar`, rank tables, league bars, RAPM/WPA/WAR (which are
+#             league designs and do not even mean anything over five games of
+#             one team) all keep reading it. Untouched by the control.
+#   `_win`  — the PER-PLAYER pool. Her game log, her shot map, her per-game
+#             boxes, her form block, her foul/FT detail, her matchup reads.
+#             This is what the control moves.
+#
+# And when they differ, every block ranked against the season says so on screen.
+WINDOWS = ["Season", "Last 10", "Last 5"]
+_WINDOW_K = {"Last 10": 10, "Last 5": 5}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _player_window(pid, game_ids=None, k=5):
+    """Her OWN last `k` tracked games (oldest-first), as a game-id tuple.
+
+    Ordered by date and taken from the games she actually appeared in — not the
+    team's last five, which is a different window for anyone who missed a game.
+    Intersected with `game_ids` first, so the window can only ever NARROW the
+    pool the viewer is entitled to; an empty entitlement stays empty rather than
+    widening (the `_conn_edges` lesson, twenty lines up)."""
+    if game_ids is not None and not game_ids:
+        return ()
+    gids = [r["gid"] for r in query(
+        """SELECT DISTINCT ge.game_id AS gid
+           FROM game_event_lineup gel
+           JOIN game_events ge ON ge.id = gel.event_id
+           WHERE gel.player_id = ?""", (pid,))]
+    if game_ids is not None:
+        keep = set(game_ids)
+        gids = [g for g in gids if g in keep]
+    if not gids:
+        return ()
+    marks = ",".join("?" * len(gids))
+    rows = query(f"SELECT id FROM games WHERE id IN ({marks}) "
+                 "ORDER BY date, id", tuple(gids))
+    return tuple(r["id"] for r in rows)[-int(k):]
+
+
+def _pool_note(win_label, *, ranked=True):
+    """The one line a windowed block owes the reader.
+
+    Silence here is the actual bug: a coach who narrows to five games and then
+    reads "78th percentile" off the rail above has every reason to think the
+    percentile moved with it. `ranked=False` is for a block whose numbers ARE
+    the window (the game log, the shot map) — it says which games, and nothing
+    about a pool it does not use."""
+    if win_label == "Season":
+        return
+    if ranked:
+        st.caption(f"⚖️ Her own numbers below are the **{win_label.lower()}**. "
+                   "Percentiles, ranks and league bars still rank her SEASON "
+                   "totals against the season pool — a last-5 percentile would "
+                   "be a rank among everyone's last five games, which is a "
+                   "different claim.")
+    else:
+        st.caption(f"Showing the **{win_label.lower()}** only.")
+
+
 def _trajectory(pid, pgb, min_games=6, last=5):
     """{category: (last-5 avg − season avg, eps, proxy label)} from the player's
     real game log. {} below `min_games` (a 5-game 'trend' on a 5-game season is
@@ -873,6 +943,33 @@ def render_card(ctx):
             st.caption("No badges earned yet — needs more volume or higher "
                        "percentile ranks.")
 
+    # ══ THE GAME WINDOW ═══════════════════════════════════════════════════════
+    # Above the fold, not below it: the fold carries her shot map and her form
+    # arrows, and a control that scoped the sections while leaving two shot maps
+    # on one screen disagreeing is worse than no control. See `_player_window`
+    # for the two-scope split — this moves the PER-PLAYER pool only.
+    import helpers.ui as _UIwin
+    _win_lab = _UIwin.seg("Games", WINDOWS, default="Season",
+                          key=f"{_kp}_win", label_visibility="collapsed") \
+        or "Season"
+    _win = _gp
+    if _win_lab != "Season":
+        _win = _player_window(pid, tuple(_gp) if _gp is not None else None,
+                              _WINDOW_K[_win_lab])
+        # Rebind the three per-player feeds the ctx builder resolved over the
+        # season. Same cached builders, narrower pool — an archive view and a
+        # windowed view are the same operation.
+        pgb = _ctx_pgb(_win)
+        located = _ctx_located(pid, _win)
+        foulft = _ctx_foulft(_win).get(pid)
+        if not _win:
+            st.caption(f"No tracked games for her in the {_win_lab.lower()}.")
+        _pool_note(_win_lab)
+    # The fold's trajectory chips are "last 5 vs SEASON" by construction, so they
+    # keep the season boxes; narrowing them would compare the last five to
+    # themselves and always read flat.
+    _pgb_season = ctx.pgb
+
     # ══ Dense OVERVIEW grid — OOTP-style one-stop summary (event-derived → Paid) ══
     #    The above-the-fold read: ratings (with a scouted confidence band), the
     #    signature tiles, where the player ranks AMONG TEAMMATES, and the full
@@ -966,7 +1063,7 @@ def render_card(ctx):
 
         # ── col 2: rating bars (+CI band, +trajectory chips) + signature tiles ──
         with g2:
-            _traj = _trajectory(pid, pgb)
+            _traj = _trajectory(pid, _pgb_season)
             bars = "".join(
                 _rating_bar(k.title(), P.get(k), GRID_CLR.get(k, accent),
                             ci=_conf["ci"] if k == "OVERALL" else None,
@@ -1092,7 +1189,11 @@ def render_card(ctx):
                                    showlegend=False)
                 st.markdown(
                     f"<div class='pl-hdr' style='margin-top:0'>Shot map · "
-                    f"{len(located)} located</div>", unsafe_allow_html=True)
+                    f"{len(located)} located"
+                    + ("" if _win_lab == "Season"
+                       else f" <span style='font-size:11px;font-weight:400;"
+                            f"color:var(--subtext)'>· {_win_lab.lower()}</span>")
+                    + "</div>", unsafe_allow_html=True)
                 st.plotly_chart(sfig, width="stretch", key=f"{_kp}_court_fold")
                 # (no rim/mid/three counts here — "Shot detail" below prints the
                 #  same three buckets WITH their FG%, which is the version worth
@@ -1121,8 +1222,12 @@ def render_card(ctx):
                             unsafe_allow_html=True)
 
         # ── full league-percentile rail (all 21, three columns) ──────────────
+        # Ranked over the SEASON pool, always — see `_player_window`. The rail
+        # does not move with the game window and has to say so, or a coach who
+        # narrowed to five games reads these bars as five-game percentiles.
         st.markdown("<div class='pl-hdr'>League percentiles</div>",
                     unsafe_allow_html=True)
+        _pool_note(_win_lab)
         _PPG = PCT_RAIL
         _third = (len(_PPG) + 2) // 3
         _gpc = st.columns(3)
@@ -1168,6 +1273,9 @@ def render_card(ctx):
         or CARD_SECTIONS[0]
 
     if _sec == "Does the team win with her on?":
+        # Impact (RAPM/WPA/WAR) is a LEAGUE design and stays on the season
+        # pool; the matchup block below is windowed. One line, said once.
+        _pool_note(_win_lab)
         # ── "why this OVERALL" (ratings live as bars in the grid) ────────────
         # The seven-metric tile row that used to sit here is gone. Five of the seven
         # — USG%, +/-, EFF, FIC, VPS — are rows in the league-percentile rail
@@ -1349,11 +1457,15 @@ def render_card(ctx):
 
 
         # Who she guarded, who guarded her, and how hard the assignment was.
+        # `_win`, not `_gp`: the matchup table is a PER-PLAYER read (her row and
+        # her column of it), so "who guarded her in the last five" is a question
+        # it can answer honestly.
         _render_matchups(ctx, P, pid,
                          getattr(ctx, "gender", None) or P.get("gender") or "F",
-                         _gp)
+                         _win)
 
     if _sec == "How does she score?":
+        _pool_note(_win_lab)
         # ── signature / invented metrics (glass tiles) ────────────────────────────
         #    VERSATILITY is box (kept for Free); the rest are event-derived → Paid.
         st.markdown("<div class='pl-hdr'>Signature metrics</div>",
@@ -1450,7 +1562,7 @@ def render_card(ctx):
                 # defended-shot map — the scouting read, deliberately BELOW the
                 # fold (founder call): where opponents shot when this player was
                 # the contester/blocker, with the guarded/open split.
-                _dshots = _defended_located(pid, _gp)
+                _dshots = _defended_located(pid, _win)   # her shot map, windowed
                 if _dshots:
                     dfig, _dn = _shot_map(
                         _dshots, f"Shots defended · {len(_dshots)} located")
@@ -1888,6 +2000,9 @@ def render_card(ctx):
                           _gp)
 
     if _sec == "What is her form?":
+        # The log and the form strip ARE the window, so this block owes the
+        # reader which games — not a disclaimer about a pool it never reads.
+        _pool_note(_win_lab, ranked=False)
         # ── Game log ──────────────────────────────────────────────────────────────
         st.markdown("<div class='pl-hdr'>Game log</div>",
                     unsafe_allow_html=True)
@@ -1912,7 +2027,9 @@ def render_card(ctx):
                      or P["team_id"])
         # RTG (per-game 0-10) is event-delta — tracked depth, so Paid only. The box
         # game log itself (PTS/REB/… + GS) is box-derivable and stays Free.
-        _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _gp, _szn) if paid else {}
+        # windowed with the log it annotates — an RTG column over games the log
+        # no longer lists is a column nobody can check.
+        _rtg_all = _game_rtg_bundle(getattr(ctx, "gender", None), _win, _szn) if paid else {}
         log = []
         _boxes = pgb.get(pid, {})
         for g in sorted(games, key=lambda x: x["date"]):
@@ -2106,6 +2223,8 @@ def render_card(ctx):
 
 
     if _sec == "Where does she rank?":
+        # Nothing in this section moves with the window, by construction.
+        _pool_note(_win_lab)
         # ── League percentiles — Free tier only (Paid gets the Overview grid rail) ──
         if not paid:
             st.markdown("<div class='pl-hdr'>League percentiles</div>",
@@ -2172,6 +2291,7 @@ def render_card(ctx):
 
 
     if _sec == "Where is she going?":
+        _pool_note(_win_lab)
         # ── Across seasons — development (Tier 3, ML_LAYER_ROADMAP) ───────────────
         # Season-by-season lines + YoY progression/regression + a rough next-season
         # projection. Auto-lights-up as rollovers link more seasons; on one season it
@@ -2301,6 +2421,7 @@ def render_card(ctx):
 
 
     if _sec == "Strengths & watch":
+        _pool_note(_win_lab)
         # ── Scouting report — rides on the category ratings → Paid ────────────────
         if paid:
             st.markdown("<div class='pl-hdr'>Scouting report</div>",

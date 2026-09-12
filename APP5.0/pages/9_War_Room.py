@@ -35,6 +35,7 @@ from helpers.glossary import glossary_tab
 import helpers.team_ratings as TR
 import helpers.matchup_sheet as MS
 import helpers.predictor as PRED
+import helpers.backtest as BT
 import helpers.simulation as SIM
 import helpers.player_ratings as PR
 import helpers.lineups as LU
@@ -153,6 +154,41 @@ def _tracked(g, season="Current"):
     return TR.tracked_ratings(gender=g, season=season)
 
 
+# ── back in time (helpers/backtest) ───────────────────────────────────────────
+# Rankings' week picker is a pure table read — `rating_snapshots` stores a rank
+# and a rating, which is everything a BOARD needs. A MATCHUP needs AdjNet,
+# ClassAdj, xPPG, xoPPG and GP, none of which are in that table, so the
+# predictor's version of the same idea has to RE-SOLVE the board over the games
+# that existed on the date. That costs one solve (~0.2 s on the production
+# book), which is why it is cached here rather than avoided.
+@st.cache_data(ttl=600, show_spinner=False)
+def _asof_days(g, season="Current"):
+    """Every date this league actually played on, newest first.
+
+    Game days, not the weekly `rating_snapshots` stride: the re-solve can stand
+    on any date, and "the board the morning of the district final" is a date a
+    coach can name, while "the Sunday before it" is not.
+    """
+    return sorted({x["day"] for x in BT.finished_games(g, season)}, reverse=True)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _asof_scored(g, day, season="Current", form_w=0.0):
+    return BT.ratings_as_of(day, g, season, form_weight=form_w)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _asof_tracked(g, day, season="Current"):
+    return BT.tracked_as_of(day, g, season)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _backtest(g, season="Current", form_w=0.0):
+    """One solve per game DATE across the season — ~20 s cold, cached for 30 min.
+    Behind a button on purpose; nothing else on this page costs that much."""
+    return BT.walk_forward(g, season, form_weight=form_w)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _war_map(g, season="Current"):
     """HoopWAR per player (wins vs replacement) — the lineup creator's value
@@ -167,8 +203,14 @@ def _war_map(g, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _sim_game(g, a, b, home, n, season="Current", form_w=0.0):
-    return SIM.simulate_game(_scored(g, season, form_w), a, b, home=home, n=n)
+def _sim_game(g, a, b, home, n, season="Current", form_w=0.0, asof=None):
+    # `asof` runs the Monte-Carlo on the board as it stood that day. Without it
+    # the sim would quietly keep using today's ratings while the verdict above it
+    # showed January's — two different matchups on one screen, agreeing on
+    # nothing, with no way for a coach to tell which number to believe.
+    board = (_asof_scored(g, asof, season, form_w) if asof
+             else _scored(g, season, form_w))
+    return SIM.simulate_game(board, a, b, home=home, n=n)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -544,10 +586,56 @@ def _wr_team_pick(key):
 # ══════════════════════════════════════════════════════════════════════════════
 @st.fragment
 def _render_matchup():
+    # These three shadow the page-level board on purpose, and they are bound
+    # FIRST so nothing in this fragment can read the live board by accident once
+    # a past date is picked. Both fetchers are cached, so re-asking for the live
+    # board here is a dict lookup, not a second solve.
+    scored = _scored(gender, season_pick, form_w)
+    tracked = _tracked(gender, season_pick)
+    order = sorted(scored, key=lambda t: scored[t]["Rank"])
+
     st.subheader("Matchup predictor")
     st.caption(
         f"Projected score, win probability, a line-by-line margin breakdown, and "
         f"the full margin distribution across {n:,} simulated games.")
+
+    # ── back in time ─────────────────────────────────────────────────────────
+    # The same question the Rankings week picker answers, asked of a matchup:
+    # what would this game have looked like BEFORE the teams played the rest of
+    # their seasons? Rankings can answer it with a table read; this cannot (see
+    # _asof_scored), so it re-solves.
+    _LIVE = "Today (live board)"
+    _days = _asof_days(gender, season_pick)
+    asof = None
+    if _days:
+        _pick = st.selectbox(
+            "🕘 As of", [_LIVE] + _days, key="wr_asof",
+            help="Project this matchup off the board as it stood on a past "
+                 "date — only the games finished on or before that day count. "
+                 "The whole view follows the date: verdict, simulation, "
+                 "one-pager.")
+        asof = None if _pick == _LIVE else _pick
+
+    if asof:
+        _b = _asof_scored(gender, asof, season_pick, form_w)
+        if not _b:
+            st.warning(f"Too few games had been played by **{asof}** to solve a "
+                       f"board worth showing — showing the live board instead.")
+            asof = None
+        else:
+            scored, tracked = _b, _asof_tracked(gender, asof, season_pick)
+            order = sorted(scored, key=lambda t: scored[t]["Rank"])
+            # A team with no game yet on that date is not on that board. Its id
+            # can still be sitting in the picker's session state from the live
+            # list, and a selectbox handed a value outside its options is a
+            # crash, not a reset.
+            for _k in ("wr_a", "wr_b"):
+                if st.session_state.get(_k) not in order:
+                    st.session_state.pop(_k, None)
+            st.info(f"**Back in time — {asof}.** Every number below is solved "
+                    f"over the {len(BT.game_ids_through(asof, gender, season_pick)):,} "
+                    f"games finished on or before that day; {len(order)} teams "
+                    f"were rated. {BT.CAVEAT}")
 
     def _pfmt(t):
         return f"#{scored[t]['Rank']} {name_of[t]} ({class_of[t]})"
@@ -650,7 +738,19 @@ def _render_matchup():
             # (metric badge + confidence dot + n + sentence). Tracked depth →
             # each column rides the viewer's entitlement for THAT team, like
             # the Rankings deep dive (_see_trk).
-            _feed = _wr_insight_feed(gender, season_pick)
+            # Skipped on a past date, and this is not a nicety: the tells feed
+            # and the exploit matrix are SEASON-WIDE tracked reads with no date
+            # filter, so on a back-in-time board they would quietly describe
+            # games that had not been played yet, sitting directly under a
+            # verdict that was careful not to. The tale of the tape below is
+            # HANDED the board (`scored`, `tracked`), so it rewinds on its own
+            # and stays.
+            _feed = {} if asof else _wr_insight_feed(gender, season_pick)
+            if asof:
+                st.caption("🕘 The auto-scout tells and the game plan are "
+                           "season-wide tracked reads and cannot be rewound — "
+                           "hidden while a past date is selected. The cards "
+                           "below follow the date.")
             _wr_uid = AUTH.current_user()
             if _feed.get(ta) or _feed.get(tb):
                 import re as _re_wri
@@ -813,7 +913,8 @@ def _render_matchup():
             with _eng("Simulating matchup…",
                       [f"{n:,} Monte-Carlo games", "Sampling possession outcomes",
                        "Aggregating margins & win share"]):
-                sim = _sim_game(gender, ta, tb, home_arg, n, season_pick, form_w)
+                sim = _sim_game(gender, ta, tb, home_arg, n, season_pick, form_w,
+                                asof=asof)
             margins = np.asarray(sim["margins"])
             edges = np.linspace(float(margins.min()), float(margins.max()), 41)
             centers = (edges[:-1] + edges[1:]) / 2
@@ -882,7 +983,7 @@ def _render_matchup():
             # opponent. Tag-driven, so it lights up as play_type / defense get
             # tagged; gated by the same co-op read rule as the tracked projection.
             _gp_user = AUTH.current_user()
-            if _can_game(_gp_user, ta, tb):
+            if _can_game(_gp_user, ta, tb) and not asof:
                 gp = _game_plan(gender, ta, tb,
                                 _vis_tuple(_gp_user, ta), _vis_tuple(_gp_user, tb))
                 off, dfn = gp["offense"], gp["defense"]
@@ -970,6 +1071,129 @@ def _render_matchup():
                                 width="stretch")
                         st.caption(f"Based on {sp['tagged_min']} tagged set calls "
                                    f"(smallest leg) · ~{sp['poss']} possessions/game.")
+
+
+    # ── how accurate is this? (walk-forward backtest) ────────────────────────
+    # The predictor has shown a number for every game in this book, and every
+    # one of those games has now been played. Nothing in the app said how often
+    # it was right, which is the first question a coach asks of a projection and
+    # the one that decides whether he believes the next one.
+    st.divider()
+    with st.expander("🎯 How accurate is this predictor?", expanded=False):
+        st.caption(
+            "Walk-forward: every finished game in this season is re-predicted "
+            "from the board solved over the games finished **strictly before "
+            "that day** — the whole day is held out, not just the one game, so "
+            "a Tuesday result cannot leak into a Tuesday prediction. Forfeits "
+            "are excluded. Thin-sample games (a team under "
+            f"{BT.MIN_TEAM_GP} prior games) are measured but kept out of the "
+            "headline.")
+        _bt_key = f"wr_bt_{gender}_{season_pick}_{int(form_w * 100)}"
+        if st.button("Measure it", key="wr_bt_run",
+                     help="~20 seconds the first time; cached for 30 minutes."):
+            st.session_state[_bt_key] = True
+        if st.session_state.get(_bt_key):
+            with _eng("Re-playing the season…",
+                      ["Solving one board per game day",
+                       "Predicting every game from the day before",
+                       "Scoring margins, win probabilities and calibration"]):
+                _bt = _backtest(gender, season_pick, form_w)
+            _s = _bt["summary"]
+            if not _s["n"]:
+                st.info("Not enough finished games in this season to backtest.")
+            else:
+                _m = st.columns(4)
+                _m[0].metric("Games scored", f"{_s['n']:,}",
+                             help=f"{_s['n_all']:,} predicted, "
+                                  f"{_s['n_all'] - _s['n']:,} held out as thin.")
+                _m[1].metric("Picked the winner", f"{_s['hit'] * 100:.1f}%")
+                _m[2].metric("Typical miss", f"{_s['mae']:.1f} pts",
+                             help="Mean absolute error on the final margin.")
+                _m[3].metric("Brier skill", f"{_s['skill']:.3f}",
+                             help=f"Brier {_s['brier']:.4f} vs {_s['brier_baseline']} "
+                                  "for a coin flip on every game. 1.0 is perfect, "
+                                  "0 is no better than a coin.")
+
+                # The two constants this test can price. Reported, never
+                # applied: a model constant does not move on one season's
+                # measurement without its own gate.
+                _c = st.columns(2)
+                _c[0].metric("Pre-game SD — measured",
+                             f"{_s['rmse']:.1f} pts",
+                             delta=f"{_s['rmse'] - _s['sd_current']:+.1f} vs the "
+                                   f"{_s['sd_current']:.0f} in use",
+                             delta_color="off",
+                             help="The RMSE of the margin error IS the pre-game "
+                                  "SD the win-probability model assumes. If the "
+                                  "measured value is higher, stated win "
+                                  "probabilities are too confident.")
+                # bias_home, not the mixed bias: the overall number is diluted
+                # by however many neutral-floor games the book has, and the
+                # reader of a HOME-COURT number wants the home floors.
+                _bh = _s["bias_home"]
+                _c[1].metric("Home lean — measured",
+                             "—" if _bh is None else f"{_bh:+.2f} pts",
+                             delta=f"home court set to {_s['hca_current']:.1f}"
+                                   + (f" · neutral control {_s['bias_neutral']:+.2f}"
+                                      if _s["bias_neutral"] is not None else ""),
+                             delta_color="off",
+                             help="Mean signed error (predicted − actual) on "
+                                  "home floors. A positive number means the "
+                                  "model favours the home team by that much too "
+                                  "much — so the home-court constant is that "
+                                  "much too big.")
+
+                if _bt["calibration"]:
+                    st.markdown("**Does a stated win probability mean what it "
+                                "says?**")
+                    st.dataframe(_round_df(pd.DataFrame([{
+                        "Favourite's win prob": r["bin"], "Games": r["n"],
+                        "Model said": f"{r['said'] * 100:.1f}%",
+                        "Actually won": f"{r['actual'] * 100:.1f}%",
+                        "Off by": f"{(r['said'] - r['actual']) * 100:+.1f} pts",
+                    } for r in _bt["calibration"]])), hide_index=True,
+                        width="stretch")
+                    st.caption("A model can pick winners well and still be badly "
+                               "calibrated — saying 90% when it means 70% is a "
+                               "different failure from picking the wrong team.")
+
+                if _bt["by_confidence"]:
+                    st.markdown("**What each confidence word was worth**")
+                    st.dataframe(_round_df(pd.DataFrame([{
+                        "Confidence": r["confidence"], "Games": r["n"],
+                        "Picked the winner": (f"{r['hit'] * 100:.1f}%"
+                                              if r["hit"] is not None else "—"),
+                        "Typical miss": f"{r['mae']:.1f}",
+                    } for r in _bt["by_confidence"]])), hide_index=True,
+                        width="stretch")
+
+                if _bt["by_game_type"]:
+                    st.markdown("**By game type**")
+                    st.dataframe(_round_df(pd.DataFrame([{
+                        "Type": r["game_type"], "Games": r["n"],
+                        "Home lean": f"{r['bias']:+.2f}",
+                        "Typical miss": f"{r['mae']:.1f}",
+                        "Flagged neutral": r["flagged_neutral"],
+                    } for r in _bt["by_game_type"]])), hide_index=True,
+                        width="stretch")
+                    st.caption("Home court is granted on every game that is not "
+                               "flagged neutral. A playoff row with a worse home "
+                               "lean than the regular-season row and no neutral "
+                               "flags is the flag missing, not the model.")
+
+                _worst = BT.worst_misses(_bt["rows"], top=10)
+                if _worst:
+                    st.markdown("**The ten it got most wrong**")
+                    st.dataframe(_round_df(pd.DataFrame([{
+                        "Date": r["day"],
+                        "Matchup": f"{team_short(r['a_name'])} vs "
+                                   f"{team_short(r['b_name'])}",
+                        "Predicted": f"{r['pred']:+.1f}",
+                        "Actual": f"{r['actual']:+.0f}",
+                        "Off by": f"{r['abs_err']:.0f}",
+                    } for r in _worst])), hide_index=True, width="stretch")
+
+                st.caption(BT.CAVEAT)
 
 
 if _wrview == "Matchup":

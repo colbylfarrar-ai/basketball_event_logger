@@ -6149,11 +6149,18 @@ if _tdview == "Scout":
 @st.cache_data(ttl=600, show_spinner=False)
 def _ins_scheme_sit(g, tid, side, game_ids=None):
     """Scheme / set-call spikes for the Insights team read. Defaults to this
-    team's entitlement-visible tracked ids rather than the league pool."""
-    return _scheme_sit_view(
-        g, tid, side,
-        game_ids=(tuple(game_ids) if game_ids
-                  else tuple(bundle["tracked_ids"])) or None)
+    team's entitlement-visible tracked ids rather than the league pool.
+
+    The trailing `or None` this replaces turned an EMPTY visible set into
+    "no restriction", which is the wrong direction for an entitlement filter:
+    a viewer with nothing visible got the whole tracked pool. Its sibling
+    `_ins_quarter_read` below already had the right shape — return nothing when
+    the scope is nothing — so that is the shape here too."""
+    _gids = tuple(game_ids) if game_ids is not None \
+        else tuple(bundle["tracked_ids"])
+    if not _gids:
+        return {"available": False, "cuts": []}
+    return _scheme_sit_view(g, tid, side, game_ids=_gids)
 
 
 @st.cache_data(ttl=600, show_spinner=False)

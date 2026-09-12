@@ -625,19 +625,34 @@ def render(ctx):
             st.caption("No player on this roster matches that filter.")
             return
 
+    # Scope, not `tuple(...) or None`. Two different pools, two different
+    # reasons the old idiom was wrong:
+    #   · `_tids` is this viewer's VISIBLE games. `controls()` always returns a
+    #     tuple, empty exactly when the visible set is empty — and `None`
+    #     downstream means unrestricted, so the narrower the coach's rights the
+    #     more play-by-play they got. That is the `_game_filter` bug (fixed
+    #     2026-09-06) re-introduced at the call site.
+    #   · `season_gp` is None BY DESIGN on the current season (the binders are
+    #     the identity there) and a real tuple otherwise, so None and () have to
+    #     stay distinguishable rather than both collapsing to None.
+    # Reachable today through the career-rows branch above, which lets a team
+    # past the gate with `has_tracked` False and `tracked_ids` empty.
+    _vis = S.as_scope(_tids)
+    _lgp = S.as_scope(getattr(ctx, "season_gp", None))
+
     _tlines = _team_feed(
         ctx.gender, getattr(ctx, "season", "Current"),
         getattr(ctx, "team_id", None),
-        tuple(_tids or ()) or None,
+        _vis,
         fp=_fp,
-        season_gp=tuple(getattr(ctx, "season_gp", None) or ()) or None,
+        season_gp=_lgp,
     ).get(getattr(ctx, "team_id", None), [])
 
     _bundle = {}
     try:
         _bundle = _DEEP.brief_bundle(
             tuple(_tids or ()), getattr(ctx, "team_id", None), ctx.gender,
-            league_gids=tuple(getattr(ctx, "season_gp", None) or ()) or None,
+            league_gids=_lgp,
             fp=_fp)
     except Exception as _exc:
         st.caption(f"Engine bundle unavailable — {type(_exc).__name__}: {_exc}")

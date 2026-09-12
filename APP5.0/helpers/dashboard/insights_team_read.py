@@ -36,6 +36,7 @@ from helpers.cards import verdict_card
 from helpers.dashboard import insights_brief as BR
 from helpers.dashboard import scheme_section as SCHEME
 import helpers.insights_severity as SEV
+import helpers.stats as _STATS
 
 
 def _md_bold(text):
@@ -54,8 +55,14 @@ def _tendencies(ctx):
     if getattr(ctx, "scheme_sit", None) is None:
         return
     # The deck's game-window control is a CACHE-KEY input on every other wrapper
-    # in this tab, so it is one here too.
-    gids = tuple(getattr(ctx, "tracked_ids", ()) or ()) or None
+    # in this tab, so it is one here too. `as_scope` rather than
+    # `tuple(...) or None`: an empty visible set means this viewer may see NO
+    # games, and collapsing it to None hands them the unrestricted pool. The
+    # sibling `_ins_quarter_read` guards the same way by returning early.
+    gids = _STATS.as_scope(getattr(ctx, "tracked_ids", ()) or ())
+    if not gids:
+        st.caption("No visible tracked games in this window.")
+        return
     SCHEME.render(
         ctx, "defense", "Tendencies — the schemes we go to",
         "Where this team's defensive scheme usage spikes off its OWN season "

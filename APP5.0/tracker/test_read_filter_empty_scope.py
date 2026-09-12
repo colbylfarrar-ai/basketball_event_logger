@@ -114,6 +114,39 @@ def _is_widening_ifexp(node):
     return isinstance(inner, ast.Name) and inner.id == node.test.id
 
 
+def _is_coll_call(node):
+    """`tuple(...)` / `set(...)` / `sorted(...)` — a node that BUILDS a
+    collection, and can therefore be empty."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in _COLL)
+
+
+def _is_widening_boolop(node):
+    """`coll(...) or None` — the same bug wearing `or` instead of `if/else`.
+
+    The original scan only knew the ternary spelling, which is why five live
+    sites survived it until 2026-09-12:
+
+        tuple(_tids or ()) or None                                    # ← 4 of them
+        (tuple(game_ids) if game_ids else tuple(bundle[...])) or None  # ← the 5th
+
+    Both mean "if this collection came out empty, ask for everything instead",
+    and an empty collection here is an entitlement answer, not a missing value.
+    The left side is required to be a collection CONSTRUCTOR (or a ternary whose
+    branches are two of them) so that ordinary `name or None` defaulting — which
+    is about a missing scalar and is fine — never trips the gate."""
+    if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
+            and len(node.values) == 2):
+        return False
+    left, right = node.values
+    if not (isinstance(right, ast.Constant) and right.value is None):
+        return False
+    if _is_coll_call(left):
+        return True
+    return (isinstance(left, ast.IfExp)
+            and _is_coll_call(left.body) and _is_coll_call(left.orelse))
+
+
 def _scan(path):
     """(line, snippet) for every widening conversion in one file."""
     src = path.read_text(encoding="utf-8")
@@ -132,6 +165,14 @@ def _scan(path):
         # unrestricted entry (`sig = tuple(sorted(game_ids)) if game_ids else None`)
         if isinstance(node, ast.Assign) and _is_widening_ifexp(node.value):
             hits.append((node.value.lineno, lines[node.value.lineno - 1].strip()))
+        # form 3 — `coll(...) or None`, ANYWHERE. Unlike the ternary forms this
+        # one needs no keyword/assignment context to be unambiguous: building a
+        # collection and then replacing the empty one with None is only ever
+        # this bug in a tree whose engines branch on `is None`. Verified to
+        # match exactly the five known sites and nothing else across pages/ and
+        # helpers/ (~500 files) — see docs/OVERNIGHT_2026-09-12.md.
+        if _is_widening_boolop(node):
+            hits.append((node.lineno, lines[node.lineno - 1].strip()))
     return sorted(set(hits))
 
 
@@ -242,6 +283,73 @@ def test_season_wpa_takes_a_read_filter_and_only_narrows():
         "an empty scope no longer short-circuits — () would widen to the pool"
     assert "game_ids_pool = [g for g in game_ids_pool if g in _vis]" in src, \
         "the filter is no longer an intersection, so it can widen the pool"
+
+
+# ── the five `or None` sites, constructed ─────────────────────────────────────
+# The freeze punch list called these "latent, not bleeding" and could not build
+# the reaching state against the production book: it needs `has_tracked` True
+# (or the career-rows branch, which lets a team past the same gate) AND an empty
+# visible set. A hermetic fixture builds it in three lines, which is the whole
+# argument for writing the test rather than only fixing the lines.
+def test_as_scope_keeps_none_and_empty_apart():
+    """The replacement idiom, stated once so every call site can share it.
+
+    `tuple(x or ()) or None` has no way to express "scoped to nothing"; that is
+    the entire defect. `as_scope` is the same one-liner minus that collapse."""
+    import helpers.stats as S
+    assert S.as_scope(None) is None, "an unscoped read must stay unscoped"
+    assert S.as_scope(()) == (), "an EMPTY scope must survive as empty"
+    assert S.as_scope([]) == (), "…including from a list"
+    assert S.as_scope([7, 9]) == (7, 9), "and a real pool stays hashable"
+
+
+def test_insights_team_read_does_not_widen_an_empty_visible_set(monkeypatch):
+    """`insights_team_read._tendencies` with nothing visible must render
+    nothing — not the league's scheme tendencies.
+
+    The old line was `tuple(getattr(ctx, "tracked_ids", ()) or ()) or None`, and
+    `scheme_section.render` passes `game_ids` straight through to the page's
+    cached binder, whose own fallback on None is
+    `SEAS.game_pool(tracked_only=True)` — every tracked game in the gender.
+    So a coach entitled to see zero games was shown the whole league's
+    tendencies, rendered as if they were this team's."""
+    from types import SimpleNamespace
+    import helpers.dashboard.insights_team_read as ITR
+
+    calls = []
+    monkeypatch.setattr(ITR.SCHEME, "render",
+                        lambda *a, **kw: calls.append(kw.get("game_ids", "<pos>")))
+    ctx = SimpleNamespace(scheme_sit=lambda *a, **kw: {"available": False},
+                          gender="F", team_id=_T1, tracked_ids=())
+    ITR._tendencies(ctx)
+    assert calls == [], (
+        "an empty visible set still reached scheme_section.render with "
+        f"{calls!r} — None there means the whole league")
+
+    ctx.tracked_ids = (_GID,)
+    ITR._tendencies(ctx)
+    assert calls == [(_GID,), (_GID,)], \
+        f"a real pool no longer reaches both sides of the read: {calls!r}"
+
+
+def test_team_dashboard_scheme_binder_guards_its_empty_scope():
+    """`_ins_scheme_sit` (pages/6_Team_Dashboard.py) closes over the page's
+    `bundle`, so it cannot be imported and called in isolation — asserted on its
+    source instead, which is the same gate its sibling twelve lines below
+    (`_ins_quarter_read`) has always passed."""
+    import re
+    src = (_APP / "pages" / "6_Team_Dashboard.py").read_text(encoding="utf-8")
+    body = re.search(r"def _ins_scheme_sit\(.*?\n(?=@st\.cache_data)", src,
+                     re.S)
+    assert body, "_ins_scheme_sit moved or was renamed"
+    # code only — the docstring above it explains the bug and says "or None"
+    code = "\n".join(ln for ln in body.group(0).splitlines()
+                     if ln.strip() and not ln.strip().startswith("#"))
+    code = re.sub(r'""".*?"""', "", code, flags=re.S)
+    assert "or None" not in code, \
+        "_ins_scheme_sit re-widens its empty scope again"
+    assert "if not _gids:" in code, \
+        "_ins_scheme_sit no longer short-circuits on an empty scope"
 
 
 def test_every_season_wpa_consumer_passes_a_scope():

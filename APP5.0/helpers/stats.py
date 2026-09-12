@@ -93,6 +93,24 @@ def _game_filter(game_ids):
     return f" AND ge.game_id IN ({marks})", tuple(game_ids)
 
 
+def as_scope(game_ids):
+    """Make a pool hashable for a cache key WITHOUT losing the None/empty
+    distinction `_game_filter` depends on.
+
+    `tuple(x or ()) or None` is the idiom this replaces, and it is wrong in
+    exactly one case — the case that matters. It collapses an EMPTY pool
+    ("this viewer may see no games") into `None` ("no restriction"), which is
+    the entitlement bug in reverse: the narrower the viewer's rights, the more
+    they are shown. A deliberate `None` (the current season, where the page's
+    engine binders are the identity) still passes through as `None`.
+
+        as_scope(None) -> None        # unscoped, by design
+        as_scope(())   -> ()          # scoped to nothing, which is not nothing
+        as_scope([7,9]) -> (7, 9)     # hashable for @st.cache_data
+    """
+    return None if game_ids is None else tuple(game_ids)
+
+
 def fetch_events(game_ids=None):
     """
     Pull all game_events (optionally limited to game_ids) with the shooter's and

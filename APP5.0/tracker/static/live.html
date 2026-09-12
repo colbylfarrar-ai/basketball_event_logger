@@ -38,6 +38,19 @@ html, body { margin: 0; background: var(--bg); color: var(--fg);
 .score .mid { text-align: center; color: var(--muted); font-size: .8rem; }
 .score .mid .q { font-size: 1.05rem; color: var(--fg); font-weight: 700; }
 .meta { text-align: center; color: var(--muted); font-size: .75rem; margin-top: 6px; }
+.pregame-card { margin-top: 10px; background: var(--bg2);
+  border: 1px solid var(--edge); border-radius: 12px; padding: 4px 12px; }
+.pregame-card .pg-row { display: flex; align-items: baseline; gap: 8px;
+  padding: 9px 0; border-bottom: 1px solid var(--edge); }
+.pregame-card .pg-row:last-of-type { border-bottom: 0; }
+.pregame-card .pg-nm { flex: 1; min-width: 0; font-weight: 600; font-size: .9rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pregame-card .pg-cls { color: var(--gold); font-size: .76rem; font-weight: 700;
+  white-space: nowrap; }
+.pregame-card .pg-rec { font-weight: 800; font-size: .95rem; white-space: nowrap; }
+.pregame-card .pg-none { color: var(--muted); font-weight: 400; font-size: .8rem; }
+.pregame-card .pg-note { color: var(--muted); font-size: .72rem;
+  padding: 0 0 9px; text-align: center; }
 .lastplay { display: flex; align-items: center; gap: 9px; margin-top: 8px;
   background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px;
   padding: 9px 12px; font-size: .86rem; }
@@ -139,6 +152,17 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       <div class="team"><a class="n" id="away-name" style="color:inherit;text-decoration:none;display:block"></a><div class="p" id="away-pts">0</div></div>
     </div>
     <div class="meta" id="meta"></div>
+
+    <!-- Pregame only. A fan who scans the QR at the door used to get a badge,
+         0-0, "No stats yet" and "Nothing logged yet" — nothing to read on the
+         page that is the whole funnel. Records and class ranks only: the
+         allowlist has no room for anything else and does not need it. -->
+    <div class="pregame-card" id="pregame" hidden>
+      <div class="pg-row" id="pg-home"></div>
+      <div class="pg-row" id="pg-away"></div>
+      <div class="pg-note" id="pg-note"></div>
+    </div>
+
     <div class="lastplay" id="last-play" hidden></div>
     <table class="qtrs" id="qtrs" hidden></table>
 
@@ -147,11 +171,11 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       <div id="wp-box"></div>
     </div>
 
-    <div class="tabs" role="tablist">
+    <div class="tabs" role="tablist" id="box-tabs">
       <button id="tab-home" class="on"></button>
       <button id="tab-away"></button>
     </div>
-    <div class="boxwrap"><table class="box" id="box">
+    <div class="boxwrap" id="box-wrap"><table class="box" id="box">
       <thead><tr><th>##</th><th>PTS</th><th>FG</th><th>3PT</th><th>FT</th>
         <th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>PF</th></tr></thead>
       <tbody id="box-body"></tbody>
@@ -173,7 +197,7 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       </div>
     </div>
 
-    <h3>Play-by-play</h3>
+    <h3 id="pbp-title">Play-by-play</h3>
     <ul class="pbp" id="pbp"></ul>
 
     <div id="refs-sec" hidden>
@@ -208,9 +232,64 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
 
   function fg(m, a) { return m + '-' + a; }
 
+  // The narrow-screen name. Written ONCE, server-side, in
+  // helpers/public_feed.short_name — these pages are plain JS and cannot import
+  // the Python helper, so it travels in the payload. Falls back to the full
+  // name for a cached payload that predates the field. The <title> and the
+  // team-page header deliberately keep the full name.
+  function sn(which) {
+    var t = state[which] || {};
+    return t.short || t.name || '';
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"]/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  // Both teams' records and class ranks before tip-off. Records and ordinal
+  // class ranks ONLY — no rating of any kind reaches this page, and there is
+  // no tip-off time to show because `games` has no time column (date and
+  // location are the whole of what a game row knows about when and where).
+  function renderPregame() {
+    var el = $('pregame');
+    if (state.status !== 'pregame') { el.hidden = true; return; }
+    function row(which) {
+      var t = state[which] || {};
+      var rec = (t.wins == null)
+        ? '<span class="pg-none">No games yet</span>'
+        : t.wins + '&ndash;' + t.losses;
+      var cls = t.class_rank
+        ? '<span class="pg-cls">' + esc(t.class_lbl || '') + ' #' + t.class_rank +
+          (t.class_of > 1 ? ' of ' + t.class_of : '') + '</span>'
+        : '';
+      var nm = '<span class="pg-nm">' + esc(sn(which)) + '</span>';
+      var link = t.id
+        ? '<a href="/live/team/' + t.id + '?from=' + encodeURIComponent(token) +
+          '" style="color:inherit;text-decoration:none;flex:1;min-width:0;' +
+          'display:flex;align-items:baseline;gap:8px">' + nm + cls + '</a>'
+        : nm + cls;
+      $('pg-' + which).innerHTML = link + '<span class="pg-rec">' + rec + '</span>';
+    }
+    row('home');
+    row('away');
+    var ranked = (state.home || {}).class_rank || (state.away || {}).class_rank;
+    $('pg-note').textContent = ranked
+      ? 'Records and class rank this season. Live stats start at tip-off.'
+      : 'Records this season. Live stats start at tip-off.';
+    el.hidden = false;
+  }
+
+  // Before tip-off the box score and the play-by-play have nothing in them, and
+  // said so twice ("No stats yet", "Nothing logged yet") under a 0-0 that also
+  // claimed to be in Q1. The pregame card is what the fan came for; these come
+  // back the moment the first event lands, because render() runs this every poll.
+  function togglePregameSections() {
+    var pre = state.status === 'pregame';
+    ['box-tabs', 'box-wrap', 'pbp-title', 'pbp'].forEach(function (id) {
+      var n = $(id);
+      if (n) n.hidden = pre;
     });
   }
 
@@ -249,8 +328,8 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
       keys.forEach(function (k) { r += '<td>' + (qs[k][sideKey] || 0) + '</td>'; });
       return r + '<td><b>' + total + '</b></td></tr>';
     }
-    t.innerHTML = head + row(state.home.name, 'home', state.home.pts) +
-                         row(state.away.name, 'away', state.away.pts);
+    t.innerHTML = head + row(esc(sn('home')), 'home', state.home.pts) +
+                         row(esc(sn('away')), 'away', state.away.pts);
   }
 
   function renderLastPlay() {
@@ -335,7 +414,7 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
     qs.sort(function (a, b) { return a - b; });
     var head = '<tr><th></th><th>Fouls</th>';
     qs.forEach(function (k) { head += '<th>' + (k > 4 ? 'OT' + (k - 4) : 'Q' + k) + '</th>'; });
-    head += '<th>' + esc(state.home.name) + '</th><th>' + esc(state.away.name) + '</th></tr>';
+    head += '<th>' + esc(sn('home')) + '</th><th>' + esc(sn('away')) + '</th></tr>';
     var body = offs.map(function (o) {
       var r = '<tr><td>' + o.slot + '</td><td><b>' + o.fouls + '</b></td>';
       qs.forEach(function (k) { r += '<td>' + ((o.q || {})[k] || 0) + '</td>'; });
@@ -348,7 +427,7 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
     var wp = state.wp || [];
     $('wp-sec').hidden = wp.length < 2;
     if (wp.length < 2) return;
-    $('wp-title').textContent = 'Win probability — ' + state.home.name;
+    $('wp-title').textContent = 'Win probability — ' + sn('home');
     var W = 600, H = 120, total = wp[wp.length - 1].t || 1;
     function x(t) { return (t / total) * W; }
     function y(p) { return (1 - p) * H; }
@@ -370,23 +449,25 @@ table.refs td:first-child { font-weight: 700; color: var(--gold); }
   function render() {
     $('loading').hidden = true; $('gone').hidden = true; $('game').hidden = false;
     chip(state.status);
-    $('home-name').textContent = state.home.name;
-    $('away-name').textContent = state.away.name;
+    $('home-name').textContent = sn('home');
+    $('away-name').textContent = sn('away');
     var from = '?from=' + encodeURIComponent(token);
     if (state.home.id) $('home-name').href = '/live/team/' + state.home.id + from;
     if (state.away.id) $('away-name').href = '/live/team/' + state.away.id + from;
     $('home-pts').textContent = state.home.pts;
     $('away-pts').textContent = state.away.pts;
     var q = state.quarter > 4 ? 'OT' + (state.quarter - 4) : 'Q' + state.quarter;
-    $('q-label').textContent = state.status === 'final' ? 'Final' : q;
+    $('q-label').textContent = state.status === 'final' ? 'Final'
+      : state.status === 'pregame' ? 'vs' : q;
     $('clock').textContent = state.status === 'live' ? state.clock : '';
     $('meta').textContent = state.date + (state.location ? ' · ' + state.location : '');
-    $('tab-home').textContent = state.home.name;
-    $('tab-away').textContent = state.away.name;
+    $('tab-home').textContent = sn('home');
+    $('tab-away').textContent = sn('away');
     var f = $('shot-filters').querySelectorAll('button');
-    f[1].textContent = state.home.name; f[2].textContent = state.away.name;
+    f[1].textContent = sn('home'); f[2].textContent = sn('away');
     renderLastPlay();
     renderQuarters(); renderWp(); renderBox(); renderShots(); renderPbp(); renderRefs();
+    renderPregame(); togglePregameSections();
     document.title = state.home.name + ' ' + state.home.pts + '–' +
       state.away.pts + ' ' + state.away.name + ' — HoopTracks';
   }

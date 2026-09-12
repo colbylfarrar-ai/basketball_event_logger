@@ -257,10 +257,15 @@ ok(tp["wins"] == 1 and tp["losses"] == 0, "record from finals")
 fin = next(g for g in tp["games"] if g["status"] == "final")
 ok(fin["won"] is True and fin["us"] == 5 and fin["them"] == 1
    and fin["url"] == f"/live/{tok}", "result row: W 5-1 + fan link")
-ok(fin["opp_rank"] == 2, "schedule row carries opponent ordinal rank (#2)")
+ok("opp_rank" not in fin,
+   "schedule row carries NO league-wide ordinal (2026-09-12 ruling)")
 ok(fin["opp_class_rank"] == 2 and fin["opp_class_lbl"] == "5A",
    "schedule row carries opponent class rank (5A #2)")
+ok(fin["opp_short"] == "Visitor Prep", "schedule row carries the short name")
 ok(tp["class_rank"] == 1 and tp["class_of"] == 2, "hero carries own class rank")
+ok("rank" not in tp and "rank_of" not in tp,
+   "team hero carries NO league-wide ordinal")
+ok(tp["short"] == "Claremore", "team payload carries a short name")
 blob = json.dumps(tp)
 for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
     for part in name.split():
@@ -276,11 +281,11 @@ ok(td["season"] == "", "active-season directory carries no archive label")
 by_name = {t["name"]: t for t in td["teams"]}
 ok({"Claremore", "Visitor Prep"} <= set(by_name), "every team listed")
 c, v = by_name["Claremore"], by_name["Visitor Prep"]
-ok(c["rank"] == 1 and c["of"] == 2 and c["wins"] == 1 and c["losses"] == 0,
-   "winner ranked #1 with W-L record")
-ok(v["rank"] == 2 and v["losses"] == 1, "loser ranked #2")
+ok(c["wins"] == 1 and c["losses"] == 0, "winner carries its W-L record")
+ok(v["losses"] == 1, "loser carries its W-L record")
 ok(c["class_lbl"] == "5A" and c["class_rank"] == 1 and c["class_of"] == 2,
    "class label + class rank ordinals")
+ok(v["class_rank"] == 2, "class ladder orders both teams")
 ok(c["gender"] == "Boys", "gender label")
 blob = json.dumps(td)
 for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
@@ -290,13 +295,28 @@ ok(True, "teams payload has no player/official names")
 for key in ("Power", "Rating", "AdjNet", "SOS", "SOR", "xPPG", "xoPPG",
             "PPG", "oPPG", "MOV", "ClassAdj"):
     assert f'"{key}"' not in blob, f"LEAK: '{key}' in teams payload"
-ok(True, "rank ordinals only — no rating-engine numbers in payload")
+ok(True, "class ordinals only — no rating-engine numbers in payload")
+
+# The league-wide ordinal is an ALLOWLIST item now, not a styling choice. It was
+# public until 2026-09-12: the number came from a 743-team pool while the page
+# showed Oklahoma only, so the boys list read "#1 · #2 · #5 · #6" with two 1-0
+# out-of-state teams holding the gaps above a 24-2 program. The founder ruled
+# for the class rank instead. Assert it stays gone from every payload.
+for key in ("rank", "of", "rank_of", "opp_rank"):
+    assert f'"{key}"' not in blob, f"LEAK: league-wide '{key}' in teams payload"
+ok(True, "no league-wide ordinal in the teams payload")
+for _name, _blob in (("game", json.dumps(st)),
+                     ("team", json.dumps(tp)),
+                     ("scoreboard", json.dumps(sb))):
+    for key in ("rank", "of", "rank_of", "opp_rank"):
+        assert f'"{key}"' not in _blob,             f"LEAK: league-wide '{key}' in {_name} payload"
+ok(True, "no league-wide ordinal in the game / team / scoreboard payloads")
 t3 = execute("INSERT INTO teams (name, class, gender) VALUES "
              "('Newbie High','4A','M')")
 PF.clear_cache()
 td = client.get("/api/public/teams").json()
 nb = next(t for t in td["teams"] if t["name"] == "Newbie High")
-ok(nb["rank"] is None and nb["gp"] == 0 and nb["wins"] == 0,
+ok(nb["class_rank"] is None and nb["gp"] == 0 and nb["wins"] == 0,
    "team with no finished games still listed, unranked")
 
 print("fan counter")
@@ -408,5 +428,107 @@ ok(any(g["status"] == "upcoming" and g["date"] == "2031-12-05"
        for g in _after["games"]),
    "the new fixture still shows as upcoming — the record and the next game "
    "are both what a fan opens this page for")
+
+# ── the short name, written once and carried in the payload ──────────────────
+# The live pages are plain JS with no build step, so they cannot import
+# helpers.cards.team_short — and that helper only strips the gender suffix,
+# which left "Claremore (Sequoya…" running off a 375 px game hero. The rule
+# lives in public_feed and every payload calls it; two rules would drift, and
+# the two that drifted would be the hero and the linescore, side by side.
+print("short names")
+for _full, _want in [
+    ("Claremore (Sequoyah) Girls", "Claremore"),
+    ("North Little Rock (Little Rock, Ark)", "North Little Rock"),
+    ("PARIS NORTH LAMAR HIGH SCHOOL", "PARIS NORTH LAMAR"),
+    ("McDonald County, MO 5a school", "McDonald County"),
+    ("Lincoln Christian Girls", "Lincoln Christian"),
+]:
+    assert PF.short_name(_full) == _want, (
+        f"short_name({_full!r}) -> {PF.short_name(_full)!r}, wanted {_want!r}")
+ok(True, "the shortening rule strips gender, school and qualifier noise")
+
+# The parenthetical is dropped only when the name does not already fit. That
+# condition is load-bearing, not an optimisation: these are two different
+# schools, and an unconditional strip prints them as the same team.
+ok(PF.short_name("Central (Sallisaw) Girls") == "Central (Sallisaw)"
+   and PF.short_name("Central (Tulsa) Girls") == "Central (Tulsa)",
+   "a name that already fits keeps its qualifier, so two schools stay distinct")
+# Nothing removable -> returned whole, for CSS to ellipsise at the real edge.
+ok(PF.short_name("BOOKER T WASHINGTON Boys") == "BOOKER T WASHINGTON",
+   "a name with no removable noise is never truncated by this function")
+ok(PF.short_name("") == "" and PF.short_name("A") == "A",
+   "degenerate names survive")
+
+PF.clear_cache()
+_sb = client.get(f"/api/public/scoreboard?date={today}").json()
+_row = next(g for g in _sb["games"] if g["home"] == "Claremore")
+ok(_row["home_short"] == "Claremore" and _row["away_short"] == "Visitor Prep",
+   "slate rows carry both short names")
+ok(all("home_short" in g and "away_short" in g for g in _sb["recent"]),
+   "the finals rail carries short names too")
+
+
+# ── a class rank is published only for a team that HAS a class ───────────────
+# team_ratings._assign_ranks buckets on (state, class) and hands the classless
+# rows a number anyway, while class_label collapses every per-state 'N/A'
+# bucket to the one label. Publishing it would print 21 ladders as one.
+print("classless teams carry no public class rank")
+t4 = execute("INSERT INTO teams (name, class, gender) VALUES "
+             "('Nowhere Academy','N/A','M')")
+t5 = execute("INSERT INTO teams (name, class, gender) VALUES "
+             "('Elsewhere Prep','N/A','M')")
+execute("INSERT INTO games (team1_id,team2_id,date,home_score,away_score,"
+        "tracked_by) VALUES (?,?, date('now','-2 day'), 60, 40, ?)",
+        (t4, t5, COACH_EMAIL))
+PF.clear_cache()
+_td = client.get("/api/public/teams").json()
+_by = {t["name"]: t for t in _td["teams"]}
+ok(_by["Nowhere Academy"]["class_lbl"] == "",
+   "a classless team shows no class label")
+ok(_by["Nowhere Academy"]["class_rank"] is None
+   and _by["Nowhere Academy"]["class_of"] is None,
+   "and no class rank, even though the engine gave it one")
+ok(_by["Nowhere Academy"]["wins"] == 1,
+   "its W-L record is still public — the record is a fact, the rank was not")
+
+
+# ── the pregame fan page has something to read ───────────────────────────────
+# A fan who scans the QR at the door used to get a badge, 0-0, "No stats yet"
+# and "Nothing logged yet". Records and class ranks only — the allowlist has no
+# room for more and does not need it.
+print("pregame payload")
+gid5 = execute("INSERT INTO games (team1_id,team2_id,date,location,tracked_by) "
+               "VALUES (?,?, date('now','+1 day'), 'Home Gym', ?)",
+               (t1, t2, COACH_EMAIL))
+_d5 = coach.post(f"/api/games/{gid5}/public").json()
+PF.clear_cache()
+_pg = client.get(f"/api/public/game/{_d5['token']}").json()
+ok(_pg["status"] == "pregame", "a game with no events reads pregame")
+ok(_pg["home"]["wins"] is not None and _pg["away"]["wins"] is not None,
+   f"both records travel ({_pg['home']['wins']}-{_pg['home']['losses']} vs "
+   f"{_pg['away']['wins']}-{_pg['away']['losses']})")
+ok(_pg["home"]["class_rank"] == 1 and _pg["home"]["class_lbl"] == "5A"
+   and _pg["home"]["class_of"] == 2,
+   "both class ranks travel, each naming its pool")
+ok(_pg["home"]["short"] == "Claremore" and _pg["away"]["short"] == "Visitor Prep",
+   "the hero gets its short names")
+ok(_pg["location"] == "Home Gym", "the venue is on the row and travels")
+# `games` has no time column, so there is no tip-off time to publish. Pinned so
+# the next person to look does not go hunting for one.
+_cols = {r["name"] for r in query("PRAGMA table_info(games)")}
+ok("time" not in _cols and "tipoff" not in _cols,
+   "there is no tip-off time on a game row to publish (date + location only)")
+
+_blob = json.dumps(_pg)
+for name in HOME_NAMES + AWAY_NAMES + REF_NAMES:
+    for part in name.split():
+        assert part not in _blob, f"LEAK: '{part}' in pregame payload"
+for key in ("Power", "Rating", "AdjNet", "SOS", "SOR", "xPPG", "xoPPG",
+            "MOV", "ClassAdj", "play_type", "defense"):
+    assert f'"{key}"' not in _blob, f"LEAK: '{key}' in pregame payload"
+for key in ("rank", "of", "rank_of", "opp_rank"):
+    assert f'"{key}"' not in _blob, f"LEAK: league-wide '{key}' in pregame payload"
+ok(True, "pregame payload: records and class ranks only, no names, no ratings")
+
 
 print(f"\nALL {PASS} CHECKS PASSED")

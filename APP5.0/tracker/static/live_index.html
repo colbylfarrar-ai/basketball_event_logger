@@ -186,6 +186,7 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
     <div id="t-season" class="season-note" hidden></div>
     <div id="t-gender" class="chiprow"></div>
     <div id="t-classes" class="chiprow"></div>
+    <div class="season-note">Ranked within class, by results.</div>
     <div id="t-loading" class="empty">Loading teams…</div>
     <ul class="teams" id="t-list" hidden></ul>
     <button id="t-more" class="more" hidden>Show more</button>
@@ -287,9 +288,9 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
       a.innerHTML =
         '<div class="top"><span class="chip live">LIVE</span>' +
         '<span>' + esc(g.gender) + ' · ' + qlabel(g.quarter) + ' ' + esc(g.clock) + '</span></div>' +
-        '<div class="row"><span class="team">' + esc(g.home) + '</span>' +
+        '<div class="row"><span class="team">' + esc(sn(g, 'home_short')) + '</span>' +
         '<span class="pts">' + g.home_pts + '</span></div>' +
-        '<div class="row"><span class="team">' + esc(g.away) + '</span>' +
+        '<div class="row"><span class="team">' + esc(sn(g, 'away_short')) + '</span>' +
         '<span class="pts">' + g.away_pts + '</span></div>';
       box.appendChild(a);
     });
@@ -304,9 +305,9 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
       if (g.url) a.href = g.url; else a.className = 'nolink';
       var hw = g.home_score > g.away_score;
       a.innerHTML =
-        '<div class="rl"><span class="nm">' + esc(g.home) + '</span>' +
+        '<div class="rl"><span class="nm">' + esc(sn(g, 'home_short')) + '</span>' +
         (hw ? '<b>' : '<span>') + g.home_score + (hw ? '</b>' : '</span>') + '</div>' +
-        '<div class="rl"><span class="nm">' + esc(g.away) + '</span>' +
+        '<div class="rl"><span class="nm">' + esc(sn(g, 'away_short')) + '</span>' +
         (!hw ? '<b>' : '<span>') + g.away_score + (!hw ? '</b>' : '</span>') + '</div>' +
         '<div class="sub">Final · ' + esc(g.gender) + ' · ' + esc(g.date) + '</div>';
       box.appendChild(a);
@@ -369,7 +370,8 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
         right = 'Upcoming';
       }
       el.innerHTML =
-        '<span class="who"><span class="m">' + esc(g.home) + ' vs ' + esc(g.away) +
+        '<span class="who"><span class="m">' + esc(sn(g, 'home_short')) +
+        ' vs ' + esc(sn(g, 'away_short')) +
         '</span><span class="sub">' + esc(g.gender) +
         (g.location ? ' · ' + esc(g.location) : '') + '</span></span>' +
         '<span class="right">' + right + '</span>';
@@ -431,6 +433,12 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
     var i = DEFAULT_CLASSES.indexOf(lbl);
     return (i >= 0 ? String.fromCharCode(65 + i) : 'z' + lbl);
   }
+
+  // The short name is written ONCE, server-side, in helpers/public_feed.py —
+  // these pages are plain JS and cannot import the Python helper, so it travels
+  // in the payload. sn() only picks the field and falls back to the full name
+  // for an older cached payload that predates it.
+  function sn(o, key) { return (o && o[key]) || (o && o[key.replace('_short', '')]) || ''; }
 
   function ordinal(n) {
     var s = ['th', 'st', 'nd', 'rd'], v = n % 100;
@@ -502,26 +510,38 @@ ul.teams .rec { font-weight: 700; font-size: .9rem; white-space: nowrap; }
       if (t.gender !== tGender) return false;
       return !selectedCount() || tClasses[t.class_lbl];
     });
+    // Ordered by the CLASS ladder, not by a league-wide ordinal — that number
+    // is no longer published (founder ruling, 2026-09-12; helpers/public_feed.py
+    // has the reasoning). Class rank first, class label second, so the first
+    // screen is every class's leader and picking a single chip gives that
+    // class's ladder top to bottom. Teams with no class rank sort last, by name.
     rows.sort(function (a, b) {
-      if (a.rank != null && b.rank != null) {
-        if (a.gender !== b.gender) return a.gender < b.gender ? -1 : 1;
-        return a.rank - b.rank;
+      var ar = a.class_rank, br = b.class_rank;
+      if (ar != null && br != null) {
+        if (ar !== br) return ar - br;
+        return classSortKey(a.class_lbl) < classSortKey(b.class_lbl) ? -1 : 1;
       }
-      if ((a.rank != null) !== (b.rank != null)) return a.rank != null ? -1 : 1;
+      if ((ar != null) !== (br != null)) return ar != null ? -1 : 1;
       return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
     });
     rows.slice(0, tLimit).forEach(function (t) {
       var li = document.createElement('li');
       var a = document.createElement('a');
       a.href = '/live/team/' + t.id;
+      // The badge is a class rank, so the line beside it must say which class
+      // and how big it is — a rank that does not name its pool is the thing
+      // this whole change is fixing.
       var sub = [t.class_lbl || null, t.gender,
                  t.class_rank != null && t.class_of > 1
-                   ? ordinal(t.class_rank) + ' in class' : null]
+                   ? 'of ' + t.class_of + ' in class' : null]
         .filter(Boolean).join(' · ');
       a.innerHTML =
-        '<span class="rk' + (t.rank != null ? '' : ' un') + '">' +
-        (t.rank != null ? '#' + t.rank : '&ndash;') + '</span>' +
-        '<span class="nm"><span class="m">' + esc(t.name) + '</span>' +
+        '<span class="rk' + (t.class_rank != null ? '' : ' un') + '">' +
+        (t.class_rank != null ? '#' + t.class_rank : '&ndash;') + '</span>' +
+        // Short name here too: the sub-line below already says Boys/Girls, so
+        // the suffix on every row was redundant AND pushing real names into
+        // the ellipsis. Search still matches on the FULL name above.
+        '<span class="nm"><span class="m">' + esc(t.short || t.name) + '</span>' +
         '<span class="sub">' + esc(sub) + '</span></span>' +
         '<span class="rec">' + (t.gp ? t.wins + '&ndash;' + t.losses : '') +
         '</span>';

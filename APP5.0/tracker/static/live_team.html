@@ -132,9 +132,13 @@ a.g:active { background: var(--bg3); }
     $('t-sub').textContent = [t.gender, t.class, t.season].filter(Boolean).join(' · ');
     $('t-rec').textContent = t.wins + '–' + t.losses +
       (t.streak ? '  ·  ' + t.streak : '');
-    if (t.rank && t.rank_of) {
-      $('t-rank').textContent = '#' + t.rank + ' of ' + t.rank_of +
-        (t.class_rank ? '  ·  ' + (t.class ? t.class + ' ' : '') + '#' + t.class_rank : '');
+    // The class rank, stating its pool. The league-wide ordinal used to lead
+    // this line and is no longer published at all (founder ruling, 2026-09-12 —
+    // helpers/public_feed.py carries the reasoning).
+    if (t.class_rank) {
+      $('t-rank').textContent =
+        (t.class_lbl || t.class || 'Class') + ' #' + t.class_rank +
+        (t.class_of > 1 ? ' of ' + t.class_of : '');
       $('t-rank').hidden = false;
     }
     // last-5 form pips (newest first)
@@ -172,12 +176,17 @@ a.g:active { background: var(--bg3); }
       } else {
         right = 'Upcoming' + (g.url ? ' · <span class="link">Watch</span>' : '');
       }
-      var orank = g.opp_rank ? '<span class="orank">#' + esc(g.opp_rank) + '</span>' : '';
-      var ocls = g.opp_class_rank
-        ? (g.opp_class_lbl ? esc(g.opp_class_lbl) + ' ' : '') + '#' + esc(g.opp_class_rank)
-        : '';
+      // The opponent's CLASS rank leads the row now; the league-wide ordinal
+      // that used to sit here is no longer in the payload.
+      var orank = g.opp_class_rank
+        ? '<span class="orank">#' + esc(g.opp_class_rank) + '</span>' : '';
+      // The label only — the badge above already carries the number, and the
+      // two together used to read "#3 Adair ... OK 3A #3". The pair is the
+      // pool statement: badge = the rank, sub = the class it is a rank in.
+      var ocls = g.opp_class_rank && g.opp_class_lbl ? esc(g.opp_class_lbl) : '';
       el.innerHTML =
-        '<span><span class="m">' + esc(g.home_away) + ' ' + orank + esc(g.opp) + '</span>' +
+        '<span><span class="m">' + esc(g.home_away) + ' ' + orank +
+        esc(g.opp_short || g.opp) + '</span>' +
         '<span class="sub">' + esc(g.date) +
         (g.location ? ' · ' + esc(g.location) : '') +
         (ocls ? ' · ' + ocls : '') + '</span></span>' +

@@ -10,13 +10,30 @@ Public by design:  score, status, quarter/clock, quarter scores, team fouls,
                    per-player box lines keyed by JERSEY NUMBER, play-by-play
                    strings (numbers only), shot-chart dots, officials as
                    anonymized crew slots (R/U1/U2) with foul counts, and the
-                   team directory: name/class/state, W-L record, ORDINAL rank
-                   (a wall poster ranking — derived from the same final scores
-                   the scoreboard already publishes).
+                   team directory: name/class/state, W-L record and CLASS rank
+                   (derived from the same final scores the scoreboard already
+                   publishes).
 Never public:      player names, official names, play_type, defense,
                    turnover_type, ratings of any kind (no Power /
-                   Rating / AdjNet — rank ordinals only), minutes,
-                   possession counts.
+                   Rating / AdjNet), minutes, possession counts — and, since
+                   the 2026-09-12 ruling, no LEAGUE-WIDE ORDINAL either.
+
+The league-wide ordinal was public until 2026-09-12 and is not any more. The
+number came from a 743-team pool while the page showed Oklahoma only, so the
+boys list read "#1 · #2 · #5 · #6" with two 1-0 out-of-state teams holding
+the missing places above a 24-2 program — THE BOOK §8.2 (the one-game
+leaderboards) surfacing on the one page with no login in front of it. Of the
+three ways out in LIVE_APP_REVIEW_2026-09-12.md §3 the founder took the third:
+publish the CLASS rank, which the OSSAA ladder makes meaningful and which is
+the number a parent argues about anyway, and keep the state-wide opinion inside
+the app. So `rank` / `of` / `opp_rank` are gone from every public payload. Do
+not add them back without another ruling.
+
+A class rank is published only for a team that HAS a class.
+`team_ratings._assign_ranks` buckets on (state, class) and hands the classless
+rows a number anyway, while `class_label` collapses all of those per-state
+buckets to the single label 'N/A' — so publishing it would print 21 different
+ladders as if they were one.
 
 Fans poll every few seconds, so `state_by_token` sits behind a small TTL
 cache: N fans on one game cost ~1 DB read per TTL window.
@@ -40,6 +57,81 @@ _CACHE: dict[str, tuple[float, dict]] = {}
 
 # crew-slot labels in assigning order; slot column 1-based, extras become U3…
 _SLOT_LABELS = ("R", "U1", "U2", "U3", "U4")
+
+# ── one shortening rule, four payloads ─────────────────────────────────────────
+# The live pages are plain JS with no build step, so they cannot import
+# helpers.cards.team_short — and that helper only strips the gender suffix,
+# which is not enough anyway: "Claremore (Sequoyah) Girls" still ran off a
+# 375 px screen as "Claremore (Sequoya…". So the short name travels in the
+# payload, and it is written HERE, once. Two rules would drift, and the two
+# pages that disagreed would be the game hero and the linescore — side by side
+# on the same screen.
+_SHORT_LIMIT = 18          # what fits the hero and the linescore at 375 px
+_GENDER_SUFFIXES = (" girls", " boys")
+_SCHOOL_SUFFIXES = (" high school", " hs")
+_PARENS = re.compile(r"\s*\([^()]*\)")
+_WS = re.compile(r"\s+")
+
+
+def short_name(name: str) -> str:
+    """A display name for a narrow screen. Never empty, never an ellipsis.
+
+    Removes what is genuinely redundant, in order, and STOPS as soon as the
+    result fits. Everything it strips is noise a fan already knows from the
+    page around it; what it cannot shorten it returns whole and lets CSS
+    ellipsise, because a truncation this function writes ("Booker T…") is
+    worse than the one the browser writes at the real edge of the box.
+
+        Claremore (Sequoyah) Girls          -> Claremore
+        North Little Rock (Little Rock, Ark)-> North Little Rock
+        PARIS NORTH LAMAR HIGH SCHOOL       -> PARIS NORTH LAMAR
+        McDonald County, MO 5a school       -> McDonald County
+        Central (Sallisaw) Girls            -> Central (Sallisaw)   [fits: kept]
+        BOOKER T WASHINGTON Boys            -> BOOKER T WASHINGTON  [no noise]
+
+    The parenthetical is dropped only when the name does NOT already fit, and
+    that condition is load-bearing: "Central (Sallisaw)" and "Central (Tulsa)"
+    are two different schools, and an unconditional strip would print them as
+    the same team on the same scoreboard.
+    """
+    s = _WS.sub(" ", (name or "").strip())
+    low = s.lower()
+    for suf in _GENDER_SUFFIXES:
+        if low.endswith(suf):
+            s = s[:-len(suf)].strip()
+            break
+    low = s.lower()
+    for suf in _SCHOOL_SUFFIXES:
+        if low.endswith(suf) and len(s) - len(suf) >= 3:
+            s = s[:-len(suf)].strip()
+            break
+    if len(s) <= _SHORT_LIMIT:
+        return s or (name or "")
+    # a trailing/embedded qualifier: "(Sequoyah)", "(Carrollton, TX)", "(6A)"
+    if "(" in s:
+        stripped = _WS.sub(" ", _PARENS.sub(" ", s)).strip(" ,-–—")
+        if len(stripped) >= 3:
+            s = stripped
+            if len(s) <= _SHORT_LIMIT:
+                return s
+    # a comma qualifier: "McDonald County, MO 5a school"
+    head = s.split(",")[0].strip()
+    if len(head) >= 3 and len(head) < len(s):
+        return head
+    return s or (name or "")
+
+
+def _class_rank(row: dict) -> tuple:
+    """(class_rank, class_of, class_lbl) for a scored row, or (None, None, "").
+
+    A team with no class has no class rank — see the module docstring. This is
+    the single place that decision is made, so the directory, the team page and
+    the game page cannot disagree about whether a team has one.
+    """
+    lbl = (row.get("class_lbl") or "").strip()
+    if not lbl or lbl.upper() == "N/A":
+        return (None, None, "")
+    return (row.get("ClassRank"), row.get("ClassOf"), lbl)
 
 
 def clear_cache() -> None:
@@ -147,6 +239,8 @@ def scoreboard(date_str: str) -> dict | None:
         gei = _live_gei(r["id"], r["team1_id"], r["team2_id"], hp, ap,
                         _ranks(r["gd"], r["season"]))
         live.append({"home": r["hn"], "away": r["an"],
+                     "home_short": short_name(r["hn"]),
+                     "away_short": short_name(r["an"]),
                      "gender": "Girls" if r["gd"] == "F" else "Boys",
                      "home_pts": hp, "away_pts": ap,
                      "quarter": last[0]["quarter"], "clock": last[0]["time"],
@@ -165,6 +259,8 @@ def scoreboard(date_str: str) -> dict | None:
 
     def _row(r, status):
         g = {"home": r["hn"], "away": r["an"],
+             "home_short": short_name(r["hn"]),
+             "away_short": short_name(r["an"]),
              "home_id": r["team1_id"], "away_id": r["team2_id"],
              "gender": "Girls" if r["gd"] == "F" else "Boys",
              "classes": sorted({c for c in (r["hc"], r["ac"]) if c and c != "N/A"}),
@@ -308,10 +404,10 @@ def team_profile(team_id: int) -> dict | None:
                     "ORDER BY date DESC, id DESC LIMIT 1", (team_id, team_id))
     season = szn[0]["season"] if szn else None
 
-    # Ordinal ranks (gender-wide) keyed by team id, from the already-cached
-    # public directory — powers both this team's hero rank and the #rank shown
-    # against each opponent on the schedule. Out-of-league / unranked opponents
-    # (out-of-state, no games) just come back None and render without a rank.
+    # Class ranks keyed by team id, from the already-cached public directory —
+    # powers both this team's hero rank and the rank shown against each
+    # opponent on the schedule. Unranked or classless opponents come back None
+    # and render without a rank, which is the correct thing to show for them.
     dir_by_id: dict[int, dict] = {}
     try:
         for td in teams_directory().get("teams", []):
@@ -347,8 +443,11 @@ def team_profile(team_id: int) -> dict | None:
             us = r["home_score"] if is_home else r["away_score"]
             them = r["away_score"] if is_home else r["home_score"]
             _od = dir_by_id.get(opp_id, {})
-            g = {"date": r["date"], "opp": r["an"] if is_home else r["hn"],
-                 "opp_rank": _od.get("rank"),
+            _opp_name = r["an"] if is_home else r["hn"]
+            g = {"date": r["date"], "opp": _opp_name,
+                 "opp_short": short_name(_opp_name),
+                 # No opp_rank. The league-wide ordinal is not public any more
+                 # (module docstring, 2026-09-12 ruling) — the class rank is.
                  "opp_class_rank": _od.get("class_rank"),
                  "opp_class_lbl": _od.get("class_lbl"),
                  "home_away": "vs" if is_home else "at",
@@ -388,18 +487,18 @@ def team_profile(team_id: int) -> dict | None:
     form = ["W" if w else "L" for w in results[:5]]   # last 5, newest first
 
     _own = dir_by_id.get(team_id, {})
-    rank, rank_of = _own.get("rank"), _own.get("of")
     class_rank, class_of = _own.get("class_rank"), _own.get("class_of")
 
     payload = {"id": t["id"], "name": t["name"],
+               "short": short_name(t["name"]),
                "class": t["class"] if t["class"] != "N/A" else "",
                "gender": "Girls" if t["gender"] == "F" else "Boys",
                "season": season if season and season != "Current" else "",
                "wins": wins, "losses": losses,
                "ppg": ppg, "oppg": oppg, "mov": mov,
                "streak": streak, "form": form,
-               "rank": rank, "rank_of": rank_of,
                "class_rank": class_rank, "class_of": class_of,
+               "class_lbl": _own.get("class_lbl") or "",
                "games": games}
     _TEAM_CACHE[team_id] = (now, payload)
     return payload
@@ -411,11 +510,12 @@ _DIR_CACHE: dict = {}
 
 
 def teams_directory() -> dict:
-    """Public landing "Teams" payload: every team's identity + W-L record and
-    an ORDINAL rank within its gender (plus class rank). Rank comes from the
-    results-only engine (team_ratings.score_ratings) whose inputs are the same
-    public final scores the scoreboard shows — but only the ordinal crosses
-    the fence. No Power / Rating / AdjNet / tracked numbers, ever.
+    """Public landing "Teams" payload: every team's identity, W-L record and
+    CLASS rank. The rank comes from the results-only engine
+    (team_ratings.score_ratings) whose inputs are the same public final scores
+    the scoreboard shows — but only the class ordinal crosses the fence. No
+    Power / Rating / AdjNet / tracked numbers, and no league-wide ordinal
+    (2026-09-12 ruling; see the module docstring).
 
     Season = the season of the most recent finished game (active season
     in-season; in the offseason the latest played season, same precedent as
@@ -443,13 +543,11 @@ def teams_directory() -> dict:
     if season:
         for gd in ("M", "F"):
             ratings = TR.score_ratings(gender=gd, season=season)
-            of = len(ratings)
             for tid, r in ratings.items():
+                c_rk, c_of, c_lbl = _class_rank(r)
                 ranked[tid] = {"wins": r["W"], "losses": r["L"], "gp": r["GP"],
-                               "rank": r["Rank"], "of": of,
-                               "class_rank": r["ClassRank"],
-                               "class_of": r["ClassOf"],
-                               "class_lbl": r["class_lbl"]}
+                               "class_rank": c_rk, "class_of": c_of,
+                               "class_lbl": c_lbl}
 
     multi = TR.league_multi_state()
     teams = []
@@ -460,14 +558,13 @@ def teams_directory() -> dict:
                    TR.class_label(t["class"], t["state"], multi))
         teams.append({
             "id": t["id"], "name": t["name"],
+            "short": short_name(t["name"]),
             "gender": "Girls" if t["gender"] == "F" else "Boys",
             "state": (t["state"] or "").strip(),
             "class_lbl": cls_lbl if cls_lbl != "N/A" else "",
             "wins": rk["wins"] if rk else 0,
             "losses": rk["losses"] if rk else 0,
             "gp": rk["gp"] if rk else 0,
-            "rank": rk["rank"] if rk else None,
-            "of": rk["of"] if rk else None,
             "class_rank": rk["class_rank"] if rk else None,
             "class_of": rk["class_of"] if rk else None,
         })
@@ -592,6 +689,37 @@ def _wp_series(score_trace: list, final: bool) -> list:
     return pts
 
 
+def _team_card(team_id: int, name: str) -> dict:
+    """The identity block for one side of a game: name, short name, id, and
+    the team's own public season facts (W-L and class rank).
+
+    The season facts exist for the PREGAME page. A fan who scans the QR at the
+    gym door before tip-off used to get a badge, 0-0, "No stats yet" and
+    "Nothing logged yet" — nothing to read for the twenty minutes that fan is
+    standing there, on the page that is the whole funnel. Both records and both
+    class ranks are already computed in `teams_directory`, so this costs a dict
+    lookup against a cache the landing page has usually warmed already.
+
+    Strictly W-L and the class rank: the same two facts the team page publishes,
+    and nothing the allowlist does not already carry.
+    """
+    card = {"name": name, "short": short_name(name), "id": team_id,
+            "wins": None, "losses": None,
+            "class_rank": None, "class_of": None, "class_lbl": ""}
+    try:
+        for td in teams_directory().get("teams", []):
+            if td["id"] == team_id:
+                if td["gp"]:
+                    card["wins"], card["losses"] = td["wins"], td["losses"]
+                card["class_rank"] = td["class_rank"]
+                card["class_of"] = td["class_of"]
+                card["class_lbl"] = td["class_lbl"]
+                break
+    except Exception:
+        pass       # a fan page must render without the ratings engine
+    return card
+
+
 def _build_state(g: dict) -> dict:
     gid, t1, t2 = g["id"], g["team1_id"], g["team2_id"]
     events = [dict(e) for e in query(
@@ -707,8 +835,8 @@ def _build_state(g: dict) -> dict:
     return {
         "status": status,
         "date": g["date"], "location": g["location"] or "",
-        "home": {"name": g["home_name"], "pts": pts["home"], "id": t1},
-        "away": {"name": g["away_name"], "pts": pts["away"], "id": t2},
+        "home": dict(_team_card(t1, g["home_name"]), pts=pts["home"]),
+        "away": dict(_team_card(t2, g["away_name"]), pts=pts["away"]),
         "quarter": last["quarter"] if last else 1,
         "clock": last["time"] if last else "",
         "quarters": quarters,

@@ -41,7 +41,7 @@ from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
 import helpers.dashboard.shot_diet as _shot_diet
-from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import pctile_badge as _PCTB   # "64th of 22", or the rank
 from helpers.stats import player_label as _PLBL
 
 
@@ -202,12 +202,14 @@ def _render_scheme_fingerprint(ctx, g, tid, off, drows, prof):
         cc = st.columns(2)
         cc[0].markdown(glass(
             "Best scheme", best["label"],
-            f"{best['PPP']:.2f} PPP · {_ORD(best['pct'])} pct · {best['poss']} poss",
+            f"{best['PPP']:.2f} PPP · {_PCTB(best['pct'], best.get('pool_n'))[0]}"
+            f" · {best['poss']} poss",
             color=best.get("color", "var(--text)")), unsafe_allow_html=True)
         if worst["key"] != best["key"]:
             cc[1].markdown(glass(
                 "Leakiest", worst["label"],
-                f"{worst['PPP']:.2f} PPP · {_ORD(worst['pct'])} pct · "
+                f"{worst['PPP']:.2f} PPP · "
+                f"{_PCTB(worst['pct'], worst.get('pool_n'))[0]} · "
                 f"{worst['poss']} poss", color=worst.get("color", "var(--text)")),
                 unsafe_allow_html=True)
 
@@ -502,13 +504,16 @@ def render(ctx):
             cc[0].markdown(glass(
                 "Best scheme" if not _off else "We torch",
                 best["label"],
-                f"{best['PPP']:.2f} PPP · {_ORD(best['pct'])} pct · {best['poss']} poss",
+                f"{best['PPP']:.2f} PPP · "
+                f"{_PCTB(best['pct'], best.get('pool_n'))[0]} · "
+                f"{best['poss']} poss",
                 color=best["color"]), unsafe_allow_html=True)
             if worst["key"] != best["key"]:
                 cc[1].markdown(glass(
                     "Leak" if not _off else "We stall vs",
                     worst["label"],
-                    f"{worst['PPP']:.2f} PPP · {_ORD(worst['pct'])} pct · "
+                    f"{worst['PPP']:.2f} PPP · "
+                    f"{_PCTB(worst['pct'], worst.get('pool_n'))[0]} · "
                     f"{worst['poss']} poss", color=worst["color"]),
                     unsafe_allow_html=True)
     else:
@@ -695,7 +700,9 @@ def render(ctx):
                 else max(lead, key=lambda x: x["PPP"])) if lead else None
         _lr.append({
             "Defense": blk["label"], "Your PPP": f"{mine['PPP']:.2f}",
-            "Pctile": (f"{mine['pct']:.0f}"
+            # the pool, not a bare number: this rank is over the teams that
+            # ran THIS scheme enough to qualify (B1).
+            "Pctile": (_PCTB(mine["pct"], mine.get("pool_n"))[0]
                        if mine.get("pct") is not None else None),
             "_p": mine.get("pct") or -1,
             "Lg avg": (f"{blk['lg_ppp']:.2f}"

@@ -4,8 +4,8 @@ Written 2026-09-12 against `~/app5_prod/analytics.db` — production, pulled 09:
 the same morning (63 tracked games; 43 of them on the girls' book, 26 on team 1).
 Every number below was measured by rendering the real page headlessly against
 that copy, not by reading the source and estimating. The suites are green at
-**492 pytest** and **106 `tracker/run_all.py`** (up from 104 — two new render
-suites).
+**494 pytest** and **106 `tracker/run_all.py`** (up from 481 / 104 — two new
+render suites and four new static guards).
 
 Three surfaces were named:
 
@@ -172,19 +172,45 @@ sections had no read at all, while computing every number one needs:
 `WP.summarize` has carried `winner`, `min_wp_winner`, `comeback` and
 `avg_tension` since it was written and only the GEI tile ever touched them.
 
-### 1.7 · Three honesty leaks, all of them B1's exact shape
+### 1.7 · Eight honesty leaks, all of them B1's exact shape
+
+A sweep for percentiles rendered without the pool they were ranked against
+turned up eight inside these three surfaces, and five more outside them.
 
 * **Both ranked box-score tables printed a bare `Pct` column** under a caption
   reading *"Pct = league percentile"*. `playtypes.py` and `defenses.py` have
   carried `pool_n` on every row since the B1 pass; nothing here read it. A
   percentile over five tracked teams rendered identically to one over 748.
-* **Play Style's "League context" table** did the same with a `Pctile` column —
-  and that pool is smaller still, since only the teams that ran *that set* often
-  enough qualify.
+* **Play Style's and Defense ▸ Scheme's "League context" tables** did the same
+  with a `Pctile` column — and that pool is smaller still, since only the teams
+  that ran *that set or scheme* often enough qualify.
+* **Six go-to / leak chips** on Play Style and Scheme read
+  `0.78 PPP · 91st pct · 68 poss`. They now read **`91st of 11`** — which is
+  the whole point: the number was always eleven teams and the screen never said
+  so. Where the pool is under `POOL_FLOOR` the chip falls back to the rank, so
+  the same row can now read `4th of 5` or `1st of 9`.
 * **`postgame`'s only sentence about a person named a jersey number**:
   `Top game RATING — Reagan Langley (6.9), 25 (7.4)`. It read the raw `name`
   column instead of `stats.player_label`, on a book where 539 of 608 players
   have no name.
+
+**Outside these three surfaces, and left for whoever owns them** — but no
+longer on a list inside a document. `tracker/test_pctile_pool.py` gained a
+second static test that finds this shape (`pctile_bar`'s own static test
+cannot: these sites never call the primitive) and holds the four remaining
+files as a *named allowlist*, with a companion test that fails when an entry
+goes stale. A new site that writes a raw percentile into a rendered string
+now fails at test time rather than quietly on a coach's screen:
+
+```
+helpers/dashboard/scout_tab.py     the scout sheet's set-call chips
+helpers/dashboard/player_card.py   the player card's play-type rows
+pages/5_Rankings.py                four Rankings play-type / scheme tables
+pages/7_Players.py                 a badge chip
+```
+
+None of them is wrong; all of them are a percentile whose pool is invisible,
+which is the exact sentence B1 says ends a new coach's trust fastest.
 
 ### 1.8 · Two charts whose caption described colours that were not on screen
 
@@ -196,7 +222,28 @@ The box score's Quarters section draws fourteen small charts with
 "accent" and "red" are the names of two *variables*, each holding a team's own
 identity colour. On most games the caption described nothing a viewer could see.
 
-### 1.9 · Four helpers that existed four times
+### 1.9 · One league table, built twice, under two cache keys
+
+`_matchup_grid` — the who-guarded-whom panel on Charts ▸ Defense ▸ Team
+Defense — asked `_ptable_full(gender)` for the league player table with **no
+season scope**, while every other league-wide wrapper on the page gets that
+scope through `_LGBIND`. Two consequences, and the second is the expensive
+one:
+
+* on an archived season that is not the read default, the assignment
+  difficulty would be priced against the wrong year's players;
+* on the read season it is the right answer, computed a **second time** under
+  a second cache key — **19.1 s unscoped against 7.0 s scoped, for a
+  byte-identical 261-player table** (both checked: same players, same
+  difficulty values, 224 defenders / 672 rated assignments either way).
+
+Worth saying what this finding is *not*: the first version of it was "the
+unscoped table resolves to the empty `Current` sentinel and blanks the
+difficulty column." Measured, it does not — `player_stat_table(game_ids=None)`
+resolves to the read season internally. The bug is duplication and a latent
+wrong-year scope, not a blank column.
+
+### 1.10 · Four helpers that existed four times
 
 `_md_bold` — `**x**` → `<b>x</b>`, two lines — was defined privately in
 `insights_team_read`, `scheme_section`, `scout_deep` and `scout`, each docstring
@@ -207,7 +254,7 @@ twice, identically, in `playstyle_tab` and `defense_tab`.
 it is in the engine layer, which may not import a module that imports Streamlit.
 Recorded so a future sweep does not "fix" it.)
 
-### 1.10 · The league quality table, rebuilt per consumer
+### 1.11 · The league quality table, rebuilt per consumer
 
 `lineups.unit_ratings` and `networks.chemistry_network` auto-fetch
 `{pid: OVERALL}` when it is omitted, and that fetch is a full
@@ -227,7 +274,7 @@ table.
 
 ## 2 · What shipped
 
-Five commits on `main`, each green on both suites.
+Eight commits on `main`, each green on both suites.
 
 | commit | what |
 |---|---|
@@ -237,6 +284,8 @@ Five commits on `main`, each green on both suites.
 | `25c7ed3` | **Flow, Shooting and Four Factors say what they found** — three more box-score reads |
 | `d0bf55f` | **one pctile helper, and the quality table is built once** — `cards.pctile_or_thin`; `_player_quality` cached |
 | `9db874e` | **the shapes, locked** — two render suites, 108 checks |
+| `8f17fee` | **Trends leads with five figures, not thirty-nine** — the reference grid gets its own section; this document |
+| *(this commit)* | **every percentile in these three surfaces says its pool** — six chips and two tables on Play Style / Scheme, plus a static guard and the named backlog; the matchup grid's league table takes the season scope |
 
 ### The two decisions worth knowing about
 
@@ -288,15 +337,30 @@ nothing else running.
 | Charts ▸ Quarters | 18.9 s | **15.1 s** |
 | Charts ▸ Offense ▸ Shooting | 19.0 s | **15.8 s** |
 | Charts ▸ Offense ▸ Scoring | 16.8 s | **15.2 s** — and it now also runs the shot-clock read |
-| Charts ▸ Defense ▸ Team Defense | 22.5 s | 20.8 s |
+| Charts ▸ Defense ▸ Team Defense | 22.5 s | **19.2 s** |
 | Lab ▸ Impact Lab | 33.3 s | **25.9 s** |
 
-**And the finding under all of them: there is a ~15-second floor, and it is not
-Charts.** Profiled, it is the page's shared `team_bundle` →
-`team_player_rows` → `player_ratings`, 9.2 s of one call, paid on every leaf of
-every view. Leaf-level work is 0–13 s on top of that. *The next performance pass
-on this page should aim at the bundle, not at the charts* — recorded here so
-nobody spends another session shaving figures.
+**And the finding under all of them: there is a ~15-second cold floor, and
+it is not Charts.** Every leaf of every view pays the page's shared
+`_team_bundle`. Profiled cold (cProfile inflates wall time ~2×, so read the
+ratios, not the seconds):
+
+```
+_team_bundle                                       20.5 s cumulative
+  └ player_ratings._pure_rapm_cached   × 2         14.9 s
+player_stat_table                      × 2          9.3 s
+module import (box_score, team_analytics, …)        9.2 s
+```
+
+The ridge solve runs **twice** per cold render, under two different
+`(gender, game-set)` keys — and on this book those two game-sets resolve to
+the same 261 players (§1.9 is the same duplication one level up, and fixing
+it there collapsed one of the two `player_stat_table` calls). Whether the two
+RAPM scopes are genuinely different, or the second is the same waste, is one
+measurement away and it is the largest single number on this page.
+
+*The next performance pass should aim at the bundle, not at the charts* —
+recorded here so nobody spends another session shaving figures.
 
 ### 3.3 · The reliability numbers now on screen
 
@@ -332,17 +396,12 @@ nobody spends another session shaving figures.
 
 Ranked, with the reason each waited.
 
-1. **The `team_bundle` floor** (§3.2). ~9 s of `player_stat_table` on every
-   view of every team. It is the largest single number on this page and it is
-   not in any of the three surfaces scoped here, which is exactly why it should
-   be its own session.
-2. **Charts ▸ Defense ▸ Team Defense, 20.8 s cold** — the slowest Charts leaf
-   after the floor is subtracted. Not profiled; worth one pass.
-3. **THE BOOK §13.5, the Synergy framing** (frequency × efficiency on one line)
-   and **§13.6, the defensive mirror**. Both are deferred past September in
-   §16, both land on Charts ▸ Play Style and Charts ▸ Defense ▸ Scheme, and
-   both are better designed after a season of a coach actually reaching for
-   play-type reads.
-4. **A `pool_n` audit of the remaining bare percentiles.** Two were found here
-   by reading two files; a static sweep for `"pct"` rendered without a sibling
-   `pool_n` would find the rest in an hour and could be a test.
+1. **The `team_bundle` floor** (§3.2), and inside it the ridge solve that
+   runs twice. ~9 s of `player_stat_table` and ~15 s of
+   `_pure_rapm_cached` on every view of every team. It is the largest
+   number on this page and it is not in any of the three surfaces scoped
+   here, which is exactly why it should be its own session. Start by
+   printing the two `(gender, game-set)` keys the RAPM memo is asked for on
+   one cold render: if they resolve to the same pool, the second solve is
+   free to delete.
+   a file is done.

@@ -130,6 +130,7 @@ _cfg, ACCENT = page_chrome("Team Dashboard")
 # Re-read per run AFTER page_chrome so the viewer's colorblind-safe pair lands
 import helpers.ui as _uimod
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+from helpers.stats import pctile_badge as _PCTB  # "91st of 11", or the rank
 from helpers.stats import player_label as _PLBL
 GOOD = _uimod.GOOD
 BAD = _uimod.BAD
@@ -1714,11 +1715,27 @@ def _team_fouls(_ids):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _matchup_grid(g, tid, _ids):
-    """Who-guarded-whom rows + assignment difficulty for a team's defenders."""
+def _matchup_grid(g, tid, _ids, _pool=None):
+    """Who-guarded-whom rows + assignment difficulty for a team's defenders.
+
+    `_pool` is the SEASON's gender tracked pool (`_season_gp`), and it is the
+    same scope every other league-wide wrapper on this page gets through
+    `_LGBIND`. This one was called directly and so asked `_ptable_full` for
+    the unscoped table — which resolves to the READ-default season, not the
+    season the picker is on. Two consequences, and the second is the
+    expensive one:
+
+      * on any archived season that is not the read default, the assignment
+        difficulty would be priced against the wrong year's players;
+      * on the read season it is the RIGHT answer computed a SECOND time,
+        under a second cache key — measured at 19.1s unscoped against 7.0s
+        scoped, for a byte-identical 261-player table, and it is most of
+        Charts -> Defense -> Team Defense's cold render.
+    """
     names = MU.player_names(g)
     rows = MU.team_matchup_rows(tid, game_ids=list(_ids), names=names)
-    diff = MU.matchup_difficulty(game_ids=list(_ids), table=_ptable_full(g))
+    diff = MU.matchup_difficulty(game_ids=list(_ids),
+                                 table=_ptable_full(g, _pool))
     return rows, diff
 
 
@@ -3287,7 +3304,8 @@ if _tdview == "Charts":
             st.caption("Reconstructed from the defender tagged on every contested "
                        "shot — the FG% each defender allowed the shooters they "
                        "covered, and how tough their assignments were (50 = average).")
-            _mrows, _mdiff = _matchup_grid(gender, team_id, tuple(bundle["tracked_ids"]))
+            _mrows, _mdiff = _matchup_grid(
+                gender, team_id, tuple(bundle["tracked_ids"]), _season_gp)
             if not _mrows:
                 empty_state("No contested-shot data yet",
                             "Tag the defender on shots in the Game Tracker to build "
@@ -4773,14 +4791,19 @@ def _fx_playmaking():
                           (f"{_hb['assist_gini']:.2f}"
                            if _hb.get("assist_gini") is not None else "—"),
                           help="The same coefficient over assist rates.")
-            _hc[2].metric("League percentile",
-                          (f"{_ORD(_hb['pct'])}" if _hb.get("pct") is not None
-                           else "—"),
-                          f"of {_hb.get('pool_n', 0)} deep teams",
-                          help="Against tracked teams with at least "
-                               f"{HB.MIN_POOL_GAMES} games. Most opponents "
-                               "appear here for a single game and are excluded "
-                               "from the scale.")
+            _hc[2].metric(
+                "League percentile",
+                # pctile_badge, not a bare ordinal with the pool in the
+                # delta line: one grammar for every rank on the page, and
+                # under POOL_FLOOR it says "4th of 9" instead of a
+                # percentile nine teams cannot carry.
+                (_PCTB(_hb["pct"], _hb.get("pool_n"))[0]
+                 if _hb.get("pct") is not None else "—"),
+                f"{_hb.get('pool_n', 0)} teams deep enough to rank",
+                help="Against tracked teams with at least "
+                     f"{HB.MIN_POOL_GAMES} games. Most opponents appear "
+                     "here for a single game and are excluded from the "
+                     "scale.")
             st.caption(
                 "Measured over **per-minute scoring rates**, not point totals. "
                 "The raw version is mostly a rotation-depth stat — a starter "

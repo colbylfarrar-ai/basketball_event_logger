@@ -39,7 +39,6 @@ from helpers.ui import empty_state, seg, style_fig
 import helpers.dashboard.scheme_section as _scheme_section
 import helpers.dashboard.rebound_map as _rebound_map
 import helpers.dashboard.shot_diet as _shot_diet
-from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
 from helpers.stats import player_label as _PLBL
 
 _PTL = dict(PT.NAMED_PLAY_TYPES)
@@ -199,12 +198,14 @@ def _render_fingerprint(ctx, g, tid, off, nrows, prof):
         cc = st.columns(2)
         cc[0].markdown(glass(
             "Go-to set", best["label"],
-            f"{best['PPP']:.2f} PPP · {_ORD(best['pct'])} pct · {best['poss']} poss",
+            f"{best['PPP']:.2f} PPP · "
+            f"{_PCTB(best['pct'], best.get('pool_n'))[0]} · {best['poss']} poss",
             color=best["color"]), unsafe_allow_html=True)
         if worst["key"] != best["key"]:
             cc[1].markdown(glass(
                 "Take away", worst["label"],
-                f"{worst['PPP']:.2f} PPP · {_ORD(worst['pct'])} pct · "
+                f"{worst['PPP']:.2f} PPP · "
+                f"{_PCTB(worst['pct'], worst.get('pool_n'))[0]} · "
                 f"{worst['poss']} poss", color=worst["color"]),
                 unsafe_allow_html=True)
 

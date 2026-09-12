@@ -62,6 +62,15 @@ def matchup_table(game_ids=None, events=None):
 
     Only shot events carrying a `guarded_by_id` contribute. Lower FG%/points
     allowed = better on-ball defense.
+
+    UNITS: every `FG%` here — the defender total, `by_shooter` and `by_zone` —
+    is ALREADY a percentage on 0-100, not a 0-1 fraction. Most rate engines in
+    this codebase return the fraction (`stats._safe`, `exploit.defender_profiles`
+    and the play-type tables all do), so a renderer that reaches for the usual
+    `* 100` turns 22.2% into 2220%. That shipped on the player card's matchup
+    block; the Players Lab, reading the same table two screens away, had it
+    right. Stated here because the only defence against it is the contract
+    being written where the value is produced.
     """
     if events is None:
         events = S.fetch_events(game_ids)

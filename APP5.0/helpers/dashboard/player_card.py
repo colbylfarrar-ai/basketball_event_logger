@@ -659,7 +659,7 @@ def _render_matchups(ctx, P, pid, gender, gp):
         if _rows:
             st.dataframe(pd.DataFrame([{
                 "Shooter": _names.get(sh, f"#{sh}"), "FGA": c["FGA"],
-                "Made": c["FGM"], "FG% allowed": (c["FG%"] or 0) * 100,
+                "Made": c["FGM"], "FG% allowed": c["FG%"] or 0,
                 "Pts": c["pts"]} for sh, c in _rows]),
                 hide_index=True, width="stretch",
                 column_config={"FG% allowed":
@@ -684,7 +684,7 @@ def _render_matchups(ctx, P, pid, gender, gp):
         if _inv:
             st.dataframe(pd.DataFrame([{
                 "Defender": _names.get(d, f"#{d}"), "FGA": c["FGA"],
-                "Made": c["FGM"], "Her FG%": (c["FG%"] or 0) * 100,
+                "Made": c["FGM"], "Her FG%": c["FG%"] or 0,
                 "Pts": c["pts"]} for d, c in _inv[:8]]),
                 hide_index=True, width="stretch",
                 column_config={"Her FG%":

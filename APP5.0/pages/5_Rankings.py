@@ -965,7 +965,7 @@ if _view == "Overview":
                        "(or tagged District on the game) — the record that "
                        "seeds the district tournament. GB runs on the district "
                        "record; Overall shown alongside. Teams with no district "
-                       "set group by class; set districts on Setup → Roster & "
+                       "set group by class; set districts in the Input Hub → Teams; "
                        "District.")
 
         st.markdown("<div class='section-hdr'>Rankings table</div>",
@@ -2784,8 +2784,8 @@ def _fx_evr():
                    "make the opponent-adjusted power noisy. Read record + margin as "
                    "the firmer signal; the power/efficiency is directional.")
         st.caption("How teams rank WITHIN one game type — their playoff / district / "
-                   "rivalry self, not the whole season. Set a game's type on the "
-                   "Roster & District page.")
+                   "rivalry self, not the whole season. Set a game's type in the "
+                   "Input Hub → Games.")
         _gt = st.selectbox("Game type", _GAME_TYPES, key="lab_gt_type")
         _gt_view = st.radio(
             "View", ["All games — power & record", "Tracked — efficiency"],

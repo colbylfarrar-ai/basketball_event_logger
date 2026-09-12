@@ -101,10 +101,20 @@ _NAV = {
                 icon=":material/edit_note:"),
         st.Page("pages/2_Game_Tracker.py", title="Game Tracker",
                 icon=":material/sports_basketball:"),
+        # The OTHER way a game gets its numbers, so it sits directly under the
+        # Game Tracker rather than inside a settings page. It was the fourth tab
+        # of "Roster & District" until 2026-09-12; that page is gone (see below).
+        st.Page("pages/16_Box_Score_Entry.py", title="Box Score Entry",
+                icon=":material/table_chart:"),
         st.Page("pages/3_Event_Editor.py", title="Event Editor",
                 icon=":material/edit:"),
-        st.Page("pages/11_Setup.py", title="Roster & District",
-                icon=":material/settings_suggest:"),
+        # "Roster & District" (11_Setup.py) was REMOVED on 2026-09-12. Three of
+        # its four tabs each edited ONE column of a row the Input Hub was
+        # already editing — player position/availability, team district, game
+        # type — which split one row across two pages and, worse, split its
+        # ownership: those writes were scoped there and unscoped here. All three
+        # moved into the Input Hub's grids, which now carry the scope. The
+        # fourth tab was the box-score app above. Nothing was dropped.
         st.Page("pages/4_Schedule.py", title="Schedule",
                 icon=":material/calendar_month:"),
     ],

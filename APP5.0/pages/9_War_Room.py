@@ -871,7 +871,7 @@ def _render_matchup():
                     "SELECT id, name FROM officials WHERE archived=0 ORDER BY name")}
                 if not _allo:
                     st.caption("No officials on file yet — add them in the Game "
-                               "Tracker or on the Setup page (untracked games).")
+                               "Tracker or on the Box Score Entry page (untracked games).")
                 else:
                     _cp = st.multiselect("Officiating crew", list(_allo),
                                          key=f"wr_crew_{ta}_{tb}")

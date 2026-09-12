@@ -7,10 +7,13 @@ import streamlit as st
 from database.db import (query, execute, normalize_date,
                          delete_or_archive_player, delete_or_archive_official,
                          delete_or_block_team, team_history_counts)
-from helpers.ui import page_chrome, page_header, lab_hero as _lab_hero, seg as _seg
+from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
+                        seg as _seg, empty_state)
 import helpers.seasons as SZ
 import helpers.auth as AUTH
+import helpers.entitlement as ENT
 import helpers.change_requests as CR
+import helpers.identity as IDN
 import helpers.officials as OFF
 import helpers.ui as _uimod          # clear_data() — see its docstring
 from helpers.stats import player_label as _PLBL
@@ -18,6 +21,93 @@ from helpers.stats import player_label as _PLBL
 _cfg, ACCENT = page_chrome("Input Hub")
 _me = AUTH.current_user()
 _is_admin = (_me or {}).get("role") == "admin"
+
+# ── ownership scope ───────────────────────────────────────────────────────────
+# Until 2026-09-12 this page had no entitlement import at all. Its only gate was
+# _gated_delete below, which queues DELETES for admin approval — so every UPDATE
+# and INSERT was league-wide open, and any signed-in coach could rename any team,
+# edit any player or rewrite any game's score. Roster & District gated the SAME
+# writes hard, which meant a player's grad year was scoped on one page and
+# unscoped on the other: ownership was decided by which page you opened.
+#
+# These two helpers are the ones that page used, ported verbatim so the two
+# cannot drift. They are applied in two places, and the split is deliberate:
+#
+#   * READS default to your own teams, with an explicit "show the whole league"
+#     switch — a coach still needs to SEE the league to enter an opponent.
+#   * WRITES are gated with no switch. A row outside your scope is rejected by
+#     _guard_team / _guard_game with a sentence, and apply_delta's per-row
+#     try/except means the rest of a pasted batch still saves.
+#
+# INSERTS stay open on purpose. Creating a team, a game or an official is how a
+# league gets entered, and closing it would break the only path a coach has to
+# add an opponent. Editing somebody else's existing row is the hole this closes.
+_OWN = ENT._own_teams(_me)
+
+
+def _team_scope(alias="", col="id"):
+    """(sql, params) restricting a query to the coach's own teams. Empty for
+    admin. Callers AND this into their WHERE."""
+    if _is_admin:
+        return "", ()
+    pre = f"{alias}." if alias else ""
+    if not _OWN:
+        return f"{pre}{col} IS NULL", ()      # no team assigned → nothing editable
+    ph = ",".join("?" * len(_OWN))
+    return f"{pre}{col} IN ({ph})", tuple(_OWN)
+
+
+def _game_scope(a1="t1", a2="t2"):
+    """(sql, params) restricting a games query to games one of the coach's own
+    teams plays in."""
+    if _is_admin:
+        return "", ()
+    if not _OWN:
+        return "1=0", ()
+    ph = ",".join("?" * len(_OWN))
+    return f"({a1}.id IN ({ph}) OR {a2}.id IN ({ph}))", tuple(_OWN) * 2
+
+
+def _owns(team_id) -> bool:
+    return _is_admin or (team_id is not None and int(team_id) in set(_OWN))
+
+
+def _guard_team(team_id, label=""):
+    """Raise unless this team is the coach's to change. apply_delta turns the
+    message into a row-level error and saves the rest of the batch."""
+    if _owns(team_id):
+        return
+    raise ValueError(
+        f"{label or 'That team'} isn't one of your teams, so the edit wasn't "
+        "saved. You can add new rows, and edit your own — ask the admin for "
+        "anything else.")
+
+
+def _guard_game(game_id, label=""):
+    """Raise unless one of the coach's teams actually plays in this game."""
+    if _is_admin:
+        return
+    r = query("SELECT team1_id, team2_id FROM games WHERE id=?", (int(game_id),))
+    if r and (_owns(r[0]["team1_id"]) or _owns(r[0]["team2_id"])):
+        return
+    raise ValueError(
+        f"{label or 'That game'} doesn't involve one of your teams, so the edit "
+        "wasn't saved. Scores and schedules belong to the teams that played.")
+
+
+def _league_switch(key):
+    """The read-scope switch. Admin sees everything already; a coach with no
+    team assigned would otherwise meet an empty page with no explanation."""
+    if _is_admin:
+        return True
+    if not _OWN:
+        st.info("No team is assigned to you yet, so there is nothing here that "
+                "is yours to edit. You can still see the league and add new "
+                "rows — ask the admin to assign your team on the Settings page.")
+        return True
+    return st.toggle("Show the whole league", key=key, value=False,
+                     help="Other teams' rows are visible so you can enter an "
+                          "opponent, but only your own are editable.")
 
 
 def _gated_delete(table, target_id, label):
@@ -48,6 +138,13 @@ STATE_OPTIONS  = ["OK", "TX", "KS", "AR", "MO", "NM", "CO", "LA", "NE",
                   "NH","NJ","NV","NY","OH","OR","PA","RI","SC","SD","TN","UT",
                   "VA","VT","WA","WI","WV","WY"]
 
+#: Coaching fields that used to live on Roster & District. Kept as module
+#: constants with the same names that page used, so a reader following either
+#: history lands in one place.
+POSITIONS = ["", "PG", "SG", "SF", "PF", "C"]
+AVAIL = ["Active", "Questionable", "Out", "Injured", "Suspended"]
+GAME_TYPES = ["Regular", "District", "Rivalry", "Playoff", "Showcase", "Tournament"]
+
 EDITOR_HELP = ("**Click any cell to edit.** Add with the **＋** row at the bottom. "
                "To delete: tick a row's checkbox and press the **Delete** key, then **Save Changes** "
                "(no Delete key on a tablet? use the **Remove** control below).")
@@ -72,9 +169,19 @@ def team_map():
 def team_names():
     return list(team_map().keys())
 
-def load_teams():
-    rows = query("SELECT id, name, class, gender, state FROM teams ORDER BY name")
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","class","gender","state"])
+TEAM_COLS = ["id", "name", "class", "gender", "state", "district"]
+#: One roster row, whole. `position` and `availability` used to live on Roster &
+#: District and the rest here, which split one players row across two pages by
+#: column — with grad_year and handedness editable on BOTH. One grid now.
+PLAYER_COLS = ["id", "name", "number", "position", "availability", "grad_year",
+               "height", "wingspan", "weight", "handedness"]
+
+
+def load_teams(scoped=False):
+    where, params = _team_scope() if scoped else ("", ())
+    rows = query("SELECT id, name, class, gender, state, district FROM teams"
+                 + (f" WHERE {where}" if where else "") + " ORDER BY name", params)
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=TEAM_COLS)
 
 def load_players_for(team_id, season=SZ.ACTIVE):
     """A team's roster for one season — the live roster (archived=0) for the
@@ -82,15 +189,20 @@ def load_players_for(team_id, season=SZ.ACTIVE):
     so archived seasons are editable with the same grid."""
     rc, rp = SZ.roster_clause(season)
     rows = query(
-        f"SELECT id, name, number, grad_year, height, wingspan, weight, handedness "
+        f"SELECT id, name, number, position, availability, grad_year, height, "
+        f"wingspan, weight, handedness "
         f"FROM players WHERE team_id=? AND {rc} ORDER BY name",
         (team_id, *rp)
     )
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","name","number","grad_year","height","wingspan","weight","handedness"])
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=PLAYER_COLS)
 
-def load_games_for_team(team_id):
-    """Load all games involving team_id from the games table, presented from that team's POV."""
+SCHED_COLS = ["id", "opponent", "date", "home_away", "location", "team_score",
+              "opp_score", "game_type", "tracked", "video_url"]
+
+
+def load_games_for_team(team_id, season="__all__"):
+    """Load games involving team_id, presented from that team's POV — the same
+    `games` rows the league grid shows, pivoted. Both POVs are one editor now."""
     rows = query("""
         SELECT g.id,
             CASE WHEN g.team1_id=? THEN t2.name ELSE t1.name END AS opponent,
@@ -100,14 +212,14 @@ def load_games_for_team(team_id):
             g.location,
             CASE WHEN g.team1_id=? THEN g.home_score ELSE g.away_score END AS team_score,
             CASE WHEN g.team1_id=? THEN g.away_score ELSE g.home_score END AS opp_score,
-            g.tracked, g.video_url
+            g.game_type, g.tracked, g.video_url
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
-        WHERE g.team1_id=? OR g.team2_id=?
-    """, (team_id,)*6)
-    df = pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","opponent","date","home_away","location","team_score","opp_score","tracked","video_url"])
+        WHERE (g.team1_id=? OR g.team2_id=?)
+          AND (? = '__all__' OR g.season = ?)
+    """, (team_id,)*6 + (str(season), str(season)))
+    df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=SCHED_COLS)
     if not df.empty:
         df["tracked"] = df["tracked"].astype(bool)
     return sort_by_date(df, ascending=False)
@@ -116,24 +228,33 @@ def load_officials():
     rows = query("SELECT id, name, official_id, state FROM officials WHERE archived=0 ORDER BY name")
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["id","name","official_id","state"])
 
-def load_games(season=None):
+GAME_COLS = ["id", "team1", "team2", "date", "location", "home_score",
+             "away_score", "neutral", "game_type", "tracked", "video_url"]
+
+
+def load_games(season=None, scoped=False):
     """Games for the editor, optionally scoped to one season. `season` None or
     '__all__' loads every season; a label ('Current' / '2025-2026') filters to it,
-    so the table doesn't balloon with every past season's games at once."""
-    where = "" if season in (None, "__all__") else "WHERE g.season = ?"
-    params = () if season in (None, "__all__") else (season,)
+    so the table doesn't balloon with every past season's games at once.
+    `scoped` further narrows to games the coach's own teams play in."""
+    w, params = [], []
+    if season not in (None, "__all__"):
+        w.append("g.season = ?"); params.append(season)
+    if scoped:
+        _gs, _gp = _game_scope()
+        if _gs:
+            w.append(_gs); params += list(_gp)
+    where = ("WHERE " + " AND ".join(w)) if w else ""
     rows = query(f"""
         SELECT g.id, t1.name AS team1, t2.name AS team2,
                g.date, g.location, g.home_score, g.away_score, g.neutral,
-               g.tracked, g.video_url
+               g.game_type, g.tracked, g.video_url
         FROM games g
         JOIN teams t1 ON t1.id = g.team1_id
         JOIN teams t2 ON t2.id = g.team2_id
         {where}
-    """, params)
-    df = pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["id","team1","team2","date","location","home_score","away_score",
-                 "neutral","tracked","video_url"])
+    """, tuple(params))
+    df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=GAME_COLS)
     if not df.empty:
         df["neutral"] = df["neutral"].astype(bool)
     if not df.empty:
@@ -383,8 +504,12 @@ st.divider()
 # the coach back to Teams. A keyed segmented_control persists the selection in
 # session_state, so a Save leaves you on the section you were editing — and only
 # the chosen section's queries run each rerun.
-_HUB_TABS = ["Teams", "Players", "Games", "Team Schedule", "Officials",
-             "Season Archive"]
+# "Team Schedule" is gone as a section — it was the SAME `games` rows in a
+# one-team pivot, with a strictly weaker insert (no duplicate-matchup check, no
+# season picker), and the two editors invalidated each other's cached frame
+# because they knew they collided. It is now a POV toggle inside Games, over one
+# insert path.
+_HUB_TABS = ["Teams", "Players", "Games", "Officials", "Season Archive"]
 _hubview = _seg("Section", _HUB_TABS, default="Teams", key="hub_section") or "Teams"
 
 
@@ -406,20 +531,42 @@ if _hubview == "Teams":
             "rankings and dashboards are still showing last season's archive. The "
             "**Class** column below sets the *current-season* class — to change the "
             "class shown in those archive views, use **🗄️ Retroactive class** below.")
-    orig = get_orig("_teams_orig", load_teams)
-    orig = _sortable(orig, "teams_editor", ["name", "class", "gender", "state"])
-    display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(columns=["name","class","gender","state"])
+    _t_all = _league_switch("teams_all")
+    if st.session_state.get("_teams_scope_prev") != _t_all:
+        invalidate("_teams_orig", "teams_editor")
+        st.session_state["_teams_scope_prev"] = _t_all
+    orig = get_orig("_teams_orig", lambda: load_teams(scoped=not _t_all))
+    # Search — carried over from Roster & District, which had it and this grid
+    # did not. On a 1,448-team book it is the difference between editing your
+    # district and scrolling for it.
+    _tq = st.text_input("Search teams", key="teams_q",
+                        placeholder="team name, class, or district…").strip().lower()
+    if _tq and not orig.empty:
+        _tm = pd.Series(False, index=orig.index)
+        for _c in ("name", "class", "district"):
+            _tm = _tm | orig[_c].astype(str).str.lower().str.contains(_tq, na=False)
+        orig = orig[_tm].reset_index(drop=True)
+        st.caption(f"{len(orig)} team(s) match — clear the box to edit or add others.")
+    orig = _sortable(orig, "teams_editor",
+                     ["name", "class", "gender", "state", "district"])
+    display = (orig.drop(columns=["id"]) if not orig.empty
+               else pd.DataFrame(columns=[c for c in TEAM_COLS if c != "id"]))
 
     st.data_editor(
         display,
         key="teams_editor",
-        num_rows="dynamic",
+        # A filtered view cannot take new rows: apply_delta maps an added row by
+        # POSITION into `orig`, and `orig` here is a subset, so an insert while
+        # searching would be applied against the wrong frame.
+        num_rows="fixed" if _tq else "dynamic",
         width="stretch",
         column_config={
             "name":   st.column_config.TextColumn("Team Name", required=True),
             "class":  st.column_config.SelectboxColumn("Class",  options=CLASS_OPTIONS,  required=True),
             "gender": st.column_config.SelectboxColumn("Gender", options=GENDER_OPTIONS, required=True),
             "state":  st.column_config.SelectboxColumn("State",  options=STATE_OPTIONS, default="OK"),
+            "district": st.column_config.TextColumn(
+                "District", help="Free text, e.g. '3A-4' — groups the standings."),
         },
     )
 
@@ -438,9 +585,13 @@ if _hubview == "Teams":
                     (r["name"].strip(), r.get("class","N/A"), g,
                      (r.get("state") or "OK")))
         def upd_team(r):
-            execute("UPDATE teams SET name=?, class=?, gender=?, state=? WHERE id=?",
-                    (r["name"].strip(), r["class"], r["gender"], (r.get("state") or "OK"), r["id"]))
+            _guard_team(r["id"], f"'{r.get('name', '?')}'")
+            execute("UPDATE teams SET name=?, class=?, gender=?, state=?, "
+                    "district=? WHERE id=?",
+                    (r["name"].strip(), r["class"], r["gender"],
+                     (r.get("state") or "OK"), (r.get("district") or ""), r["id"]))
         def del_team(r):
+            _guard_team(r["id"], f"'{r.get('name', '?')}'")
             # NOT a plain DELETE: teams cascade into games → game_events →
             # game_event_lineup, so removing a team while tidying the list used
             # to silently destroy every game it ever played. delete_or_block_team
@@ -505,10 +656,21 @@ if _hubview == "Players":
     if not tnames:
         st.warning("Add at least one team first.")
     else:
+        # Own teams first, and only them unless the league switch is on: a
+        # roster is the most team-owned thing in the book, and the old picker
+        # offered all 1,448 with every one of them editable.
+        _p_all = _league_switch("players_all")
+        _own_names = [r["name"] for r in query(
+            "SELECT name FROM teams WHERE id IN (%s) ORDER BY name"
+            % ",".join("?" * len(_OWN)), tuple(_OWN))] if _OWN else []
+        _p_opts = tnames if (_p_all or not _own_names) else _own_names
         _pc1, _pc2 = st.columns([2, 1])
-        selected_team = _pc1.selectbox("Select Team", tnames, key="player_team_sel")
+        selected_team = _pc1.selectbox("Select Team", _p_opts, key="player_team_sel")
         tm = team_map()
         team_id = tm[selected_team]
+        if not _owns(team_id):
+            st.caption(f"👁 Viewing **{selected_team}** — not one of your teams, "
+                       "so saves on existing players will be refused.")
 
         # Season picker — the current season edits the live roster; a past season
         # edits that season's archived rows directly (names, numbers, grad years),
@@ -539,8 +701,8 @@ if _hubview == "Players":
                        "seasons); name & grad-year edits sync across seasons.")
         st.caption(EDITOR_HELP)
         orig = get_orig("_players_orig", lambda: load_players_for(team_id, roster_season))
-        display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
-            columns=["name","number","grad_year","height","wingspan","weight","handedness"])
+        display = (orig.drop(columns=["id"]) if not orig.empty
+                   else pd.DataFrame(columns=[c for c in PLAYER_COLS if c != "id"]))
 
         st.data_editor(
             display,
@@ -550,6 +712,15 @@ if _hubview == "Players":
             column_config={
                 "name":     st.column_config.TextColumn("Player Name", required=True),
                 "number":   st.column_config.NumberColumn("Number",      min_value=0, max_value=999, step=1),
+                # position + availability came from Roster & District. They power
+                # the depth chart; nothing else on this page reads them.
+                "position": st.column_config.SelectboxColumn(
+                    "Position", options=POSITIONS,
+                    help="Drives the depth chart on the Team Dashboard."),
+                "availability": st.column_config.SelectboxColumn(
+                    "Status", options=AVAIL, default="Active",
+                    help="Out / Injured / Suspended drop a player from the "
+                         "depth chart and the lineup builder's default five."),
                 "grad_year": st.column_config.NumberColumn(
                     "Grad yr", min_value=2000, max_value=2100, step=1, format="%d",
                     default=SZ.default_grad_year(roster_season),
@@ -591,8 +762,11 @@ if _hubview == "Players":
                 # it never surfaces in current-season pickers)
                 szn = SZ.ACTIVE if _is_cur_roster else str(roster_season)
                 pid = execute(
-                    "INSERT INTO players (team_id, name, number, grad_year, height, wingspan, weight, handedness, season, archived) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (team_id, name, int(r.get("number") or 0), gy,
+                    "INSERT INTO players (team_id, name, number, position, "
+                    "availability, grad_year, height, wingspan, weight, "
+                    "handedness, season, archived) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (team_id, name, int(r.get("number") or 0),
+                     r.get("position") or "", r.get("availability") or "Active", gy,
                      r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
                      "left" if r.get("handedness") == "left" else "right",
                      szn, 0 if _is_cur_roster else 1)
@@ -602,9 +776,13 @@ if _hubview == "Players":
                 if not _is_cur_roster:
                     IDN.auto_link(pid)
             def upd_player(r):
+                _guard_team(team_id, f"'{selected_team}'")
                 execute(
-                    "UPDATE players SET team_id=?, name=?, number=?, grad_year=?, height=?, wingspan=?, weight=?, handedness=? WHERE id=?",
-                    (team_id, r["name"].strip(), int(r.get("number") or 0), _gy(r),
+                    "UPDATE players SET team_id=?, name=?, number=?, position=?, "
+                    "availability=?, grad_year=?, height=?, wingspan=?, weight=?, "
+                    "handedness=? WHERE id=?",
+                    (team_id, r["name"].strip(), int(r.get("number") or 0),
+                     r.get("position") or "", r.get("availability") or "Active", _gy(r),
                      r.get("height") or None, r.get("wingspan") or None, r.get("weight") or None,
                      "left" if r.get("handedness") == "left" else "right",
                      r["id"])
@@ -613,6 +791,7 @@ if _hubview == "Players":
                 # player's rows on other seasons (identity-linked)
                 IDN.propagate_person_fields(r["id"])
             def del_player(r):
+                _guard_team(team_id, f"'{selected_team}'")
                 if _gated_delete("players", r["id"], f"player '{r.get('name','?')}'"):
                     if delete_or_archive_player(r["id"]) == "archived":
                         st.toast(f"{r.get('name','Player')} has tracked game "
@@ -795,38 +974,163 @@ if _hubview == "Players":
 # ══════════════════════════════════════════════════════════════════════════════
 #  GAMES
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+#  GAMES — shared preamble for both points of view
+# ══════════════════════════════════════════════════════════════════════════════
+# One `games` table, two ways to look at it: the league grid (home team / away
+# team) and one team's schedule (opponent / home-away). They used to be two
+# SECTIONS with two insert paths, and the second was a strictly weaker copy —
+# no duplicate-matchup check and no season picker, so adding a game from the
+# team view could double-book a matchup the league grid would have refused.
+# Both now run through _ins_game / _upd_game below.
+_games_pov = "League"
+_gv_val = SZ.ACTIVE
 if _hubview == "Games":
+    _gpc1, _gpc2 = st.columns([2, 3])
+    with _gpc1:
+        _games_pov = _seg("Point of view", ["League", "One team"],
+                          default="League", key="games_pov") or "League"
+    # Season filter for the LIST below (separate from the "Season for new
+    # games" stamp-picker under the editor). Only shown once an archive
+    # exists; defaults to the active season so the table stays lean. Changing
+    # it resets the editor so pending edits can't misapply to another season.
+    _gv_opts = SZ.season_options() + [("__all__", "All seasons")]
+    if len(_gv_opts) > 2:
+        _gv_lbls = [l for _v, l in _gv_opts]
+        _gv_sel = _gpc2.selectbox(
+            "Show games from", _gv_lbls, index=0, key="games_view_szn",
+            help="Filters the table below to one season (or all). The 'Season "
+                 "for new games' picker under the editor controls what NEW "
+                 "rows are stamped with.")
+        _gv_val = next(v for v, l in _gv_opts if l == _gv_sel)
+    if st.session_state.get("_games_view_prev") != (_gv_val, _games_pov):
+        invalidate("_games_orig", "games_editor", "_sched_orig", "sched_editor")
+        st.session_state["_games_view_prev"] = (_gv_val, _games_pov)
+
+    # Season for NEW rows: Auto = infer from each game's date (Oct 1 cutoff —
+    # a past-dated game lands in its real season automatically); or force one.
+    # Shared by both POVs; the team view never had this picker at all.
+    _szn_opts = ["Auto (from date)"] + [v for v, _l in SZ.season_options()]
+    _szn_pick = st.selectbox(
+        "Season for new games", _szn_opts, index=0, key="games_szn",
+        help="Auto stamps each new game with the season its DATE falls in "
+             "(seasons run Oct 1 – Apr 30), so back-dated games go straight "
+             "into their real season and never mix into current stats.")
+
+    _skipped = []
+
+    def _dup_matchup(d, t1, t2):
+        """True when this matchup is already on the schedule for that day.
+
+        ux_games_matchup (db.py) forbids a second IMPORTED row for one matchup
+        on one date, in either orientation. Checked HERE so the coach reads a
+        sentence instead of a raw constraint name — and so the rest of a pasted
+        batch still saves, which is what apply_delta's per-row try/except is
+        for. Q13: teams play once a day.
+        """
+        return bool(query(
+            "SELECT id FROM games WHERE date=? AND tracked_by=''"
+            " AND ((team1_id=? AND team2_id=?) OR (team1_id=? AND team2_id=?))",
+            (d, t1, t2, t2, t1)))
+
+    def _ins_game(t1, t2, date, location, h_sc, a_sc, neutral, tracked,
+                  video_url, game_type, n1="", n2=""):
+        """The ONE insert. Both points of view reach the table through here."""
+        if t1 == t2:
+            _skipped.append(f"Skipped a game with '{n1 or t1}' as both home and "
+                            "away — pick two different teams.")
+            return
+        _d = normalize_date(date)
+        if _dup_matchup(_d, t1, t2):
+            _skipped.append(
+                f"Skipped {n1 or t1} vs {n2 or t2} on {_d} — that matchup is "
+                "already on the schedule for that day (teams play once a day). "
+                "Edit the existing row instead.")
+            return
+        _szn = SZ.resolve_new_game_season(
+            _d, None if _szn_pick.startswith("Auto") else _szn_pick)
+        execute(
+            "INSERT INTO games (team1_id, team2_id, date, location, home_score, "
+            "away_score, neutral, tracked, video_url, game_type, season) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (t1, t2, _d, location or None, h_sc, a_sc, int(bool(neutral)),
+             int(bool(tracked)), (video_url or "").strip(),
+             game_type or "Regular", _szn))
+
+    def _upd_game(gid, t1, t2, date, location, h_sc, a_sc, neutral, tracked,
+                  video_url, game_type):
+        """The ONE update, with both guards a game edit needs: ownership, and
+        the tracked game's PBP-derived score."""
+        gid = int(gid)
+        _guard_game(gid, f"Game #{gid}")
+        live = _live_game(gid)
+        if live and live["tracked"]:
+            # Tracked games own their PBP-derived score — keep it. Apply only
+            # non-score edits; reject a manual score / untrack change.
+            if (_norm_score(h_sc) != live["home_score"]
+                    or _norm_score(a_sc) != live["away_score"]
+                    or not bool(tracked)):
+                raise ValueError(
+                    f"Game #{gid} is play-by-play tracked — its score and "
+                    "tracked flag are owned by the Game Tracker, so this edit "
+                    "was not saved. Untrack it there to score it by hand.")
+            execute(
+                "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, "
+                "neutral=?, video_url=?, game_type=? WHERE id=?",
+                (t1, t2, normalize_date(date), location or None,
+                 int(bool(neutral)), (video_url or "").strip(),
+                 game_type or "Regular", gid))
+            return
+        execute(
+            "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, "
+            "home_score=?, away_score=?, neutral=?, tracked=?, video_url=?, "
+            "game_type=? WHERE id=?",
+            (t1, t2, normalize_date(date), location or None, h_sc, a_sc,
+             int(bool(neutral)), int(bool(tracked)), (video_url or "").strip(),
+             game_type or "Regular", gid))
+
+    def _del_game_row(gid, label):
+        _guard_game(gid, label)
+        if _gated_delete("games", gid, label):
+            execute("DELETE FROM games WHERE id=?", (gid,))
+
+    def _after_games_save(errs):
+        """Both editors write the same rows, so BOTH cached frames are dropped —
+        otherwise the other view can save stale rows back over this edit."""
+        if errs:
+            st.error("\n".join(errs))  # no rerun — keep rejected rows visible
+            for _w in _skipped:
+                st.warning(_w)
+            return
+        flash("success", "Saved!")
+        for _w in _skipped:
+            flash("warning", _w)
+        invalidate("_games_orig", "games_editor", "_sched_orig", "sched_editor")
+        _uimod.clear_data()
+        st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  GAMES — league point of view
+# ══════════════════════════════════════════════════════════════════════════════
+if _hubview == "Games" and _games_pov == "League":
     tnames = team_names()
     if not tnames:
         st.warning("Add at least one team first.")
     else:
-        # Season filter for the LIST below (separate from the "Season for new
-        # games" stamp-picker under the editor). Only shown once an archive
-        # exists; defaults to the active season so the table stays lean. Changing
-        # it resets the editor so pending edits can't misapply to another season.
-        _gv_opts = SZ.season_options() + [("__all__", "All seasons")]
-        if len(_gv_opts) > 2:
-            _gv_lbls = [l for _v, l in _gv_opts]
-            _gv_sel = st.selectbox(
-                "Show games from", _gv_lbls, index=0, key="games_view_szn",
-                help="Filters the table below to one season (or all). The 'Season "
-                     "for new games' picker under the editor controls what NEW "
-                     "rows are stamped with.")
-            _gv_val = next(v for v, l in _gv_opts if l == _gv_sel)
-        else:
-            _gv_val = SZ.ACTIVE
-        if st.session_state.get("_games_view_prev") != _gv_val:
+        _g_all = _league_switch("games_all")
+        if st.session_state.get("_games_scope_prev") != _g_all:
             invalidate("_games_orig", "games_editor")
-            st.session_state["_games_view_prev"] = _gv_val
+            st.session_state["_games_scope_prev"] = _g_all
 
         st.caption(EDITOR_HELP)
-        orig = get_orig("_games_orig", lambda: load_games(_gv_val))
+        orig = get_orig("_games_orig",
+                        lambda: load_games(_gv_val, scoped=not _g_all))
         orig = _sortable(orig, "games_editor",
                          ["date", "team1", "team2", "location",
-                          "home_score", "away_score"])
-        display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
-            columns=["team1","team2","date","location","home_score","away_score",
-                     "neutral","tracked"])
+                          "home_score", "away_score", "game_type"])
+        display = (orig.drop(columns=["id"]) if not orig.empty
+                   else pd.DataFrame(columns=[c for c in GAME_COLS if c != "id"]))
         # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
         display["date"] = pd.to_datetime(display["date"], errors="coerce").dt.date
 
@@ -843,132 +1147,108 @@ if _hubview == "Games":
                 "home_score": st.column_config.NumberColumn("Home Score",      min_value=0, step=1),
                 "away_score": st.column_config.NumberColumn("Away Score",      min_value=0, step=1),
                 "neutral":    st.column_config.CheckboxColumn("Neutral", default=False, help="Neutral floor — no home-court. Home/Away Team still label the two sides for scoring; this just flags the venue."),
+                # game_type came from Roster & District. It tags the game for
+                # standings and the district/playoff splits.
+                "game_type":  st.column_config.SelectboxColumn(
+                    "Type", options=GAME_TYPES, default="Regular",
+                    help="District / Playoff drive the standings splits and the "
+                         "record breakdown on the Team Dashboard."),
                 "tracked":    st.column_config.CheckboxColumn("Tracked",       default=False),
                 "video_url":  st.column_config.TextColumn("Film URL", help="Hudl / YouTube / NFHS link. Clickable from the Team Dashboard schedule — opens in a new tab."),
             },
         )
 
-        # Season for NEW rows: Auto = infer from each game's date (Oct 1 cutoff —
-        # a past-dated game lands in its real season automatically); or force one.
-        _szn_opts = ["Auto (from date)"] + [v for v, _l in SZ.season_options()]
-        _szn_pick = st.selectbox(
-            "Season for new games", _szn_opts, index=0, key="games_szn",
-            help="Auto stamps each new game with the season its DATE falls in "
-                 "(seasons run Oct 1 – Apr 30), so back-dated games go straight "
-                 "into their real season and never mix into current stats.")
-        if st.button("Save Changes", key="save_games", type="primary"):
-            tm = team_map()
-            skipped = []
-            def ins_game(r):
-                if r.get("team1") and r.get("team1") == r.get("team2"):
-                    skipped.append(f"Skipped a game with '{r['team1']}' as both home "
-                                   "and away — pick two different teams.")
-                    return
-                if r.get("date","").strip() and r.get("team1") and r.get("team2"):
-                    _d = normalize_date(r["date"])
-                    _szn = SZ.resolve_new_game_season(
-                        _d, None if _szn_pick.startswith("Auto") else _szn_pick)
-                    # ux_games_matchup (db.py) forbids a second IMPORTED row for
-                    # one matchup on one date, in either orientation. Catch it
-                    # here so the coach reads a sentence instead of the raw
-                    # constraint name — and so the rest of a pasted batch still
-                    # saves, which is what apply_delta's per-row try/except is
-                    # for. Q13: teams play once a day.
-                    _t1, _t2 = tm[r["team1"]], tm[r["team2"]]
-                    if query(
-                            "SELECT id FROM games WHERE date=? AND tracked_by=''"
-                            " AND ((team1_id=? AND team2_id=?)"
-                            "   OR (team1_id=? AND team2_id=?))",
-                            (_d, _t1, _t2, _t2, _t1)):
-                        skipped.append(
-                            f"Skipped {r['team1']} vs {r['team2']} on {_d} — "
-                            "that matchup is already on the schedule for that "
-                            "day (teams play once a day). Edit the existing "
-                            "row instead.")
-                        return
-                    execute(
-                        "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, neutral, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                        (tm[r["team1"]], tm[r["team2"]], _d,
-                         r.get("location") or None, r.get("home_score") or None,
-                         r.get("away_score") or None,
-                         int(bool(r.get("neutral", False))),
-                         int(bool(r.get("tracked", False))),
-                         (r.get("video_url") or "").strip(), _szn)
-                    )
-            def upd_game(r):
-                if r.get("team1") and r.get("team1") == r.get("team2"):
-                    skipped.append(f"Skipped game #{int(r['id'])} — '{r['team1']}' "
-                                   "can't play itself; pick two different teams.")
-                    return
-                live = _live_game(r["id"])
-                if live and live["tracked"]:
-                    # Tracked games own their PBP-derived score — keep it. Apply
-                    # only non-score edits; reject a manual score / untrack change.
-                    if (_norm_score(r.get("home_score")) != live["home_score"]
-                            or _norm_score(r.get("away_score")) != live["away_score"]
-                            or not bool(r.get("tracked", True))):
-                        raise ValueError(
-                            f"Game #{int(r['id'])} is play-by-play tracked — its score "
-                            "and tracked flag are owned by the Game Tracker, so this "
-                            "edit was not saved. Untrack it there to score it by hand.")
-                    execute(
-                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, neutral=?, video_url=? WHERE id=?",
-                        (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
-                         r.get("location") or None,
-                         int(bool(r.get("neutral", False))),
-                         (r.get("video_url") or "").strip(), int(r["id"])))
-                    return
-                execute(
-                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, neutral=?, tracked=?, video_url=? WHERE id=?",
-                    (tm[r["team1"]], tm[r["team2"]], normalize_date(r["date"]),
-                     r.get("location") or None, r.get("home_score") or None,
-                     r.get("away_score") or None,
-                     int(bool(r.get("neutral", False))),
-                     int(bool(r.get("tracked", False))),
-                     (r.get("video_url") or "").strip(), r["id"])
-                )
-            def del_game(r):
-                if _gated_delete("games", r["id"],
-                                 f"game {r.get('team1','?')} vs {r.get('team2','?')}"):
-                    execute("DELETE FROM games WHERE id=?", (r["id"],))
-
-            errs = apply_delta("games_editor", orig, ins_game, upd_game, del_game)
-            if errs:
-                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
-                for _w in skipped:
-                    st.warning(_w)
-            else:
-                flash("success", "Saved!")
-                for _w in skipped:
-                    flash("warning", _w)
-                # Same games table as the Team Schedule tab — drop its cached
-                # editor frame too so it can't save stale rows back over this edit.
-                invalidate("_games_orig", "games_editor", "_sched_orig", "sched_editor")
+        # Bulk game-type set — carried over from Roster & District, the one
+        # genuinely useful thing its games tab had. Playoffs often start the
+        # same day league-wide: filter the table by season, then set them all.
+        with st.expander("⚡ Set the type on every game shown"):
+            st.caption("Applies to the rows in the table above, as filtered. "
+                       "Narrow with the season picker first.")
+            _bc1, _bc2 = st.columns([2, 1])
+            _bulk = _bc1.selectbox("Set all shown to", GAME_TYPES, key="games_bulk")
+            if _bc2.button("Apply to all shown", key="games_bulk_btn",
+                           disabled=orig.empty):
+                _n, _refused = 0, 0
+                for _gid in orig["id"].tolist():
+                    try:
+                        _guard_game(int(_gid))
+                    except ValueError:
+                        _refused += 1
+                        continue
+                    execute("UPDATE games SET game_type=? WHERE id=?",
+                            (_bulk, int(_gid)))
+                    _n += 1
                 _uimod.clear_data()
+                invalidate("_games_orig", "games_editor")
+                flash("success", f"Set {_n} game(s) to {_bulk}."
+                      + (f" {_refused} skipped — not your teams' games."
+                         if _refused else ""))
                 st.rerun()
 
+        if st.button("Save Changes", key="save_games", type="primary"):
+            tm = team_map()
+
+            def ins_game(r):
+                if not (r.get("date", "").strip() and r.get("team1")
+                        and r.get("team2")):
+                    return
+                _ins_game(tm[r["team1"]], tm[r["team2"]], r["date"],
+                          r.get("location"), r.get("home_score") or None,
+                          r.get("away_score") or None, r.get("neutral", False),
+                          r.get("tracked", False), r.get("video_url"),
+                          r.get("game_type"), r["team1"], r["team2"])
+
+            def upd_game(r):
+                if r.get("team1") and r.get("team1") == r.get("team2"):
+                    _skipped.append(
+                        f"Skipped game #{int(r['id'])} — '{r['team1']}' can't "
+                        "play itself; pick two different teams.")
+                    return
+                _upd_game(r["id"], tm[r["team1"]], tm[r["team2"]], r["date"],
+                          r.get("location"), r.get("home_score") or None,
+                          r.get("away_score") or None, r.get("neutral", False),
+                          r.get("tracked", False), r.get("video_url"),
+                          r.get("game_type"))
+
+            def del_game(r):
+                _del_game_row(r["id"], f"game {r.get('team1', '?')} vs "
+                                       f"{r.get('team2', '?')}")
+
+            _after_games_save(
+                apply_delta("games_editor", orig, ins_game, upd_game, del_game))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TEAM SCHEDULE  — same games table as the Games tab, team POV
+#  GAMES — one team's point of view (was the "Team Schedule" section)
 # ══════════════════════════════════════════════════════════════════════════════
-if _hubview == "Team Schedule":
+# The same `games` rows, pivoted onto one team: opponent instead of home/away
+# team, and the scores labelled "us / them". Everything it writes goes through
+# the shared _ins_game / _upd_game above, so this view now inherits the
+# duplicate-matchup check and the season picker it never had.
+if _hubview == "Games" and _games_pov == "One team":
     tnames = team_names()
     if not tnames:
         st.warning("Add at least one team first.")
     else:
-        selected_team = st.selectbox("Select Team", tnames, key="sched_team_sel")
+        _s_all = _league_switch("sched_all")
+        _own_names = [r["name"] for r in query(
+            "SELECT name FROM teams WHERE id IN (%s) ORDER BY name"
+            % ",".join("?" * len(_OWN)), tuple(_OWN))] if _OWN else []
+        _s_opts = tnames if (_s_all or not _own_names) else _own_names
+        selected_team = st.selectbox("Select Team", _s_opts, key="sched_team_sel")
         tm = team_map()
         team_id = tm[selected_team]
 
         prev_key = "_sched_prev_team"
-        if st.session_state.get(prev_key) != selected_team:
+        if st.session_state.get(prev_key) != (selected_team, _gv_val):
             invalidate("_sched_orig", "sched_editor")
-            st.session_state[prev_key] = selected_team
+            st.session_state[prev_key] = (selected_team, _gv_val)
 
         st.caption(EDITOR_HELP)
-        orig = get_orig("_sched_orig", lambda: load_games_for_team(team_id))
-        display = orig.drop(columns=["id"]) if not orig.empty else pd.DataFrame(
-            columns=["opponent","date","home_away","location","team_score","opp_score","tracked"])
+        orig = get_orig("_sched_orig",
+                        lambda: load_games_for_team(team_id, _gv_val))
+        display = (orig.drop(columns=["id"]) if not orig.empty
+                   else pd.DataFrame(columns=[c for c in SCHED_COLS if c != "id"]))
         # DateColumn needs real dates; DB stores ISO strings (normalize_date on save).
         display["date"] = pd.to_datetime(display["date"], errors="coerce").dt.date
 
@@ -987,86 +1267,49 @@ if _hubview == "Team Schedule":
                 "location":   st.column_config.TextColumn("Location"),
                 "team_score": st.column_config.NumberColumn("Team Score",        min_value=0, step=1),
                 "opp_score":  st.column_config.NumberColumn("Opp Score",         min_value=0, step=1),
+                "game_type":  st.column_config.SelectboxColumn(
+                    "Type", options=GAME_TYPES, default="Regular"),
                 "tracked":    st.column_config.CheckboxColumn("Tracked",         default=False),
                 "video_url":  st.column_config.TextColumn("Film URL", help="Hudl / YouTube / NFHS link. Clickable from the Team Dashboard schedule — opens in a new tab."),
             },
         )
 
+        def _sides(r):
+            """This team's POV row → (home_id, away_id, home_score, away_score,
+            neutral). Away puts the team in the away slot; Home and Neutral both
+            put it in the home slot — Neutral only flags the venue, and the two
+            scores map the same way."""
+            opp_id = tm[r["opponent"]]
+            ha = r.get("home_away", "Home")
+            t_score = r.get("team_score") or None
+            o_score = r.get("opp_score") or None
+            if ha == "Away":
+                return opp_id, team_id, o_score, t_score, 0
+            return team_id, opp_id, t_score, o_score, (1 if ha == "Neutral" else 0)
+
         if st.button("Save Changes", key="save_sched", type="primary"):
             def ins_sched(r):
-                opp = r.get("opponent")
-                date = r.get("date", "").strip()
-                if not opp or not date:
+                if not (r.get("opponent") and r.get("date", "").strip()):
                     return
-                opp_id = tm[opp]
-                ha = r.get("home_away", "Home")
-                t_score = r.get("team_score") or None
-                o_score = r.get("opp_score")  or None
-                tracked = int(bool(r.get("tracked", False)))
-                # Away → team in the away slot; Home/Neutral → team in the home
-                # slot (Neutral just flags the venue, scores map the same as Home).
-                if ha == "Away":
-                    t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
-                else:
-                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
-                neu = 1 if ha == "Neutral" else 0
-                _d = normalize_date(date)
-                execute(
-                    "INSERT INTO games (team1_id, team2_id, date, location, home_score, away_score, neutral, tracked, video_url, season) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (t1, t2, _d, r.get("location") or None, h_sc, a_sc, neu, tracked,
-                     (r.get("video_url") or "").strip(),
-                     SZ.resolve_new_game_season(_d))
-                )
+                t1, t2, h_sc, a_sc, neu = _sides(r)
+                _ins_game(t1, t2, r["date"], r.get("location"), h_sc, a_sc, neu,
+                          r.get("tracked", False), r.get("video_url"),
+                          r.get("game_type"), selected_team, r["opponent"])
 
             def upd_sched(r):
-                opp = r.get("opponent")
-                date = r.get("date", "").strip()
-                if not opp or not date:
+                if not (r.get("opponent") and r.get("date", "").strip()):
                     return
-                opp_id = tm[opp]
-                ha = r.get("home_away", "Home")
-                t_score = r.get("team_score") or None
-                o_score = r.get("opp_score")  or None
-                tracked = int(bool(r.get("tracked", False)))
-                if ha == "Away":
-                    t1, t2, h_sc, a_sc = opp_id, team_id, o_score, t_score
-                else:                       # Home or Neutral → team in home slot
-                    t1, t2, h_sc, a_sc = team_id, opp_id, t_score, o_score
-                neu = 1 if ha == "Neutral" else 0
-                live = _live_game(r["id"])
-                if live and live["tracked"]:
-                    # Tracked games own their PBP-derived score — keep it.
-                    if (_norm_score(h_sc) != live["home_score"]
-                            or _norm_score(a_sc) != live["away_score"]
-                            or not tracked):
-                        raise ValueError(
-                            f"Game #{int(r['id'])} is play-by-play tracked — its score "
-                            "and tracked flag are owned by the Game Tracker, so this "
-                            "edit was not saved. Untrack it there to score it by hand.")
-                    execute(
-                        "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, neutral=?, video_url=? WHERE id=?",
-                        (t1, t2, normalize_date(date), r.get("location") or None, neu,
-                         (r.get("video_url") or "").strip(), int(r["id"])))
-                    return
-                execute(
-                    "UPDATE games SET team1_id=?, team2_id=?, date=?, location=?, home_score=?, away_score=?, neutral=?, tracked=?, video_url=? WHERE id=?",
-                    (t1, t2, normalize_date(date), r.get("location") or None, h_sc, a_sc, neu, tracked,
-                     (r.get("video_url") or "").strip(), r["id"])
-                )
+                t1, t2, h_sc, a_sc, neu = _sides(r)
+                _upd_game(r["id"], t1, t2, r["date"], r.get("location"), h_sc,
+                          a_sc, neu, r.get("tracked", False), r.get("video_url"),
+                          r.get("game_type"))
 
             def del_sched(r):
-                if _gated_delete("games", r["id"],
-                                 f"scheduled game {r.get('team1','?')} vs {r.get('team2','?')}"):
-                    execute("DELETE FROM games WHERE id=?", (r["id"],))
+                _del_game_row(r["id"], f"game {selected_team} vs "
+                                       f"{r.get('opponent', '?')}")
 
-            errs = apply_delta("sched_editor", orig, ins_sched, upd_sched, del_sched)
-            if errs:
-                st.error("\n".join(errs))  # no rerun — keep the rejected rows visible
-            else:
-                flash("success", "Saved!")
-                invalidate("_sched_orig", "sched_editor", "_games_orig", "games_editor")
-                _uimod.clear_data()
-                st.rerun()
+            _after_games_save(
+                apply_delta("sched_editor", orig, ins_sched, upd_sched, del_sched))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1128,11 +1371,18 @@ if _hubview == "Officials":
 #  SEASON ARCHIVE
 # ══════════════════════════════════════════════════════════════════════════════
 if _hubview == "Season Archive":
+    # `schedule` is a dead table. Repo-wide, the only write left to it is
+    # seasons.py re-stamping a season label onto rows that already exist — no
+    # INSERT path has existed for a long time, and on the production book it
+    # holds 30 rows against 13,383 in `games`, all of them from one season. Both
+    # reads here now go to `games`, which is where a season's schedule has
+    # actually lived since the rollover was built.
     past_seasons = query(
         "SELECT DISTINCT season FROM players WHERE archived=1 ORDER BY season"
     )
     past_seasons += query(
-        "SELECT DISTINCT season FROM schedule WHERE season != 'Current' ORDER BY season"
+        "SELECT DISTINCT season FROM games WHERE season != ? AND season IS NOT NULL "
+        "AND season != '' ORDER BY season", (SZ.ACTIVE,)
     )
     seen = set()
     seasons = []
@@ -1177,27 +1427,54 @@ if _hubview == "Season Archive":
 
         with arc_tab_schedule:
             st.subheader(f"Schedules — {sel_season}")
+            # One team per expander, but only the teams that actually played
+            # that season — a 1,448-row team list with one row each would be a
+            # worse view than no view.
             teams_with_sched = query("""
-                SELECT DISTINCT t.id, t.name
-                FROM schedule s
-                JOIN teams t ON t.id = s.team_id
-                WHERE s.season=?
+                SELECT t.id, t.name, COUNT(*) AS n
+                FROM games g JOIN teams t
+                  ON t.id = g.team1_id OR t.id = g.team2_id
+                WHERE g.season=?
+                GROUP BY t.id, t.name
                 ORDER BY t.name
             """, (sel_season,))
+            _q = st.text_input("Find a team", key="arc_sched_q",
+                               placeholder="team name…").strip().lower()
+            if _q:
+                teams_with_sched = [r for r in teams_with_sched
+                                    if _q in r["name"].lower()]
             if not teams_with_sched:
-                st.info("No schedule data for this season.")
+                st.info("No games recorded for this season."
+                        if not _q else "No team matches that.")
             else:
-                for team in teams_with_sched:
-                    with st.expander(team["name"]):
+                st.caption(f"{len(teams_with_sched)} team(s) played in "
+                           f"{sel_season}.")
+                for team in teams_with_sched[:60]:
+                    with st.expander(f"{team['name']} · {team['n']} game(s)"):
                         rows = query("""
-                            SELECT o.name AS opponent, s.date, s.home_away,
-                                   s.location, s.team_score, s.opp_score, s.tracked
-                            FROM schedule s
-                            JOIN teams o ON o.id = s.opponent_id
-                            WHERE s.team_id=? AND s.season=?
-                            ORDER BY s.date
-                        """, (team["id"], sel_season))
+                            SELECT CASE WHEN g.team1_id=? THEN t2.name ELSE t1.name END
+                                     AS opponent,
+                                   g.date,
+                                   CASE WHEN g.neutral=1 THEN 'Neutral'
+                                        WHEN g.team1_id=? THEN 'Home'
+                                        ELSE 'Away' END AS home_away,
+                                   g.location,
+                                   CASE WHEN g.team1_id=? THEN g.home_score
+                                        ELSE g.away_score END AS team_score,
+                                   CASE WHEN g.team1_id=? THEN g.away_score
+                                        ELSE g.home_score END AS opp_score,
+                                   g.game_type, g.tracked
+                            FROM games g
+                            JOIN teams t1 ON t1.id=g.team1_id
+                            JOIN teams t2 ON t2.id=g.team2_id
+                            WHERE (g.team1_id=? OR g.team2_id=?) AND g.season=?
+                            ORDER BY g.date
+                        """, (team["id"],) * 6 + (sel_season,))
                         df = pd.DataFrame(rows) if rows else pd.DataFrame()
                         if not df.empty:
                             df["tracked"] = df["tracked"].astype(bool)
                         st.dataframe(df, width="stretch", hide_index=True)
+                if len(teams_with_sched) > 60:
+                    st.caption(f"Showing the first 60 of "
+                               f"{len(teams_with_sched)} — use the box above to "
+                               "find a team.")

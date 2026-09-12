@@ -54,7 +54,7 @@ def render(ctx):
             _mc[2].metric("ORtg", f"{_mprof['ORtg']:.0f}")
             _mc[3].metric("eFG%", f"{_mprof['off_ff']['eFG']:.0f}%")
             st.caption("From hand-entered box scores (not play-by-play tracked) · "
-                       "possessions = FGA + TOV. Enter boxes on the Setup page.")
+                       "possessions = FGA + TOV. Enter boxes on the Box Score Entry page.")
         else:
             _mc = st.columns(2)
             _mc[0].metric("Games entered", _mprof["games"])

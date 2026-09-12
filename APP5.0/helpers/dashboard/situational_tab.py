@@ -134,7 +134,7 @@ def render(ctx):
         } for r in _bgt]), unsafe_allow_html=True)
         st.caption("Efficiency / eFG% / pace / shot-mix come from tracked games only "
                    "(Trk GP); '—' = no tracked game of that type yet. Set a game's "
-                   "type on the Roster & District page.")
+                   "type in the Input Hub → Games.")
         st.divider()
 
     # ── Runs — momentum swings (scoring-only, lights up without any tags) ─────

@@ -377,7 +377,8 @@ def render_manual_box(game_id, accent="#f0a500", away="#e74c3c"):
     g = g[0]
     t1id, t2id = g["team1_id"], g["team2_id"]
     if not box:
-        st.info("No box score entered for this game yet — add one on the Setup page.")
+        st.info("No box score entered for this game yet — add one on the Box "
+                "Score Entry page.")
         return
     t1 = team_totals(box.get(t1id, []))
     t2 = team_totals(box.get(t2id, []))

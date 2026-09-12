@@ -184,13 +184,30 @@ def scoreboard(date_str: str) -> dict | None:
         status = "live" if r["id"] in live_ids else ("final" if final else "upcoming")
         games.append(_row(r, status))
 
-    # latest-finals rail: most recent finished games (any date), newest first
-    recent = [_row(r, "final") for r in query(
+    # latest-finals rail: most recent finished games, newest first.
+    #
+    # The three-day floor was right in-season and wrong the rest of the year: a
+    # high-school season runs November to March, so from March to November the
+    # rail is empty, the slate for any date is empty, and the front door of the
+    # public site is a date picker over the sentence "No games on this date".
+    # That is eight months of a landing page with nothing on it — October, when
+    # coaches are being shown the product, included.
+    #
+    # So the floor applies only while there is something else on the page. With
+    # no live game and an empty slate, the rail falls back to the last finals in
+    # the book however old they are: out of season, "here is what this thing
+    # does" beats "nothing here".
+    _recent_sql = (
         _slate_cols +
         "WHERE (g.tracked=1 OR (g.home_score IS NOT NULL AND g.away_score IS NOT NULL)) "
-        "AND g.date >= date('now','-3 day') AND g.id NOT IN "
-        "(SELECT id FROM games WHERE date=?) "
+        "AND g.id NOT IN (SELECT id FROM games WHERE date=?) ")
+    recent = [_row(r, "final") for r in query(
+        _recent_sql + "AND g.date >= date('now','-3 day') "
         "ORDER BY g.date DESC, g.id DESC LIMIT 12", (date_str,))]
+    if not recent and not live and not games:
+        recent = [_row(r, "final") for r in query(
+            _recent_sql + "ORDER BY g.date DESC, g.id DESC LIMIT 12",
+            (date_str,))]
 
     payload = {"date": date_str, "live": live, "games": games, "recent": recent}
     _SB_CACHE[date_str] = (now, payload)
@@ -275,8 +292,20 @@ def team_profile(team_id: int) -> dict | None:
     if not t:
         return None
     t = t[0]
-    szn = query("SELECT season FROM games WHERE team1_id=? OR team2_id=? "
+    # The season this page is ABOUT is the one the team last PLAYED in, not the
+    # one its last dated row belongs to. Those are the same thing right up until
+    # a coach enters next season's schedule — and then the most recent row is an
+    # unplayed fixture months in the future, the season resolves to one with no
+    # finished games, and a 29-3 program's public page reads 0-0 with its whole
+    # record gone. Coaches enter schedules in the autumn, so this fires exactly
+    # when the most people are looking. (The docstring always promised the
+    # played season; the ORDER BY just never excluded the unplayed rows.)
+    szn = query("SELECT season FROM games WHERE (team1_id=? OR team2_id=?) "
+                "AND home_score IS NOT NULL AND away_score IS NOT NULL "
                 "ORDER BY date DESC, id DESC LIMIT 1", (team_id, team_id))
+    if not szn:      # a team that has genuinely never played — show its fixtures
+        szn = query("SELECT season FROM games WHERE team1_id=? OR team2_id=? "
+                    "ORDER BY date DESC, id DESC LIMIT 1", (team_id, team_id))
     season = szn[0]["season"] if szn else None
 
     # Ordinal ranks (gender-wide) keyed by team id, from the already-cached
@@ -300,7 +329,14 @@ def team_profile(team_id: int) -> dict | None:
             "       g.team2_id, t1.name AS hn, t2.name AS an "
             "FROM games g JOIN teams t1 ON t1.id=g.team1_id "
             "             JOIN teams t2 ON t2.id=g.team2_id "
-            "WHERE (g.team1_id=? OR g.team2_id=?) AND g.season=? "
+            "WHERE (g.team1_id=? OR g.team2_id=?) "
+            # the played season's games, PLUS anything still to come. Scoping
+            # strictly to the resolved season would fix the 0-0 record above and
+            # then hide the next game, which is the other half of what a fan
+            # opens this page for. Unplayed rows carry no score, so they cannot
+            # touch the record either way.
+            "  AND (g.season=? OR (g.date >= date('now') "
+            "       AND g.home_score IS NULL AND g.away_score IS NULL)) "
             "ORDER BY g.date DESC, g.id DESC LIMIT 60",
             (team_id, team_id, season))
         for r in rows:

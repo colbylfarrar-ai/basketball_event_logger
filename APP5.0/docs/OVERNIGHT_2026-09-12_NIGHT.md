@@ -1,11 +1,11 @@
 # Overnight run — night of 2026-09-12
 
-Four asks, all four done, on **`main`** and **unpushed**. Both suites green.
+Six asks, all six done, on **`main`** and **unpushed**. Both suites green.
 
 | | |
 |---|---|
-| Commits | `2624ce9` demo launcher · `6f16400` matchup back-in-time + backtest · `b040d9d` Input Hub consolidation · (+ this doc) |
-| Suites | `pytest` **481 passed** (was 479) · `tracker/run_all.py` **103 / 0** (was 100 / 0) |
+| Commits | `2624ce9` demo launcher · `6f16400` matchup back-in-time + backtest · `b040d9d` Input Hub consolidation · `06c5b2d` Event Editor · (+ the live-app fixes and these docs) |
+| Suites | `pytest` **481 passed** (was 479) · `tracker/run_all.py` **104 / 0** (was 100 / 0) |
 | Verified against | a snapshot pulled from production tonight — 17,350,656 bytes, 13,383 games, 63 tracked, `integrity_check=ok` |
 | Source docs | `INPUT_HUB_SCRUB_2026-09-10.md` · `THE_BOOK_2026-09.md` §9 (gating), §12.7, §14 (consolidations), §8.4 (constants) |
 | On `main`, not pushed | deploy is yours: `git push` → ssh → `systemctl restart app5-web` |
@@ -312,8 +312,127 @@ coach with no team is stopped on Box Score Entry.
   quality wins on the Hall of Fame). `resume.py` makes both nearly free and
   they are still not done — the closest adjacent win to tonight's work.
 
+# 5 · The Event Editor, made to flow (`06c5b2d`)
+
+**First, the answer to the question you actually asked: the tracker PWA already
+has the mode you were imagining.** "Edit log" — on the game screen while
+tracking, and on the setup screen before you start. Tap an event, a form opens
+in place with every field for that event type (shooter, result, 2/3, zone, play
+call, defense, assists, rebound, fouler, official, turnover kind), Save or
+Delete, with quarter chips to find the row and a score-drift warning plus
+Recompute. Touch-first and offline-tolerant. Nothing needed building.
+
+So the clunkiness is the Streamlit page, and it was real and structural. Five
+tools stacked down one scroll, with the page's **namesake — the grid that fixes
+an event — roughly 380 lines below the fold**, behind a missed-substitution
+panel, the coverage chips, two filters and two bulk expanders. Fixing one
+mistagged shot meant scrolling past four tools that had nothing to do with it.
+Every rerun rebuilt all five, and each Save fires a rerun.
+
+Now: **Fix events · Shot locations · Add an event · Bulk tags · Lineups**, a
+segmented control with lazy if-dispatch — the same contract the Input Hub and
+the Insights deck use. The grid leads. Only the chosen tool runs its queries.
+The selection survives a Save.
+
+The quarter and event-type filters moved **inside the three tools they actually
+govern**. They used to sit above everything while governing three tools of five;
+the bulk-defense fill and the lineup fixer both act on the whole game, which
+their captions had to keep apologising for. A filter that does not apply is no
+longer drawn.
+
+Two things the restructure exposed and fixed in passing: the page's subtitle
+still said new events had to be added in the Game Tracker, which stopped being
+true when "Insert a missed event" shipped; and the page now names what it is for
+that a phone is not — bulk re-tagging, moving a shot on the court, inserting a
+missed event, correcting an on-court five — and points one-off courtside fixes
+at the PWA.
+
+### Liberties
+
+* **`tools/seg_leak_sweep.py` is new.** A lazy `_seg` conversion has one failure
+  mode: a name one section defined and another read was harmless under a single
+  scroll and is a NameError under dispatch. The sweep finds those statically. It
+  reports **CLEAN** on all three `_seg` pages (Event Editor, Input Hub, War
+  Room). Its one blind spot, stated so nobody trusts it too far: a section whose
+  test is compound (`if _hubview == "Games" and _games_pov == ...`) is treated as
+  module scope, so a leak *between the two Games POVs* would not be caught.
+* `tracker/test_event_editor_tools.py` renders each of the five tools alone
+  against a real book, and pins the filter scoping.
+* **Not done:** the PWA edit log has no event-TYPE filter (only quarter chips),
+  and none of the bulk tools, the court fixer or the insert. That is the honest
+  division of labour — one fix on a phone, a stretch of fixes on a laptop — but
+  if you want "shots only" chips on the phone, say so; it is small.
+
+---
+
+# 6 · live.hooptracks.com — reviewed against the running site
+
+Full write-up: **`docs/LIVE_APP_REVIEW_2026-09-12.md`**. Read against production
+tonight, not the repo. Two defects found and fixed, one reported for your call.
+
+**The verdict on "too many hats": not in the code — in the claims.** The whole
+live app is ~1,950 lines with no build step, smaller than the Input Hub was this
+morning; it costs nothing to carry. But it publishes four products: a live game
+centre, a scoreboard, team pages, **and a public ranking of all 1,448 teams by
+name**. The first three are facts a fan already believes you have. The fourth is
+an opinion with your name on it, and it is the only one that generates arguments
+and support load. Keep the first three. Reconsider the fourth — three concrete
+options are in the review.
+
+The live **game** page earns its place and should not be trimmed: a parent scans
+the QR and gets a real win-probability curve, a real box score, a shot chart and
+play-by-play, and it lands properly on a 375 px phone. That is the funnel.
+
+One item to re-affirm or cut on purpose: the **officiating table** on the fan
+page (R/U1/U2 foul counts by quarter and team). Correctly anonymised, a real
+differentiator, and also the highest-risk, lowest-funnel-value block on the page.
+
+### FIXED — the front door was blank for eight months a year
+
+`live.hooptracks.com` tonight was a date picker over "No games on this date",
+and nothing else. The LATEST FINALS rail is floored at three days, and a
+high-school season runs November to March — so from March to November the
+landing page has nothing on it. **October included.** The floor now applies only
+while there is something else on the page; with no live game and an empty slate
+the rail falls back to the last twelve finals however old. The same date now
+returns 12 games instead of 0.
+
+### FIXED — a team page read 0–0 once next season's schedule was entered
+
+`live.hooptracks.com/team/1` showed **Adair Girls 0–0**, 23 games "Upcoming", no
+results. `team_profile` resolved the season from the most recent **dated** game
+— which, once you enter next season's schedule, is an unplayed fixture in 2027.
+The season resolved to one with no finished games and the record, PPG, margin,
+streak and form all went to zero. Coaches enter schedules in the autumn, so this
+fires exactly when the most people are looking. It now resolves from the most
+recent **finished** game and keeps upcoming fixtures on the page. Adair Girls
+reads **29–3** again, with 32 finals and 23 upcoming.
+
+### REPORTED, not fixed — the public rank
+
+Boys, out of the box, reads `#1 · #2 · #5 · #6 …`. **#3 and #4 are a 1-0
+Arkansas team and a 1-0 Missouri academy**, ranked above 24-2 Booker T
+Washington — and then hidden from the list, because the class chips default to
+the eight OSSAA classes and those two carry no class label. So the number comes
+from a 743-team pool while the list shows Oklahoma only, and the sequence has
+holes in it. Two problems: a 1-0 team should not be third (THE BOOK §8.2, the
+one-game leaderboards, on the one page with no login in front of it), and a rank
+computed over one pool and displayed inside a subset will keep gapping. Three
+options are in the review; I picked none, because each changes what the public
+site claims.
+
+### Deploy note for these two
+
+Both are in `helpers/public_feed.py`, which the **tracker service** imports —
+not the Streamlit app. Restarting `app5-web` alone will not change
+live.hooptracks.com; the tracker/uvicorn service needs the restart too. No
+static file changed, so the PWA cache does **not** need a bump.
+
+---
+
 # Three things to look at first in the morning
 
 1. `python run.py` — confirm the demo is the app you expect to show.
 2. War Room → Matchup → "How accurate is this predictor?" → **Measure it**.
 3. `docs/FAQ_ADDITIONS_2026-09-12.md`, then paste into the Doc.
+4. `docs/LIVE_APP_REVIEW_2026-09-12.md` — and decide the public-rank question.

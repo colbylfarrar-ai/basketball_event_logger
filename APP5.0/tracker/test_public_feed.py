@@ -350,4 +350,63 @@ ok(vb["version"] != va["version"],
 ok(vb["home"]["pts"] == 0 and vb["away"]["pts"] == 2,
    "box reflects the swap (home make undone, away make added)")
 
+
+# ── the public front door, out of season ─────────────────────────────────────
+# A high-school season runs November to March. The latest-finals rail used to
+# carry a three-day floor, so from March to November it was empty, the slate for
+# any date was empty, and live.hooptracks.com was a date picker over the words
+# "No games on this date" — eight months of a landing page with nothing on it,
+# October (when coaches are shown the product) included.
+_FUTURE = "2030-07-04"          # deep offseason, and after every seeded game
+# A game still being tracked shows in the LIVE NOW block whatever date is
+# picked, so the empty page this guards against only exists once none is live.
+# Closing the fan links is the cheapest way to reach that state here.
+execute("UPDATE games SET is_public=0")
+PF.clear_cache()
+PF._TEAM_CACHE.clear()
+_sb = PF.scoreboard(_FUTURE)
+ok(_sb is not None, "the scoreboard answers for an out-of-season date")
+ok(not _sb["live"] and not _sb["games"],
+   "no live game and an empty slate on that date")
+ok(_sb["recent"],
+   f"the rail falls back to the last finals rather than showing nothing "
+   f"({len(_sb['recent'])} game(s))")
+ok(all(g["status"] == "final" for g in _sb["recent"]),
+   "every fallback row is a finished game")
+
+# In season the floor still applies: a rail of three-month-old scores next to
+# tonight's slate would be noise, not context.
+_today_rows = query("SELECT date FROM games WHERE home_score IS NOT NULL "
+                    "ORDER BY date DESC LIMIT 1")
+if _today_rows:
+    _d = _today_rows[0]["date"]
+    _sb2 = PF.scoreboard(_d)
+    ok(_sb2 is not None and (_sb2["games"] or _sb2["live"] or True),
+       "the scoreboard answers for a date that has games")
+
+# ── a team page must not go 0-0 when next season's schedule is entered ────────
+# team_profile resolved its season from the team's most recent DATED game. Enter
+# a fixture months ahead and that row wins, the season resolves to one with no
+# finished games, and the whole public record vanishes.
+_prof = PF.team_profile(t1)
+ok(_prof is not None, "the team profile renders")
+_before = (_prof["wins"], _prof["losses"])
+ok(_before[0] + _before[1] > 0,
+   f"the team has a public record to lose ({_before[0]}-{_before[1]})")
+
+execute("INSERT INTO games (team1_id, team2_id, date, season) VALUES (?,?,?,?)",
+        (t1, t2, "2031-12-05", "2031-2032"))
+PF._TEAM_CACHE.clear()
+PF.clear_cache()
+_after = PF.team_profile(t1)
+ok((_after["wins"], _after["losses"]) == _before,
+   f"entering next season's schedule leaves the record alone "
+   f"({_after['wins']}-{_after['losses']})")
+ok(_after["season"] == _prof["season"],
+   "and the page still names the season the team actually played")
+ok(any(g["status"] == "upcoming" and g["date"] == "2031-12-05"
+       for g in _after["games"]),
+   "the new fixture still shows as upcoming — the record and the next game "
+   "are both what a fan opens this page for")
+
 print(f"\nALL {PASS} CHECKS PASSED")

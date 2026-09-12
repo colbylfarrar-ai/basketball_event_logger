@@ -190,3 +190,22 @@ ok(_s["empties"][0]["name"] == "analyze.py:262"
 ok(len(_s["coop"]) == 1, "co-op flips are listed newest-first")
 
 print(f"\n{PASS} checks passed")
+
+# ── the ceiling under the retention window ───────────────────────────────────
+print("row ceiling")
+clear()
+_keep = TEL.MAX_ROWS
+TEL.MAX_ROWS = 20
+try:
+    for i in range(35):
+        TEL._write("page", f"P{i}", "a@x")
+        TEL.reset_dedup()          # every write is a fresh "navigation"
+        TEL._pruned_day["day"] = ""   # force the prune each time
+    _n = len(rows())
+    ok(_n <= TEL.MAX_ROWS + 1,
+       f"a rerun storm that defeats the dedup is still capped ({_n} rows)")
+    ok(rows()[-1]["name"] == "P34", "the cap drops the OLDEST, not the newest")
+finally:
+    TEL.MAX_ROWS = _keep
+
+print(f"\n{PASS} checks passed")

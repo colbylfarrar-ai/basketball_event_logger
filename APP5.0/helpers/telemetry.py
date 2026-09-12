@@ -31,10 +31,15 @@ source rather than to throw the ordering away:
   · `coop_toggle` is never deduped. Every flip is a fact and there are maybe
     ten of them all season.
 
-After that dedup the write rate is bounded by human navigation — order 10^3
-rows/day at five coaches, ~60 bytes a row. A single unindexed-path INSERT on a
-WAL database is sub-millisecond; the page render it rides on costs 0.15–85 s.
-This is not the thing that will be felt on a 1 vCPU box.
+After that dedup the write rate is bounded by human navigation. Measured here
+(Python 3.12, this machine): 5,000 rows in 3.78 s — **757 µs a row**, including
+the two commits `database.db.execute` does per call and the index write — for
+**97.5 bytes** of database file each. At the top of plausible use (five coaches,
+~200 navigations a day each) that is under a second of database time a day and
+~98 KB, against a page render that costs 0.15–85 s. It is not the thing that
+will be felt on a 1 vCPU box. It is also not free, which is why `RETAIN_DAYS`
+and `MAX_ROWS` below are set off those measured numbers rather than off a
+guess.
 
 **The dedup state is per-process, in memory.** `app5-web` is one Streamlit
 process (see `helpers/presence.py`, which relies on the same fact), so one
@@ -75,11 +80,21 @@ KINDS = ("page", "empty", "coop")
 # An empty state that is still empty on the next rerun is the same dead end.
 _DEDUP_SECS = 90
 
-# How long rows live. The window that has to stay readable is the October
-# training plus the season it feeds (Nov–Mar), so six months rather than the
-# read surface's 30 days. At the measured shape (~60 B/row, ~10^3 rows/day at
-# five coaches) that is a few MB — see docs/OVERNIGHT_2026-09-12.md.
-RETAIN_DAYS = 180
+# How long rows live, and the hard ceiling under it.
+#
+# MEASURED, not assumed: 5,000 rows cost 476 KB of database file including the
+# index — 97.5 bytes a row, not the ~60 the first draft guessed. At the high end
+# of plausible use (five coaches, ~200 navigations each a day) that is ~98 KB a
+# day, so the six months the first draft kept would have been ~17 MB against a
+# production book that is currently 17 MB. Doubling the database to hold page
+# views is hoarding, and [[db-stays-small]] is explicit about capping.
+#
+# 90 days covers the October training at full resolution plus the first two
+# months of the season, and the read surface only ever asks for 30. MAX_ROWS is
+# the belt under the braces: a rerun storm that defeats the dedup cannot run
+# away between two daily prunes.
+RETAIN_DAYS = 90
+MAX_ROWS = 150_000          # ~15 MB ceiling at the measured 97.5 B/row
 
 _KILL_KEY = "telemetry_off"
 _KILL_TTL = 60          # seconds; matches settings_utils._SNAP_TTL
@@ -140,6 +155,11 @@ def _prune_once() -> None:
     try:
         execute("DELETE FROM telemetry WHERE ts < datetime('now', ?)",
                 (f"-{int(RETAIN_DAYS)} days",))
+        # …and the ceiling, by id rather than by date: ids are monotonic here
+        # (one AUTOINCREMENT writer), so "keep the newest MAX_ROWS" is one
+        # indexed comparison and needs no second scan of ts.
+        execute("DELETE FROM telemetry WHERE id <= "
+                "(SELECT MAX(id) - ? FROM telemetry)", (int(MAX_ROWS),))
     except Exception as exc:
         _log.warning("telemetry prune failed: %s", exc)
 

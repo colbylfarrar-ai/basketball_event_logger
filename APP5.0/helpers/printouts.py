@@ -143,12 +143,27 @@ def band(kicker, h1, meta, chips_html=""):
             f"<div class='meta'>{meta}</div>{chips}</div>")
 
 
+#: Chips are separated by REAL whitespace, not only by CSS margin.
+#:
+#: xhtml2pdf drops both the border and the margin on an inline span, so the
+#: pills degrade to plain type — which is fine on an ink-light sheet — but with
+#: nothing between them they ran together as "87 ORtg55 DRtg64 Pace" on every
+#: printed masthead. Two non-breaking spaces cost the browser path a hair of
+#: extra gap beside the margin it already honours, and they are the only
+#: separator the PDF engine cannot discard.
+_CHIP_GAP = "&nbsp;&nbsp;"
+
+
 def chip(label, value=None):
-    """One header chip. ``chip('OVR', 78)`` → bold value + label; ``chip('Guard')``
-    → a plain tag."""
+    """One header chip, with its trailing separator. ``chip('OVR', 78)`` → bold
+    value + label; ``chip('Guard')`` → a plain tag.
+
+    Callers concatenate these with ``+``, so the gap rides on the chip rather
+    than on a joiner every call site would have to remember."""
     if value is None:
-        return f"<span class='chip'>{e(str(label))}</span>"
-    return f"<span class='chip'><b>{e(str(value))}</b> {e(str(label))}</span>"
+        return f"<span class='chip'>{e(str(label))}</span>{_CHIP_GAP}"
+    return (f"<span class='chip'><b>{e(str(value))}</b> "
+            f"{e(str(label))}</span>{_CHIP_GAP}")
 
 
 def kpi(label, value):

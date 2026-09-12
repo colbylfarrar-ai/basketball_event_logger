@@ -877,6 +877,26 @@ def usage_map_html(situations, kind, title, row_hdr="Set", ink=True):
             "situation's tagged possessions.</p>")
 
 
+# Column widths on these tables are declared on the HEADER CELLS, not in a
+# `<colgroup>`, and that is not a style preference.
+#
+# xhtml2pdf — the pure-pip engine every downloaded PDF actually goes through —
+# has no usable automatic table layout. Given five columns and no declared
+# widths it allocates by content, and when TWO of them hold free text (Force:
+# "needs space"; Key: "force jumper — wall the rim") it collapses the pair onto
+# the same x and prints them over each other. On the live call sheet the header
+# came out as "FoKeyrce" and every row stacked its two cues on top of one
+# another, which is what pushed a one-page artifact onto two pages.
+#
+# The browser path never showed it: the same HTML lays out correctly in Chrome,
+# which is why it survived the print pass.
+#
+# `<colgroup>` fixes the collision but not the layout — measured, it leaves the
+# first column starting at x=121pt instead of x=37pt, so a fifth of the page is
+# dead gutter and the Key column wraps to three lines to pay for it. Widths on
+# the `<th>` land where they are asked to. Both engines honour them.
+
+
 def call_sheet_html(sc, opponent_label, extra=None, plan_lines=None):
     """The one page a coach holds at the scorer's table.
 
@@ -924,8 +944,9 @@ def call_sheet_html(sc, opponent_label, extra=None, plan_lines=None):
             f"<tr><td>{e(m['scorer'])}</td><td>{e(m['defender'])}</td>"
             f"<td class='n'>{('%+.0f' % m['edge']) if m.get('edge') is not None else '—'}"
             "</td></tr>" for m in extra["matchups"])
-        mu = ("<h2>Who guards whom</h2><table><tr><th>Their scorer</th>"
-              f"<th>You</th><th class='n'>Edge</th></tr>{rows}</table>")
+        mu = ("<h2>Who guards whom</h2><table>"
+              "<tr><th width='42%'>Their scorer</th><th width='42%'>You</th>"
+              f"<th class='n' width='16%'>Edge</th></tr>{rows}</table>")
 
     # 4 · one line per player — number, name, OVR, the force cue, the note
     pers = ""
@@ -942,9 +963,12 @@ def call_sheet_html(sc, opponent_label, extra=None, plan_lines=None):
                      f"<td class='n'>{p['ovr'] if p.get('ovr') is not None else '—'}</td>"
                      f"<td>{e(cue)}</td>"
                      f"<td>{e(p.get('note') or '')}</td></tr>")
-        pers = ("<h2>Their personnel — one line each</h2><table><tr>"
-                "<th class='n'>#</th><th>Player</th><th class='n'>OVR</th>"
-                f"<th>Force</th><th>Key</th></tr>{rows}</table>")
+        pers = ("<h2>Their personnel — one line each</h2><table>"
+                "<tr><th class='n' width='5%'>#</th>"
+                "<th width='23%'>Player</th>"
+                "<th class='n' width='7%'>OVR</th>"
+                "<th width='21%'>Force</th>"
+                f"<th width='44%'>Key</th></tr>{rows}</table>")
 
     # 5 · their three go-to sets, and the situations they live in
     sets_html = ""
@@ -962,8 +986,10 @@ def call_sheet_html(sc, opponent_label, extra=None, plan_lines=None):
                         + " · ".join(f"{e(k)} → {e(v)}"
                                      for k, v in list(goto.items())[:4])
                         + "</p>")
-        sets_html = ("<h2>Their three go-to sets</h2><table><tr><th>Set</th>"
-                     f"<th class='n'>Share</th><th class='n'>PPP</th></tr>"
+        sets_html = ("<h2>Their three go-to sets</h2><table>"
+                     "<tr><th width='60%'>Set</th>"
+                     "<th class='n' width='20%'>Share</th>"
+                     f"<th class='n' width='20%'>PPP</th></tr>"
                      f"{rows}</table>{_sitline}")
 
     # 6 · what to play on D, from their own numbers
@@ -1003,12 +1029,24 @@ def call_sheet_html(sc, opponent_label, extra=None, plan_lines=None):
                    f"{e(opponent_label)} · {e(sc['record'])} · "
                    f"Power #{sc['rank']}/{sc['of']}", _chips)
 
+    # Local, and only local: these override the shared chrome for THIS document
+    # because it is the one artifact with a hard length contract — the page a
+    # coach holds at the scorer's table. The masthead costs a fifth of the sheet
+    # at its shared size (xhtml2pdf also draws the band's bottom rule once per
+    # child block, so it reads as three rules and three gaps), and with the
+    # column fix above the content now lands three lines over one page. Trimming
+    # the header is the cheapest three lines on the document.
     css = """
 @page{size:Letter portrait;margin:.35in}
-.wrap{max-width:7.8in;padding:0 14px 12px}
+.wrap{max-width:7.8in;padding:0 14px 8px}
+.band{padding:6px 20px 4px;margin-bottom:6px}
+.band h1{font-size:19px;margin:1px 0 0}
+.band .meta{font-size:11px}
+.chips{margin-top:3px}
+.foot{margin-top:8px}
 table{font-size:11px} th{font-size:9px;padding:2px 5px}
 td{padding:2px 5px;vertical-align:top}
-h2{font-size:11px;margin:9px 0 4px}
+h2{font-size:11px;margin:8px 0 3px}
 ul{margin:2px 0;padding-left:15px} li{margin:1px 0;font-size:11px}
 .note{color:#444;font-size:10px;margin:2px 0}
 table.cols{width:100%;border-collapse:separate;border-spacing:9px 0}

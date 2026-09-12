@@ -935,6 +935,48 @@ def render_box_score(game_id: int):
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_flow():
+        # The shape of the game, before four charts of the shape of the
+        # game. `WP.summarize` has carried every one of these numbers since
+        # it was written and only the GEI tile ever read them.
+        _fv = []
+        if summ:
+            _wnm = (t1name if summ["winner"] == "home" else
+                    t2name if summ["winner"] == "away" else None)
+            _tens = summ.get("avg_tension") or 0
+            _shape = ("a coin flip the whole way" if _tens >= .6 else
+                      "close most of the way" if _tens >= .35 else
+                      "settled early" if _tens >= .15 else
+                      "decided from the tip")
+            _fv.append((
+                "the shape", None,
+                f"<b>{html.escape(summ['label'])}</b> — Game Excitement "
+                f"<b>{summ['gei']:.1f}</b>, {_shape} "
+                f"(average tension {_tens:.2f}, where 1.00 is a coin flip "
+                f"at every moment)."))
+            if _wnm and summ.get("comeback", 0) >= .1:
+                _fv.append((
+                    "the comeback", None,
+                    f"<b>{html.escape(_wnm)}</b> won it from as low as "
+                    f"<b>{summ['min_wp_winner'] * 100:.0f}%</b> — a "
+                    f"{summ['comeback'] * 100:.0f}-point climb back."))
+            elif _wnm and summ.get("min_wp_winner", 0) >= .5:
+                _fv.append((
+                    "never behind", None,
+                    f"<b>{html.escape(_wnm)}</b> was never the underdog — "
+                    "the model's win probability for them never dropped "
+                    f"below <b>{summ['min_wp_winner'] * 100:.0f}%</b>."))
+        _fruns = GF.scoring_runs(game_id, events=events)
+        if _fruns:
+            _r0 = _fruns[0]
+            _rteam = t1name if _r0["team_id"] == t1id else t2name
+            _fv.append((
+                "the run", None,
+                f"The biggest run was <b>{_r0['points']}-0</b> to "
+                f"<b>{html.escape(_rteam)}</b> — it is shaded on the "
+                "margin chart below."))
+        if _fv:
+            st.markdown(CARDS.verdict_card(_fv), unsafe_allow_html=True)
+
         xticks = [_q_base(q) for q in qs] + [end_t]
         xlabels = [_q_label(q) for q in qs] + ["End"]
 
@@ -1105,6 +1147,32 @@ def render_box_score(game_id: int):
     # ════════════════════════════════════════════════════════════════════════
     @st.fragment
     def _tab_shooting():
+        # Shot-MAKING against shot-QUALITY, which is the one thing this
+        # section can say that the box table cannot: `team_shot_quality`
+        # has computed SMOE and xPPS on every open and only a caption
+        # under the last chart ever read them.
+        _shv = []
+        for _nm, _tq, _tb in ((t1name, tsq_h, htb), (t2name, tsq_a, atb)):
+            _moe = (_tq.get("SMOE") or 0) * 100
+            if not _tb["FGA"]:
+                continue
+            _word = ("<b>made more than the looks were worth</b>" if _moe >= 2
+                     else "<b>left points on good looks</b>" if _moe <= -2
+                     else "finished about what its looks were worth")
+            _shv.append((
+                html.escape(_nm), _tb["FGA"],
+                f"{html.escape(_nm)} {_word} — FG% <b>{_moe:+.1f}pp</b> "
+                f"against expected, and <b>{_tq['PPS']:.2f}</b> points a "
+                f"shot against the <b>{_tq['xPPS']:.2f}</b> its shot "
+                "selection predicted."))
+        if _shv:
+            st.markdown(CARDS.verdict_card(_shv), unsafe_allow_html=True)
+            st.caption("Expected FG% and expected PPS come from the league shot-"
+                       "quality baseline — every shot priced by its kind, how "
+                       "it was created and whether a defender was on it. The "
+                       "gap is shot-making; the selection itself is the charts "
+                       "below.")
+
         # 1) stacked creation × region bar (per team) + creation table
         st.markdown("**Shot profile — creation × shot type**")
         st.caption("Each bar = a creation context; stacked Paint-2 / Mid-2 / 3-pt by "
@@ -1777,6 +1845,22 @@ def render_box_score(game_id: int):
         e1, e2 = st.columns(2)
         e1.metric(f"{t1name} factor edges", h_edges)
         e2.metric(f"{t2name} factor edges", a_edges)
+        # The table already decided every row; saying which factor actually
+        # separated the teams is one more line and it is the line a coach
+        # repeats in the locker room.
+        _gaps = []
+        for k, lbl, better in FACTORS:
+            hv, avv = 100 * ff_h[k], 100 * ff_a[k]
+            _gaps.append((lbl, hv - avv, better))
+        _big = max(_gaps, key=lambda g: abs(g[1]))
+        _bw = (t1name if (_big[1] > 0) == (_big[2] == "high") else t2name)
+        _ffv = [(
+            "the factors", None,
+            f"<b>{html.escape(t1name)} {h_edges}</b> · "
+            f"<b>{html.escape(t2name)} {a_edges}</b> on the four factors, "
+            f"and the widest gap was <b>{_big[0]}</b> — "
+            f"<b>{abs(_big[1]):.1f}pp</b> to {html.escape(_bw)}.")]
+        st.markdown(CARDS.verdict_card(_ffv), unsafe_allow_html=True)
 
         # 4F-PPP: what the factors alone say each offense should have scored
         # per possession — vs what actually happened. Gap = shot-making /

@@ -121,6 +121,7 @@ def apply() -> dict:
     more than once. A value that fails its coercer is skipped, never fatal."""
     import importlib
     applied = {}
+    touched = {}
     for name, val in load().items():
         spec = REGISTRY.get(name)
         if not spec:
@@ -131,6 +132,20 @@ def apply() -> dict:
             mod = importlib.import_module(mod_path)
             setattr(mod, attr, coerced)
             applied[name] = coerced
+            touched[mod_path] = mod
         except Exception:
             continue
+    # Anything a module DERIVED from a constant at import time — a label with the
+    # cut point in it, a lookup table keyed on a threshold — is frozen at the
+    # committed default by the time this rebinding happens, because import came
+    # first. A module with derived state declares `_on_constants_applied` and
+    # gets told; `helpers/shot_kinds.py` is the first, and its band labels were
+    # silently disagreeing with its own classifier for exactly this reason.
+    for mod in touched.values():
+        hook = getattr(mod, "_on_constants_applied", None)
+        if callable(hook):
+            try:
+                hook()
+            except Exception:
+                continue
     return applied

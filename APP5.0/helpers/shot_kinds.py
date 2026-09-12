@@ -181,21 +181,63 @@ KIND_LABELS = {
     UNKNOWN: "Unlocated",
 }
 
-BAND_LABELS = {
-    "rim04": "0-4 ft",
-    "two419": "4 ft - arc",
-    "arc3": "3 at the arc",
-    "deep3": f"3 from {DEEP_FT:.0f}+ ft",
-    UNKNOWN: "Unlocated",
-}
+# ── labels derived from the cut points, not typed beside them ────────────────
+# RIM_FT / FLOATER_FT / DEEP_FT are registered in `model_constants`, which means
+# a recal can move them — and three of the five band labels below used to type
+# the number in by hand ("0-4 ft", "4 ft - arc", "inside 4 feet"). A recal that
+# moved the cliff to 4.5 ft would have re-classified every shot and kept telling
+# the coach the line was at 4. `deep3` already interpolated its constant, which
+# is how the disagreement was visible at all: one row of the same dict honoured
+# the engine and the others did not.
+#
+# The dicts stay dicts, because seven call sites subscript them. They are
+# REBUILT IN PLACE by `_on_constants_applied` — `model_constants.apply()`
+# setattrs the new value onto this module AFTER import, so anything computed at
+# import time (including the old `deep3` f-string) was frozen at the committed
+# default and quietly wrong for the rest of the process.
 
+BAND_LABELS = {}
 #: A coach reads a distance, not a slug. Used in captions and verdicts.
-BAND_PROSE = {
-    "rim04": "inside 4 feet",
-    "two419": "from 4 feet to the arc",
-    "arc3": "from the arc",
-    "deep3": f"from {DEEP_FT:.0f} feet and out",
-}
+BAND_PROSE = {}
+#: The floater band's own phrasing, which `verdict` prints. Same treatment.
+FLOATER_PROSE = ""
+
+
+def _ft(v):
+    """A cut point as a coach would write it: "4", not "4.0" — and "4.5" rather
+    than the "4" that `:.0f` would round a fractional recal down to."""
+    return f"{float(v):g}"
+
+
+def _build_labels():
+    """(re)derive every distance-bearing label from the current cut points."""
+    BAND_LABELS.clear()
+    BAND_LABELS.update({
+        "rim04": f"0-{_ft(RIM_FT)} ft",
+        "two419": f"{_ft(RIM_FT)} ft - arc",
+        "arc3": "3 at the arc",
+        "deep3": f"3 from {_ft(DEEP_FT)}+ ft",
+        UNKNOWN: "Unlocated",
+    })
+    BAND_PROSE.clear()
+    BAND_PROSE.update({
+        "rim04": f"inside {_ft(RIM_FT)} feet",
+        "two419": f"from {_ft(RIM_FT)} feet to the arc",
+        "arc3": "from the arc",
+        "deep3": f"from {_ft(DEEP_FT)} feet and out",
+    })
+    global FLOATER_PROSE
+    FLOATER_PROSE = f"from {_ft(RIM_FT)}-{_ft(FLOATER_FT)} feet"
+
+
+_build_labels()
+
+
+def _on_constants_applied():
+    """Called by `model_constants.apply()` after it rebinds this module's
+    constants. Without it every derived label keeps the committed default for
+    the life of the process."""
+    _build_labels()
 
 # ── display gates, set by the split-half measurement in the docstring ─────────
 #: Located attempts before a PLAYER's kind shares are shown as a read. The
@@ -771,7 +813,8 @@ def verdict(team_id=None, player_id=None, gender=None, game_ids=None,
     # Each taxonomy gets its own noun: the kind cut has a word a coach already
     # uses ("floater"), the depth cut does not and must name the distance.
     subject, where = ((f"shot {BAND_PROSE[bad]}", BAND_PROSE[bad])
-                      if taxonomy == "band" else ("floater", "from 4-10 feet"))
+                      if taxonomy == "band"
+                      else ("floater", FLOATER_PROSE))
     costly = ex["excess"] > 0
     if costly:
         body = (f"You take {tbl[bad]['n']} of them — {ex['excess']:.0f} more "

@@ -1,6 +1,18 @@
 # HoopTracks — The Book
 ### One read for September 2026. Everything the sweep found, everything it suggests, and every question it needs you to answer.
 
+> **SUPERSEDED IN PART — read `THE_FREEZE_BOOK_2026-09-12.md` alongside this.**
+> A full-app scrub ran against production on 2026-09-12 and answered the one
+> question this document could not: *is it safe to freeze?* (Yes — four things
+> first, one of them code.) It closes four of the six punch-list items, corrects
+> this document's §17 backup claim (Litestream to R2 has been running since
+> 4 September), scores the "high-school Synergy" blueprint against `helpers/`,
+> and measures **§13.3's 4-foot cliff**, which is still unbuilt and is the best
+> single read available to this product.
+>
+> This document remains the entry point for *why* the app is shaped as it is
+> and what the fourteen rulings settled.
+
 Written 2026-09-06 after a ten-part read-only audit (`SWEEP_2026-09-06_INDEX.md`
 and Parts 1–10). **Revised the same day after founder review** — §0 lists what
 changed, and three findings were retracted or downgraded.

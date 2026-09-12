@@ -844,6 +844,155 @@ def usage_map_html(situations, kind, title, row_hdr="Set"):
             f"<tr><td style='{_ax}'>{e(row_hdr)}</td>{th}</tr>{body}</table>")
 
 
+def call_sheet_html(sc, opponent_label, extra=None, plan_lines=None):
+    """The one page a coach holds at the scorer's table.
+
+    Not a preset of the full sheet — a purpose-built page 1. The full sheet is
+    the appendix behind it, and everything here is already computed for that
+    sheet: the matchup table, the ranked keys, the personnel one-liners, their
+    go-to sets, the defenses to throw and the breakeven number.
+
+    Deliberately narrow. Five things fit on a page a coach reads standing up
+    with eight seconds on the horn, and the whole value of this artifact is
+    that it refuses to carry a sixth. Ranking is what makes that refusal honest
+    — the keys are ordered by effect size (see `rank_keys`), so the five that
+    print are the five that matter, not the five whose rules were typed first.
+    """
+    e = html.escape
+    extra = extra or {}
+
+    def _vlines(lines):
+        return "".join(
+            f"<div class='vline'><span class='vbadge'>{e(str(b))}</span>"
+            + (f"<span class='vn'>n={e(str(n))}</span>" if n else "")
+            + f" {t}</div>" for b, n, t in (lines or []))
+
+    # 1 · the plan, if the exploit engine had anything to say
+    plan = (f"<div class='vcard'>{_vlines(plan_lines)}</div>"
+            if plan_lines else "")
+
+    # 2 · the keys, top five a side
+    _g = merge_keys(sc["guard"], extra.get("auto_report"), "guard")[:5]
+    _a = merge_keys(sc["attack"], extra.get("auto_report"), "attack")[:5]
+
+    def _li(ks):
+        return "".join(
+            f"<li>{_md_bold(k['text']) if k.get('md') else e(k['text'])}</li>"
+            for k in ks) or "<li>—</li>"
+
+    keys = ("<table class='cols'><tr>"
+            f"<td class='col'><h2>Guard</h2><ul>{_li(_g)}</ul></td>"
+            f"<td class='col'><h2>Attack</h2><ul>{_li(_a)}</ul></td></tr></table>")
+
+    # 3 · who guards whom
+    mu = ""
+    if extra.get("matchups"):
+        rows = "".join(
+            f"<tr><td>{e(m['scorer'])}</td><td>{e(m['defender'])}</td>"
+            f"<td class='n'>{('%+.0f' % m['edge']) if m.get('edge') is not None else '—'}"
+            "</td></tr>" for m in extra["matchups"])
+        mu = ("<h2>Who guards whom</h2><table><tr><th>Their scorer</th>"
+              f"<th>You</th><th class='n'>Edge</th></tr>{rows}</table>")
+
+    # 4 · one line per player — number, name, OVR, the force cue, the note
+    pers = ""
+    if sc.get("personnel"):
+        rows = ""
+        for p in sc["personnel"]:
+            cue = ""
+            if p.get("hand") and p["hand"].get("cue"):
+                cue = p["hand"]["cue"]
+            elif p.get("space") and p["space"].get("cue"):
+                cue = p["space"]["cue"]
+            rows += (f"<tr><td class='n'>{e(str(p['num']))}</td>"
+                     f"<td><b>{e(p['name'])}</b></td>"
+                     f"<td class='n'>{p['ovr'] if p.get('ovr') is not None else '—'}</td>"
+                     f"<td>{e(cue)}</td>"
+                     f"<td>{e(p.get('note') or '')}</td></tr>")
+        pers = ("<h2>Their personnel — one line each</h2><table><tr>"
+                "<th class='n'>#</th><th>Player</th><th class='n'>OVR</th>"
+                f"<th>Force</th><th>Key</th></tr>{rows}</table>")
+
+    # 5 · their three go-to sets, and the situations they live in
+    sets_html = ""
+    pc = sc.get("play_calls")
+    if pc and pc.get("rows"):
+        top = sorted(pc["rows"], key=lambda r: -r["share"])[:3]
+        sit = (sc.get("situational") or {}).get("rows") or []
+        goto = {r["label"]: r.get("top") for r in sit if r.get("top")}
+        rows = "".join(
+            f"<tr><td>{e(r['label'])}</td><td class='n'>{r['share'] * 100:.0f}%</td>"
+            f"<td class='n'>{r['PPP']:.2f}</td></tr>" for r in top)
+        _sitline = ""
+        if goto:
+            _sitline = ("<p class='note'>Go-to by situation: "
+                        + " · ".join(f"{e(k)} → {e(v)}"
+                                     for k, v in list(goto.items())[:4])
+                        + "</p>")
+        sets_html = ("<h2>Their three go-to sets</h2><table><tr><th>Set</th>"
+                     f"<th class='n'>Share</th><th class='n'>PPP</th></tr>"
+                     f"{rows}</table>{_sitline}")
+
+    # 6 · what to play on D, from their own numbers
+    dfn_html = ""
+    dfaced = sc.get("defenses_faced")
+    if dfaced and dfaced.get("rows"):
+        rows = sorted((r for r in dfaced["rows"] if r["poss"] >= 10),
+                      key=lambda r: r["PPP"])[:2]
+        if rows:
+            dfn_html = ("<h2>Defenses to show them</h2><ul>" + "".join(
+                f"<li><b>{e(r['label'])}</b> — they score only "
+                f"{r['PPP']:.2f} PPP against it ({r['poss']} poss).</li>"
+                for r in rows) + "</ul>")
+
+    # 7 · the two numbers, one line
+    nums = []
+    bk = extra.get("breakeven")
+    if bk:
+        nums.append(f"Their breakeven 3P% is <b>{_pf(bk['be3'])}</b> and they "
+                    f"shoot <b>{_pf(bk['3P%'])}</b> — "
+                    + ("let them shoot it." if (bk['3P%'] or 0) < (bk['be3'] or 0)
+                       else "run them off the line."))
+    pl = extra.get("poss_length") or []
+    if pl:
+        _fast = max(pl, key=lambda r: r["PPP"])
+        nums.append(f"Most dangerous on <b>{e(_fast['label'])}</b> possessions "
+                    f"({_fast['PPP']:.2f} pts/shot).")
+    nums_html = ("<p class='note'>" + " ".join(nums) + "</p>") if nums else ""
+
+    _chips = ""
+    trk = sc.get("trk")
+    if trk:
+        _chips = (PO.chip("ORtg", f"{trk['ORtg']:.0f}")
+                  + PO.chip("DRtg", f"{trk['DRtg']:.0f}")
+                  + PO.chip("Pace", f"{trk['Pace']:.0f}"))
+    band = PO.band("Call Sheet", f"{e(sc['name'])}",
+                   f"{e(opponent_label)} · {e(sc['record'])} · "
+                   f"Power #{sc['rank']}/{sc['of']}", _chips)
+
+    css = """
+@page{size:Letter portrait;margin:.35in}
+.wrap{max-width:7.8in;padding:0 14px 12px}
+table{font-size:11px} th{font-size:9px;padding:2px 5px}
+td{padding:2px 5px;vertical-align:top}
+h2{font-size:11px;margin:9px 0 4px}
+ul{margin:2px 0;padding-left:15px} li{margin:1px 0;font-size:11px}
+.note{color:#5b6675;font-size:10px;margin:2px 0}
+table.cols{width:100%;border-collapse:separate;border-spacing:9px 0}
+td.col{width:50%;vertical-align:top;border:none;padding:0;background:#fff}
+.vcard{border:1px solid #e7ebf0;border-left:3px solid #f0a500;border-radius:7px;
+  background:#fbfcfe;padding:6px 8px;margin:4px 0}
+.vline{font-size:11px;margin:3px 0}
+.vbadge{display:inline-block;background:#fff3d6;border:1px solid #f0d692;
+  border-radius:4px;color:#6b4e00;font-size:9px;font-weight:700;padding:1px 5px;
+  margin-right:4px}
+.vn{color:#8a94a2;font-size:9px;margin-right:3px}
+"""
+    body = (f"{band}<div class='wrap'>{plan}{keys}{mu}{pers}"
+            f"{sets_html}{dfn_html}{nums_html}</div>")
+    return PO.doc(f"Call sheet · {sc['name']}", body, extra_css=css)
+
+
 def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
                    layout=None, diagrams=None, shotwall=""):
     """A print-ready scouting sheet (browser → Print → PDF, or the in-app

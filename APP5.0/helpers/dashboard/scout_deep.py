@@ -129,7 +129,26 @@ def render_ported(ctx, fp=None):
 
 
 # ── the game plan: our sets × their vulnerability, and what to play on D ──────
-def render_game_plan(ctx, my_team_id, my_game_ids=None, fp=None):
+def game_plan(ctx, my_team_id, my_game_ids=None):
+    """`exploit.game_plan` for this matchup, or None.
+
+    Data only, deliberately: the printable needs the same plan the tab draws,
+    and a builder that renders as a side effect cannot be called from a lazy
+    download without painting a second copy of the section onto the page.
+    """
+    opp_tid = getattr(ctx, "team_id", None)
+    if not (my_team_id and opp_tid and my_team_id != opp_tid):
+        return None
+    try:
+        import helpers.exploit as EX
+        return EX.game_plan(my_team_id, opp_tid, gender=ctx.gender,
+                            my_game_ids=my_game_ids,
+                            opp_game_ids=getattr(ctx, "season_gp", None))
+    except Exception:
+        return None
+
+
+def render_game_plan(ctx, my_team_id, my_game_ids=None, fp=None, plan=None):
     """`exploit.game_plan` — the most scout-shaped engine in the codebase, and
     until now the Scout tab did not import it.
 
@@ -138,16 +157,11 @@ def render_game_plan(ctx, my_team_id, my_game_ids=None, fp=None):
     actually carries. `offensive_exploits` is our set-call efficiency × their
     vulnerability to the same set; `defensive_plan` is what to play on D.
     """
-    opp_tid = getattr(ctx, "team_id", None)
-    if not (my_team_id and opp_tid and my_team_id != opp_tid):
-        return None
-    try:
-        import helpers.exploit as EX
-        opp_ids = getattr(ctx, "season_gp", None)
-        plan = EX.game_plan(my_team_id, opp_tid, gender=ctx.gender,
-                            my_game_ids=my_game_ids, opp_game_ids=opp_ids)
-    except Exception as exc:
-        st.caption(f"Game plan unavailable — {type(exc).__name__}: {exc}")
+    if plan is None:
+        plan = game_plan(ctx, my_team_id, my_game_ids=my_game_ids)
+    if not plan:
+        st.caption("No game plan yet — it needs tagged play types or defenses "
+                   "on both sides of this matchup.")
         return None
 
     off, dfn = plan["offense"], plan["defense"]
@@ -411,13 +425,9 @@ def render_player_depth(lines, pid):
 
 
 # ── section chooser, shared with the tab ─────────────────────────────────────
-SECTIONS = ["Call sheet", "Personnel", "Their offense", "Their defense",
-            "Shooting", "Notes & print"]
-
-
-def section_picker(key="scout_section"):
+def section_picker(labels, key="scout_section"):
     """`_UI.seg`, not `st.tabs`: st.tabs executes EVERY tab body on every rerun,
     which is what made the Scout tab render all ~35 of its sections eagerly on
     every interaction. One open section instead."""
-    return _UI.seg("Section", SECTIONS, default=SECTIONS[0], key=key,
-                   label_visibility="collapsed") or SECTIONS[0]
+    return _UI.seg("Section", labels, default=labels[0], key=key,
+                   label_visibility="collapsed") or labels[0]

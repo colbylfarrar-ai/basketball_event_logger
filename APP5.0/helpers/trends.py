@@ -21,7 +21,8 @@ _SQL_VARS = 900
 
 
 def game_meta(game_ids):
-    """{gid: {id, date, team1_id, team2_id, n1, n2}} for the given games only.
+    """{gid: {id, date, team1_id, team2_id, home_score, away_score, n1, n2}}
+    for the given games only.
 
     Split out of `player_game_log` because that function ran this join with NO
     where-clause — the whole `games` table (13k rows on the live book) joined
@@ -37,6 +38,7 @@ def game_meta(game_ids):
         ph = ",".join("?" * len(chunk))
         for r in query(
             f"""SELECT g.id, g.date, g.team1_id, g.team2_id,
+                       g.home_score, g.away_score,
                        t1.name n1, t2.name n2
                 FROM games g JOIN teams t1 ON t1.id = g.team1_id
                              JOIN teams t2 ON t2.id = g.team2_id
@@ -47,8 +49,14 @@ def game_meta(game_ids):
 
 def player_game_log(player_id, boxes=None, meta=None):
     """
-    Ordered game log for one player: [{game_id, date, opp, home, box}], oldest
-    first, over every tracked game the player has a box for.
+    Ordered game log for one player:
+    [{game_id, date, opp, home, won, margin, box}], oldest first, over every
+    tracked game the player has a box for.
+
+    `won` / `margin` are from HER team's side. They were computable from the
+    moment this function existed and nothing carried them, so the player card's
+    printable printed a game log with no result in it — the first column a coach
+    looks for.
 
     `boxes` = a cached stats.player_game_boxes() result ({pid:{gid:box}}); fetched
     if omitted.
@@ -61,10 +69,18 @@ def player_game_log(player_id, boxes=None, meta=None):
     games = boxes.get(player_id, {})
     if not games:
         return []
-    prow = query("SELECT team_id FROM players WHERE id = ?", (player_id,))
-    if not prow:
-        return []
-    pteam = prow[0]["team_id"]
+    # TRANSFER-PROOF. `players.team_id` is the CURRENT roster row, so on an
+    # archive season a transferred player's log resolved every opponent against
+    # her NEW team — printing her OLD team as the opponent in the games she
+    # actually played for it. Resolve from the lineup snapshots the events
+    # recorded, exactly as the on/off splits and the card's own log do; fall
+    # back to the roster row only when the lineups cannot say.
+    pteam = S.player_lineup_team(player_id, list(games.keys()))
+    if pteam is None:
+        prow = query("SELECT team_id FROM players WHERE id = ?", (player_id,))
+        if not prow:
+            return []
+        pteam = prow[0]["team_id"]
     if meta is None:
         meta = game_meta(games.keys())
     out = []
@@ -73,9 +89,14 @@ def player_game_log(player_id, boxes=None, meta=None):
         if not m:
             continue
         is_home = m["team1_id"] == pteam
+        _us = m["home_score"] if is_home else m["away_score"]
+        _them = m["away_score"] if is_home else m["home_score"]
+        _margin = (_us - _them) if (_us is not None and _them is not None) else None
         out.append({"game_id": gid, "date": m["date"],
                     "opp": m["n2"] if is_home else m["n1"],
-                    "home": is_home, "box": box})
+                    "home": is_home,
+                    "won": (None if _margin is None else _margin > 0),
+                    "margin": _margin, "box": box})
     out.sort(key=lambda r: (r["date"] or "", r["game_id"]))
     return out
 

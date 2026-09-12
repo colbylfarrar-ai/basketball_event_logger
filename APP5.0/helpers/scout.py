@@ -1599,8 +1599,17 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
                 _play2 = ("<div class='brk'>" + e(" · ".join(
                     f"{lbl} {pct:.0f}% ({ppp:.2f})" for lbl, pct, ppp, _fg
                     in pm[:2])) + "</div>")
+            # The per-player depth the TAB shows under each tile (her foul
+            # clock, her last-5 form). It is one line each and it is the read
+            # that makes one opponent player different from the next, so the
+            # paper carries it too rather than the sheet being a thinner claim
+            # than the screen it came from.
+            _dep = ""
+            for _b, _n, _t in (extra.get("player_depth") or {}).get(
+                    p.get("pid"), []):
+                _dep += (f"<div class='pnote'>{e(str(_b))}: {_t}</div>")
             cards.append(f"<td class='pcard'>{head}{stat}{_top_cue}{_play2}"
-                         f"{note}{inote}{cnote}</td>")
+                         f"{_dep}{note}{inote}{cnote}</td>")
             # the appendix card keeps everything the five-line card dropped
             _rest = (bio + brk + play + hand_html + space_html + spc_html
                      + ("".join(f"<div class='pnote'>✋ {e(c)}</div>"

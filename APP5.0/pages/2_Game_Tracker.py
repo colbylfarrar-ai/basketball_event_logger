@@ -529,10 +529,23 @@ if is_tracked and _paid_view and _gt_view == _V_LIVE:
         try:
             import helpers.reports as RP
             from helpers.ui import pdf_or_html_download
+            # Same section picker the box-score mount offers. One document, two
+            # places to reach it, and only one of them let a coach choose what
+            # printed — so the "same" recap was two different artifacts
+            # depending on which screen you pressed the button from.
+            with st.expander("🖨️ Game recap — choose sections to include"):
+                _rsec = st.multiselect(
+                    "Sections", [k for k, _ in RP.RECAP_SECTIONS],
+                    default=[k for k, _ in RP.RECAP_SECTIONS],
+                    format_func=lambda k: dict(RP.RECAP_SECTIONS)[k],
+                    key=f"gt{game_id}_recap_secs",
+                    help="Pick what prints on the recap — like the scout "
+                         "sheet's toggles.")
+                _rhid = [k for k, _ in RP.RECAP_SECTIONS if k not in _rsec]
             pdf_or_html_download(
-                "Game recap", lambda: RP.game_recap_html(game_id),
+                "Game recap", lambda: RP.game_recap_html(game_id, _rhid),
                 f"recap_{t1name}_vs_{t2name}".replace(" ", "_"),
-                key=f"gt{game_id}_recap", fp=game_id)
+                key=f"gt{game_id}_recap", fp=(game_id, tuple(_rhid)))
         except Exception:
             st.caption("Recap unavailable for this game.")
 

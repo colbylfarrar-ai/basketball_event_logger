@@ -1699,6 +1699,9 @@ def render(ctx):
                 SD.game_plan(ctx, _my_team_id, my_game_ids=_my_gp)),
             "engine_reads": (SD.print_blocks(ctx)
                              if _show("engine_reads") else []),
+            # the same per-player depth lines the tab prints under each tile
+            "player_depth": (SD.player_depth(ctx)
+                             if _show("personnel") else {}),
             "three_profile": _three_profile(ctx),
             "poss_length": [r for r in (ctx.bundle.get("poss_length") or [])
                             if r["label"] != "Untimed" and r["FGA"]],

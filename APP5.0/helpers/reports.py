@@ -50,6 +50,26 @@ def _pctile(val, key, pool):
 
 
 # ── per-player season report card ────────────────────────────────────────────────
+#: The verdict card in ink — the same (badge, n, sentence) shape as the
+#: on-screen cards.verdict_card and as the scout sheet's, outlined rather than
+#: filled so it costs a rule instead of a panel.
+_VERDICT_CSS = """
+.vcard{border:1px solid #999;border-left:3px solid #111;border-radius:6px;
+  padding:6px 9px;margin:4px 0}
+.vline{font-size:12px;margin:3px 0}
+.vbadge{display:inline-block;border:1px solid #666;border-radius:4px;color:#111;
+  font-size:9px;font-weight:700;padding:1px 5px;margin-right:4px}
+.vn{color:#555;font-size:9px;margin-right:3px}
+"""
+
+
+def _md_b(text):
+    """`**bold**` to escaped HTML with <b> spans (the feed speaks markdown)."""
+    parts = str(text).split("**")
+    return "".join(f"<b>{e(p)}</b>" if i % 2 else e(p)
+                   for i, p in enumerate(parts))
+
+
 def player_card_html(player_id, gender=None, table=None, *,
                      season=SEAS_DEFAULT, game_ids=None):
     """The printable player card.
@@ -228,7 +248,12 @@ def player_card_html(player_id, gender=None, table=None, *,
     lrows = ""
     for game in log[-15:][::-1]:
         b = game["box"]
-        lrows += (f"<tr><td class='num'>{e(game['date'])}</td><td>{e(game['opp'])}</td>"
+        _res = ("" if game.get("won") is None
+                else ("W" if game["won"] else "L"))
+        _mg = ("" if game.get("margin") is None else f"{game['margin']:+d}")
+        lrows += (f"<tr><td class='num'>{e(game['date'])}</td>"
+                  f"<td>{e(game['opp'])}</td>"
+                  f"<td class='num'>{_res}</td><td class='num'>{_mg}</td>"
                   f"<td class='num'>{b.get('PTS',0)}</td><td class='num'>{b.get('TRB',0)}</td>"
                   f"<td class='num'>{b.get('AST',0)}</td><td class='num'>{b.get('STL',0)}</td>"
                   f"<td class='num'>{b.get('BLK',0)}</td><td class='num'>{b.get('TOV',0)}</td>"
@@ -319,9 +344,46 @@ def player_card_html(player_id, gender=None, table=None, *,
     except Exception:
         imp_html = ""
 
+    # ── the verdict, first — the same one the screen leads with ──────────
+    # The on-screen card opens with a ranked verdict under the fold; this
+    # printable opened with a KPI strip and never carried the read at all, so a
+    # coach handed the PDF got every number and none of the meaning. Same feed,
+    # same ranker, same reconciled role — capped here, because this is paper.
+    verdict_html = ""
+    try:
+        import helpers.insights as _IN
+        import helpers.insights_severity as _SEV
+        _ev = S.fetch_events(_scope) if _scope else S.fetch_events()
+        _feed = _IN.build_feed(table, _ev, top=None).get(player_id, [])
+        _vlines = []
+        if _arch and _barch:
+            _vlines.append(
+                ("Role", None,
+                 f"<b>{e(_arch)}</b> by play profile, <b>{e(_barch)}</b> by "
+                 "badges — "
+                 + ("the two lenses agree." if _arch == _barch
+                    else "the two lenses disagree, so read the lines below "
+                         "rather than the label.")))
+        elif _arch or _barch:
+            _vlines.append(("Role", None, f"<b>{e(_arch or _barch)}</b>"))
+        for _f in _SEV.rank(
+                _SEV.collect(player_feed={player_id: _feed},
+                             names={player_id: r["name"]}),
+                gp=r.get("GP") or 0)[:5]:
+            _vlines.append((_f.get("metric") or "Read", _f.get("n"),
+                            _md_b(_f.get("text") or "")))
+        if _vlines:
+            verdict_html = ("<h2>Verdict</h2><div class='vcard'>" + "".join(
+                f"<div class='vline'><span class='vbadge'>{e(str(_b))}</span>"
+                + (f"<span class='vn'>n={e(str(_n))}</span>" if _n else "")
+                + f" {_t}</div>" for _b, _n, _t in _vlines) + "</div>")
+    except Exception:
+        verdict_html = ""
+
     body = (
         f"{band}<div class='wrap'>"
-        f"<h2>Season averages</h2><table class='kpis'><tr>{kpis}</tr></table>"
+        + verdict_html
+        + f"<h2>Season averages</h2><table class='kpis'><tr>{kpis}</tr></table>"
         f"<h2>Impact &amp; signature</h2><table class='kpis'><tr>{sig}</tr></table>"
         + form_html
         + imp_html
@@ -332,12 +394,13 @@ def player_card_html(player_id, gender=None, table=None, *,
         + (f"<h2>Season highs</h2><table><tr><th>Stat</th><th class='num'>High</th>"
            f"<th>vs</th><th class='num'>Date</th></tr>{hrows}</table>" if hrows else "")
         + (f"<h2>Recent games</h2><table><tr><th>Date</th><th>Opp</th>"
+           f"<th class='num'>W/L</th><th class='num'>Margin</th>"
            f"<th class='num'>PTS</th><th class='num'>REB</th><th class='num'>AST</th>"
            f"<th class='num'>STL</th><th class='num'>BLK</th><th class='num'>TOV</th>"
            f"<th class='num'>PF</th><th class='num'>FG</th>"
            f"<th class='num'>FT</th></tr>{lrows}</table>" if lrows else "")
         + "</div>")
-    return _doc(f"Player card · {r['name']}", body)
+    return _doc(f"Player card · {r['name']}", body, extra_css=_VERDICT_CSS)
 
 
 # ── single-game recap ────────────────────────────────────────────────────────────

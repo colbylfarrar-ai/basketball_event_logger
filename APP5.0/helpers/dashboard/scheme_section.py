@@ -14,16 +14,15 @@ page-cached ``ctx.scheme_sit`` callable, so caching stays on the page.
 """
 from __future__ import annotations
 
-import re as _re
 
 import streamlit as st
 
-from helpers.cards import verdict_card
+from helpers.cards import verdict_card, md_bold as _CARDS_md_bold
 
 
-def _md_bold(text):
-    """`**x**` -> `<b>x</b>`. The engines speak markdown; verdict_card takes HTML."""
-    return _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+#: `**x**` -> `<b>x</b>` — one copy, beside the `verdict_card` that
+#: needs it (helpers/cards.py). Do not re-add a private one.
+_md_bold = _CARDS_md_bold
 
 
 def render(ctx, side, header, blurb, game_ids=None):

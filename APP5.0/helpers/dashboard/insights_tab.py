@@ -720,6 +720,21 @@ def render(ctx):
     _sections = ["Who we are", "Why we win / why we lose", "Who's helping",
                  "Who to play together", "What they'll take away", "Monday",
                  "Receipts"]
+    # This switcher owns the section names, so it joins the same parked-path
+    # handshake Charts and Lab already use: consume the one step it
+    # recognises BEFORE the widget with this key exists (Streamlit rejects a
+    # write to a widget key afterwards). Without it a jump that named an
+    # Insights section landed on 'Who we are' and left its path in session
+    # state for some later switcher to eat.
+    _parked = list(st.session_state.get(TD_SUB_GOTO) or ())
+    _hit = next((p for p in _parked if p in _sections), None)
+    if _hit is not None:
+        _parked.remove(_hit)
+        if _parked:
+            st.session_state[TD_SUB_GOTO] = _parked
+        else:
+            st.session_state.pop(TD_SUB_GOTO, None)
+        st.session_state["ins_section"] = _hit
     _sec = _UI.seg("Section", _sections, default=_sections[0],
                    key="ins_section", label_visibility="collapsed") \
         or _sections[0]

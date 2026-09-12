@@ -1,26 +1,38 @@
 """
 6_Team_Dashboard.py — the single-team deep dive.
 
-Pick one team and read everything about it across these tabs:
+Pick one team; ten VIEWS read it, chosen from a segmented control rather
+than `st.tabs` (only the open view runs — see the RENDER MAP below):
 
-  • Overview   — a coach's one-glance card: record, power ratings, best players,
-                 four-factor snapshot, scoring mix and the margin trend.
-  • Roster     — the roster scan (ratings compared, leader bars, scatter maps,
-                 shot-selection breakdown) and a "Player" drill-down sub-view that
-                 opens one player's full card. The two share this view via an inner
-                 selector. (The lineup simulator now lives under Helper → Lineup.)
-  • Schedule   — the full schedule, record vs each class, and any tracked game's
-                 complete box score on demand.
-  • Charts     — the analytics wall, six stories: Offense (Scoring · Shooting ·
-                 Playmaking nested), Play Style, Defense (Team Defense · Scheme ·
-                 Glass nested), Situational, Trends and Quarters (every stat
-                 split by quarter, heatmap + drill).
-  • Scout      — game-day scouting report: keys to guard / attack, four-factor
-                 tendencies, the 2s-vs-3s breakeven, personnel cards, hot zones
-                 and a printable sheet (folds in the old Scout Report page).
+  • Overview   — the one-glance card: record, power ratings, best players,
+                 four-factor snapshot, scoring mix, margin trend, verdict.
+  • Scout      — game-day report: keys to guard / attack, four-factor
+                 tendencies, the 2s-vs-3s breakeven, personnel cards, hot
+                 zones, and the printable sheet.
+  • Insights   — the deck: every finding this book supports, ranked by
+                 severity, cut by the question a coach asks. The prose
+                 surface — Charts and Lab are its evidence.
+  • Projection — depth-chart minutes + the signature-stat optimizer.
+  • Roster     — the roster scan and a Player Profile drill-down, one
+                 view with a lazy inner selector.
+  • Schedule   — the full schedule, record vs each class, and any tracked
+                 game's complete box score on demand.
+  • Charts     — the evidence wall, seven sections: Offense (Scoring ·
+                 Shooting · Playmaking), Play Style, Defense (Team Defense ·
+                 Scheme · Glass · Stops), Situational, Trends, Quarters and
+                 Winning Formula. Every section leads with the sentence its
+                 charts are evidence for.
+  • Lab        — the analyst tools: Advanced (Efficiency & DNA · Résumé &
+                 Form · Game Flow), Impact Lab (RAPM · WPA · chemistry ·
+                 units · rotation) and Build (a free-form chart builder).
+  • Share      — premade social cards for the own-team surface.
+  • Glossary   — every stat on the page, defined.
 
-All math lives in helpers/team_analytics.py (+ stats / team_ratings /
-player_ratings / scout); this page is display + controls only.
+All math lives in helpers/ (team_analytics · stats · team_ratings ·
+player_ratings · scout · quarters · shot_clock · …); this page is display
+and controls only. Five views render from helpers/dashboard/<module>.py;
+Charts and Lab are still inline because they share one computed-once data
+batch — the RENDER MAP further down says why and what that costs.
 """
 import sys
 from pathlib import Path
@@ -86,6 +98,8 @@ import helpers.exploit as EXPL
 import helpers.spacing as SPACE
 import helpers.matchups as MU
 import helpers.gameflow as GF
+import helpers.quarters as QTR
+import helpers.shot_clock as SCLK
 import helpers.fouls as FL
 import helpers.manual_box as MB
 import helpers.scoutboard as SB
@@ -106,6 +120,7 @@ import helpers.dashboard.situational_tab as DSITUATIONAL
 import helpers.dashboard.projection_tab as DPROJ
 import helpers.dashboard.shot_diet as DSDIET
 import helpers.dashboard.share_tab as DSHARE
+import helpers.dashboard.quarter_read as DQREAD
 import helpers.breakdown as BR
 import helpers.situational as SIT
 import helpers.seasons as SEAS
@@ -947,11 +962,32 @@ def _lg_delta(v, pool, *, pct=False, dec=1, inverse=False, neutral=False):
                             "inverse" if inverse else "normal")}
 
 
-def _jump(view, label, key):
+def _jump(view, label, key, sub=None):
     """Cross-link button: flips the top-level View switcher on next rerun.
-    Only for VIEW-level links (st.tabs can't be selected programmatically)."""
-    st.button(label, key=key,
-              on_click=lambda v=view: st.session_state.update(td_view=v))
+
+    `sub` is the PATH under that view — "Résumé & Form", or a tuple for a
+    destination two switchers deep — and it is parked the same way the
+    Insights evidence buttons park theirs: each `_sub_seg` consumes the one
+    step it recognises before its widget is built. Without it a button whose
+    own caption said "Lab → Advanced → Résumé & Form" landed on Lab's first
+    section and left the coach to find the rest, which is how a jump stops
+    being used after the second try.
+
+    Setting `td_view` from a callback is legal (the callback runs before the
+    widget is re-instantiated); `TD_SUB_GOTO` is not a widget key at all.
+    """
+    def _go(v=view, s=sub):
+        st.session_state["td_view"] = v
+        if s:
+            st.session_state[DINS.TD_SUB_GOTO] = (
+                list(s) if isinstance(s, (tuple, list)) else [s])
+        else:
+            st.session_state.pop(DINS.TD_SUB_GOTO, None)
+
+    _path = ([] if not sub else
+             list(sub) if isinstance(sub, (tuple, list)) else [sub])
+    st.button(label, key=key, on_click=_go,
+              help=" → ".join([f"Open {view}"] + _path))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1770,7 +1806,7 @@ if _tdview != "Overview":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 1 — OVERVIEW
+#  OVERVIEW — ctx build  (dispatch is below the PLAYERS ctx)
 # ══════════════════════════════════════════════════════════════════════════════
 # The Overview tab lives in helpers/dashboard/overview.py (Big Bet 5 split);
 # ctx carries the page-level shared state plus the page helpers it calls.
@@ -1787,7 +1823,7 @@ _over_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 2 — PLAYERS
+#  OVERVIEW — dispatch, then the ROSTER-scan ctx build
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Overview":
     DOVER.render(_over_ctx)
@@ -1813,7 +1849,7 @@ _players_ctx = SimpleNamespace(bundle=bundle, players=players, team_id=team_id,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 3 — SCHEDULE
+#  SCHEDULE — ctx build
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -1831,8 +1867,8 @@ _sched_ctx = SimpleNamespace(bundle=bundle, rec=rec, log=log, scored=scored,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 4 — CHARTS  (6 tabs: Offense · Play Style · Defense · Situational ·
-#                   Trends · Quarters; Offense + Defense carry nested sub-tabs)
+#  SCHEDULE — dispatch, then CHARTS + LAB (the inline block)
+#  (7 sections; Offense, Defense, Shooting and Quarters nest their own)
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Schedule":
     DSCHED.render(_sched_ctx)
@@ -2111,9 +2147,15 @@ if _tdview == "Charts":
 
         # ───────────────────────────────────────────── SHOOTING ─────────────
         if _choff == "Shooting":
-            _shp, _shc, _shm = st.tabs(
-                ["Shot Profile", "Contest", "Creation & Shot-making"])
-            with _shp:
+            # `_sub_seg`, NOT `st.tabs` — st.tabs runs every body on every
+            # rerun, so opening Shooting built all 23 of its figures to show
+            # one third of them; and a tab is not addressable from session
+            # state, so an Insights evidence jump could name Shooting and
+            # never the Contest panel its number came from. The bodies did
+            # not move — only the header line of each changed.
+            _shsub = _sub_seg(["Shot Profile", "Contest",
+                               "Creation & Shot-making"], key="ch_sh_sub")
+            if _shsub == "Shot Profile":
                 # plain-word read first — shot-making vs the looks created
                 # (the full SMOE breakdown lives in Shot Lab further down)
                 _sv_zo = zones["off"]
@@ -2387,7 +2429,7 @@ if _tdview == "Charts":
                     st.dataframe(pd.DataFrame(ztbl), hide_index=True,
                                  width="stretch")
 
-            with _shc:
+            if _shsub == "Contest":
                 # guarded vs unguarded — overall, then split by 2/3, zone & creation
                 gd = bundle["guarded_detail"]
                 g, u = guarded["guarded"], guarded["unguarded"]
@@ -2516,7 +2558,7 @@ if _tdview == "Charts":
                            "value, floor zone and how the shot was created — where "
                            "contesting hurts them most and where they punish open looks.")
 
-            with _shm:
+            if _shsub == "Creation & Shot-making":
                 cmap = {"both": "Pass + screen", "pass": "Off a pass",
                         "created": "Off a screen", "self": "Self-created"}
                 order = ["both", "pass", "created", "self"]
@@ -3274,7 +3316,8 @@ if _tdview == "Charts":
                                "(down for Pts against / Def Rtg / Opp eFG% / "
                                "turnovers). Effect-size-ranked signature stats → "
                                "**Insights** tab.")
-                    _jump("Insights", "Open Insights →", "tr_jump_ins")
+                    _jump("Insights", "Open Insights →", "tr_jump_ins",
+                          sub="Why we win / why we lose")
 
                 # ── vs top-half vs bottom-half opponents (Insights port) ────
                 _ss = _strength_split(gender, team_id,
@@ -3370,7 +3413,8 @@ if _tdview == "Charts":
                 # tracked-event trends — they live with the résumé now.)
                 st.caption("Game-margin dot plot & home/away splits → **Lab → "
                            "Advanced → Résumé & Form**.")
-                _jump("Lab", "Open Lab →", "tr_jump_lab")
+                _jump("Lab", "Open Lab →", "tr_jump_lab",
+                      sub=("Advanced", "Résumé & Form"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3383,15 +3427,16 @@ def _fx_chqt():
         st.info("No tracked games yet — quarter splits need play-by-play data "
                 "from the Game Tracker.")
     else:
-        st.caption("The single home for time-split data — every tracked stat "
-                   "broken out by quarter/half and averaged over tracked games "
-                   "('For' / 'Allowed' = this team vs opponents; small samples "
-                   "are directional). The headline below owns which quarter you "
-                   "win; the four sub-tabs go deep: **Scoring & Efficiency** "
-                   "(ratings, PPP, pace), **Shooting** (offense + defense shot "
-                   "profile), **Control · Glass · Discipline** (rebounds, "
-                   "turnovers, fouls, four factors), and **Reference Tables** "
-                   "(full per-quarter grids + by-game splits).")
+        st.caption(
+            "The single home for time-split data — every tracked stat broken "
+            "out by quarter/half and averaged over tracked games ('For' / "
+            "'Allowed' = this team vs opponents). The read above owns which "
+            "period decides these games; the four sections below are its "
+            "evidence: **Scoring & Efficiency** (ratings, PPP, pace), "
+            "**Shooting** (offense + defense shot profile), **Control · "
+            "Glass · Discipline** (rebounds, turnovers, fouls, four factors) "
+            "and **Reference Tables** (full per-quarter grids + by-game "
+            "splits).")
 
         qsq = sorted(qbx)
         qx = [_q_label(q) for q in qsq]
@@ -3428,11 +3473,27 @@ def _fx_chqt():
             hm[2].metric("1st-half net/g", f"{h1:+.1f}")
             hm[3].metric("2nd-half net/g", f"{h2:+.1f}")
 
-        qt1, qt2, qt3, qt4 = st.tabs(
-            ["Scoring & Efficiency", "Shooting",
-             "Control · Glass · Discipline", "Reference Tables"])
+        # ── the sentence, before the wall ───────────────────────────────
+        # helpers/quarters.py already writes this axis as prose and the
+        # Insights team read already renders it. The tab whose entire
+        # subject IS the quarter axis did not, so a coach reached a
+        # sentence the app had already written by reading 35 charts.
+        # Same engine, same renderer (DQREAD) as Insights — two surfaces
+        # on one quarter story cannot drift into two different stories.
+        DQREAD.render(QTR.quarter_reads(
+            qbx, by_game=bundle.get("quarter_by_game")))
 
-        with qt1:
+        # `_sub_seg`, NOT `st.tabs` — the same conversion the rest of this
+        # page already made. st.tabs executes EVERY body on every rerun, so
+        # opening Quarters drew all 35 plots to show one section of them;
+        # and a tab cannot be selected from session state, so an Insights
+        # evidence jump could never name a section inside here. The bodies
+        # did not move — only the header line of each changed.
+        _qsub = _sub_seg(["Scoring & Efficiency", "Shooting",
+                          "Control · Glass · Discipline",
+                          "Reference Tables"], key="ch_q_sub")
+
+        if _qsub == "Scoring & Efficiency":
             # ─────────────────────────────────────────── SCORING & EFFICIENCY ───
             st.markdown("<div class='lab-hdr'>Scoring & efficiency by quarter"
                         "</div>", unsafe_allow_html=True)
@@ -3493,7 +3554,7 @@ def _fx_chqt():
                     text_fmt=lambda v: f"{v:.1f}"),
                     width="stretch", key="q_pace")
 
-        with qt2:
+        if _qsub == "Shooting":
             # ─────────────────────────────────────────── SHOOTING (OFFENSE) ─────
             st.markdown("<div class='lab-hdr'>Shooting — offense, by quarter"
                         "</div>", unsafe_allow_html=True)
@@ -3568,7 +3629,7 @@ def _fx_chqt():
                       ("Opp FTA", _pg("opp", "FTA"), "#f0a500")],
                 "Attempts / game"), width="stretch", key="q_ovol")
 
-        with qt3:
+        if _qsub == "Control · Glass · Discipline":
             # ─────────────────────────────────────────── REBOUNDING ─────────────
             st.markdown("<div class='lab-hdr'>Rebounding by quarter</div>",
                         unsafe_allow_html=True)
@@ -3669,7 +3730,7 @@ def _fx_chqt():
                         qsq, [("Offense", offv, ACCENT), ("Allowed", defv, AWAY)],
                         "%"), width="stretch", key=f"q_ff_{k}")
 
-        with qt4:
+        if _qsub == "Reference Tables":
             # ─────────────────────────────────────────── FULL TABLE ─────────────
             st.markdown("<div class='lab-hdr'>Per-quarter stat table</div>",
                         unsafe_allow_html=True)
@@ -4019,7 +4080,7 @@ def _fx_chqt():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CHARTS ▸ ADVANCED  (the futuristic analytics lab: 5 sub-tabs)
+#  CHARTS ▸ QUARTERS — dispatch, then DEFENSE ▸ STOPS
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Charts":
     if _chsub == "Quarters":
@@ -5381,7 +5442,7 @@ def _fx_chadv():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 7 — INSIGHTS
+#  LAB ▸ ADVANCED — dispatch, then the LAB ▸ IMPACT LAB body
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Lab":
     if _labsub == "Advanced":
@@ -5389,7 +5450,7 @@ if _tdview == "Lab":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 8 — HELPER  (the orphaned helper engines: Predictor + Impact Lab + Lineup)
+#  LAB ▸ IMPACT LAB  (RAPM · WPA · chemistry · units · rotation)
 # ══════════════════════════════════════════════════════════════════════════════
 # Helper tab dissolved: matchup Predictor removed, Lineup creator moved to the War
 # Room page, Impact Lab moved here under Charts. `if True:` preserves the moved
@@ -6030,7 +6091,7 @@ if _tdview == "Lab":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CHARTS ▸ BUILD YOUR OWN CHART  (a free-form chart lab over the team's data)
+#  SCOUT — ctx build and dispatch
 # ══════════════════════════════════════════════════════════════════════════════
 # The Scout tab lives in helpers/dashboard/scout_tab.py (Big Bet 5 split);
 # ctx carries the page-level shared state plus the page helpers it calls.
@@ -6159,7 +6220,7 @@ if _tdview == "Scout":
     DSCOUT.render(_scout_ctx)
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB — INSIGHTS (the scout that reads itself, scoped to this team)
+#  INSIGHTS — ctx build and dispatch  (the scout that reads itself)
 # ══════════════════════════════════════════════════════════════════════════════
 # `rec` / `team_name` feed THE DECK's masthead (record, margin, rank, rest,
 # next opponent). They are already on the page — the deck must not re-query the
@@ -6220,7 +6281,7 @@ if _tdview == "Insights":
     DINS.render(_insights_ctx)
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB — PROJECTION (depth-chart minutes + signature-stat optimizer; paid+team-gated)
+#  PROJECTION — depth-chart minutes + signature-stat optimizer (paid + team)
 # ══════════════════════════════════════════════════════════════════════════════
 # Self-gates on is_paid + has_tracked + the engine's own MIN_TEAM_GAMES rotation
 # gate. game_ids = this team's entitlement-visible tracked ids, season-scoped.
@@ -6234,7 +6295,7 @@ if _tdview == "Projection":
         season=season_pick, players=players))
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB — SHARE (premade social-media cards; own-team surface — see share_tab)
+#  SHARE — premade social-media cards (own-team surface; see share_tab)
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Share":
     DSHARE.render(SimpleNamespace(team_id=team_id, gender=gender,
@@ -6636,7 +6697,7 @@ def _fx_chbld():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 9 — GLOSSARY
+#  LAB ▸ BUILD — dispatch, then GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Lab":
     if _labsub == "Build":
@@ -6648,7 +6709,7 @@ if _tdview == "Glossary":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB — PLAYER PROFILE  (ported from 6_Players.py; scoped to this team's roster)
+#  PLAYER PROFILE — the renderer (ported from 7_Players.py, this roster)
 # ══════════════════════════════════════════════════════════════════════════════
 def _render_profile(P, pid, rows, zsplits, zguard, hsplits=None):
     from helpers.dashboard.player_card import render_card, build_card_ctx
@@ -6725,7 +6786,7 @@ _prof_ctx = SimpleNamespace(team_id=team_id, gender=gender, team=team,
                             pp_zone_tables=_prof_bind(_pp_zone_tables),
                             render_profile=_render_profile, season=_prof_season)
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB — ROSTER  (Players roster scan + Player Profile drill, merged)
+#  ROSTER — the merged Players scan + Player Profile drill, dispatched
 # ══════════════════════════════════════════════════════════════════════════════
 # One top-level view, two lazy sub-views behind a segmented selector: "Roster"
 # (the whole-roster scan — DPLAY) and "Player" (drill into one name — DPROF, which

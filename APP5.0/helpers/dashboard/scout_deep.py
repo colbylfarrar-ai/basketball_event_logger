@@ -620,11 +620,9 @@ def _formula(gender, season, team_id, gids=None, fp=None):
     return tm, lg, WF.suppressors(tm or {})
 
 
-def _md_bold(text):
-    """`**x**` -> `<b>x</b>`. The engine speaks markdown; verdict_card takes
-    HTML. Same two-line helper `insights_team_read` uses, for the same reason."""
-    import re as _re
-    return _re.sub(r"\*\*(.+?)\*\*", r"<b>\g<1></b>", str(text or ""))
+#: `**x**` -> `<b>x</b>` — one copy, beside the `verdict_card` that
+#: needs it (helpers/cards.py). Do not re-add a private one.
+_md_bold = CARDS.md_bold
 
 
 def formula_lines(ctx):

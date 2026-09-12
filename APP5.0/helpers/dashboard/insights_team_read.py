@@ -28,20 +28,20 @@ on the page, the same contract the Team Dashboard tabs use.
 """
 from __future__ import annotations
 
-import re as _re
 
 import streamlit as st
 
-from helpers.cards import verdict_card
+from helpers.cards import verdict_card, md_bold as _CARDS_md_bold
 from helpers.dashboard import insights_brief as BR
 from helpers.dashboard import scheme_section as SCHEME
+from helpers.dashboard import quarter_read as QREAD
 import helpers.insights_severity as SEV
 import helpers.stats as _STATS
 
 
-def _md_bold(text):
-    """`**x**` -> `<b>x</b>`. The engines speak markdown; verdict_card takes HTML."""
-    return _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", str(text or ""))
+#: `**x**` -> `<b>x</b>` — one copy, beside the `verdict_card` that
+#: needs it (helpers/cards.py). Do not re-add a private one.
+_md_bold = _CARDS_md_bold
 
 
 def _tendencies(ctx):
@@ -91,30 +91,11 @@ def _quarters(ctx):
             "Which period actually decides these games. The full per-quarter "
             "splits — shooting, efficiency, the four factors — stay on "
             "Charts → Quarters; this is what they add up to.")
-    if not lines:
-        # "Level" is a finding, not an empty state. Saying so is the difference
-        # between an answer and a panel that looks broken.
-        st.caption(
-            "Nothing moves: no quarter sits far enough off level to call it a "
-            "pattern, and the halves agree. That is an answer, not a gap — this "
-            "team is the same team for 32 minutes.")
-        return
-    # The badge names the CUT, because the lines no longer share a unit: the
-    # scoring lines are points a game and the tempo line is possessions a game.
-    _tag = {"quarter": "Quarter", "half": "Halves", "pace": "Tempo"}
-    st.markdown(
-        verdict_card([(_tag.get(l.get("cut"), "Quarter"), l["n"],
-                       _md_bold(l["text"])) for l in lines]),
-        unsafe_allow_html=True)
-    st.caption(
-        "Scoring lines are points per game, not per possession; the tempo line "
-        "is possessions per game against this team's own other quarters, "
-        "measured per game so one loose night cannot become a habit. Each line "
-        "carries the number of tracked games behind it. Overtime is "
-        "deliberately excluded — an OT “tendency” drawn from two games is a "
-        "coin flip wearing a verdict's clothes. Tempo is the one quarter read "
-        "that repeats (SB .596); quarter shooting and quarter ball security "
-        "were measured and refused — see reliability.THE QUARTER AXIS.")
+    # One renderer, shared with Charts → Quarters (which puts the same
+    # sentences above the panels that are their evidence). The caption
+    # carries the reliability disclosure, so it must not be able to be
+    # true on one of the two screens and absent on the other.
+    QREAD.render(lines)
 
 
 def _rollup(findings):

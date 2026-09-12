@@ -19,6 +19,7 @@ Two gauges, intentionally distinct:
 from __future__ import annotations
 
 import html
+import re
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -335,6 +336,18 @@ def dense_table(rows, columns=None, *, highlight=None, num_cols=None):
 
 
 # ── Insights-style verdict box ────────────────────────────────────────────────
+def md_bold(text):
+    """`**x**` -> `<b>x</b>` — the engines speak markdown, `verdict_card`
+    takes HTML.
+
+    Four private copies of this two-line function existed (insights_team_read,
+    scheme_section, scout_deep, scout) because every engine that writes a
+    verdict line writes it in markdown and every renderer of one takes HTML.
+    It belongs next to `verdict_card`, which is the thing that needs it.
+    """
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", str(text or ""))
+
+
 def verdict_card(lines):
     """Insights-style plain-word read box (HTML string).
 

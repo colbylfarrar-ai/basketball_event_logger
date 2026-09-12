@@ -203,7 +203,7 @@ def player_card_html(player_id, gender=None, table=None, *,
     ])
 
     bdg = "".join(f"<span class='bdg'>{e(b['emoji'])} {e(b['name'])}</span>"
-                  for b in badges[:8]) or "<span style='color:#8a94a2'>—</span>"
+                  for b in badges[:8]) or "<span style='color:#555'>—</span>"
 
     hrows = ""
     for k, lbl in TRD.HIGH_KEYS:
@@ -263,7 +263,7 @@ def player_card_html(player_id, gender=None, table=None, *,
         # the accuracy line the profile prints under its fold shot map
         chart_html = (
             f"<h2>Shot chart</h2>{CPNG.shot_chart_png(shots, width=320)}"
-            f"<div style='font-size:9px;color:#5b6470'>Paint FG% {pg('Paint%')}"
+            f"<div style='font-size:9px;color:#444'>Paint FG% {pg('Paint%')}"
             f" &middot; FG% {pg('FG%')} &middot; 3P% {pg('3P%')}</div>")
 
     # Vs teammates — league rating ranked among this player's own roster.
@@ -403,7 +403,7 @@ def game_recap_html(game_id, hidden=None):
             m = meta.get(pid, {})
             hand = S.fmt_hand(m.get("handedness"))
             out += (f"<tr><td>#{m.get('number','')} {e(m.get('name','?'))} "
-                    f"<span style='color:#8a94a2;font-size:11px'>{hand}</span></td>"
+                    f"<span style='color:#555;font-size:11px'>{hand}</span></td>"
                     f"<td class='num'>{b.get('PTS',0)}</td>"
                     f"<td class='num'>{b.get('TRB',0)}</td><td class='num'>{b.get('AST',0)}</td>"
                     f"<td class='num'>{b.get('STL',0)}</td><td class='num'>{b.get('BLK',0)}</td>"
@@ -494,9 +494,9 @@ def game_recap_html(game_id, hidden=None):
     if _sc1 or _sc2:
         body += "<h2>Shot charts</h2>"
         if _sc1:
-            body += f"<div style='font-size:12px;color:#5b6675'>{e(g['n1'])}</div>{_sc1}"
+            body += f"<div style='font-size:12px;color:#444'>{e(g['n1'])}</div>{_sc1}"
         if _sc2:
-            body += f"<div style='font-size:12px;color:#5b6675'>{e(g['n2'])}</div>{_sc2}"
+            body += f"<div style='font-size:12px;color:#444'>{e(g['n2'])}</div>{_sc2}"
     if _show("box1"):
         body += f"<h2>{e(g['n1'])} — box score</h2><table>{_phdr()}{_pbox(t1id)}</table>"
     if _show("box2"):

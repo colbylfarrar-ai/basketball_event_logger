@@ -1,10 +1,13 @@
 """
 matchup_sheet.py — downloadable matchup one-pager (HTML).
 
-Same pattern as helpers/scout.py's printable_html: one self-contained HTML
-string (inline CSS, print-ready) built from the predictor + simulation outputs
-the War Room matchup tab already shows. The artifact a coach texts to an AD or
-prints for the locker room. Streamlit-free.
+Built on the SHARED print chrome ([[helpers.printouts]]), like every other
+hand-out. It used to hand-roll its own 720px stylesheet with no masthead, no
+footer and its own gold brand bar, which is why it was the one printable that
+did not look like the others — and why an ink or layout fix landed everywhere
+except here. Contents come from the predictor + simulation outputs the War Room
+matchup tab already shows. The artifact a coach texts to an AD or prints for the
+locker room. Streamlit-free.
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ def matchup_html(pred: dict, sim: dict | None = None, n_sims: int = 0,
                  home_label: str = "Neutral floor", generated: str = "") -> str:
     """Render the matchup sheet. ``pred`` = helpers/predictor.predict_game()
     output; ``sim`` = helpers/simulation.simulate_game() output (optional)."""
-    from helpers.scout import _BRAND_MARK   # baked HoopTracks mark (xhtml2pdf-safe)
+    import helpers.printouts as PO
     e = _html.escape
     a, b = e(pred["a_name"]), e(pred["b_name"])
     wa, wb = pred["win_prob_a"] * 100, pred["win_prob_b"] * 100
@@ -47,60 +50,44 @@ def matchup_html(pred: dict, sim: dict | None = None, n_sims: int = 0,
 
     meta_line = e(home_label) + (f" · {e(generated)}" if generated else "")
 
-    return f"""<!doctype html>
-<html><head><meta charset="utf-8">
-<title>{a} vs {b} — matchup sheet</title>
-<style>
-  body {{ font-family: 'Segoe UI', -apple-system, Arial, sans-serif;
-          color: #16191d; max-width: 720px; margin: 28px auto; padding: 0 18px; }}
-  h1 {{ font-size: 22px; margin: 0 0 2px; }}
-  h2 {{ font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px;
-        color: #5a6470; border-bottom: 2px solid #e3e6ea;
-        padding-bottom: 4px; margin: 22px 0 8px; }}
-  .meta {{ color: #5a6470; font-size: 12px; margin-bottom: 18px; }}
-  /* Table, not flexbox — xhtml2pdf (the PDF engine) has no flex support. */
-  table.score {{ width: 100%; background: #f4f6f8; border-radius: 10px;
-                 border-collapse: separate; margin: 14px 0; }}
-  table.score td {{ border: none; padding: 14px 22px; text-align: center;
-                    vertical-align: middle; }}
-  .score .nm {{ font-size: 14px; font-weight: 700; }}
-  .score .pts {{ font-size: 40px; font-weight: 900; line-height: 1.1; }}
-  .score .wp {{ font-size: 12px; color: #5a6470; }}
-  .score .mid {{ color: #8a94a0; font-size: 13px; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-  td {{ padding: 5px 8px; border-bottom: 1px solid #edf0f3;
-        vertical-align: top; }}
-  td.num {{ text-align: right; font-weight: 700; white-space: nowrap; }}
-  td.note {{ color: #5a6470; font-size: 12px; }}
-  p {{ font-size: 13px; line-height: 1.5; }}
-  .foot {{ margin-top: 26px; color: #8a94a0; font-size: 11px; }}
-  .brandbar {{ font-weight: 800; font-size: 13px; color: #c8860a;
-               letter-spacing: .3px; margin-bottom: 8px; }}
-  @media print {{ body {{ margin: 8px auto; }} }}
-</style></head>
-<body>
-  <div class="brandbar">{_BRAND_MARK} HoopTracks</div>
-  <h1>{a} vs {b}</h1>
-  <div class="meta">{meta_line}</div>
+    chips = (PO.chip("Spread", f"{fav} −{pred['spread']:.1f}")
+             + PO.chip("Total", f"{pred['total']:.0f}")
+             + PO.chip(e(pred["confidence"])))
+    band = PO.band("Matchup Sheet", f"{a} vs {b}", meta_line, chips)
 
-  <table class="score"><tr>
-    <td><div class="nm">{a}</div>
-      <div class="pts">{pred['pf_a']:.0f}</div>
-      <div class="wp">{wa:.0f}% win</div></td>
-    <td class="mid">projected<br>total {pred['total']:.0f}</td>
-    <td><div class="nm">{b}</div>
-      <div class="pts">{pred['pf_b']:.0f}</div>
-      <div class="wp">{wb:.0f}% win</div></td>
-  </tr></table>
+    score = (
+        "<table class='score'><tr>"
+        f"<td><div class='nm'>{a}</div>"
+        f"<div class='pts'>{pred['pf_a']:.0f}</div>"
+        f"<div class='wp'>{wa:.0f}% win</div></td>"
+        f"<td class='mid'>projected<br>total {pred['total']:.0f}</td>"
+        f"<td><div class='nm'>{b}</div>"
+        f"<div class='pts'>{pred['pf_b']:.0f}</div>"
+        f"<div class='wp'>{wb:.0f}% win</div></td>"
+        "</tr></table>")
 
-  <p><b>{fav} −{pred['spread']:.1f}</b> · {e(pred['confidence'])}</p>
-
-  <h2>Where the margin comes from</h2>
-  <table>{comp_rows}</table>
-
-  {sim_block}
-  {tracked_block}
-
-  <div class="foot">Opponent-adjusted ratings · home court as labelled above ·
-  Made with <b style="color:#c8860a">HoopTracks</b> · app.hooptracks.com</div>
-</body></html>"""
+    # Only what the shared chrome does not already cover — the projected-score
+    # block. Outlined, not filled: this used to be a solid panel behind two
+    # 40px numbers, and the numbers are the thing, not the panel.
+    css = """
+/* Page size and wrap width come from the shared chrome — portrait Letter at
+   .4in, 7.7in of printable width. Only this sheet's own block is below.
+   Table, not flexbox — xhtml2pdf (the PDF engine) has no flex support. */
+table.score{width:100%;border:1px solid #999;border-radius:9px;
+  border-collapse:separate;margin:12px 0}
+table.score td{border:none;padding:12px 20px;text-align:center;
+  vertical-align:middle}
+.score .nm{font-size:14px;font-weight:700}
+.score .pts{font-size:38px;font-weight:900;line-height:1.1}
+.score .wp{font-size:12px;color:#444}
+.score .mid{color:#555;font-size:13px}
+td.note{color:#444;font-size:12px}
+p{font-size:13px;line-height:1.5}
+"""
+    body = (f"{band}<div class='wrap'>{score}"
+            "<h2>Where the margin comes from</h2>"
+            f"<table>{comp_rows}</table>"
+            f"{sim_block}{tracked_block}"
+            "<p class='note'>Opponent-adjusted ratings · home court as labelled "
+            "in the header.</p></div>")
+    return PO.doc(f"{a} vs {b} — matchup sheet", body, extra_css=css)

@@ -43,7 +43,10 @@ def _light_court(width=340):
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
-    LINE, lw, RIM = "#444444", 1.3, "#b8860b"
+    # Grey line work, a darker rim. The rim used to be dark-goldenrod — the only
+    # colour on the court, and on a mono laser it printed as the same grey as
+    # the lines it was meant to stand out from. Weight separates it instead.
+    LINE, lw, RIM = "#555555", 1.2, "#111111"
     ax.plot([CG.X_MIN, CG.X_MAX], [0, 0], color=LINE, lw=lw)              # baseline
     ax.plot([CG.X_MIN, CG.X_MIN], [0, CG.Y_MAX], color=LINE, lw=lw)       # sidelines
     ax.plot([CG.X_MAX, CG.X_MAX], [0, CG.Y_MAX], color=LINE, lw=lw)
@@ -90,9 +93,18 @@ def blank_halfcourt_png(width=160):
 
 
 def shot_chart_png(shots, width=340, dot_r=None):
-    """Light half-court with green-dot makes / red-× misses overlaid via PIL, as a
-    base64-PNG <img> tag. `shots` = helpers.stats.located_shots() dicts (x, y feet,
-    `make` bool). Misses first so makes paint on top."""
+    """Light half-court with SOLID-dot makes / OPEN-circle misses overlaid via
+    PIL, as a base64-PNG <img> tag. `shots` = helpers.stats.located_shots() dicts
+    (x, y feet, `make` bool). Misses first so makes paint on top.
+
+    Make vs miss is carried by FILL, not by hue. It used to be a green disc
+    against a red ×, which is the one encoding that fails on both of this
+    document's likeliest readers: a mono laser renders the two as near-identical
+    mid-greys, and red-green is the common colour deficiency. A filled dot
+    against an open ring separates at a glance in colour, in greyscale and on a
+    photocopy — and the open ring is the cheaper mark on a chart that can carry
+    two hundred of them.
+    """
     from PIL import ImageDraw
     img = _light_court(width).copy()
     w, h = img.size
@@ -102,11 +114,11 @@ def shot_chart_png(shots, width=340, dot_r=None):
         if s.get("make"):
             continue
         px, py = CG.px_from_feet(s["x"], s["y"], w, h)
-        d.line([px - r, py - r, px + r, py + r], fill="#cf222e", width=2)
-        d.line([px - r, py + r, px + r, py - r], fill="#cf222e", width=2)
+        d.ellipse([px - r, py - r, px + r, py + r], fill=None,
+                  outline="#555", width=max(1, r // 3))
     for s in shots:
         if not s.get("make"):
             continue
         px, py = CG.px_from_feet(s["x"], s["y"], w, h)
-        d.ellipse([px - r, py - r, px + r, py + r], fill="#1a7f37")
+        d.ellipse([px - r, py - r, px + r, py + r], fill="#111")
     return _img_tag(img, w, h)

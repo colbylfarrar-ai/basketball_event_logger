@@ -797,15 +797,21 @@ def _pf(frac, dp=0):
     return f"{frac * 100:.{dp}f}%" if frac is not None else "—"
 
 
-def usage_map_html(situations, kind, title, row_hdr="Set"):
+def usage_map_html(situations, kind, title, row_hdr="Set", ink=True):
     """Share-by-situation usage map as a self-styled, print-safe colored HTML
     table — the scout-sheet twin of the Situational tab's plotly heatmaps.
 
     ``kind`` = 'plays' (offense set-usage) or 'defenses' (defense-scheme usage);
-    each cell is that set/scheme's % share of the situation's tagged possessions,
-    gold-shaded by intensity. Every cell carries its own background + text colour
-    so it reads on both the dark app screen and the white printed page. Returns
-    '' when there's no tagged data (so the sheet self-hides it)."""
+    each cell is that set/scheme's % share of the situation's tagged possessions.
+
+    INTENSITY IS TYPE, NOT FILL. This used to shade every cell of an 8×N grid
+    from pale gold to deep orange, with a dark navy axis — the single most
+    ink-expensive object on the printed sheet, and on a mono laser the whole
+    ramp collapsed into four indistinguishable greys, so it cost the most and
+    said the least. The heat is now carried by weight and size: a big bold
+    number IS a hot cell, and it reads identically in colour, in greyscale and
+    photocopied. Returns '' when there's no tagged data (so the sheet
+    self-hides it)."""
     e = html.escape
     if not situations:
         return ""
@@ -813,18 +819,33 @@ def usage_map_html(situations, kind, title, row_hdr="Set"):
     rows = [r for r in base.get(kind, []) if r.get("poss", 0) > 0][:8]
     if not rows or not sits:
         return ""
-    # OPAQUE pale-gold -> deep-orange heat so a cell reads on the dark app screen
-    # AND the white printed page (alpha-on-transparent washed out on both).
-    _lo, _hi = (255, 244, 191), (208, 58, 24)
+
+    # `ink=True` is the printed sheet (dark type on white); `ink=False` is the
+    # same grid on the app's dark screen. ONLY the four colours differ — the
+    # weight/size ramp that carries the heat is identical, so the coach reads
+    # the same shape on both and the sheet cannot rank a cell differently from
+    # the tab.
+    _ramp = (("#000", "#111", "#333", "#666") if ink
+             else ("#fff", "#e6edf3", "#b8c2cc", "#8b949e"))
+    _dim = "#bbb" if ink else "#484f58"
+    _axc = "#111" if ink else "#e6edf3"
+    _rule = "#111" if ink else "#30363d"
+    _hair = "#e0e0e0" if ink else "#21262d"
 
     def _cell(share):
-        n = min(1.0, max(0.0, share / 0.45))       # full heat by ~45% share
-        rgb = tuple(round(_lo[i] + (_hi[i] - _lo[i]) * n) for i in range(3))
-        txt = "#fff" if n > 0.55 else "#1a1a1a"     # white on the hot end
-        return f"rgb{rgb}", txt
+        """(font-size px, weight, colour) for a share — four steps, so the eye
+        still sorts the grid at a glance without a drop of background ink."""
+        n = min(1.0, max(0.0, share / 0.45))       # 'hot' by ~45% share
+        if n >= 0.75:
+            return 12.5, 800, _ramp[0]
+        if n >= 0.45:
+            return 11, 700, _ramp[1]
+        if n >= 0.2:
+            return 9.5, 600, _ramp[2]
+        return 9, 400, _ramp[3]
 
-    _c = "padding:3px 5px;text-align:center;font-size:9px"
-    _ax = "background:#243140;color:#fff;font-weight:700;padding:3px 5px;font-size:9px"
+    _ax = (f"font-weight:700;padding:3px 5px;font-size:9px;color:{_axc};"
+           f"border-bottom:1px solid {_rule}")
     th = "".join(f"<td style='{_ax};text-align:center'>{e(s['label'])}</td>"
                  for s in sits)
     body = ""
@@ -834,14 +855,20 @@ def usage_map_html(situations, kind, title, row_hdr="Set"):
             share = next((x["share"] for x in s.get(kind, [])
                           if x["key"] == r["key"]), 0.0)
             pct = round(share * 100)
-            bg, txt = _cell(share)
+            size, wt, col = _cell(share)
             inner = f"{pct}%" if pct else "·"
-            cells += (f"<td style='background:{bg};color:{txt if pct else '#c8b86a'};"
-                      f"{_c}'>{inner}</td>")
-        body += f"<tr><td style='{_ax}'>{e(r['label'])}</td>{cells}</tr>"
+            cells += (f"<td style='padding:3px 5px;text-align:center;"
+                      f"font-size:{size}px;font-weight:{wt};"
+                      f"color:{col if pct else _dim};"
+                      f"border-bottom:1px solid {_hair}'>{inner}</td>")
+        body += (f"<tr><td style='font-weight:600;padding:3px 5px;font-size:9px;"
+                 f"color:{_axc};border-bottom:1px solid {_hair}'>"
+                 f"{e(r['label'])}</td>{cells}</tr>")
     return (f"<h2>{e(title)}</h2>"
             "<table style='border-collapse:collapse;width:100%;margin-bottom:7px'>"
-            f"<tr><td style='{_ax}'>{e(row_hdr)}</td>{th}</tr>{body}</table>")
+            f"<tr><td style='{_ax}'>{e(row_hdr)}</td>{th}</tr>{body}</table>"
+            "<p class='note'>Bigger and bolder = a larger share of that "
+            "situation's tagged possessions.</p>")
 
 
 def call_sheet_html(sc, opponent_label, extra=None, plan_lines=None):
@@ -977,16 +1004,15 @@ table{font-size:11px} th{font-size:9px;padding:2px 5px}
 td{padding:2px 5px;vertical-align:top}
 h2{font-size:11px;margin:9px 0 4px}
 ul{margin:2px 0;padding-left:15px} li{margin:1px 0;font-size:11px}
-.note{color:#5b6675;font-size:10px;margin:2px 0}
+.note{color:#444;font-size:10px;margin:2px 0}
 table.cols{width:100%;border-collapse:separate;border-spacing:9px 0}
 td.col{width:50%;vertical-align:top;border:none;padding:0;background:#fff}
-.vcard{border:1px solid #e7ebf0;border-left:3px solid #f0a500;border-radius:7px;
-  background:#fbfcfe;padding:6px 8px;margin:4px 0}
+.vcard{border:1px solid #999;border-left:3px solid #111;border-radius:6px;
+  padding:6px 8px;margin:4px 0}
 .vline{font-size:11px;margin:3px 0}
-.vbadge{display:inline-block;background:#fff3d6;border:1px solid #f0d692;
-  border-radius:4px;color:#6b4e00;font-size:9px;font-weight:700;padding:1px 5px;
-  margin-right:4px}
-.vn{color:#8a94a2;font-size:9px;margin-right:3px}
+.vbadge{display:inline-block;border:1px solid #666;border-radius:4px;color:#111;
+  font-size:9px;font-weight:700;padding:1px 5px;margin-right:4px}
+.vn{color:#555;font-size:9px;margin-right:3px}
 """
     body = (f"{band}<div class='wrap'>{plan}{keys}{mu}{pers}"
             f"{sets_html}{dfn_html}{nums_html}</div>")
@@ -1111,24 +1137,29 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
                 continue
             badge, thin, w = S.pctile_badge(f["pct"], f.get("n"))
             p = f["pct"]
-            col = ("#8b949e" if thin or p is None else
-                   "#1a7f37" if p >= 60 else "#b42318" if p <= 40 else "#5b6675")
+            # Greyscale, and the direction is carried by a MARKER rather than by
+            # green/red — this prints on a mono laser and reads for a colourblind
+            # coach on a colour one. The bar is the only fill left on the sheet
+            # and it is information: it is the percentile.
+            mark = ("" if thin or p is None else
+                    "<span class='up'></span>" if p >= 60 else
+                    "<span class='down'></span>" if p <= 40 else "")
             _bars.append(
                 "<div class='pl-pct'><div class='pl-pct-top'>"
                 f"<span class='pl-pct-lbl'>{e(f['label'])}</span>"
                 f"<span class='pl-pct-val'>{f['value']:.1f} · "
-                f"<span style='color:{col}'>{e(badge)}</span></span></div>"
+                f"{mark}{e(badge)}</span></div>"
                 f"<div class='pl-pct-track'><div class='pl-pct-fill' "
-                f"style='width:{w}%;background:{col}'></div></div></div>")
+                f"style='width:{w}%'></div></div></div>")
         if _bars:
             _pool_n = next((f.get("n") for f in sc["factors"] if f.get("n")), 0)
             ff_html = ("<h2>Four factors &amp; tendencies</h2>"
                        + "".join(_bars)
                        + f"<p class='note'>Ranked against {_pool_n or '—'} rated "
-                       "teams this gender. Green ≥60th (a strength), red ≤40th "
-                       f"(exploit it). Under {S.POOL_FLOOR} teams the bar shows "
-                       "the rank instead — a percentile over five observations "
-                       "is not a fact.</p>")
+                       "teams this gender. ▲ = 60th or better (a strength), "
+                       f"▼ = 40th or worse (exploit it). Under {S.POOL_FLOOR} "
+                       "teams the bar shows the rank instead — a percentile over "
+                       "five observations is not a fact.</p>")
 
     # ── shooting by zone, WITH the expected-FG baseline folded in ──
     # "Shooting by zone" and "Zone shooting vs expected" were two tables over the
@@ -1407,7 +1438,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
             "<h2>Shot chart</h2>"
             f"<div class='chart'>{CP.shot_chart_png(team_shots, width=330)}</div>"
             f"<p class='note'>{fga} located attempts · {fgm}/{fga} · {pct:.0f}% "
-            "— the spots to take away. ● make · ✕ miss.</p>")
+            "— the spots to take away. ● make · ○ miss.</p>")
 
     # ── the shot wall: ONE split of small courts ─────────────────────────────
     # This used to be four separate sections, each able to stack its own grid of
@@ -1481,18 +1512,18 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
                   (("off", "Off"), ("def", "Def"), ("ply", "Ply"), ("reb", "Reb"))]
             br = [f"{lbl} {v}" for lbl, v in br if v is not None]
             brk = (f"<div class='brk'>{e(' · '.join(br))} "
-                   f"<span style='color:#8b949e'>(0–100, 50 = lg avg)</span></div>"
+                   f"<span class='brk'>(0–100, 50 = lg avg)</span></div>"
                    if br else "")
             _why = PR.overall_blurb(p.get("off"), p.get("def"),
                                     p.get("ply"), p.get("reb"))
             if _why:
-                brk += f"<div class='brk' style='color:#b25e00'>{e(_why)}</div>"
+                brk += f"<div class='brk'>{e(_why)}</div>"
             _role = p.get("rtg_role")
             if _role:
                 _rform = (f" · form {p['rtg_form']}"
                           if p.get("rtg_form") is not None else "")
                 brk += (f"<div class='brk'>Rating role: {e(_role)}"
-                        f"<span style='color:#8b949e'>"
+                        f"<span class='brk'>"
                         f" (0–10 game grade{_rform})</span></div>")
             tp = f"{p['tp']:.0f}%" if p.get("tp") is not None else "—"
             ts = f"{p['ts']:.0f}%" if p.get("ts") is not None else "—"
@@ -1543,11 +1574,11 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
             if _mi and str(_mi.get("note", "")).strip():
                 _mk = _mi.get("pid", str(_mi.get("name", "")).strip().lower())
                 _matched_intel.add(_mk)
-                inote = (f"<div class='pnote' style='color:#1a5fb4'>📋 "
+                inote = (f"<div class='pnote'>📋 "
                          f"{e(str(_mi['note']).strip())}</div>")
             # your freeform per-player note (the Custom notes editor)
             _cn = _pnotes.get(str(p.get("pid")))
-            cnote = (f"<div class='pnote' style='color:#0a7d33'>&#9998; "
+            cnote = (f"<div class='pnote'>&#9998; "
                      f"{e(str(_cn).strip())}</div>"
                      if _cn and str(_cn).strip() else "")
             shots = p.get("shots") or []
@@ -1870,7 +1901,7 @@ def printable_html(sc, opponent_label, hidden=None, extra=None, compact=True,
 /* The wrap is the PAPER, not a guess at it. Letter at .4in margins is 7.7in
    portrait / 10.2in landscape; the old 840px was 8.75in, so every portrait
    print was shrink-to-fit and the overflow came out of the content. */
-.wrap{{max-width:{_wrap_w};padding:0 20px 24px}}
+.wrap{{max-width:{_wrap_w}}}
 .flow{{column-count:{_cols};column-gap:18px}}
 td.pcard{{width:{100 / (3 if _cols >= 3 else 2):.2f}%}}
 """ + """
@@ -1879,7 +1910,7 @@ th{font-size:9px;padding:3px 6px}
 td{padding:3px 6px;vertical-align:top}
 h2{font-size:11px;margin:14px 0 6px}
 ul{margin:2px 0;padding-left:15px} li{margin:2px 0;font-size:11.5px}
-.note{color:#5b6675;font-size:10px;margin:3px 0}
+.note{color:#444;font-size:10px;margin:3px 0}
 .kpi .v{font-size:16px}
 table.cols{width:100%;border-collapse:separate;border-spacing:10px 0}
 td.col{width:50%;vertical-align:top;border:none;padding:0;background:#fff}
@@ -1887,18 +1918,18 @@ table.two{width:100%;border-collapse:separate;border-spacing:10px 0}
 td.two-col{width:50%;vertical-align:top;border:none;padding:0;background:#fff}
 .chart{text-align:center;margin:4px 0}
 table.cards{border-collapse:separate;border-spacing:8px 8px;width:100%}
-td.pcard{border:1px solid #e2e7ee;border-radius:9px;padding:7px 9px;
-  vertical-align:top;background:#fbfcfe}
+td.pcard{border:1px solid #999;border-radius:7px;padding:7px 9px;
+  vertical-align:top}
 td.pcard.empty{border:none;background:#fff}
 .phead{font-size:12px;margin-bottom:1px}
-.ovr{color:#5b6675;font-size:10px;font-weight:700}
-.pos{color:#5b6675;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
-.brk{color:#5b6675;font-size:10px}
+.ovr{color:#444;font-size:10px;font-weight:700}
+.pos{color:#444;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.brk{color:#444;font-size:10px}
 .pstat{font-size:11px;margin:1px 0}
-.pnote{color:#b25e00;font-size:10px;margin-top:1px}
+.pnote{color:#111;font-weight:600;font-size:10px;margin-top:1px}
 .mini{text-align:center;margin-top:4px}
-.notes-box{white-space:pre-wrap;border:1px solid #e7ebf0;border-radius:8px;
-  background:#f7f9fb;padding:7px;font-size:11px;min-height:46px}
+.notes-box{white-space:pre-wrap;border:1px solid #999;border-radius:7px;
+  padding:7px;font-size:11px;min-height:46px}
 table.diag{border-collapse:separate;border-spacing:7px;width:100%}
 table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;background:#fff}
 .diagname{border-bottom:1px solid #999;height:13px;margin:0 3px 3px}
@@ -1918,19 +1949,21 @@ table.diag td{border:none;text-align:center;vertical-align:top;padding:1px;backg
 .pl-pct-top{margin-bottom:2px}
 .pl-pct-lbl{font-size:10px;color:#5b6675}
 .pl-pct-val{font-size:10px;font-weight:700;float:right}
-.pl-pct-track{background:#e7ebf0;border-radius:3px;height:5px;overflow:hidden;clear:both}
-.pl-pct-fill{height:5px;border-radius:3px}
-.dx{color:#5b6675;font-size:9px}
+/* The only fill left on the sheet, and it IS the number: a 5px rule whose
+   length is the percentile. Outlined track so an empty bar still reads. */
+.pl-pct-track{border:1px solid #bbb;border-radius:3px;height:5px;overflow:hidden;
+  clear:both}
+.pl-pct-fill{height:3px;background:#111}
+.dx{color:#444;font-size:9px}
 /* The verdict card, in ink — the same (badge, n, sentence) shape as the
    on-screen cards.verdict_card, so the sheet cannot say something the tab
    does not. */
-.vcard{border:1px solid #e7ebf0;border-left:3px solid #f0a500;border-radius:7px;
-  background:#fbfcfe;padding:6px 8px;margin:4px 0;break-inside:avoid}
+.vcard{border:1px solid #999;border-left:3px solid #111;border-radius:6px;
+  padding:6px 8px;margin:4px 0;break-inside:avoid}
 .vline{font-size:10.5px;margin:3px 0}
-.vbadge{display:inline-block;background:#fff3d6;border:1px solid #f0d692;
-  border-radius:4px;color:#6b4e00;font-size:9px;font-weight:700;padding:1px 5px;
-  margin-right:4px}
-.vn{color:#8a94a2;font-size:9px;margin-right:3px}
+.vbadge{display:inline-block;border:1px solid #666;border-radius:4px;color:#111;
+  font-size:9px;font-weight:700;padding:1px 5px;margin-right:4px}
+.vn{color:#555;font-size:9px;margin-right:3px}
 @media print{.wrap{padding:6px 12px} td.pcard,table.diag td{page-break-inside:avoid}}
 """
 

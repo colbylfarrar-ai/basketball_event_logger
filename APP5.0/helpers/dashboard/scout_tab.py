@@ -1408,7 +1408,10 @@ def render(ctx):
                 for _kind, _ttl, _rh in (
                         ("plays", "Set-usage map — share by situation", "Set"),
                         ("defenses", "Defense-usage map — share by situation", "Scheme")):
-                    _umap = SC.usage_map_html(sit.get("situations") or [], _kind, _ttl, _rh)
+                    # ink=False: same weight/size heat ramp, light type for the
+                    # app's dark screen (the sheet renders the ink version).
+                    _umap = SC.usage_map_html(sit.get("situations") or [],
+                                              _kind, _ttl, _rh, ink=False)
                     if _umap:
                         st.markdown(_umap, unsafe_allow_html=True)
             else:

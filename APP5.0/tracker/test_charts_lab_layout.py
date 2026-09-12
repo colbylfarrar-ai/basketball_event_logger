@@ -94,7 +94,10 @@ LEAVES = [
     ("Charts / Defense / Glass", {"ch_sub": "Defense", "ch_sub_def": "Glass"}),
     ("Charts / Defense / Stops", {"ch_sub": "Defense", "ch_sub_def": "Stops"}),
     ("Charts / Situational", {"ch_sub": "Situational"}),
-    ("Charts / Trends", {"ch_sub": "Trends"}),
+    ("Charts / Trends / Form & splits",
+     {"ch_sub": "Trends", "ch_tr_sub": "Form & splits"}),
+    ("Charts / Trends / Every stat",
+     {"ch_sub": "Trends", "ch_tr_sub": "Every stat, game by game"}),
     ("Charts / Quarters / Scoring & Efficiency",
      {"ch_sub": "Quarters", "ch_q_sub": "Scoring & Efficiency"}),
     ("Charts / Quarters / Shooting",
@@ -201,6 +204,8 @@ _QUIET = {
     "Charts / Quarters / Shooting",
     "Charts / Quarters / Control",
     "Charts / Quarters / Reference Tables",
+    # the same: a per-game line for every stat, under the Trends read
+    "Charts / Trends / Every stat",
 }
 for _label, _body in BODIES.items():
     if _label in _QUIET:

@@ -3378,170 +3378,186 @@ if _tdview == "Charts":
                     f"net rating vs <b>{_fr_all:+.1f}</b> on the season — "
                     f"{_fr_w}.")])
 
-                # ── wins vs losses — moved up & expanded ────────────────────
-                wl = bundle["wl_splits"]
-                if wl["W"] and wl["L"]:
-                    st.markdown("<div class='lab-hdr'>Wins vs losses — what "
-                                "changes</div>", unsafe_allow_html=True)
-                    wm = st.columns(4)
-                    wm[0].metric("Record split",
-                                 f"{wl['W']['n']}W · {wl['L']['n']}L")
-                    wm[1].metric("Net rating swing",
-                                 f"{wl['W']['NetRtg'] - wl['L']['NetRtg']:+.1f}",
-                                 help=f"Wins {wl['W']['NetRtg']:+.1f} vs losses "
-                                      f"{wl['L']['NetRtg']:+.1f} pts/100.")
-                    wm[2].metric("eFG% swing",
-                                 f"{(wl['W']['eFG'] - wl['L']['eFG'])*100:+.1f}pp")
-                    wm[3].metric("Avg margin W / L",
-                                 f"+{strk['avg_win_margin']:.0f} / "
-                                 f"{strk['avg_loss_margin']:.0f}")
-                    # One diverging bar per stat — the % swing from the loss
-                    # baseline, sorted by size. Margin/NetRtg excluded (their
-                    # loss baselines sit near zero, so % swings explode; the
-                    # metric tiles above already carry them).
-                    WL_CATS = [("Pts for", "PF", False), ("Pts against", "PA", False),
-                               ("Off Rtg", "ORtg", False),
-                               ("Def Rtg", "DRtg", False),
-                               ("Pace", "Pace", False), ("eFG%", "eFG", True),
-                               ("Opp eFG%", "oeFG", True), ("FG%", "FG", True),
-                               ("3P%", "TP", True), ("TS%", "TS", True),
-                               ("Turnovers", "TOV", False), ("OREB", "ORB", False),
-                               ("DREB", "DRB", False), ("Assists", "AST", False),
-                               ("Steals", "STL", False), ("Blocks", "BLK", False)]
-                    # stats where the winning direction is DOWN
-                    WL_LOW_BETTER = {"PA", "DRtg", "oeFG", "TOV"}
-                    swings = []
-                    for lbl, k, ispct in WL_CATS:
-                        wv, lv = wl["W"][k], wl["L"][k]
-                        if not lv:
-                            continue
-                        chg = (wv - lv) / abs(lv) * 100
-                        winning_dir = chg <= 0 if k in WL_LOW_BETTER else chg >= 0
-                        fmt = (lambda v: f"{v * 100:.1f}%") if ispct \
-                            else (lambda v: f"{v:.1f}")
-                        swings.append((lbl, chg, winning_dir, fmt(wv), fmt(lv)))
-                    swings.sort(key=lambda s: abs(s[1]))
-                    wlf = go.Figure(go.Bar(
-                        x=[s[1] for s in swings], y=[s[0] for s in swings],
-                        orientation="h",
-                        marker_color=[GOOD if s[2] else BAD for s in swings],
-                        marker_line_width=0,
-                        text=[f"{s[1]:+.0f}%" for s in swings],
-                        textposition="auto",
-                        hovertext=[f"wins {s[3]} · losses {s[4]}" for s in swings],
-                        hovertemplate="%{y}: %{x:+.1f}% in wins<br>%{hovertext}"
-                                      "<extra></extra>"))
-                    wlf.add_vline(x=0, line=dict(color="#30363d"))
-                    wlf.update_xaxes(title="% change in wins (vs loss average)")
-                    _style(wlf, 460)
-                    wlf.update_layout(margin=dict(l=4, r=14, t=8, b=30))
-                    st.plotly_chart(wlf, width="stretch", key="tr_wl")
-                    st.caption(f"Each stat's per-game average in {wl['W']['n']} wins "
-                               f"vs {wl['L']['n']} losses, as the % swing from the "
-                               "loss baseline — longest bars change most when this "
-                               "team wins. Green = moved in the winning direction "
-                               "(down for Pts against / Def Rtg / Opp eFG% / "
-                               "turnovers). Effect-size-ranked signature stats → "
-                               "**Insights** tab.")
-                    _jump("Insights", "Open Insights →", "tr_jump_ins",
-                          sub="Why we win / why we lose")
 
-                # ── vs top-half vs bottom-half opponents (Insights port) ────
-                _ss = _strength_split(gender, team_id,
-                                      tuple(bundle["tracked_ids"]), season_pick)
-                if _ss and _ss.get("available"):
-                    st.markdown("<div class='lab-hdr'>Vs top-half vs bottom-half"
-                                " opponents</div>", unsafe_allow_html=True)
-                    _tp, _bt = _ss["top"], _ss["bottom"]
-                    _dppp = (_tp.get("PPP") or 0) - (_bt.get("PPP") or 0)
-                    _ss_w = (f"offense <b>drops {abs(_dppp):.2f} PPP</b> against "
-                             "top-half teams — the scoring feasts on weaker "
-                             "opponents" if _dppp <= -0.12 else
-                             f"offense <b>rises {_dppp:+.2f} PPP</b> vs top-half "
-                             "teams — it brings its best against the better "
-                             "opponents" if _dppp >= 0.12 else
-                             "offense holds up about the same against strong "
-                             "and weak opponents — an opponent-proof profile")
-                    _verdict_lines([(
-                        "strength", _ss["top_games"] + _ss["bottom_games"],
-                        f"This team's {_ss_w}.")])
-                    _ssm = st.columns(2)
-                    _ssm[0].metric(f"PPP vs top half ({_ss['top_games']}g)",
-                                   f"{_tp.get('PPP') or 0:.2f}")
-                    _ssm[1].metric(f"PPP vs bottom half ({_ss['bottom_games']}g)",
-                                   f"{_bt.get('PPP') or 0:.2f}")
-                    _SS_CATS = [("eFG%", "eFG"), ("ScEff", "ScEff"),
-                                ("3PA rate", "3PA_rate"), ("Rim rate", "rim_rate"),
-                                ("Assisted", "ast_rate"), ("Open looks", "open_rate")]
-                    ssf = go.Figure()
-                    ssf.add_trace(go.Bar(
-                        name="vs top half", x=[c[0] for c in _SS_CATS],
-                        y=[(_tp.get(c[1]) or 0) * 100 for c in _SS_CATS],
-                        marker_color=ACCENT, marker_line_width=0))
-                    ssf.add_trace(go.Bar(
-                        name="vs bottom half", x=[c[0] for c in _SS_CATS],
-                        y=[(_bt.get(c[1]) or 0) * 100 for c in _SS_CATS],
-                        marker_color=GREY, marker_line_width=0))
-                    ssf.update_layout(barmode="group")
-                    ssf.update_yaxes(title="%")
-                    _style(ssf, 300)
-                    st.plotly_chart(ssf, width="stretch", key="tr_strength")
-                    st.caption("The offense's shot profile against the league's "
-                               "top half vs its bottom half (by power rank) — "
-                               "what stops working against good teams. Full "
-                               "7-metric split table → **Insights** tab.")
+                # Trends built THIRTY-NINE figures in one scroll — the
+                # biggest wall left on the page once Quarters was split,
+                # and 30-odd of them are one reference grid: a per-game
+                # line for every stat in PER_GAME_STAT_SPEC. That grid is
+                # worth keeping — it is the only place a coach can follow
+                # any single stat game by game — and it is not what anyone
+                # opens Trends to read. Same fix as Quarters: the reads
+                # stay first, the reference gets its own section.
+                _trsub = _sub_seg(["Form & splits",
+                                   "Every stat, game by game"],
+                                  key="ch_tr_sub")
 
-                # ── every team stat over the tracked games (straight, individual)
-                st.markdown("<div class='lab-hdr'>Every team stat over tracked "
-                            "games</div>", unsafe_allow_html=True)
-                st.caption("Each tracked stat as its own per-game line (oldest → "
-                           "newest), with its straight average over the tracked "
-                           "games (dotted).")
-                _per_game_stat_grid(bundle["per_game_full"], TA.PER_GAME_STAT_SPEC,
-                                    key_prefix="tr_pg")
+                if _trsub == "Form & splits":
+                    # ── wins vs losses — moved up & expanded ────────────────────
+                    wl = bundle["wl_splits"]
+                    if wl["W"] and wl["L"]:
+                        st.markdown("<div class='lab-hdr'>Wins vs losses — what "
+                                    "changes</div>", unsafe_allow_html=True)
+                        wm = st.columns(4)
+                        wm[0].metric("Record split",
+                                     f"{wl['W']['n']}W · {wl['L']['n']}L")
+                        wm[1].metric("Net rating swing",
+                                     f"{wl['W']['NetRtg'] - wl['L']['NetRtg']:+.1f}",
+                                     help=f"Wins {wl['W']['NetRtg']:+.1f} vs losses "
+                                          f"{wl['L']['NetRtg']:+.1f} pts/100.")
+                        wm[2].metric("eFG% swing",
+                                     f"{(wl['W']['eFG'] - wl['L']['eFG'])*100:+.1f}pp")
+                        wm[3].metric("Avg margin W / L",
+                                     f"+{strk['avg_win_margin']:.0f} / "
+                                     f"{strk['avg_loss_margin']:.0f}")
+                        # One diverging bar per stat — the % swing from the loss
+                        # baseline, sorted by size. Margin/NetRtg excluded (their
+                        # loss baselines sit near zero, so % swings explode; the
+                        # metric tiles above already carry them).
+                        WL_CATS = [("Pts for", "PF", False), ("Pts against", "PA", False),
+                                   ("Off Rtg", "ORtg", False),
+                                   ("Def Rtg", "DRtg", False),
+                                   ("Pace", "Pace", False), ("eFG%", "eFG", True),
+                                   ("Opp eFG%", "oeFG", True), ("FG%", "FG", True),
+                                   ("3P%", "TP", True), ("TS%", "TS", True),
+                                   ("Turnovers", "TOV", False), ("OREB", "ORB", False),
+                                   ("DREB", "DRB", False), ("Assists", "AST", False),
+                                   ("Steals", "STL", False), ("Blocks", "BLK", False)]
+                        # stats where the winning direction is DOWN
+                        WL_LOW_BETTER = {"PA", "DRtg", "oeFG", "TOV"}
+                        swings = []
+                        for lbl, k, ispct in WL_CATS:
+                            wv, lv = wl["W"][k], wl["L"][k]
+                            if not lv:
+                                continue
+                            chg = (wv - lv) / abs(lv) * 100
+                            winning_dir = chg <= 0 if k in WL_LOW_BETTER else chg >= 0
+                            fmt = (lambda v: f"{v * 100:.1f}%") if ispct \
+                                else (lambda v: f"{v:.1f}")
+                            swings.append((lbl, chg, winning_dir, fmt(wv), fmt(lv)))
+                        swings.sort(key=lambda s: abs(s[1]))
+                        wlf = go.Figure(go.Bar(
+                            x=[s[1] for s in swings], y=[s[0] for s in swings],
+                            orientation="h",
+                            marker_color=[GOOD if s[2] else BAD for s in swings],
+                            marker_line_width=0,
+                            text=[f"{s[1]:+.0f}%" for s in swings],
+                            textposition="auto",
+                            hovertext=[f"wins {s[3]} · losses {s[4]}" for s in swings],
+                            hovertemplate="%{y}: %{x:+.1f}% in wins<br>%{hovertext}"
+                                          "<extra></extra>"))
+                        wlf.add_vline(x=0, line=dict(color="#30363d"))
+                        wlf.update_xaxes(title="% change in wins (vs loss average)")
+                        _style(wlf, 460)
+                        wlf.update_layout(margin=dict(l=4, r=14, t=8, b=30))
+                        st.plotly_chart(wlf, width="stretch", key="tr_wl")
+                        st.caption(f"Each stat's per-game average in {wl['W']['n']} wins "
+                                   f"vs {wl['L']['n']} losses, as the % swing from the "
+                                   "loss baseline — longest bars change most when this "
+                                   "team wins. Green = moved in the winning direction "
+                                   "(down for Pts against / Def Rtg / Opp eFG% / "
+                                   "turnovers). Effect-size-ranked signature stats → "
+                                   "**Insights** tab.")
+                        _jump("Insights", "Open Insights →", "tr_jump_ins",
+                              sub="Why we win / why we lose")
 
-                st.markdown("<div class='lab-hdr'>Net rating — per game"
-                            "</div>", unsafe_allow_html=True)
-                nr = go.Figure(go.Bar(
-                    x=tx, y=[e["NetRtg"] for e in trend],
-                    marker_color=[GOOD if e["NetRtg"] >= 0 else BAD
-                                  for e in trend], marker_line_width=0,
-                    text=[f"{e['NetRtg']:+.0f}" for e in trend],
-                    textposition="outside", textfont=dict(size=9)))
-                nr.add_hline(y=0, line=dict(color="#30363d"))
-                nr.update_yaxes(title="Net rating (pts/100)")
-                nr.update_xaxes(tickangle=-40)
-                _style(nr, 340)
-                st.plotly_chart(nr, width="stretch", key="tr_net")
+                    # ── vs top-half vs bottom-half opponents (Insights port) ────
+                    _ss = _strength_split(gender, team_id,
+                                          tuple(bundle["tracked_ids"]), season_pick)
+                    if _ss and _ss.get("available"):
+                        st.markdown("<div class='lab-hdr'>Vs top-half vs bottom-half"
+                                    " opponents</div>", unsafe_allow_html=True)
+                        _tp, _bt = _ss["top"], _ss["bottom"]
+                        _dppp = (_tp.get("PPP") or 0) - (_bt.get("PPP") or 0)
+                        _ss_w = (f"offense <b>drops {abs(_dppp):.2f} PPP</b> against "
+                                 "top-half teams — the scoring feasts on weaker "
+                                 "opponents" if _dppp <= -0.12 else
+                                 f"offense <b>rises {_dppp:+.2f} PPP</b> vs top-half "
+                                 "teams — it brings its best against the better "
+                                 "opponents" if _dppp >= 0.12 else
+                                 "offense holds up about the same against strong "
+                                 "and weak opponents — an opponent-proof profile")
+                        _verdict_lines([(
+                            "strength", _ss["top_games"] + _ss["bottom_games"],
+                            f"This team's {_ss_w}.")])
+                        _ssm = st.columns(2)
+                        _ssm[0].metric(f"PPP vs top half ({_ss['top_games']}g)",
+                                       f"{_tp.get('PPP') or 0:.2f}")
+                        _ssm[1].metric(f"PPP vs bottom half ({_ss['bottom_games']}g)",
+                                       f"{_bt.get('PPP') or 0:.2f}")
+                        _SS_CATS = [("eFG%", "eFG"), ("ScEff", "ScEff"),
+                                    ("3PA rate", "3PA_rate"), ("Rim rate", "rim_rate"),
+                                    ("Assisted", "ast_rate"), ("Open looks", "open_rate")]
+                        ssf = go.Figure()
+                        ssf.add_trace(go.Bar(
+                            name="vs top half", x=[c[0] for c in _SS_CATS],
+                            y=[(_tp.get(c[1]) or 0) * 100 for c in _SS_CATS],
+                            marker_color=ACCENT, marker_line_width=0))
+                        ssf.add_trace(go.Bar(
+                            name="vs bottom half", x=[c[0] for c in _SS_CATS],
+                            y=[(_bt.get(c[1]) or 0) * 100 for c in _SS_CATS],
+                            marker_color=GREY, marker_line_width=0))
+                        ssf.update_layout(barmode="group")
+                        ssf.update_yaxes(title="%")
+                        _style(ssf, 300)
+                        st.plotly_chart(ssf, width="stretch", key="tr_strength")
+                        st.caption("The offense's shot profile against the league's "
+                                   "top half vs its bottom half (by power rank) — "
+                                   "what stops working against good teams. Full "
+                                   "7-metric split table → **Insights** tab.")
 
-                # Headliners only — pace / turnovers / assists / steals already
-                # have their own lines in the per-game stat grid above, so no
-                # standalone dups.
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("<div class='lab-hdr'>Efficiency — per game"
+
+                    st.markdown("<div class='lab-hdr'>Net rating — per game"
                                 "</div>", unsafe_allow_html=True)
-                    ortg = [e["ORtg"] for e in trend]
-                    drtg = [e["DRtg"] for e in trend]
-                    eff = _trend_line(
-                        tx, [("ORtg", ortg, ACCENT), ("DRtg", drtg, AWAY)],
-                        None, "tr_eff", height=320, yaxis="Pts / 100 poss")
-                    st.plotly_chart(eff, width="stretch", key="tr_eff")
-                with c2:
-                    st.markdown("<div class='lab-hdr'>Shooting — per game"
-                                "</div>", unsafe_allow_html=True)
-                    ef = _trend_line(
-                        tx, [("eFG%", [e["eFG"] * 100 for e in trend], ACCENT),
-                             ("Opp eFG%", [e["oeFG"] * 100 for e in trend], AWAY)],
-                        None, "tr_efg", height=320, yaxis="eFG%")
-                    st.plotly_chart(ef, width="stretch", key="tr_efg")
+                    nr = go.Figure(go.Bar(
+                        x=tx, y=[e["NetRtg"] for e in trend],
+                        marker_color=[GOOD if e["NetRtg"] >= 0 else BAD
+                                      for e in trend], marker_line_width=0,
+                        text=[f"{e['NetRtg']:+.0f}" for e in trend],
+                        textposition="outside", textfont=dict(size=9)))
+                    nr.add_hline(y=0, line=dict(color="#30363d"))
+                    nr.update_yaxes(title="Net rating (pts/100)")
+                    nr.update_xaxes(tickangle=-40)
+                    _style(nr, 340)
+                    st.plotly_chart(nr, width="stretch", key="tr_net")
 
-                # (Margin distribution + home/away splits are results-math, not
-                # tracked-event trends — they live with the résumé now.)
-                st.caption("Game-margin dot plot & home/away splits → "
-                           "**Lab → Résumé & Form**.")
-                _jump("Lab", "Open Lab →", "tr_jump_lab",
-                      sub="Résumé & Form")
+                    # Headliners only — pace / turnovers / assists / steals already
+                    # have their own lines in the per-game stat grid above, so no
+                    # standalone dups.
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown("<div class='lab-hdr'>Efficiency — per game"
+                                    "</div>", unsafe_allow_html=True)
+                        ortg = [e["ORtg"] for e in trend]
+                        drtg = [e["DRtg"] for e in trend]
+                        eff = _trend_line(
+                            tx, [("ORtg", ortg, ACCENT), ("DRtg", drtg, AWAY)],
+                            None, "tr_eff", height=320, yaxis="Pts / 100 poss")
+                        st.plotly_chart(eff, width="stretch", key="tr_eff")
+                    with c2:
+                        st.markdown("<div class='lab-hdr'>Shooting — per game"
+                                    "</div>", unsafe_allow_html=True)
+                        ef = _trend_line(
+                            tx, [("eFG%", [e["eFG"] * 100 for e in trend], ACCENT),
+                                 ("Opp eFG%", [e["oeFG"] * 100 for e in trend], AWAY)],
+                            None, "tr_efg", height=320, yaxis="eFG%")
+                        st.plotly_chart(ef, width="stretch", key="tr_efg")
+
+                    # (Margin distribution + home/away splits are results-math, not
+                    # tracked-event trends — they live with the résumé now.)
+                    st.caption("Game-margin dot plot & home/away splits → "
+                               "**Lab → Résumé & Form**.")
+                    _jump("Lab", "Open Lab →", "tr_jump_lab",
+                          sub="Résumé & Form")
+
+                else:
+                    # ── every team stat over the tracked games (straight, individual)
+                    st.markdown("<div class='lab-hdr'>Every team stat over tracked "
+                                "games</div>", unsafe_allow_html=True)
+                    st.caption("Each tracked stat as its own per-game line (oldest → "
+                               "newest), with its straight average over the tracked "
+                               "games (dotted).")
+                    _per_game_stat_grid(bundle["per_game_full"], TA.PER_GAME_STAT_SPEC,
+                                        key_prefix="tr_pg")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

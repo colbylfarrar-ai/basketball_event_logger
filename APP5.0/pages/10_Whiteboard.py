@@ -265,8 +265,15 @@ if _seqs:
         _fr = PB.get_play(_me_email, _frames[_fi]["id"], _team_id)
         if _fr:
             st.caption(f"**{_fr['name']}** · {_fr['mode']} court")
-            st.image(PB.play_svg(_fr["ops"], _fr["mode"]).encode("utf-8"),
-                     width="stretch")
+            # A STRING, not bytes. `st.image` only recognises SVG on the
+            # str branch (`image_utils.image_to_url` -> `isinstance(image,
+            # str)` -> the `<svg` regex); bytes fall straight through to
+            # `PIL.Image.open`, which cannot identify an SVG and raises
+            # UnidentifiedImageError. `.encode('utf-8')` meant this preview
+            # had never rendered on any Streamlit in range — the Whiteboard
+            # is parked with one saved play in the book, so nobody opened
+            # the Sequence tab until 2026-09-12.
+            st.image(PB.play_svg(_fr["ops"], _fr["mode"]), width="stretch")
             if s2.button("Load frame onto board", key="wb_seq_load"):
                 st.session_state["_wb_load"] = {
                     "nonce": st.session_state.get("_wb_load", {}).get("nonce", 0) + 1,

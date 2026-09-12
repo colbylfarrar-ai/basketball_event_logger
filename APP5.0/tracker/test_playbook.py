@@ -148,6 +148,48 @@ check("but its author can", PB.get_play(B, _shared["id"], TEAM) is None)
 _legacy = query("SELECT COUNT(*) n FROM coach_plays WHERE team_id IS NULL")
 check("plays saved without a team stay team-less", _legacy[0]["n"] >= 2)
 
+
+# -- the renderer's CONSUMER contract, not just its output ---------------------
+# `play_svg` returning a well-formed string is not enough: the Whiteboard hands
+# that string to `st.image`, and Streamlit only recognises SVG on its STR branch
+# (`image_utils.image_to_url` -> `isinstance(image, str)` -> a `<svg` regex).
+# Bytes fall through to `PIL.Image.open`, which cannot identify an SVG and
+# raises UnidentifiedImageError. The page shipped `.encode("utf-8")`, so that
+# preview had never rendered on any Streamlit in range - and because the
+# Whiteboard is parked with one saved play in the book, nobody opened the
+# Sequence tab until 2026-09-12, when it crashed the whole page on production.
+#
+# So this pins BOTH halves: Streamlit still accepts what play_svg produces, and
+# the page still hands it over unwrapped. The first half is version-aware on
+# purpose - prod had drifted to Streamlit 1.58 while this machine sat on 1.54,
+# and a contract change there should fail here, not on a coach's screen.
+print()
+try:
+    from streamlit.elements.lib import image_utils
+    from streamlit.elements.lib.layout_utils import LayoutConfig
+    _lc = LayoutConfig(width='stretch')
+    _url = image_utils.image_to_url(svg, _lc, False, 'RGB', 'auto', 'probe')
+    check('streamlit renders play_svg output as an svg data url',
+          _url.startswith('data:image/svg+xml'), _url[:40])
+    _err = None
+    try:
+        image_utils.image_to_url(svg.encode('utf-8'), _lc, False, 'RGB',
+                                 'auto', 'probe')
+    except Exception as _e:
+        _err = type(_e).__name__
+    check('and REFUSES the same svg as bytes (the bug this pins)',
+          _err is not None, _err)
+except ImportError as _e:                     # streamlit-free environment
+    print(f'  -- streamlit not importable here ({_e}); consumer check skipped')
+
+_WB = (Path(__file__).resolve().parent.parent / 'pages'
+       / '10_Whiteboard.py').read_text(encoding='utf-8')
+_IMG = [ln for ln in _WB.splitlines() if 'st.image(' in ln]
+check('the Whiteboard previews the svg', any('play_svg' in ln for ln in _IMG),
+      _IMG)
+check('and hands st.image a str, never bytes',
+      not any('encode(' in ln for ln in _IMG), _IMG)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURES:", *FAILS, sep="\n  ")

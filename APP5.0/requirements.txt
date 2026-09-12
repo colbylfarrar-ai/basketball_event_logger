@@ -1,6 +1,17 @@
 # APP5.0 — Streamlit basketball analytics app
 # Install with:  pip install -r requirements.txt
-streamlit>=1.53.1
+# PINNED, not floating. `>=1.53.1` let production drift to 1.58.0 (installed
+# 14 Jun) while the dev machine sat on 1.54.0, so the suites could not
+# reproduce a prod-only break and `update.sh` could pull an untested minor
+# onto the droplet on any deploy. The 2026-09-12 Whiteboard crash was found
+# that way: st.image() only recognises SVG on its str branch, and the page
+# handed it bytes. (That one turned out to be version-independent, but the
+# hour spent proving it is the cost this pin removes.)
+#
+# Bumping is a deliberate act: change the number here, run both suites, THEN
+# deploy. `python -m tools.api_sweep`-style checking is not a substitute —
+# see tracker/test_playbook.py for the shape of a consumer-contract test.
+streamlit==1.58.0
 pandas>=2.3.3
 plotly>=6.5.2
 numpy>=2.3.5

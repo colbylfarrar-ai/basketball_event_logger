@@ -84,4 +84,42 @@ _after = {r["token"] for r in AUTH.list_guest_tokens("coach@gmail.com")}
 ok(_pin not in _after and _open in _after,
    "revoking the pinned link leaves the other one alone")
 
+
+# -- the offline demo identity (run.py) --------------------------------------
+# The demo runs with auth OFF, and the fallback identity carries an EMPTY email.
+# Every ownership read in the app resolves through that email, so an empty one
+# shows a different product than the same coach sees signed in. `identity_for`
+# is the single builder both paths use; these checks pin the two properties the
+# demo depends on - it is built from the app_users row, and it never invents a
+# coach who is not on the allowlist.
+AUTH.add_user("demo@school.org", "coach", "Demo Coach", added_by="coach@gmail.com")
+AUTH.set_teams("demo@school.org", [1])
+
+_ident = AUTH.identity_for("Demo@School.org")
+ok(_ident is not None, "identity_for resolves an allowlisted email")
+ok(_ident["email"] == "demo@school.org", "identity_for lowercases the email")
+ok(_ident["team_ids"] == [1], "identity_for carries the coach's teams")
+ok(_ident["name"] == "Demo Coach", "identity_for falls back to the stored name")
+ok(AUTH.identity_for("ghost@nowhere.org") is None,
+   "identity_for returns None for an email that is not on the allowlist")
+
+os.environ[AUTH.DEMO_AS_ENV] = "demo@school.org"
+ok((AUTH._demo_identity() or {}).get("team_ids") == [1],
+   "APP5_DEMO_AS builds the demo identity from that coach's row")
+os.environ[AUTH.DEMO_AS_ENV] = "ghost@nowhere.org"
+ok(AUTH._demo_identity() is None,
+   "an unknown APP5_DEMO_AS falls back to the open-local identity, not a crash")
+os.environ.pop(AUTH.DEMO_AS_ENV)
+ok(AUTH._demo_identity() is None, "no APP5_DEMO_AS -> no demo identity")
+
+# The co-op flag is TEAM-level, and the demo must inherit it rather than assume
+# it: _LOCAL_IDENTITY hardcodes shares_pool=1, so a demo built on the fallback
+# would show League-wide depth for a coach who is actually Solo.
+ok(AUTH.identity_for("demo@school.org")["shares_pool"] == 0,
+   "a Solo team's coach reads shares_pool=0, not the fallback's 1")
+AUTH.set_team_shares_pool(1, True)
+ok(AUTH.identity_for("demo@school.org")["shares_pool"] == 1,
+   "flipping the team to League-wide moves the identity with it")
+AUTH.set_team_shares_pool(1, False)
+
 print(f"\nALL {PASS} CHECKS PASSED")

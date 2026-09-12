@@ -36,7 +36,9 @@ _ident = AUTH.current_user() or {}
 _is_admin = (_ident.get("role") == "admin")
 
 _force = 0
-if _is_admin:
+# Offline (the demo launcher), the Refresh button can only spend 15s failing —
+# so it is not offered rather than offered and broken.
+if _is_admin and not FAQ.offline():
     if st.button("↻ Refresh from the Doc now", key="faq_refresh",
                  help="Pulls the Doc immediately instead of waiting out the "
                       "6-hour cache."):
@@ -50,7 +52,10 @@ if not _data["text"]:
             f"directly: [open the Doc]({_data['source_url']}).")
     st.stop()
 
-if _data["stale"]:
+if _data.get("offline"):
+    _when = (_data["fetched_at"] or "—").split("T")[0]
+    st.caption(f"Offline — showing the copy synced {_when}.")
+elif _data["stale"]:
     st.caption("⚠ Showing the last synced copy — the Doc couldn't be reached "
                "just now.")
 
@@ -74,6 +79,8 @@ if not _shown:
 
 st.divider()
 _when = (_data["fetched_at"] or "—").replace("T", " ")
+_tail = ("this copy is frozen until the app is back online."
+         if _data.get("offline") else
+         f"updates land automatically within {FAQ.TTL_HOURS} h of an edit.")
 st.caption(f"Synced from [the founder's Doc]({_data['source_url']}) · last "
-           f"pull {_when} UTC · updates land automatically within "
-           f"{FAQ.TTL_HOURS} h of an edit.")
+           f"pull {_when} UTC · {_tail}")

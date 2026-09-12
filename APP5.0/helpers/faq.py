@@ -21,9 +21,21 @@ Streamlit-free; network isolated in fetch_doc_text so tests mock it.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
 
 from database.db import query, execute
+
+#: Set by the offline demo launcher (`run.py`). This is the ONLY page in the app
+#: that reaches the network on a page load, so on a laptop with no connection it
+#: is the only page that hangs: the 6h TTL expires, `urlopen` waits out its full
+#: 15s timeout, and the coach watches a spinner before the cached copy he was
+#: always going to get renders anyway. Offline, skip the call and say so.
+OFFLINE_ENV = "APP5_OFFLINE"
+
+
+def offline() -> bool:
+    return (os.environ.get(OFFLINE_ENV) or "").strip().lower() in ("1", "true", "yes")
 
 # The founder's FAQ doc (link-shared). Swap the id here if he ever recreates it.
 DOC_ID = "1yW__An6OErdOjwtZoDA-6yTZ3gfQHQGhwfctD4jRaFg"
@@ -67,11 +79,20 @@ def get_faq(force=False, _fetch=None):
 
     `force` refetches regardless of age (the admin Refresh button). `_fetch`
     is a test seam (defaults to fetch_doc_text). A failed fetch never wipes
-    the cache: the last good copy is served with stale=True."""
+    the cache: the last good copy is served with stale=True.
+
+    Offline (see OFFLINE_ENV) no fetch is attempted at all — not even on
+    `force`, which would otherwise spend 15s proving what the env var already
+    said. The returned dict carries `offline` so the page can name the reason
+    instead of implying the Doc is broken."""
+    _off = offline()
     fetch = _fetch or fetch_doc_text
     cached = _setting(_K_CONTENT)
     fetched_at = _setting(_K_FETCHED)
     fresh = False
+    if _off:
+        return {"text": cached or "", "fetched_at": fetched_at,
+                "stale": True, "offline": True, "source_url": DOC_URL}
     if cached is not None and fetched_at and not force:
         try:
             age = (_dt.datetime.utcnow()
@@ -91,7 +112,7 @@ def get_faq(force=False, _fetch=None):
         except Exception:
             pass                        # keep serving the cached copy
     return {"text": cached or "", "fetched_at": fetched_at,
-            "stale": not fresh, "source_url": DOC_URL}
+            "stale": not fresh, "offline": False, "source_url": DOC_URL}
 
 
 # ── parsing ──────────────────────────────────────────────────────────────────

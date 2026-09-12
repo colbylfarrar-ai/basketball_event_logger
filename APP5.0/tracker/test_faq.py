@@ -80,4 +80,26 @@ print("cap")
 d5 = FAQ.get_faq(force=True, _fetch=lambda: "x" * (FAQ.MAX_BYTES * 2))
 ok(len(d5["text"]) <= FAQ.MAX_BYTES, "stored text capped (DB stays small)")
 
+
+print("offline")
+# The FAQ is the ONLY page that touches the network on a page load, so it is the
+# only one that can hang a demo laptop with no connection. Offline it must serve
+# the cached copy WITHOUT attempting a fetch - not even on force, which would
+# otherwise spend the full 15s timeout proving what the env var already said.
+def _must_not_run():
+    raise AssertionError("fetched while offline")
+
+
+os.environ[FAQ.OFFLINE_ENV] = "1"
+try:
+    ok(FAQ.offline(), "OFFLINE env is read")
+    d6 = FAQ.get_faq(_fetch=_must_not_run)
+    ok(d6["offline"] and d6["text"], "offline serves the cached copy, no fetch")
+    d7 = FAQ.get_faq(force=True, _fetch=_must_not_run)
+    ok(d7["offline"], "force does not override offline")
+finally:
+    os.environ.pop(FAQ.OFFLINE_ENV)
+ok(FAQ.get_faq(_fetch=lambda: "Fresh:" + chr(10))["offline"] is False,
+   "back online, the fetch path returns and says so")
+
 print(f"\nALL {PASS} CHECKS PASSED")

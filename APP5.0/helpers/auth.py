@@ -17,6 +17,7 @@ OIDC provides authentication only; roles live here in SQLite:
 """
 from __future__ import annotations
 
+import os
 import secrets
 
 import streamlit as st
@@ -30,6 +31,18 @@ ROLES = ("admin", "coach")
 _LOCAL_IDENTITY = {"email": "", "name": "Local", "role": "admin",
                    "plan": "paid", "paid_until": "", "team_id": None,
                    "team_ids": [], "shares_pool": 1, "pool_banned": 0}
+
+#: Offline demo (`python run.py`): auth is off, but the identity must still be a
+#: REAL coach. `_LOCAL_IDENTITY` carries an empty email, and every read filter in
+#: the app resolves ownership through that email (`coach_teams` → `own-creation`,
+#: the co-op gate, per-coach settings). An empty email therefore owns no team and
+#: shares no pool, so the open-local app shows a DIFFERENT product than the same
+#: coach sees signed in on production — more in places (admin tools) and less in
+#: others (his own team's tracked reads). Naming an `app_users` email here builds
+#: the identity from that row through the same `identity_for` the signed-in
+#: branch uses, so the demo is the coach's production view minus the handshake.
+#: Ignored the moment real auth is configured — it can never widen a live deploy.
+DEMO_AS_ENV = "APP5_DEMO_AS"
 
 
 def auth_enabled() -> bool:
@@ -295,14 +308,61 @@ def bootstrap_admin_if_empty(email: str, name: str = ""):
 
 
 # ── the gate ─────────────────────────────────────────────────────────────────────
+def identity_for(email: str, name: str = "", role: str = "") -> dict | None:
+    """The full identity dict for one allowlisted coach, or None if the email is
+    not on the list.
+
+    Pulled out of `require_login` so the signed-in path and the offline demo
+    path cannot drift: every field a gate reads — plan, the team ids ownership
+    resolves through, the team-level co-op flag — is assembled HERE, once. A
+    demo that built its own dict would be a second definition of "who this coach
+    is", and the first field either one forgot would show the coach a product
+    that does not exist.
+    """
+    email = (email or "").strip().lower()
+    u = lookup_user(email)
+    if not u:
+        return None
+    _teams = get_teams(email)
+    return {"email": email, "name": name or u.get("name") or email,
+            "role": role or u.get("role") or "coach",
+            "plan": u.get("plan", "free"),
+            "paid_until": u.get("paid_until", ""),
+            "team_id": u.get("team_id"),          # PRIMARY team (legacy / default)
+            "team_ids": _teams,                    # every team this coach staffs
+            # team-level co-op: League-wide if ANY of the coach's teams shares
+            "shares_pool": 1 if any(get_team_shares_pool(t) for t in _teams) else 0,
+            "pool_banned": u.get("pool_banned", 0)}
+
+
+def _demo_identity() -> dict | None:
+    """The `APP5_DEMO_AS` identity, or None. See `DEMO_AS_ENV`.
+
+    Fails to None rather than raising: a typo'd email or a book that predates
+    the account must land on the ordinary open-local identity, not a stack trace
+    in front of a room of coaches.
+    """
+    email = (os.environ.get(DEMO_AS_ENV) or "").strip().lower()
+    if not email:
+        return None
+    try:
+        return identity_for(email)
+    except Exception:
+        return None
+
+
 def require_login() -> dict:
     """Call once per page run, after set_page_config. Returns the identity
     {'email','name','role'} — or renders a sign-in / not-authorized screen and
-    st.stop()s. With auth not configured, returns a local admin identity."""
+    st.stop()s. With auth not configured, returns a local admin identity (or the
+    APP5_DEMO_AS coach, when one is named and on the allowlist)."""
     if not auth_enabled():
-        st.session_state["auth_user"] = _LOCAL_IDENTITY
-        set_audit_actor("")              # no-auth local owner → audited as 'local'
-        return _LOCAL_IDENTITY
+        ident = _demo_identity() or _LOCAL_IDENTITY
+        st.session_state["auth_user"] = ident
+        # no-auth local owner → audited as 'local'; a named demo coach is
+        # audited as himself, so a demo write is attributable like any other.
+        set_audit_actor(ident.get("email", ""))
+        return ident
 
     if not getattr(st.user, "is_logged_in", False):
         from pathlib import Path as _P
@@ -328,16 +388,13 @@ def require_login() -> dict:
             st.logout()
         st.stop()
 
-    u = lookup_user(email) or {}
-    _teams = get_teams(email)
-    ident = {"email": email, "name": name, "role": role,
-             "plan": u.get("plan", "free"),
-             "paid_until": u.get("paid_until", ""),
-             "team_id": u.get("team_id"),          # PRIMARY team (legacy / default)
-             "team_ids": _teams,                    # every team this coach staffs
-             # team-level co-op: League-wide if ANY of the coach's teams shares
-             "shares_pool": 1 if any(get_team_shares_pool(t) for t in _teams) else 0,
-             "pool_banned": u.get("pool_banned", 0)}
+    # `role` is already resolved above (allowlist, or the one-time bootstrap),
+    # and the bootstrap case has no app_users row until `add_user` returns — so
+    # pass it through rather than re-reading it.
+    ident = identity_for(email, name, role) or {
+        "email": email, "name": name, "role": role, "plan": "free",
+        "paid_until": "", "team_id": None, "team_ids": [],
+        "shares_pool": 0, "pool_banned": 0}
     st.session_state["auth_user"] = ident
     set_audit_actor(email)               # attribute this run's writes to this coach
     return ident

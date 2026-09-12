@@ -513,6 +513,70 @@ else:
                        "halftime spike can read high here without meaning the "
                        "box is too small; pair this with the ↻ render time.")
 
+    # ── What coaches actually did (THE BOOK §21 Phase 1) ─────────────────────
+    # The three October counters, read where the founder already looks once a
+    # week — beside the capacity glance — rather than on a page that would have
+    # to be remembered. Three questions, in the order they pay:
+    #   · which dead ends did coaches hit          (a list of reasons to be angry)
+    #   · which pages did they open, and first     (the ordering instinct, checked)
+    #   · did anyone touch the co-op toggle        (the business question)
+    with st.expander("🔭 What coaches actually did (last 30 days)"):
+        import helpers.telemetry as _TEL
+
+        _tel_on = _TEL.enabled()
+        _tc = st.columns([3, 1])
+        _tc[0].caption(
+            "Three counters, on for October and disposable after it. They "
+            "record a page OPEN (not every click), which empty state fired, "
+            "and every change to the co-op toggle — nothing else, no blobs, "
+            f"and rows older than {_TEL.RETAIN_DAYS} days are deleted.")
+        _new_on = _tc[1].toggle("Recording", value=_tel_on, key="tel_on",
+                                help="The kill switch. Off stops every write "
+                                     "immediately — no deploy, no restart. "
+                                     "What is already recorded stays.")
+        if _new_on != _tel_on:
+            _TEL.set_enabled(_new_on)
+            st.rerun()
+
+        _sum = _TEL.summary(30)
+        if not _sum["total"]:
+            st.caption("Nothing recorded yet."
+                       if _tel_on else "Recording is off.")
+        else:
+            st.markdown("**Dead ends hit** — every one is a promise the app "
+                        "failed to keep.")
+            if _sum["empties"]:
+                st.dataframe(pd.DataFrame([{
+                    "Empty state": e["title"] or e["name"],
+                    "Where": e["name"], "Hits": e["hits"],
+                    "Coaches": e["coaches"],
+                } for e in _sum["empties"]]), hide_index=True, width="stretch")
+            else:
+                st.caption("None — no coach hit an empty state in the window.")
+
+            st.markdown("**Pages opened**")
+            _first = {r["name"]: r["hits"] for r in _sum["first"]}
+            st.dataframe(pd.DataFrame([{
+                "Page": p["name"], "Opens": p["hits"],
+                "Coaches": p["coaches"],
+                "Opened first": _first.get(p["name"], 0),
+            } for p in _sum["pages"]]), hide_index=True, width="stretch")
+            st.caption("*Opens* counts navigations, not reruns — clicking "
+                       "filters inside a page does not count. *Opened first* "
+                       "is how many coach-days started on that page, which is "
+                       "the only ordering that survives the de-duplication.")
+
+            st.markdown("**Co-op toggle**")
+            if _sum["coop"]:
+                st.dataframe(pd.DataFrame([{
+                    "When": c["ts"], "Coach": c["actor"],
+                    "Scope": c["name"], "Change": c["detail"],
+                } for c in _sum["coop"]]), hide_index=True, width="stretch")
+            else:
+                st.caption("Never touched in the window. If that is still true "
+                           "after the training session, the pitch is wrong — "
+                           "not the coaches.")
+
     # ── Restart the app — makes "next restart" actually happen ────────────────
     # The two buttons above both end with "takes effect on the next app
     # restart"; this is that restart, without an SSH session.

@@ -208,6 +208,24 @@ def _apply_pool_coupling():
             break
 
 
+def _coop_telemetry(scope, old, new, *, actor="", target="") -> None:
+    """October instrumentation (THE BOOK §21 Phase 1, item 3): every change to
+    the Coaches' Co-op flag, old value and new. Instrumented on the two SETTERS
+    rather than on the two Settings widgets, so a third call site added later is
+    covered for free. Never raises — a counter must not be able to break a
+    sharing change, which is a real business action."""
+    try:
+        from helpers import telemetry as _tel
+        if not actor:
+            try:
+                actor = (current_user() or {}).get("email", "") or ""
+            except Exception:
+                actor = ""
+        _tel.coop_toggle(scope, old, new, actor=actor, target=target)
+    except Exception:
+        pass
+
+
 def get_team_shares_pool(team_id) -> bool:
     """Is this TEAM in the Coaches' Co-op (teams.shares_pool)? The canonical
     TEAM-LEVEL opt-in flag — a program is one unit."""
@@ -224,7 +242,9 @@ def set_team_shares_pool(team_id, on: bool):
     No-op when team_id is None."""
     if team_id is None:
         return
+    _was = get_team_shares_pool(team_id)
     execute("UPDATE teams SET shares_pool=? WHERE id=?", (1 if on else 0, team_id))
+    _coop_telemetry("team", _was, on, target=f"team {team_id}")
     _apply_pool_coupling()
     from helpers.entitlement import recompute_game_pool
     recompute_game_pool()
@@ -238,9 +258,12 @@ def set_shares_pool(email: str, on: bool):
     ids = get_teams(email)
     if not ids:
         return
+    _was = any(get_team_shares_pool(t) for t in ids)
     ph = ",".join("?" * len(ids))
     execute(f"UPDATE teams SET shares_pool=? WHERE id IN ({ph})",
             tuple([1 if on else 0] + ids))
+    _coop_telemetry("coach", _was, on, actor=email,
+                    target=f"{len(ids)} team{'' if len(ids) == 1 else 's'}")
     _apply_pool_coupling()
     from helpers.entitlement import recompute_game_pool
     recompute_game_pool()

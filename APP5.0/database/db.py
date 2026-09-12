@@ -42,6 +42,10 @@ _AUDIT_SKIP_TABLES = {
     # coach_plays: private per-coach stroke blobs — auditing would re-store the
     # whole ops JSON on every save and bloat the DB for zero moderation value.
     "coach_plays",
+    # telemetry: the October counters are themselves a log. Auditing them would
+    # write a second row for every page view a coach makes — doubling the cost
+    # of the cheapest thing in the app and burying real moderation signal under it.
+    "telemetry",
 }
 _AUDIT_RE = re.compile(
     r"^\s*(INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
@@ -551,6 +555,20 @@ def _run_init(db_path):
                )""",
             "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts)",
             "CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)",
+            # October instrumentation (THE BOOK §21 Phase 1) — page views,
+            # empty-state hits and co-op toggles. Append-only, scalar columns
+            # only, no blobs; helpers/telemetry.py prunes past RETAIN_DAYS and
+            # carries the kill switch (app_settings.telemetry_off). One index:
+            # every read is "the last N days", so ts covers all of them.
+            """CREATE TABLE IF NOT EXISTS telemetry (
+                   id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                   ts     TEXT NOT NULL DEFAULT (datetime('now')),
+                   kind   TEXT NOT NULL,
+                   actor  TEXT NOT NULL DEFAULT '',
+                   name   TEXT NOT NULL DEFAULT '',
+                   detail TEXT NOT NULL DEFAULT ''
+               )""",
+            "CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(kind, ts)",
             # Per-season TEAM CLASS. `teams.class` is the CURRENT season's class
             # (freely re-aligned each year); the rollover snapshots the outgoing
             # season's class here so a past-season view shows the class the team

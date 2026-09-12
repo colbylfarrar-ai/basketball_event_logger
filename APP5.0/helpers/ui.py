@@ -246,6 +246,19 @@ def page_chrome(title: str = None):
         _presence.mark((_ident or {}).get("email"))
     except Exception:
         pass
+    # October instrumentation (THE BOOK §21 Phase 1, item 1): which pages get
+    # opened, in what order. page_chrome runs on every RERUN, so telemetry
+    # dedupes on the actor's last page and this writes only on a real
+    # navigation. Wrapped here too — it must never reach page boot.
+    try:
+        from helpers import telemetry as _tel
+        # every page in pages/ passes its title; the fallback is only for a
+        # caller that does not (none today, and Main.py is a router that never
+        # reaches here).
+        _tel.page_view(title or "(untitled)",
+                       (_ident or {}).get("email", ""))
+    except Exception:
+        pass
     # Always-available data refresh — kept LAST in page_chrome. Clearing stamps
     # a session time string; first run of a session shows no caption.
     if st.sidebar.button("↻ Refresh data", key="_chrome_refresh"):
@@ -677,6 +690,18 @@ def chart(fig, *, data=None, key=None, export=("CSV",)):
 
 
 # ── Empty state / loading ───────────────────────────────────────────────────────
+def _empty_actor() -> str:
+    """The signed-in coach, for telemetry only. Resolved the same way
+    `settings_utils._scope_email` does; '' when there is no auth."""
+    try:
+        u = st.session_state.get("auth_user")
+        if u and u.get("email"):
+            return u["email"].strip().lower()
+    except Exception:
+        pass
+    return ""
+
+
 def empty_state(title, body="", *, icon="🏀", cta=None, page=None):
     """Branded empty-state card — the polished replacement for a bare ``st.info``.
 
@@ -685,6 +710,17 @@ def empty_state(title, body="", *, icon="🏀", cta=None, page=None):
     it restyles with the chosen theme. ``cta`` is an optional next-step line;
     pass ``page`` (an ``st.page_link`` target, e.g. ``"pages/1_Input_Hub.py"``)
     to render the CTA as a real clickable link instead of the static pill."""
+    # October instrumentation (THE BOOK §21 Phase 1, item 2) — the highest-value
+    # of the three counters. This is the ONE funnel for "this surface has nothing
+    # to show", so instrumenting it here names every dead end in the app without
+    # touching any of its 53 call sites. The row is identified by the CALLER's
+    # module:line, not by the title: "No tracked games yet" is written in at
+    # least four different tabs and the titles collide.
+    try:
+        from helpers import telemetry as _tel
+        _tel.empty_hit(title, _empty_actor(), _tel.caller_site(2))
+    except Exception:
+        pass
     cta_html = f"<div class='empty-state-cta'>{cta}</div>" if cta and not page else ""
     st.markdown(
         f"<div class='empty-state'><div class='empty-state-icon'>{icon}</div>"

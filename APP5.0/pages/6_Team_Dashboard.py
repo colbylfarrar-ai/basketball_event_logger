@@ -825,6 +825,31 @@ def _located_pool(g, season="Current"):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _clock(g, tid, _ids, season):
+    """Where this team's offense happens in the possession (shot_clock.py).
+
+    Routed through `team_insights.clock_extra` rather than calling
+    `shot_clock.clock_profile` directly, so the chart and the Insights
+    sentence are the same four numbers — team, team-without-transition,
+    league, and the league's early-share distribution for the z.
+
+    Cheap in a way the neighbouring pool wrappers are not: the league half
+    is one `fetch_events` over the gender's tracked games (0.08s over 43
+    games / 7,717 rows on production) and the bucketing itself is a single
+    pass. The empty guard is the same load-bearing one `_kind_pool`
+    carries — `S.fetch_events([])` returns the WHOLE book.
+    """
+    gids = list(_ids)
+    lg_ids = _gender_tracked_ids(g, season)
+    if not gids or not lg_ids:
+        return {}
+    import helpers.team_insights as _TI
+    return (_TI.clock_extra(tid, events=S.fetch_events(gids),
+                            league_events=S.fetch_events(lg_ids))
+            .get("clock") or {})
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _located_allowed(tid, gids):
     """Tap-captured x/y shots the team ALLOWED (opponents' shots in its games) —
     the shots-against companion to _located_team. A game has two teams, so any
@@ -1689,7 +1714,9 @@ def _matchup_grid(g, tid, _ids):
 #    profile_tab.py  → tab_prof      Player Profile
 #
 #  STILL INLINE — the Charts + Lab block (the hard one; shared data batch):
-#    Lab   → `_labsub` (Advanced · Build · Impact Lab)
+#    Lab   → `_labsub` (Efficiency & DNA · Résumé & Form · Game Flow ·
+#            Impact Lab · Chart Builder) — ONE level; the first three share
+#            the `_fx_chadv` fragment and branch on `_labsub` inside it.
 #    Charts→ `_chsub`  (Offense · Play Style · Defense · Situational · Trends ·
 #            Quarters · Winning Formula), with `_choff` nesting under Offense
 #            (Scoring · Shooting · Playmaking) and `_chdef` under Defense
@@ -1772,6 +1799,12 @@ def _sub_seg(options, *, key, default=None):
     so a Lab destination is not eaten by the Charts switcher on the way past.
     """
     dflt = default or options[0]
+    # A session carrying a value this switcher no longer offers (an option
+    # was renamed between deploys) would hand `segmented_control` a default
+    # outside its own options and raise. Drop it rather than making a
+    # returning coach reload the app.
+    if st.session_state.get(key) not in (None, *options):
+        st.session_state.pop(key, None)
     # The parked destination is a PATH ("Offense" → "Playmaking"), because the
     # evidence for a read can live two switchers deep. Each switcher consumes
     # the one step it recognises and leaves the rest for the nested switcher
@@ -1884,8 +1917,19 @@ if _tdview == "Schedule":
 # symmetry; Lab's blocks are all inside its own `if _tdview == "Lab":` gate.
 _labsub = _choff = _chdef = None
 if _tdview == "Lab":
-    st.caption("Analyst tools — deeper dives beyond the game-prep core.")
-    _labsub = _sub_seg(["Advanced", "Build", "Impact Lab"], key="lab_sub")
+    st.caption(
+        "Analyst tools — the deeper dives beyond the game-prep core. "
+        "**Efficiency & DNA** places this team in the league; **Résumé & "
+        "Form** is the schedule it actually played; **Game Flow** is the "
+        "score-flow explorer; **Impact Lab** is the possession-level "
+        "player work (RAPM, WPA, chemistry, units) and is the experimental "
+        "end of the app; **Chart Builder** plots any of it your own way.")
+    # One level, not two. "Advanced" named nothing — it was a folder over
+    # three unrelated tools, and it put a coach's own schedule résumé three
+    # switchers deep behind a word that promised statistics. The three names
+    # under it were already the real sections, so they are the sections.
+    _labsub = _sub_seg(["Efficiency & DNA", "Résumé & Form", "Game Flow",
+                        "Impact Lab", "Chart Builder"], key="lab_sub")
 
 if _tdview == "Charts":
     # Seven top-level stories; Offense and Defense carry nested switchers.
@@ -2116,6 +2160,57 @@ if _tdview == "Charts":
             # possession-length splits
             st.markdown("<div class='lab-hdr'>Scoring by possession length"
                         "</div>", unsafe_allow_html=True)
+            # THE BOOK §13.1 — the one thing `possession_secs` is good for.
+            # This panel has always bucketed the field and then closed with a
+            # caption asserting that "transition looks are usually the most
+            # efficient", which is folklore printed exactly where a measured
+            # number belongs — and §8.4 is a whole section about league
+            # constants hardcoded into captions. `shot_clock.py` measures it,
+            # the Insights deck already says it, and this is the chart it is
+            # about, so the chart says it too. Computed, never hardcoded: the
+            # module's own docstring numbers pool both genders and the girls'
+            # book prices the early band differently.
+            _ck = _clock(gender, team_id, tuple(bundle["tracked_ids"]),
+                         season_pick)
+            _ck_l = (_ck.get("league") or {}) if _ck else {}
+            _ck_t = (_ck.get("team") or {}) if _ck else {}
+            _ck_nt = (_ck.get("team_nt") or {}) if _ck else {}
+            if _ck_l.get("early") and _ck_t.get("early"):
+                _e, _m, _l = (_ck_l["early"], _ck_l.get("mid") or {},
+                              _ck_l.get("late") or {})
+                _gap = (_e["PPP"] - _l["PPP"]) if _l.get("PPP") is not None \
+                    else None
+                _flat = (abs((_m.get("PPP") or 0) - (_l.get("PPP") or 0))
+                         if _m.get("PPP") is not None and
+                         _l.get("PPP") is not None else None)
+                _ts, _ls = _ck_t["early"]["share"], _e["share"]
+                _word = ("hunts it earlier than the league" if _ts - _ls >= .03
+                         else "gets there later than the league"
+                         if _ls - _ts >= .03 else "sits on the league's own "
+                         "rhythm")
+                _lines = [("shot clock", _ck_t.get("poss"),
+                           f"<b>{_ts * 100:.0f}%</b> of this offense happens "
+                           f"in the first <b>{SCLK.EARLY_MAX}s</b> against a "
+                           f"league <b>{_ls * 100:.0f}%</b> — it {_word}.")]
+                if _gap is not None:
+                    _lines.append((
+                        "the price", _e.get("poss"),
+                        f"League-wide those first {SCLK.EARLY_MAX} seconds are "
+                        f"worth <b>{_e['PPP']:.2f} PPP</b> against "
+                        f"<b>{_l['PPP']:.2f}</b> after — <b>{_gap:+.2f}</b> a "
+                        "possession" + (f", and nothing after the knee differs "
+                                        f"({_flat:.3f} between mid and late)."
+                                        if _flat is not None and _flat < .03
+                                        else ".")))
+                if _ck_nt.get("early", {}).get("share") is not None:
+                    _lines.append((
+                        "not just breaks", _ck_nt.get("poss"),
+                        "Dropping every possession tagged <b>transition</b>, "
+                        f"this team still opens "
+                        f"<b>{_ck_nt['early']['share'] * 100:.0f}%</b> of what "
+                        "is left inside the knee — the read is half-court "
+                        "tempo, not fast breaks."))
+                _verdict_lines(_lines)
             if plen:
                 pl_df = pd.DataFrame([{
                     "Length": r["label"], "FGA": r["FGA"], "FG%": _pctf(r["FG%"]),
@@ -2139,11 +2234,19 @@ if _tdview == "Charts":
                     pf.update_yaxes(title="Points per possession")
                     _style(pf, 260)
                     st.plotly_chart(pf, width="stretch", key="sc_plen")
-                st.caption("Possession length = seconds elapsed on the shot's "
-                           "possession. ~16% of events are untimed (shown "
-                           "separately). PPP estimated from the team's "
-                           "possessions-per-FGA rate. Transition looks are usually "
-                           "the most efficient.")
+                st.caption(
+                    "Possession length = seconds elapsed on the shot's own "
+                    "possession; ~16% of events are untimed and are shown "
+                    "separately. PPP here is estimated from the team's "
+                    "possessions-per-FGA rate, so read it against the other "
+                    "rows rather than against ORtg. The bands above come "
+                    "from helpers/shot_clock.py, whose cut at "
+                    f"{SCLK.EARLY_MAX}s is the measured knee in the league "
+                    "PPP series rather than a convention — and the early "
+                    "SHARE is the half that repeats (SB .746), which is why "
+                    "the read above is about where the offense happens and "
+                    "not about how well it shoots once it gets there."
+                )
 
         # ───────────────────────────────────────────── SHOOTING ─────────────
         if _choff == "Shooting":
@@ -3411,10 +3514,10 @@ if _tdview == "Charts":
 
                 # (Margin distribution + home/away splits are results-math, not
                 # tracked-event trends — they live with the résumé now.)
-                st.caption("Game-margin dot plot & home/away splits → **Lab → "
-                           "Advanced → Résumé & Form**.")
+                st.caption("Game-margin dot plot & home/away splits → "
+                           "**Lab → Résumé & Form**.")
                 _jump("Lab", "Open Lab →", "tr_jump_lab",
-                      sub=("Advanced", "Résumé & Form"))
+                      sub="Résumé & Form")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4938,17 +5041,18 @@ if _tdview == "Charts":
 
 @st.fragment
 def _fx_chadv():
-    st.caption("The analytics lab — league-relative efficiency, team DNA, "
-               "schedule résumé, the passing network and possession flow. (Shot "
-               "Lab now lives under Charts → Offense → Shooting.) Most panels "
-               "need tracked "
-               "games; the résumé works from results alone.")
+    """Lab's three results-and-efficiency sections.
 
-    _advsub = _sub_seg(["Efficiency & DNA", "Résumé & Form",
-                        "Game Flow"], key="lab_adv_sub")
+    One function rather than three because they share this fragment and the
+    page-level Lab switcher decides which body runs; `_labsub` is a module
+    global set before the call, exactly like `_chsub` on Charts.
+    """
+    st.caption(
+        "Most panels here need tracked games; the résumé works from results "
+        "alone. (Shot Lab now lives under Charts → Offense → Shooting.)")
 
     # ───────────────────────────────────────── EFFICIENCY & DNA ─────────────
-    if _advsub == "Efficiency & DNA":
+    if _labsub == "Efficiency & DNA":
         if not has_tracked or not sc_track:
             st.info("Tracked games needed for league-relative efficiency.")
         else:
@@ -5089,7 +5193,7 @@ def _fx_chadv():
                        "outward = better, defense and turnovers included.")
 
     # ───────────────────────────────────────── RÉSUMÉ & FORM ────────────────
-    if _advsub == "Résumé & Form":
+    if _labsub == "Résumé & Form":
         power_by = {tid2: r.get("Power") for tid2, r in scored.items()}
         rank_by = {tid2: r.get("Rank") for tid2, r in scored.items()}
         sos = TA.strength_of_schedule(log, power_by, rank_by, len(scored))
@@ -5340,7 +5444,7 @@ def _fx_chadv():
             st.caption("Green = win, red = loss. Points to the right are tougher "
                        "opponents; high-up wins over strong teams are the marquee "
                        "results, low losses to weak teams are the red flags.")
-    if _advsub == "Game Flow":
+    if _labsub == "Game Flow":
         if not has_tracked:
             st.info("Tracked games needed to reconstruct the score flow.")
         else:
@@ -5445,7 +5549,7 @@ def _fx_chadv():
 #  LAB ▸ ADVANCED — dispatch, then the LAB ▸ IMPACT LAB body
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Lab":
-    if _labsub == "Advanced":
+    if _labsub in ("Efficiency & DNA", "Résumé & Form", "Game Flow"):
         _fx_chadv()
 
 
@@ -6700,7 +6804,7 @@ def _fx_chbld():
 #  LAB ▸ BUILD — dispatch, then GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
 if _tdview == "Lab":
-    if _labsub == "Build":
+    if _labsub == "Chart Builder":
         _fx_chbld()
 
 

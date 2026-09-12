@@ -3,7 +3,7 @@
 The question this section answers is the one a coach asks before any other:
 what kind of team is this, against the field it actually plays in? Everything
 here already existed somewhere — the DNA percentiles and the efficiency
-quadrant on Lab → Advanced, the four-factor fit on Charts → Winning Formula,
+quadrant on Lab → Efficiency & DNA, the four-factor fit on Charts → Winning
 opponent-adjusted shooting and the floor-spacing index on Charts → Offense.
 None of it is retired from those tabs. This is a copy, gathered around one
 question instead of scattered across three.
@@ -110,7 +110,7 @@ def _stand(p, n):
 
 
 def _quadrant(ctx, fp):
-    """KenPom-style efficiency landscape. Copied from Lab → Advanced; that tab
+    """KenPom-style efficiency landscape. Copied from Lab → Efficiency & DNA;
     keeps its own, and the two read the same `tracked_ratings` so they cannot
     disagree about where this team sits."""
     try:

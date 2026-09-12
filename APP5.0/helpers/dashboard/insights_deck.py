@@ -77,7 +77,7 @@ def _dna_axes(gender, season, team_id, fp=None):
     wrong pool is worse than one that states none (B1, THE BOOK §10).
 
     Same eight axes and the same percentile direction as the radar on
-    Lab → Advanced (`6_Team_Dashboard.py`), deliberately: two surfaces showing
+    Lab → Efficiency & DNA (`6_Team_Dashboard.py`), deliberately: two surfaces
     one team's identity must not be able to disagree about it. The RENDERING
     differs — a rail reads as a ranking, a radar reads as a shape — which is
     the whole reason it is worth having in both places.

@@ -580,13 +580,19 @@ def _wr_pool_size(season="Current"):
     two teams or twenty. Counted off `games.in_pool`, the same denormalised
     truth `entitlement.pooled_game_ids` reads, so this cannot drift from what
     the gate would actually hand over."""
-    gids = ENT.pooled_game_ids(season)
+    gids = sorted(ENT.pooled_game_ids(season))
     if not gids:
         return 0, 0
-    marks = ",".join("?" * len(gids))
-    rows = query(f"SELECT team1_id a, team2_id b FROM games WHERE id IN ({marks})",
-                 tuple(sorted(gids)))
-    teams = {r["a"] for r in rows} | {r["b"] for r in rows}
+    # Chunked because SQLite caps a statement at 999 bound parameters and a
+    # healthy pool is meant to outgrow that. One season of one league fits
+    # today; a count that starts throwing the year the co-op works would be a
+    # bad way to find out it worked.
+    teams = set()
+    for i in range(0, len(gids), 500):
+        chunk = gids[i:i + 500]
+        rows = query("SELECT team1_id a, team2_id b FROM games WHERE id IN "
+                     f"({','.join('?' * len(chunk))})", tuple(chunk))
+        teams |= {r["a"] for r in rows} | {r["b"] for r in rows}
     return len(teams - {None}), len(gids)
 
 

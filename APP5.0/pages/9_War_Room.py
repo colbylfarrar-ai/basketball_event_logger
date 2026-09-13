@@ -80,9 +80,18 @@ def _wr_blob_save(key, blob):
 # ══════════════════════════════════════════════════════════════════════════════
 from helpers.ui import lab_hero as _lab_hero
 from helpers.stats import player_label as _PLBL
+# The deck states the MECHANIC, not the feature list, and that is deliberate.
+# The old sub named the five surfaces ("build fives, optimize the rotation,
+# project any matchup…"), which is what the page contains. What makes this page
+# different from every other one in the app is that nothing on it is a report:
+# every number here answers an input the coach chose, and changing the input
+# re-runs it. An analyst arriving with KenPom and CTG in their head already
+# knows what a matchup projection is; what they do not know, from a page named
+# after a room, is that they are allowed to drive it.
 _lab_hero("War Room — Lineups, Matchups & Sims",
-          sub="Build and compare your fives, optimize the rotation, project any "
-              "matchup, roll the season thousands of times, and bracket the title.")
+          sub="Everything on this page is something you change and re-run: "
+              "build a five, swap a defender, replay the season, project any "
+              "matchup, or take the whole stat table apart yourself.")
 
 cc = st.columns([2, 3])
 gender = gender_radio(cc[0])
@@ -523,10 +532,33 @@ def _render_proj_statline(pred, ctx, table, key):
         "PHY = measurables rating when recorded.")
 
 
-# Paid + Solo (not in the Coaches' Co-op) get ONLY the Lineups views — building
-# your own team's lineups uses your own tracked data. Scouting other teams — the
-# matchup projection and the season/bracket sims (league-wide) — is Co-op only.
-# Lineups + Glossary stay open to any paid coach; the other three gate on league-wide.
+# Paid + Solo (not in the Coaches' Co-op) build their OWN team's lineups from
+# their OWN tracked data. Scouting other teams — the matchup projection and the
+# season/bracket sims, all league-wide aggregates — is Co-op only.
+#
+# THE GATE MAP, because the comment that stood here counted five views against a
+# seven-view list and was stale rather than wrong. Audited 2026-09-13:
+#
+#   Lineups                 open to any Paid coach. `_wr_team_pick` narrows the
+#                           team list to their own when not league-wide, so the
+#                           view opens and the SCOPE is what the gate moves.
+#   Glossary                open. Definitions are not data.
+#   Matchup / Season sim /  hard-gated on `_wr_league_wide` below — the three the
+#   Bracket                 old comment meant by "the other three".
+#   Analyze                 gated INSIDE `helpers/dashboard/analyze.py:100`, and
+#                           it DEGRADES rather than refusing: a solo coach gets
+#                           the box-score columns and loses the tracked ones.
+#                           That is why it carries no lock glyph — the door does
+#                           open, onto a smaller room.
+#   Defensive assignments   no VIEW-level gate, and that is the one finding the
+#                           audit turned up. It gates per-opponent instead:
+#                           `can_rate = _can_team(_id, opp)` inside
+#                           `_render_planner`, so an un-entitled coach still
+#                           opens the planner and assigns their own five, and
+#                           the opponent's rated players are replaced by their
+#                           own hand-entered Scout intel. Correct, and the
+#                           better design — the view is a planning surface that
+#                           works with no opponent data at all. Left as is.
 _wr_ident = AUTH.current_user()
 # a PAST season is an open archive → the co-op (league-wide) gate opens too
 _wr_league_wide = True if not _is_cur_season else ENT.viewer_is_league_wide(_wr_ident)
@@ -535,12 +567,130 @@ _wr_league_wide = True if not _is_cur_season else ENT.viewer_is_league_wide(_wr_
 _WR_LOCK = (ENT.lock_reason(_wr_ident, season=season_pick, scope="pool")
             or ENT.MSG_COOP_INVITE)
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _wr_pool_size(season="Current"):
+    """(teams, games) the co-op pool would open — the SIZE of what is behind the
+    lock, which is the only part of the sell that is a fact rather than a claim.
+
+    A coach deciding whether to share their season's tracking is pricing an
+    exchange, and "scout every league-wide team" does not say whether that is
+    two teams or twenty. Counted off `games.in_pool`, the same denormalised
+    truth `entitlement.pooled_game_ids` reads, so this cannot drift from what
+    the gate would actually hand over."""
+    gids = ENT.pooled_game_ids(season)
+    if not gids:
+        return 0, 0
+    marks = ",".join("?" * len(gids))
+    rows = query(f"SELECT team1_id a, team2_id b FROM games WHERE id IN ({marks})",
+                 tuple(sorted(gids)))
+    teams = {r["a"] for r in rows} | {r["b"] for r in rows}
+    return len(teams - {None}), len(gids)
+
+
+# What each locked view actually is, in the two sentences a coach needs to price
+# it: the read it produces, and a question they would genuinely ask it. Written
+# as the thing behind the door, never as marketing — `MSG_COOP_INVITE` already
+# carries the ask, and a second layer of persuasion over it reads as a pitch.
+_WR_LOCK_SELL = {
+    "Matchup": (
+        "A projected score, a win probability and a **line-by-line margin "
+        "breakdown** for any two teams in the league, plus the full simulated "
+        "margin distribution — opponent-adjusted, with home court applied to "
+        "the actual venue.",
+        "“We are three points worse than them on paper. Where do the three "
+        "points come from, and which of them can I coach?”"),
+    "Season sim": (
+        "Every finished game replayed thousands of times off the league "
+        "ratings → expected wins, and the gap between those and the record "
+        "you actually have.",
+        "“Are we 14-6 because we are a 14-win team, or because we won four "
+        "coin flips?”"),
+    "Bracket": (
+        "Seed a single-elimination field by rating and roll it out → "
+        "round-by-round survival and championship odds for every team in it.",
+        "“If we draw the 3-seed in the quarters, what are we actually "
+        "playing for?”"),
+}
+
+
+def _wr_locked(view):
+    """The co-op lock, rendered as the door it is instead of the refusal it was.
+
+    This gate is the page's commercial job and it used to be one `st.info` line.
+    Three things go on the screen instead, and the order is the argument: WHAT
+    is behind it, a QUESTION it answers, and HOW BIG the pool it would draw on
+    actually is — then the one action that opens it. Nothing here bypasses
+    anything; the view below still does not run.
+    """
+    what, question = _WR_LOCK_SELL.get(view, ("", ""))
+    st.markdown(f"<div class='lab-hdr'>🔒 {view}</div>", unsafe_allow_html=True)
+    if what:
+        st.markdown(what)
+        st.markdown(f"<div style='color:var(--subtext);font-style:italic;"
+                    f"margin:6px 0 10px'>{question}</div>",
+                    unsafe_allow_html=True)
+    _teams, _games = _wr_pool_size(season_pick)
+    if _teams:
+        st.markdown(
+            f"<span class='stat-chip'>{_teams} teams in the pool</span>"
+            f"<span class='stat-chip'>{_games} tracked games</span>",
+            unsafe_allow_html=True)
+    else:
+        # An honest zero. Telling a coach they are missing out on an empty pool
+        # is the fastest way to lose the next thing you tell them.
+        st.caption("Nobody has shared tracked games in this season yet — you "
+                   "would be first in, and the pool grows as coaches join.")
+    st.info(_WR_LOCK)
+
 # View switcher — seg + if-dispatch (the lazy-load contract): only the chosen
-# view computes, where st.tabs ran EVERY body each rerun. Lineups leads — it's
-# the decision every coach makes every game, and it works for Solo coaches.
-_WR_VIEWS = ["Lineups", "Matchup", "Season sim", "Bracket",
-             "Defensive assignments", "Analyze", "Glossary"]
-_wrview = _seg("View", _WR_VIEWS, default="Lineups", key="wr_view") or "Lineups"
+# view computes, where st.tabs ran EVERY body each rerun.
+#
+# THE ORDER IS THE ARGUMENT. Analyze — the self-serve playground that filters
+# the full ~60-column player table, plots any stat against any other and
+# correlates anything — shipped SIXTH of seven, behind two simulators. It is the
+# one surface on this page that lets a reader ask a question nobody composed for
+# them, which is the single thing a college-level analyst is looking for, and it
+# was the hardest thing here to find. Defensive assignments follows it for the
+# same reason from the other direction: who guarded whom is the read no
+# competitor at this level can produce at all.
+#
+# LINEUPS STAYS THE DEFAULT, and that is a hard constraint, not a preference:
+# Analyze is co-op-gated, and landing a Paid-but-solo coach on a page that opens
+# into a degraded view is a worse first impression than any ordering buys back.
+# Never default-land a gated view.
+#
+# Reordering is free at runtime — `_seg` dispatch is lazy, so Season sim and
+# Bracket stay expensive and stay unevaluated until someone clicks them.
+#
+# THE VALUES DO NOT CHANGE. Only the ORDER of the list and the display labels
+# (via format_func) move; every option string is byte-identical, so `wr_view`
+# session state and every existing deep link resolve exactly as before. Changing
+# an option VALUE here is the same class of failure as the st.tabs -> _seg
+# conversion that silently broke routing into a section.
+_WR_VIEWS = ["Lineups", "Analyze", "Defensive assignments", "Matchup",
+             "Season sim", "Bracket", "Glossary"]
+# Icons make the bar read as primary navigation rather than one more toggle —
+# the Team Dashboard pattern at 6_Team_Dashboard.py:1794.
+_WR_VIEW_ICONS = {"Lineups": "👥", "Analyze": "🔬",
+                  "Defensive assignments": "🛡", "Matchup": "⚔",
+                  "Season sim": "🎲", "Bracket": "🏆", "Glossary": "📖"}
+
+# The three views a solo coach cannot open at all. Shown in the bar WITH a lock
+# glyph rather than hidden: a door you can see is a sell, a door you cannot see
+# is nothing. Analyze is deliberately NOT in this set — its gate degrades to the
+# box-score columns instead of refusing, so a padlock on it would be a lie.
+_WR_GATED = ("Matchup", "Season sim", "Bracket")
+
+
+def _wr_view_label(v):
+    icon = _WR_VIEW_ICONS.get(v, "")
+    lock = " 🔒" if (v in _WR_GATED and not _wr_league_wide) else ""
+    return f"{icon} {v}{lock}"
+
+
+_wrview = _seg("View", _WR_VIEWS, default="Lineups", key="wr_view",
+               format_func=_wr_view_label) or "Lineups"
 
 # Team-identity chrome. Anchored to the coach's OWN team from their identity,
 # not to whichever team the current view happens to have selected: the banner
@@ -1200,7 +1350,7 @@ if _wrview == "Matchup":
     if _wr_league_wide:
         _render_matchup()
     else:
-        st.info(_WR_LOCK)
+        _wr_locked(_wrview)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1290,7 +1440,7 @@ if _wrview == "Season sim":
     if _wr_league_wide:
         _render_season()
     else:
-        st.info(_WR_LOCK)
+        _wr_locked(_wrview)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1497,7 +1647,7 @@ if _wrview == "Bracket":
     if _wr_league_wide:
         _render_bracket()
     else:
-        st.info(_WR_LOCK)
+        _wr_locked(_wrview)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

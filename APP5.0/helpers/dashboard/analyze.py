@@ -1,8 +1,16 @@
 """
-analyze.py (dashboard) — the self-serve analytics playground, as a render() so it
-can live inside the War Room ("Analyze" tab) while the same code powers the
-standalone page. Filter the full ~60-column player table, plot any stat vs any
-other (OLS trendline), correlate anything, and map shots.
+analyze.py (dashboard) — the self-serve analytics playground. Filter the full
+~60-column player table, plot any stat vs any other (OLS trendline), correlate
+anything, and map shots.
+
+It is a render() because it was extracted from the old Data Explorer page to be
+mounted inside another one. That page is gone and `9_War_Room.py` is now the
+only caller — the "Analyze" view, promoted to second in the bar 2026-09-13
+because this is the one surface in the app where a reader composes their own
+question instead of reading one somebody else composed. (The docstring said the
+same code powered a standalone page until 2026-09-13; it had not since the
+Input Hub consolidation. Do not restore that page — a second surface for the
+same read is the fluency tax THE_BOOK §4 already charges four times.)
 
 Folded out of the old Data Explorer page. The PCA "style galaxy" was dropped on
 purpose — it duplicated the Players page's data-driven archetypes; the k-means

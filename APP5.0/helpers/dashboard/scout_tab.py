@@ -18,6 +18,8 @@ import html
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+from helpers.ui import export_button as _export
 import streamlit.components.v1 as components
 
 from database.db import query
@@ -1425,7 +1427,9 @@ def render(ctx):
                         _r[_dl.get(dk, dk)] = (round(c["PPP"], 2)
                                                if c and c["stable"] else float("nan"))
                     _grid.append(_r)
-                st.dataframe(pd.DataFrame(_grid), hide_index=True, width="stretch")
+                _mx_df = pd.DataFrame(_grid)
+                st.dataframe(_mx_df, hide_index=True, width="stretch")
+                _export(_mx_df, "set_vs_scheme", key="scout_mx_csv")
                 st.caption("PPP this team scores running each set vs each scheme "
                            "(cells with ≥10 poss; blank = thin). Which defense to "
                            "throw at which action.")

@@ -105,6 +105,7 @@ import helpers.manual_box as MB
 import helpers.scoutboard as SB
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+from helpers.ui import export_button as _export
 # Tab modules (Big Bet 5 split) — render(ctx) fragments; ctx packs the shared
 # page-level state. See helpers/dashboard/__init__.py for the convention.
 from types import SimpleNamespace
@@ -2265,6 +2266,7 @@ if _tdview == "Charts":
                 lc, rc = st.columns([1, 1])
                 with lc:
                     st.dataframe(pl_df, hide_index=True, width="stretch")
+                    _export(pl_df, "possession_length", key="poss_len_csv")
                 with rc:
                     timed = [r for r in plen if r["label"] != "Untimed"]
                     ppps = [_ppp(r, ppf, ftpf) or 0 for r in timed]
@@ -3337,6 +3339,7 @@ if _tdview == "Charts":
                 st.caption("FG% allowed · defender (row) × shooter (column), top "
                            "shooters by volume. Blank = never matched up.")
                 st.dataframe(_grid, width="stretch", key="mu_grid")
+                _export(_grid, "matchup_grid", key="mu_grid_csv", index=True)
 
                 _drows = []
                 for p in players:
@@ -4374,6 +4377,7 @@ def _fx_formula():
         "Pts per SD": f["beta"],
         "Raw r": f["r"],
     } for f in show["factors"]])
+    _export(_fdf, "four_factor_pull", key="ff_pull_csv")
     st.dataframe(_fdf, hide_index=True, width="stretch",
                  column_config={
                      "Share of pull": st.column_config.ProgressColumn(

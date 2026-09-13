@@ -10,6 +10,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from helpers.ui import export_button as _export
+
 
 def _col_config(board):
     cfg = {}
@@ -35,8 +37,15 @@ def render(boards, per_row=3, key_prefix="pe"):
                 st.caption(board["caption"])
                 rows = board.get("rows") or []
                 if rows:
-                    st.dataframe(pd.DataFrame(rows), hide_index=True,
+                    _bdf = pd.DataFrame(rows)
+                    st.dataframe(_bdf, hide_index=True,
                                  width="stretch", column_config=_col_config(board),
                                  key=f"{key_prefix}_{board['key']}")
+                    # One edit, every board: this is the only renderer behind
+                    # the whole edge surface, so the button lands under each of
+                    # them without touching a single board definition.
+                    _export(_bdf, f"edge_{board['key']}", label="⬇",
+                            key=f"{key_prefix}_{board['key']}_csv",
+                            help="Download this board exactly as shown.")
                 else:
                     st.caption("Not enough tracked sample yet.")

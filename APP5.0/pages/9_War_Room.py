@@ -32,6 +32,7 @@ from helpers.ui import (page_chrome, style_fig as _style, empty_state, team_colo
 from helpers.cards import bar_h, team_short, style_df as _style_df, \
     round_df as _round_df
 from helpers.glossary import glossary_tab
+from helpers.ui import export_button as _export
 import helpers.team_ratings as TR
 import helpers.matchup_sheet as MS
 import helpers.predictor as PRED
@@ -520,8 +521,9 @@ def _render_proj_statline(pred, ctx, table, key):
              "REB": _sum("REB"), "AST": _sum("AST"), "STL": _sum("STL"),
              "BLK": _sum("BLK"), "TOV": _sum("TOV"), "SC/G": _sum("SC/G"),
              "DEF z": None, "WAR": _sum("WAR"), "PHY": None}
-    st.dataframe(_round_df(pd.DataFrame(rows + [total])), hide_index=True,
-                 width="stretch", key=key)
+    _line_df = _round_df(pd.DataFrame(rows + [total]))
+    st.dataframe(_line_df, hide_index=True, width="stretch", key=key)
+    _export(_line_df, "lineup_projected_line", key=f"{key}_csv")
     st.caption(
         "Projected per-game line for this unit. **PTS** is lineup-aware — each "
         "player's share of the five's offense at the projected pace, so stacking "
@@ -1092,11 +1094,12 @@ def _render_matchup():
                 f"{sim['p95']:+.0f} · {pred['confidence']}.")
 
             st.markdown("**Where the margin comes from**")
-            st.dataframe(
-                _round_df(pd.DataFrame(
-                    [{"Component": c["label"], "Points": c["value"],
-                      "Detail": c["note"]} for c in pred["components"]])),
-                hide_index=True, width="stretch")
+            _comp_df = _round_df(pd.DataFrame(
+                [{"Component": c["label"], "Points": c["value"],
+                  "Detail": c["note"]} for c in pred["components"]]))
+            st.dataframe(_comp_df, hide_index=True, width="stretch")
+            _export(_comp_df, f"matchup_{pred['a_name']}_vs_{pred['b_name']}",
+                    key="wr_match_csv")
 
             if pred["tracked"] and _can_game(
                     AUTH.current_user(), ta, tb):
@@ -1412,6 +1415,7 @@ def _render_season():
         st.dataframe(
             _style_df(df, grad_cols=["Exp W"], signed_cols=["Luck"]),
             hide_index=True, width="stretch", key="wr_seas_tbl")
+        _export(df, "season_sim", key="wr_seas_csv")
 
         # per-team win distribution
         pick = st.selectbox("Win distribution for", order,
@@ -1641,6 +1645,7 @@ def _render_bracket():
                 column_config={
                     "Champ %": st.column_config.ProgressColumn(
                         "Champ %", format="%.1f%%", min_value=0, max_value=100)})
+            _export(_round_df(df), "bracket_odds", key="wr_brk_csv")
 
 
 if _wrview == "Bracket":
@@ -2203,9 +2208,11 @@ def _render_compare():
             "Sig": f"{_h}/{_n}" if _n else "—",
             "Obs poss": _lu["obs_unit_poss"],
         })
-    st.dataframe(_style_df(pd.DataFrame(rows), grad_cols=["Net"],
+    _cmp_df = pd.DataFrame(rows)
+    st.dataframe(_style_df(_cmp_df, grad_cols=["Net"],
                            signed_cols=["Δ best"]),
                  hide_index=True, width="stretch", key=f"wrcmp_tbl_{_t}")
+    _export(_cmp_df, "lineup_compare", key=f"wrcmp_csv_{_t}")
     st.caption("★ = best projected Net (blended with each five's observed "
                "possessions together). **Sig** = how many of your ~4 signature "
                "win/loss stats the five projects to hit. Offensive rates are "

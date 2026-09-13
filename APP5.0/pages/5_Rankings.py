@@ -64,6 +64,7 @@ from helpers.dashboard.player_edge import render as _render_edge
 import helpers.wpa as WPA
 import helpers.auth as AUTH
 import helpers.entitlement as ENT
+from helpers.ui import export_button as _export
 import helpers.seasons as SEAS
 import helpers.resume as RES
 
@@ -2190,6 +2191,7 @@ def _fx_chart():
                     "Opp eFG%": round(ts[t]["oeFG"], 1),
                     "DRB%": round(ts[t]["DRBpct"], 1),
                 } for t in all_teams])
+                _export(ff, f"four_factors_{gender}", key="rk_ff_csv")
                 st.dataframe(
                     ff, hide_index=True, width="stretch",
                     height=min(560, 60 + 35 * len(ff)),
@@ -2911,6 +2913,7 @@ def _fx_evr():
                                + ("  ⚡upset" if d["upset"] > 0.05 else "")),
                     "Drama": d["label"],
                 } for d in _board[:25]])
+                _export(_bdf, f"excitement_{gender}", key="rk_gei_csv")
                 st.dataframe(
                     _bdf, hide_index=True, width="stretch",
                     column_config={"Adj GEI": st.column_config.ProgressColumn(
@@ -2965,6 +2968,9 @@ def _fx_evr():
                     "Pct": (round(L["pct"]) if L["pct"] is not None else None),
                     "Tier": L["tier"], "_c": L["color"]}
                     for L in _pt_blk["leaders"]]
+                _export(pd.DataFrame(_pt_trows).drop(columns=["_c"],
+                                                     errors="ignore"),
+                        f"playtype_offense_{_pt_pick}", key="rk_pto_csv")
                 st.dataframe(
                     pd.DataFrame(_pt_trows).style.apply(
                         lambda r: [f"color:{r['_c']}"] * len(r), axis=1),
@@ -3055,6 +3061,9 @@ def _fx_evr():
                     "Pct": (round(L["pct"]) if L["pct"] is not None else None),
                     "Tier": L["tier"], "_c": L["color"]}
                     for L in _df_blk["leaders"]]
+                _export(pd.DataFrame(_df_trows).drop(columns=["_c"],
+                                                     errors="ignore"),
+                        f"playtype_defense_{_df_pick}", key="rk_ptd_csv")
                 st.dataframe(
                     pd.DataFrame(_df_trows).style.apply(
                         lambda r: [f"color:{r['_c']}"] * len(r), axis=1),

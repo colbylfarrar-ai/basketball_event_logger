@@ -681,6 +681,215 @@ def grid(df, key, *, height=480, page_size=25, fit_columns=False, pin_first=True
         st.dataframe(df, hide_index=True, width="stretch", key=f"{key}_native")
 
 
+#: Columns a heated table must never colour, whatever the caller passes. An
+#: identity, a jersey number and a games-played count are not achievements, and
+#: heating them invites the eye to read "42 is a dark green number".
+HEAT_NEVER = {"team_id", "player_id", "id", "number", "#", "GP", "G", "Games",
+              "MP", "Min", "class", "Cls", "Season", "Date",
+              # A Rank column is already the sort. Heating it draws the same
+              # ordering twice and makes an ordinal look like an achievement.
+              "Rank", "Rk", "Seed",
+              # DIRECTION-FREE, and each one is a trap rather than an oversight.
+              # ShotRating is shot DIFFICULTY, not shot quality — colouring it
+              # green-high would tell a coach that taking hard shots is good.
+              # The rest are diet / style / context: a share of shots from the
+              # paint and a usage rate describe what a player does, not how
+              # well. Heat asserts a direction; these do not have one.
+              "ShotRating", "USG%", "3PR", "3PAr", "RimFGA%", "MidFGA%",
+              "Paint%", "Height", "Weight", "Wingspan", "MIN", "MPG",
+              "Confidence", "Archetype"}
+
+#: Columns where SMALL is the good end. `heat_table` inverts these the same way
+#: `stats.percentile(higher_better=False)` does everywhere else in the app.
+#: Curated rather than derived: the glossary states direction in prose, and
+#: parsing it classifies "Consistency" (low volatility ranks HIGH) as
+#: lower-is-better — a sign error that would paint the most consistent team red.
+HEAT_LOWER_BETTER = {
+    # giving it away
+    "TOV", "TPG", "TOV%", "TO", "TOV/G",
+    # fouls
+    "PF", "PF/G", "PFPG", "Fouls",
+    # defence: a percentage ALLOWED
+    "DSHOT%", "AdjDFG%", "DFGoe", "RimDFG%", "PerimDFG%", "DFG%", "OppPPP",
+    # team ratings where less is the good end
+    "DRtg", "PA", "PA_pg", "OppPPG",
+}
+
+
+def heat_pct(p, *, thin=False, strength=0.62):
+    """One percentile (0-100) → a table-cell background, or "" for no heat.
+
+    Reads GOOD/BAD off this module at call time, so the colorblind-safe pair and
+    the active style preset reach the grid the same way they reach every chart.
+    `thin` forces no colour — see `heat_table`, which is the only caller that
+    should ever be deciding that.
+    """
+    if thin or p is None:
+        return ""
+    try:
+        p = max(0.0, min(100.0, float(p)))
+    except (TypeError, ValueError):
+        return ""
+    # Distance from average, not from zero: a 50th-percentile cell is the one
+    # that should disappear. A field where every cell is coloured is a field
+    # with no outliers in it, which is the opposite of what scanning is for.
+    d = abs(p - 50.0) / 50.0
+    if d < 0.12:
+        return ""
+    hexc = (GOOD if p >= 50 else BAD).lstrip("#")
+    r, g, b = (int(hexc[i:i + 2], 16) for i in (0, 2, 4))
+    return f"background-color: rgba({r},{g},{b},{d * strength:.3f})"
+
+
+def heat_table(df, key, *, heat=None, lower_better=(), pool_n=None,
+               pool_noun="teams", height=460, caption=None, hide_index=True):
+    """A table you SCAN instead of read — percentile heat, with the pool stated.
+
+    The row-level component (`cards.pctile_bar`) is the best thing in this app
+    and there has never been a grid-level counterpart: `background_gradient`
+    appears zero times in the repo, so a coach comparing twelve teams has to
+    read forty numbers instead of noticing two colours. This is that
+    counterpart, and it inherits the whole of `pctile_bar`'s pool discipline,
+    because a heated cell computed over five teams is the identical lie in a
+    different shape — the lie that component was written to prevent.
+
+    THE POOL RULE, which is the point of the function:
+
+        pool_n >= POOL_FLOOR   cells are coloured by their percentile WITHIN
+                               THE RENDERED POOL, and the pool size is stated
+                               under the table.
+        pool_n <  POOL_FLOOR   NOTHING is coloured. The table renders plain,
+                               and says so: over five rows the sort order IS
+                               the rank, and colouring it would let the eye
+                               read "2nd of 5" as "80th percentile" — exactly
+                               the failure `pctile_bar` degrades to "2nd of 5"
+                               to avoid.
+
+    `pool_n` defaults to the number of ROWS RENDERED, which is the honest
+    default: the percentile is computed over what is on screen, so that is the
+    pool it is a statement about. A caller that has filtered a 40-row table down
+    to 6 gets the thin-pool treatment, and should.
+
+    `heat` names the columns to colour (default: every numeric column not in
+    HEAT_NEVER). `lower_better` ADDS to HEAT_LOWER_BETTER for this table — the
+    shared set already carries the app-wide inversions (TOV%, fouls, defended
+    FG%, DRtg), so a caller only names what is local to its own frame.
+    """
+    import pandas as pd
+    from helpers.stats import POOL_FLOOR
+
+    if df is None or not len(df):
+        return
+    df = df.copy()
+    n = len(df) if pool_n is None else int(pool_n)
+    thin = n < POOL_FLOOR
+
+    cols = [c for c in (heat if heat is not None else df.columns)
+            if c in df.columns and c not in HEAT_NEVER
+            and pd.api.types.is_numeric_dtype(df[c])]
+    low = HEAT_LOWER_BETTER | set(lower_better)
+
+    styled = df
+    if not thin and cols:
+        def _col_style(s):
+            vals = [v for v in s.tolist() if pd.notna(v)]
+            if len(set(vals)) < 2:
+                # Every value identical: there is no ranking to draw, and a
+                # gradient over one value paints an order that does not exist.
+                return ["" for _ in s]
+            hb = s.name not in low
+            out = []
+            for v in s:
+                if pd.isna(v):
+                    out.append("")
+                    continue
+                below = sum(1 for x in vals if (x < v) == hb)
+                out.append(heat_pct(100.0 * below / len(vals)))
+            return out
+        try:
+            styled = df.style.apply(_col_style, axis=0, subset=cols)
+        except Exception:
+            styled = df               # a styler failure must not eat the table
+
+    st.dataframe(styled, hide_index=hide_index, width="stretch",
+                 height=height, key=key)
+
+    # The pool line is not decoration. It is the sentence that stops "dark
+    # green" from being read as a statement about the sport rather than about
+    # these rows.
+    if thin:
+        note = (f"Pool of **{n}** {pool_noun} — too thin to colour. "
+                f"Over {n} rows the order in this table *is* the rank; a "
+                f"percentile drawn from {n} observations is not a fact.")
+    else:
+        note = (f"Colour is each column's percentile **within these {n} "
+                f"{pool_noun}** — not against the sport, and not against any "
+                f"other pool. Green is good, red is not, and average is left "
+                f"uncoloured so the outliers are what you see.")
+    st.caption(note + (f" {caption}" if caption else ""))
+
+
+def export_button(df, name, *, key=None, label="⬇ CSV", help=None,
+                  index=False):
+    """The CSV button on its own, for a table something else already drew.
+
+    `table_with_export` is the shape to reach for. This exists because a real
+    sweep of ~40 tables runs into three kinds of call site that must NOT have
+    their renderer swapped: an AgGrid (`ui.grid`), a heated grid
+    (`ui.heat_table`), and an `st.dataframe` carrying a hand-built
+    `column_config` — LinkColumns, ProgressColumns, per-column help. Replacing
+    those renderers to gain a button would trade a real feature for a button,
+    so the button comes to them instead.
+
+    Silently renders nothing for an empty frame: a download that hands over a
+    header row and no rows is worse than no download.
+    """
+    try:
+        if df is None or not len(df):
+            return False
+        csv = df.to_csv(index=index)
+    except Exception:
+        return False
+    slug = "".join(ch if (ch.isalnum() or ch in "-_") else "_"
+                   for ch in str(name)).strip("_") or "table"
+    return st.download_button(
+        label, csv, file_name=f"{slug}.csv", mime="text/csv",
+        key=key or f"dl_{slug}",
+        help=help or "Download exactly the rows and columns shown above.")
+
+
+def table_with_export(df, name, *, key=None, height=None, hide_index=True,
+                      column_config=None, label="⬇ CSV", caption=None):
+    """A DataFrame and its CSV button, in that order, everywhere.
+
+    Every site on the list of sites a sicko loves puts the raw data one click
+    from the rendered view, in the same place on every page, and the
+    consistency is most of the value: a reader stops looking for the button and
+    starts assuming it. This app had 21 `download_button` sites against roughly
+    40 renderable tables, and the ones missing it were the best tables in it —
+    the matchup grid, the lineup board, the play-type economics.
+
+    Giving away the rows is also the cheapest distribution on offer. A coach who
+    can export is a coach who can check the number in their own spreadsheet,
+    and a metric a college analyst has checked once is one they will stake a
+    rotation on.
+
+    `name` becomes the download filename and the widget key, so it must be
+    unique on the page.
+    """
+    if df is None or not len(df):
+        return
+    kw = {"hide_index": hide_index, "width": "stretch"}
+    if height is not None:
+        kw["height"] = height
+    if column_config is not None:
+        kw["column_config"] = column_config
+    st.dataframe(df, key=key or f"tbl_{name}", **kw)
+    if caption:
+        st.caption(caption)
+    export_button(df, name, key=f"{key or name}_csv", label=label)
+
+
 def chart(fig, *, data=None, key=None, export=("CSV",)):
     """Render a Plotly ``fig``. When ``data`` is supplied AND streamlit-extras is
     importable, wrap it in a ``chart_container`` that adds *Dataframe* + *Export*

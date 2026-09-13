@@ -27,7 +27,8 @@ import plotly.express as px
 import streamlit as st
 
 from helpers.ui import (gender_radio, style_fig as _style, empty_state,
-                        grid as _grid, chart as _chart)
+                        grid as _grid, chart as _chart, seg as _seg,
+                        heat_table as _heat_table, export_button as _export)
 from helpers import ui as _uit  # theme-reactive DIVERGE — read at call time
 from helpers.cards import round_df as _round_df
 import helpers.player_ratings as PR
@@ -155,12 +156,37 @@ def render(season=SEAS_DEFAULT):
         cols = st.multiselect("Columns to show", list(df.columns),
                               default=default_cols, key="dx_cols")
         gdf = _round_df(df[cols] if cols else df)
+        # Two ways to read the same table, and they are different jobs.
+        #
+        # The FILTER grid (AgGrid) is for working: sort, per-column filters,
+        # pin, page. The HEAT grid is for scanning — a CTG reader does not read
+        # a team page, they sweep it for dark blue and dark red and read only
+        # those cells, which turns "read 60 numbers" into "notice 2 colours"
+        # and is where volume comparison comes from. AgGrid cannot carry a
+        # pandas Styler, so this is a switch rather than one grid.
+        #
+        # Heat debuts HERE on purpose: this is the densest table in the app and
+        # the most gated, so a first version has the fewest eyes on it. Do not
+        # propagate it to the league tables without a decision.
+        _mode = _seg("Read as", ["Filter", "Heat map"], default="Filter",
+                     key="dx_gridmode",
+                     help="Filter = sortable grid with per-column filters. "
+                          "Heat map = percentile colour within this pool, for "
+                          "scanning a field instead of reading it.")
         st.caption(f"{len(gdf)} players · {len(gdf.columns)} columns. "
                    "Click a column header to sort; AgGrid adds per-column filters.")
-        _grid(gdf, "dx_grid")
-        st.download_button("⬇ Download CSV", gdf.to_csv(index=False),
-                           file_name=f"players_{gender}.csv", mime="text/csv",
-                           key="dx_csv")
+        if _mode == "Heat map":
+            # The pool is the rendered table, because that is what the
+            # percentile is computed over. A coach who filtered 240 players
+            # down to their own eight gets the thin-pool treatment, and should.
+            # No `lower_better` here: ui.HEAT_LOWER_BETTER already carries
+            # every inverted column this table can render, and HEAT_NEVER
+            # carries the direction-free ones (ShotRating is difficulty, not
+            # quality; USG% and the shot-diet shares describe style).
+            _heat_table(gdf, "dx_heat", pool_noun="players", height=520)
+        else:
+            _grid(gdf, "dx_grid")
+        _export(gdf, f"players_{gender}", key="dx_csv")
 
     # ── tab 2: scatter explorer ─────────────────────────────────────────────
     with t_scatter:

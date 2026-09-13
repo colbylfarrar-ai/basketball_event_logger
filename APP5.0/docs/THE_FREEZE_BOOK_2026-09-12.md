@@ -30,8 +30,10 @@ answer in September, because the work had not happened yet:
 
 > **Is it safe to freeze this and hand it to five coaches in October?**
 
-**Yes.** With four things to do first, none of which is code, and one easy win
-that is worth more than all four.
+**Yes.** It said four things had to happen first. **All four are now done**,
+plus five more that turned up along the way — §16 is the receipt. One line of
+`sudo` is left, and it is the only thing in this document still waiting on a
+human.
 
 ---
 
@@ -49,8 +51,9 @@ reproduce or contradict them:
 | Ops | `ssh` to `107.170.27.154` — `systemctl`, `crontab`, `litestream`, `df`, `free`. |
 | Data integrity | `tools/repair_book.py` dry run against the snapshot, byte-identical to production. |
 
-Nothing was written to production. The only thing placed on the droplet was
-`/tmp/freeze_smoke.py` and an empty `/tmp/p3book` directory, both disposable.
+**While the sweep ran, nothing was written to production.** Everything in
+sections I–V was read-only. The writes described in §16 came afterwards, on the
+founder's rulings, and each one names what it changed.
 
 ---
 
@@ -63,9 +66,9 @@ Three months ago the honest answer would have been "probably". It is now
 
 | check | result |
 |---|---|
-| Production vs `main` | `cb65e75` on both. Nothing unpushed, nothing undeployed, working tree clean. |
-| `pytest -q` | **495 passed**, 0 failed |
-| `tracker/run_all.py` | **106 passed**, 0 failed, 0 timeout |
+| Production vs `main` | `8800244` on both — the sweep's own fixes, deployed. Nothing unpushed. |
+| `pytest -q` | **498 passed**, 0 failed *(495 when the sweep ran)* |
+| `tracker/run_all.py` | **107 passed**, 0 failed, 0 timeout *(106 at sweep time)* |
 | **Every page, every persona** | **45 renders, 0 exceptions** (15 pages × admin / paid / free) |
 | **Day-one coach** (team with zero tracked games) | **15 renders, 0 exceptions** — the empty states hold |
 | Backups | **Litestream → Cloudflare R2, lag −1s, continuous since 2026-09-04** |
@@ -81,13 +84,14 @@ believe the freeze will hold through March.
 
 ## 2 · The punch list, re-measured — four of six can be struck
 
-`FREEZE_PUNCHLIST_2026-09-09.md` listed six items. Three days and two sessions
-later, **four are closed** and the two that remain are both one command.
+`FREEZE_PUNCHLIST_2026-09-09.md` listed six items. Four were already closed
+when this sweep ran; **the other two closed the same day** (§16), leaving the
+single `sudo` in §17.1.
 
 | # | item | state today |
 |---|---|---|
 | 1 | *"No timers, no cron, **no backups**"* | **HALF WRONG — struck in part.** See §3. Backups exist and are healthy. The timers genuinely do not. |
-| 2 | `repair_book.py` never run on production | **STILL OPEN.** One command, one judgement call. §4. |
+| 2 | `repair_book.py` never run on production | **NOW CLOSED — §16.3.** It ran the same day; `ux_games_matchup` is live and `_INIT_SKIPPED` is empty. |
 | 3 | Three sites re-widen an entitlement-scoped id set | **CLOSED.** All three now use `as_scope` / early-return. Verified at `insights_team_read.py:62`, `insights_tab.py:631`, `6_Team_Dashboard.py:6411`. |
 | 4 | Two suite tests priced to a book that no longer exists | **CLOSED.** `run_all` is 106/0. Both were re-priced. |
 | 5 | Phase 1 instrumentation is not built | **CLOSED.** `helpers/telemetry.py` is written, wired at three call sites, and has **19 real rows on production**. |
@@ -832,7 +836,7 @@ stays readable as *what was done about it*.
 |---|---|---|
 | **1** | Test a Litestream restore | ✅ **DONE — and it works.** `litestream restore` to scratch: **1.7 seconds**, `integrity_check = ok`, and all six table counts identical to live (13,383 games · 11,402 events · 1,448 teams · 608 players · 6 users · 13,807 rating snapshots). The backup is now a fact. |
 | **2** | Raise the recovery window | ✅ **DONE.** `/etc/litestream.yml`: `retention 168h → 2160h` (7 days → 90), `snapshot-interval 1h → 24h`. Config validated by making `litestream` re-read it. Old file backed up to `~/litestream.yml.bak-2026-09-12`. **Needs one `sudo systemctl restart app5-litestream` from you to take.** |
-| **3** | `repair_book.py` | ⚠️ **SCOPE CHANGED — see §17.** The `tracked` half is withdrawn on your ruling; only the 9 duplicates remain, and one of them still needs your eye. |
+| **3** | `repair_book.py` | ✅ **DONE — §16.3.** 9 duplicates collapsed, scout games untouched, `ux_games_matchup` live, `_INIT_SKIPPED` empty. |
 | **4** | `7_Players.py` → lazy `_seg` | ✅ **DONE.** 8 eager tab bodies → one. |
 | — | `14_Hall_of_Fame.py` → lazy `_seg` | ✅ **DONE.** 3 bodies → one. |
 | — | Game Tracker's per-row date parse | ✅ **DONE**, pinned by a new test, and proven row-for-row equivalent against production. |
@@ -841,6 +845,75 @@ stays readable as *what was done about it*.
 | — | `test_hero_ball.py` / `test_ordinals.py` | ✅ **DONE.** Both bit only on an empty or deployed tree. |
 | — | `declare_scope` on Hall of Fame | ❌ **RETRACTED** — the recommendation was wrong. §6. |
 | — | Rating-history timer | ❌ **STRUCK** on your ruling: you do it by hand through the app, and that is fine. |
+
+## 16.0 · DEPLOYED AND MEASURED ON THE DROPLET
+
+Everything below shipped as `8800244`. Production pulled, `pandas` and
+`streamlit` confirmed matching the pins, `app5-web` and `app5-tracker`
+restarted, the duplicate repair applied, migrations run.
+
+**Cold page cost on the real 1 vCPU box, admin (Paid) persona, before → after:**
+
+| page | before | **after** | |
+|---|---:|---:|---|
+| **7_Players** | 68.70s | **8.03s** | **−88%** |
+| 2_Game_Tracker | 38.87s | **18.55s** | −52% |
+| 6_Team_Dashboard | 34.04s | **16.09s** | −53% |
+| 9_War_Room | 21.45s | **17.78s** | −17% |
+| 14_Hall_of_Fame | 9.25s | **6.54s** | −29% |
+| 8_Officials | 6.01s | 6.03s | — |
+| everything else | ≤ 5s | ≤ 2.1s | |
+
+**No page is over nineteen seconds any more, and the worst one is now the
+fourth-worst.** Before this session a Paid coach met four pages over twenty
+seconds; now none.
+
+**Only two of those rows are mine to claim.** Players is the `_seg` conversion
+and Game Tracker is the date sort. **Team Dashboard and War Room contain no
+code I changed** — their improvement is most likely `ux_games_matchup` finally
+existing (§16.3) plus a less loaded box, and I have not isolated which. Recorded
+as unattributed rather than counted as a win.
+
+**Every section still renders on the droplet** — all 8 of Players, 0 exceptions
+— and the per-section shape is the whole argument for the change:
+
+| section | droplet cold |
+|---|---:|
+| Leaders *(lands here)* | 9.94s |
+| Player Profile | 36.14s |
+| Lab | 10.44s |
+| the other five | **0.24s – 0.86s** |
+
+36 seconds of Player Profile is no longer on the path to seeing the page.
+
+`tracker/test_players_deeplink.py` (8 checks) and `tracker/test_game_dates_iso.py`
+(5 checks) both pass **against the live production book**.
+
+## 16.3 · The duplicate repair ran, and the index finally took
+
+```
+APPLIED: collapsed 9 group(s); deleted [16419, 21347, 17598, 22449,
+                                        22297, 23837, 21345, 22045, 23134]
+```
+
+Run `--only dups`, per your ruling — verified afterwards that games **4 and
+13959 are still `tracked=0`**, so the in-progress scout games were not touched.
+Yukon/Alva kept `id=323` (43-55, Wheat Capitol) as ruled. `games` went
+13,383 → 13,374; `tracked` stayed 63 and `game_events` stayed 11,402, so nothing
+but the nine duplicate rows moved.
+
+Then the thing this was blocking:
+
+```
+ux_games_matchup PRESENT: True
+skipped migrations: {'/var/lib/app5/analytics.db': []}
+```
+
+**`_INIT_SKIPPED` is empty for the first time.** No migration is being deferred
+any more. One wrinkle worth recording: the index did *not* appear on the
+`app5-web` restart, because `initialize_database()` runs on the first page load
+rather than at process start — it took an explicit call. If you ever wonder why
+a migration "didn't take" after a restart, that is why.
 
 ## 16.1 · The performance win, measured
 
@@ -995,10 +1068,20 @@ reads — nothing changed at all.
 
 Everything else is done. These two need your hands or your judgement.
 
-### 17.1 · One `sudo`, for the retention change to take
+### 17.1 · One `sudo` — the ONLY thing left on your desk
 
 The config is already edited and validated. The running process holds the old
-one until it restarts.
+one until it restarts, and **I cannot do this one**: the droplet's sudoers rule
+covers `app5-web` and `app5-tracker` (both of which I restarted for the deploy)
+but **not** `app5-litestream`. That is correct security hygiene, not a problem —
+it just means this line is yours.
+
+The journal confirms it is still pruning at the old seven-day window:
+
+```
+Sep 13 00:16:32  msg="snapshot deleted"  generation=eca027e59a9c3621 index=7090
+Sep 13 00:16:33  msg="wal segmented deleted before" index=7090 n=5
+```
 
 ```bash
 ssh app5@107.170.27.154 "sudo systemctl restart app5-litestream"
@@ -1012,7 +1095,7 @@ The second command should show the same generation id and a small lag. If
 anything looks wrong, `~/litestream.yml.bak-2026-09-12` is the file that was
 running before.
 
-### 17.2 · Yukon vs Alva — RULED, and the repair ran
+### 17.2 · ~~Yukon vs Alva~~ — RULED AND DONE, see §16.3
 
 Your ruling withdrew the `tracked=0` half of the repair. The 9 duplicates
 remain, and **eight of them are unambiguous** — same score, sometimes home and

@@ -5,3 +5,8 @@
 *.db
 *.db-wal
 *.db-shm
+
+# Test scratch: tracker/test_box_score_sections.py writes this probe script into
+# tracker/ at run time and deletes it on the way out, so it is only ever on disk
+# mid-suite — which is exactly when `git add -A` catches it.
+APP5.0/tracker/_bs_section_probe.py

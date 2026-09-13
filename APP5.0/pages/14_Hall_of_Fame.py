@@ -27,7 +27,8 @@ import pandas as pd
 import streamlit as st
 
 from database.db import query
-from helpers.ui import page_chrome, page_header, gender_radio, empty_state
+from helpers.ui import (page_chrome, page_header, gender_radio, empty_state,
+                        seg as _seg)
 import helpers.stats as S
 import helpers.seasons as SEAS
 import helpers.team_ratings as TR
@@ -369,14 +370,21 @@ def _board(rows, cols, key):
                  width="stretch", key=key)
 
 
-tab_records, tab_single, tab_tracked = st.tabs(
-    ["Records", "Single-game records", "Tracked ratings"])
+#  `_seg`, not `st.tabs`: st.tabs executes every body on every rerun, and this
+#  page's three bodies cost 9.25s cold on the droplet between them. Only the
+#  chosen one runs now. Swept for cross-body name leaks before the conversion —
+#  the one hit was `key`, a parameter of the nested `_sg_board`, not a read.
+_HOF_VIEWS = ["Records", "Single-game records", "Tracked ratings"]
+if st.session_state.get("hof_view") not in (None, *_HOF_VIEWS):
+    st.session_state.pop("hof_view", None)
+_hview = _seg("Section", _HOF_VIEWS, default=_HOF_VIEWS[0], key="hof_view",
+              label_visibility="collapsed") or _HOF_VIEWS[0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 1 — RECORDS  (open to everyone; box-stat halls + two engine teasers)
+#  SECTION 1 — RECORDS  (open to everyone; box-stat halls + two engine teasers)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_records:
+if _hview == "Records":
     # ── season bests (per game) ──────────────────────────────────────────────
     st.markdown(f"### 🏅 Season bests — per game (min {SEASON_MIN_GP} games)")
     _season_rows = [
@@ -568,9 +576,9 @@ with tab_records:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 2 — SINGLE-GAME RECORDS  (best individual nights, all seasons pooled)
+#  SECTION 2 — SINGLE-GAME RECORDS  (best individual nights, all seasons pooled)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_single:
+if _hview == "Single-game records":
     st.markdown("### 🌙 Best single-game nights — all seasons")
     st.caption("The biggest individual games in the program's book — tracked "
                "games and hand-entered box scores both count. Ties go to "
@@ -607,9 +615,9 @@ with tab_single:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 3 — TRACKED RATINGS  (the deep engine: greatest-ever by OVERALL)
+#  SECTION 3 — TRACKED RATINGS  (the deep engine: greatest-ever by OVERALL)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_tracked:
+if _hview == "Tracked ratings":
     st.markdown("### 🐐 Greatest ever — by tracked rating")
     st.caption("The deep engine's verdict: every player's **OVERALL** and the "
                "component ratings (Offense / Defense / Playmaking / Rebounding), "

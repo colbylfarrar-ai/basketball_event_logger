@@ -4,6 +4,25 @@
 Written 2026-09-12, after a full-app scrub run against **production**, not
 against the repo and not against `%LOCALAPPDATA%`.
 
+> ## ✅ ACTED ON, SAME DAY — read this before the body
+>
+> The founder ruled on every open item and the work shipped. What the body
+> below says is "to do" is now mostly "done"; §16 at the end is the receipt.
+>
+> **Founder rulings that changed the plan:**
+> * **The two `tracked=0` games are in-progress scout games.** Not a defect —
+>   §4's "Class 1" is **withdrawn**, and `repair_book` must be run
+>   `--only dups` so it never touches them.
+> * **Rating history and weight checks are done manually through the app, by
+>   choice.** That timer is **struck**, not deferred.
+> * **No Free coaches in year one.** The pilot is Paid. §5's finding stands as
+>   insurance, but it stops being the headline — and the **Paid** cold times in
+>   §6, not the Free ones, are the numbers that matter.
+> * **Player roles are set manually by design.** No action.
+>
+> **One thing in this document was wrong and is retracted:** the
+> `declare_scope` recommendation for Hall of Fame. See §6's retraction.
+
 This is a companion to `THE_BOOK_2026-09.md`, not a replacement. THE BOOK is
 still the entry point for *why* the app is shaped the way it is and what the
 fourteen rulings settled. This document answers one question THE BOOK could not
@@ -360,13 +379,21 @@ The same profile shows `_pure_rapm_cached` at **7.05s, called twice** (once per
 team). That one is real work and correctly cached; it is noted only so the next
 reader does not re-derive it.
 
-### The smaller performance note
+### The smaller performance note — **retracted on build day**
 
-`14_Hall_of_Fame.py` is also the **only expensive page that never calls
-`ui.declare_scope`**. Five pages declare their `(gender, season)` pool so a
-live-game write to a *different* pool no longer dumps their warm cache; Hall of
-Fame does not, so it pays its 9 seconds again after any write anywhere. One
-line, same shape as the other five.
+This section originally said `14_Hall_of_Fame.py` should call
+`ui.declare_scope`, because it is the only expensive page that does not, and so
+it dumps its warm cache after any write anywhere.
+
+**That recommendation was wrong, and the page is right as it stands.**
+`game_events.data_scope_key(gender, season)` always names **one** season —
+there is no "every season, this gender" key. Hall of Fame reads *all* seasons
+by design; it is a pantheon. Declaring a single scope there would tell the cache
+gate to ignore writes to every other season the page is displaying, and the
+coach would be left looking at a stale board. The conservative
+clear-on-any-write default is the correct behaviour for a multi-season page.
+
+Recorded rather than deleted, because the next person will have the same idea.
 
 ## 7 · The suites have never run on production's dependency stack
 
@@ -788,3 +815,238 @@ states the pool it was drawn from. It is ready.
 ```bash
 python tools/pull_prod_snapshot.py && python tools/freeze_smoke.py
 ```
+
+---
+---
+
+# VII · WHAT SHIPPED — 2026-09-12, same day
+
+The founder read the above, ruled on every open item, and the work went out.
+This section is the receipt. It is deliberately at the end rather than folded
+into the body, so the body stays readable as *what the sweep found* and this
+stays readable as *what was done about it*.
+
+## 16 · The freeze list, closed
+
+| # | item | outcome |
+|---|---|---|
+| **1** | Test a Litestream restore | ✅ **DONE — and it works.** `litestream restore` to scratch: **1.7 seconds**, `integrity_check = ok`, and all six table counts identical to live (13,383 games · 11,402 events · 1,448 teams · 608 players · 6 users · 13,807 rating snapshots). The backup is now a fact. |
+| **2** | Raise the recovery window | ✅ **DONE.** `/etc/litestream.yml`: `retention 168h → 2160h` (7 days → 90), `snapshot-interval 1h → 24h`. Config validated by making `litestream` re-read it. Old file backed up to `~/litestream.yml.bak-2026-09-12`. **Needs one `sudo systemctl restart app5-litestream` from you to take.** |
+| **3** | `repair_book.py` | ⚠️ **SCOPE CHANGED — see §17.** The `tracked` half is withdrawn on your ruling; only the 9 duplicates remain, and one of them still needs your eye. |
+| **4** | `7_Players.py` → lazy `_seg` | ✅ **DONE.** 8 eager tab bodies → one. |
+| — | `14_Hall_of_Fame.py` → lazy `_seg` | ✅ **DONE.** 3 bodies → one. |
+| — | Game Tracker's per-row date parse | ✅ **DONE**, pinned by a new test, and proven row-for-row equivalent against production. |
+| — | The `?player=` / palette deep links | ⚠️ **BROKEN BY THE CONVERSION, THEN FIXED.** Caught by reading the code, not by any suite. §16.1.1 — the most instructive thing in this document. |
+| — | Pin `pandas` | ✅ **DONE** — `pandas==3.0.3`, matched **up** to what production runs. |
+| — | `test_hero_ball.py` / `test_ordinals.py` | ✅ **DONE.** Both bit only on an empty or deployed tree. |
+| — | `declare_scope` on Hall of Fame | ❌ **RETRACTED** — the recommendation was wrong. §6. |
+| — | Rating-history timer | ❌ **STRUCK** on your ruling: you do it by hand through the app, and that is fine. |
+
+## 16.1 · The performance win, measured
+
+Local, admin persona, production book, cold cache — before and after:
+
+| page | before | after | |
+|---|---:|---:|---|
+| **7_Players** | **70.06s** | **10.23s** | −85% |
+| 2_Game_Tracker | 30.28s | 24.15s | −20% |
+| 14_Hall_of_Fame | 7.87s | 9.30s | see below |
+| 6_Team_Dashboard | 31.59s | 23.70s | (unchanged code; run-to-run variance) |
+
+**Players is fixed.** 70 seconds to 10, and the character count falls from
+100,603 to 6,289 — which is the proof rather than a worry: only the section the
+coach actually opened is being built now.
+
+Both of those numbers are Players measured **seventh in a full fifteen-page
+run**, which is the like-for-like comparison: module imports were already warm
+in both. Standing alone in a genuinely cold process the landing section costs
+**31.1s**, but most of that is the import cost a long-lived Streamlit process
+pays once at boot rather than once per page view.
+
+### Per-section, which is what the fix actually bought
+
+Every section driven individually (`tools/freeze_smoke.py --sections`, admin,
+production book):
+
+| section | cold |
+|---|---:|
+| Leaders *(the landing section)* | 31.14s |
+| **Player Profile** | **55.39s** |
+| **Lab** | **13.12s** |
+| Shot Lab | 1.25s |
+| Impact & Splits | 0.95s |
+| Compare | 0.89s |
+| Ratings | 0.45s |
+| Glossary | 0.42s |
+
+Read the top three against the bottom five. **Before the change a coach paid
+all eight to see the first one.** The two genuinely expensive sections — Player
+Profile at 55s and Lab at 13s — are now *opt-in*, which is the honest
+description of the win: they did not get faster, they got off the critical
+path. Five of the eight sections cost under a second and a half, so switching
+between them is now instant where it used to be a full rebuild.
+
+**All eleven sections across both pages render with zero exceptions.** That pass
+matters more than the timings: a page render only ever proves its *default*
+section, and the entire hazard of this conversion is a body that used to run on
+every rerun now running only when clicked.
+
+### 16.1.1 · The conversion broke two links, and neither would have raised
+
+This is the part of the change worth reading, because the sweep tooling did not
+catch it and nor did any suite. `tools/seg_leak_sweep.py` reported CLEAN, all
+eleven sections rendered, 498 pytest checks passed — and the page was still
+broken in a way a coach would have hit in the first ten minutes.
+
+Two things enter `pages/7_Players.py` expecting to land on **Player Profile**:
+
+1. `?player=<id>` — a deep link out of a landing or search leaderboard.
+2. `_palette_player` — the sidebar command palette (`helpers/ui.py:408`), which
+   is on **every page in the app** and `switch_page`s here.
+
+Both are consumed inside `_fx_prof`. Under `st.tabs` that body ran on every
+rerun, so both worked without anyone having had to think about them. Under lazy
+dispatch `_fx_prof` runs *only when its section is open* — so both links landed
+on Leaders and did nothing at all.
+
+**Nothing raised.** No `NameError`, no traceback, no empty state. The coach
+searched a player, got taken to the Players page, and was looking at the
+league leaderboard. That is the failure mode no automated pass finds by
+accident, because there is nothing wrong on the screen — it is just the wrong
+screen.
+
+The page now parks `pl_view` before the switcher is instantiated — the same
+"parked destination" move `_sub_seg` uses for a Charts jump, and legal only in
+that one window. It **peeks** at both signals rather than consuming them
+(`_fx_prof` still owns the dedupe and the pop), which is what stops the second
+bug: if the park fired on every run rather than only on a *new* id, the coach
+could never leave the Profile for as long as `?player=` sat in the URL — worse
+than the bug being fixed.
+
+`tracker/test_players_deeplink.py` — **new** — pins all four cases, including
+that last one. It asserts on the section the switcher settled on, not on what
+rendered, because "the wrong section rendered fine" is precisely the shape of
+this bug.
+
+**And that test itself fell into the oldest trap in this repo**, which is worth
+the two lines. It passed 8/8 when run by hand and failed under
+`tracker/run_all.py` — because by hand it happened to run from a directory with
+no `secrets.toml`, and under the suite it did not. With the real `[auth]` block
+resolvable, `require_login` calls `st.stop()`, the page never reaches its
+switcher, and `pl_view` comes back `None` — which the test then reported as
+*"a palette player opens the Profile (got None)"*, a routing failure that was
+not happening. Same trap `tools/freeze_smoke.py` hit earlier the same day, where
+it reported fifteen green pages at an identical 825 characters each
+(`local-run-auth-off`). Both now chdir to a secrets-free cwd, and this one
+additionally asserts the switcher *ran* before asking what it chose — so the
+next failure of this kind says "the page stopped early, check auth" instead of
+blaming the feature.
+
+**The lesson for the next conversion:** a lazy-dispatch change is not only about
+variables. Ask what *outside the page* knows a section's name — deep links,
+`switch_page` handoffs, parked jumps, query params — because an eager tab body
+was silently doing that routing for free.
+
+**Hall of Fame did not move, and the honest read is that the fix did not
+apply.** Its character count fell correctly (12,637 → 6,941), so the lazy
+dispatch is working — but its cost is not in the tab bodies at all. It is in the
+module-level cached builders (`_qw_best`, `_war_best`, the career roll-up) that
+run before the switcher is drawn. The conversion is still right — it stops the
+page computing three boards to show one — but it buys about a second, not eight.
+Naming that here rather than quoting the character drop as a win.
+
+**Game Tracker's −6s is the date sort**, and it is a floor rather than a
+ceiling: the profile put the parse at 1.96s and the rest of that page's cost is
+`_pure_rapm_cached` at 7.05s × 2 teams, which is real work, correctly cached,
+and not a September job.
+
+That change was checked against production rather than assumed. The new query
+returns an **identical row set, an identical date sequence, and identical event
+counts** — 13,383 rows, 65 with events, both ways.
+
+It did turn up one thing worth knowing. Python's `sorted` is *stable*, so the
+old code left same-date games in the order the JOIN emitted them; SQL with no
+tiebreaker does not. Without one, the date sequence is still identical but
+**13,242 of 13,383 rows move within their date**. `ORDER BY g.date DESC, g.id`
+was added for that — and honestly, it does **not** restore the old order.
+Nothing could: that order was the planner's `teams` index walk, neither
+ascending nor descending by id, and it would have shifted again the next time an
+index changed. What the tiebreaker buys is that the list is now the same on
+every rerun and explicable when someone asks. Across dates — the part a coach
+reads — nothing changed at all.
+
+## 16.2 · Guards added, so none of this silently regresses
+
+* `tracker/test_game_dates_iso.py` — **new.** Pins the invariant the SQL sort
+  rests on: every `games.date` is `YYYY-MM-DD`. States the counterfactual
+  (`2026-2-05` sorts *ahead* of `2026-12-08`, so an unpadded month would put
+  February on top of a newest-first list) and asserts the page has not quietly
+  regained a Python sort — checking **code lines only**, so the comment
+  documenting what was removed is allowed to quote it.
+* `tools/seg_leak_sweep.py` reports **CLEAN** on both converted pages, and both
+  were swept *before* conversion too. `7_Players.py` had **zero** cross-body
+  leaks (every expensive body was already a module-level `_fx_*` fragment);
+  Hall of Fame's one hit was `key`, a parameter of the nested `_sg_board` — a
+  false positive, confirmed by reading it.
+* `tools/freeze_smoke.py` re-run after every change: **15 renders, 0
+  exceptions.**
+
+## 17 · The two things still on your desk
+
+Everything else is done. These two need your hands or your judgement.
+
+### 17.1 · One `sudo`, for the retention change to take
+
+The config is already edited and validated. The running process holds the old
+one until it restarts.
+
+```bash
+ssh app5@107.170.27.154 "sudo systemctl restart app5-litestream"
+```
+
+```bash
+ssh app5@107.170.27.154 "litestream generations -config /etc/litestream.yml /var/lib/app5/analytics.db"
+```
+
+The second command should show the same generation id and a small lag. If
+anything looks wrong, `~/litestream.yml.bak-2026-09-12` is the file that was
+running before.
+
+### 17.2 · Yukon vs Alva — RULED, and the repair ran
+
+Your ruling withdrew the `tracked=0` half of the repair. The 9 duplicates
+remain, and **eight of them are unambiguous** — same score, sometimes home and
+away flipped, one row carrying a venue and one not. The survivor rule keeps the
+one with the venue.
+
+**The ninth disagrees with itself:**
+
+```
+2026-01-10   Yukon Girls vs Alva Girls
+  KEEP  id=323     43-55   loc='Wheat Capitol'
+  drop  id=22449   44-53   loc=''
+```
+
+Alva wins either way; the margin is 12 or 9. Both rows are untracked, so this
+only moves SOS and the results-only power rating — but it is somebody's actual
+game and deleting a row is not reversible.
+
+**Ruled 2026-09-12: keep `id=323`, the 43-55 row carrying the venue.** That is
+the tool's own survivor rule — a row with a venue was entered from a real
+source rather than backfilled — so the repair runs unmodified:
+
+```bash
+ssh app5@107.170.27.154 "cd app5/APP5.0 && APP5_DATA_DIR=/var/lib/app5 .venv/bin/python tools/repair_book.py --only dups --apply"
+```
+
+```bash
+ssh app5@107.170.27.154 "sudo systemctl restart app5-web"
+```
+
+The restart is what lets `ux_games_matchup` finally take — the unique index has
+been skipped at every boot since it was written, because it cannot be created
+over a table holding duplicates.
+
+**`--only dups` matters.** Without it the tool would also set `tracked=1` on
+games 4 and 13959, which your ruling says are live scout games. Do not drop
+that flag.

@@ -59,6 +59,22 @@ PAGES = [
     "14_Hall_of_Fame.py", "15_FAQ.py", "16_Box_Score_Entry.py",
 ]
 
+# Pages converted from `st.tabs` to lazy `_seg` dispatch, and the session key +
+# options that drive each switcher.
+#
+# These need their own pass, because a normal render proves the DEFAULT section
+# and nothing else — and the entire risk of that conversion is a body which used
+# to run on every rerun now running only when a coach clicks it. A cross-section
+# variable leak is invisible until then. `tools/seg_leak_sweep.py` finds those
+# statically; this finds whatever the AST cannot see.
+SECTIONS = {
+    "7_Players.py": ("pl_view", ["Leaders", "Ratings", "Impact & Splits",
+                                 "Shot Lab", "Compare", "Player Profile",
+                                 "Lab", "Glossary"]),
+    "14_Hall_of_Fame.py": ("hof_view", ["Records", "Single-game records",
+                                        "Tracked ratings"]),
+}
+
 # The three plans that exist, as identities. `admin` is the founder; `paid` is
 # what today's six users are; `free` is what every new coach will be.
 PERSONAS = {
@@ -101,7 +117,8 @@ def _text(at) -> str:
     return " ".join(parts)
 
 
-def _run_page(page: str, persona_name: str, persona: dict) -> dict:
+def _run_page(page: str, persona_name: str, persona: dict,
+              section: tuple | None = None) -> dict:
     import streamlit as st
     from streamlit.testing.v1 import AppTest
 
@@ -124,6 +141,9 @@ def _run_page(page: str, persona_name: str, persona: dict) -> dict:
             at.session_state[k] = SEASON
         for k in ("ta_team", "wr_team", "pl_team", "bx_team", "ee_team"):
             at.session_state[k] = persona.get("team_id") or TEAM
+        if section:
+            at.session_state[section[0]] = section[1]
+            row["section"] = section[1]
         at.run()
         row["secs"] = round(time.perf_counter() - t0, 2)
         if at.exception:
@@ -148,6 +168,9 @@ def main() -> int:
                     or os.path.expanduser("~/app5_prod"))
     ap.add_argument("--persona", default="", choices=[""] + list(PERSONAS))
     ap.add_argument("--page", default="")
+    ap.add_argument("--sections", action="store_true",
+                    help="drive every _seg section of the converted pages, "
+                         "not just the one that opens by default")
     args = ap.parse_args()
 
     book = os.path.join(os.path.expanduser(args.dir), "analytics.db")
@@ -179,14 +202,21 @@ def main() -> int:
     for pname in people:
         print(f"=== persona: {pname} ({PERSONAS[pname]['plan']}) ===")
         for page in pages:
-            r = _run_page(page, pname, PERSONAS[pname])
-            RESULTS.append(r)
-            mark = "FAIL" if r["exc"] else ("thin" if r["chars"] < 300 else "ok")
-            print(f"  {mark:5} {page:24} {r['secs']:6.2f}s "
-                  f"{r['chars']:6d} chars {r['widgets']:3d} widgets"
-                  f"{'  EMPTY-STATE' if r['empty'] else ''}")
-            if r["exc"]:
-                print(f"        {r['exc'][:400]}")
+            # One run per section on a converted page, else one run for the page.
+            key_views = SECTIONS.get(page) if args.sections else None
+            jobs = ([(key_views[0], v) for v in key_views[1]]
+                    if key_views else [None])
+            for job in jobs:
+                r = _run_page(page, pname, PERSONAS[pname], section=job)
+                RESULTS.append(r)
+                mark = ("FAIL" if r["exc"]
+                        else ("thin" if r["chars"] < 300 else "ok"))
+                label = f"{page} › {job[1]}" if job else page
+                print(f"  {mark:5} {label:44} {r['secs']:6.2f}s "
+                      f"{r['chars']:6d} chars {r['widgets']:3d} widgets"
+                      f"{'  EMPTY-STATE' if r['empty'] else ''}")
+                if r["exc"]:
+                    print(f"        {r['exc'][:400]}")
         print()
 
     bad = [r for r in RESULTS if r["exc"]]

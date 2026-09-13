@@ -58,7 +58,15 @@ print("\n-- no call site hardcodes the suffix any more ----------------------")
 
 PAT = re.compile(r"\}th[\"'<)\s]|\}th pct|\}th pctile|\}th pctl")
 offenders = []
+# This sweep is about THIS APP's call sites, not its dependencies'. Prune the
+# directory list in place so os.walk never descends into a virtualenv: on the
+# droplet the venv lives at APP5.0/.venv, and scipy's own source contains the
+# pattern — so before this prune the check failed on every deployment, which is
+# a suite that cries wolf exactly where it most needs to be believed.
+_PRUNE = {"__pycache__", ".git", ".venv", "venv", "env", "site-packages",
+          "node_modules", ".pytest_cache", ".mypy_cache", "tracker"}
 for root, _dirs, files in os.walk(_APP):
+    _dirs[:] = [d for d in _dirs if d not in _PRUNE]
     if "__pycache__" in root or "tracker" in root or ".git" in root:
         continue
     for f in files:

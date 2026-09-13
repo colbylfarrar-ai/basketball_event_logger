@@ -33,7 +33,8 @@ import helpers.ui as _uimod  # theme tokens read at call time
 from helpers.ui import (page_chrome, page_header, lab_hero as _lab_hero,
                         empty_state, rgb as _rgb, shot_panel as _shot_panel,
                         style_fig as _style, CARD_BG, GRID, HEAT, PALETTE,
-                        gender_radio, grid as _grid, glossary_key as _glossary_key)
+                        gender_radio, grid as _grid, glossary_key as _glossary_key,
+                        seg as _seg)
 from helpers.cards import (fmt as _fmt, pctile as _pctile,
                            pctile_bar as _pctile_bar, pctile_n as _pctile_n,
                            tier as _tier, glass as _glass, onoff_html as _onoff_html,
@@ -565,16 +566,57 @@ def _lab_names(g):
     return MX.player_names(gender=g)
 
 
-(tab_lead, tab_rate, tab_impact, tab_shot, tab_cmp, tab_prof, tab_plab,
- tab_gloss) = st.tabs(
-    ["Leaders", "Ratings", "Impact & Splits", "Shot Lab",
-     "Compare", "Player Profile", "Lab", "Glossary"])
+#  `_seg`, not `st.tabs`. `st.tabs` executes EVERY tab body on every rerun, and
+#  this page's bodies are not cheap: profiled cold on the droplet at 74.9s, of
+#  which `_fx_prof` was 45.8s and `_fx_plab` 12.0s — both paid in full whether
+#  or not the coach ever clicked them. `@st.fragment` does not save you, because
+#  a fragment still runs on the first full render.
+#
+#  Same fix Charts, Lab, Quarters, the Insights deck and the Event Editor all
+#  took. The hazard it carries is cross-body variable leaks — under one long
+#  scroll body F can read a name body B happened to define, and under lazy
+#  dispatch that read is a NameError the first time a coach opens F. Swept
+#  before the conversion (`tools/seg_leak_sweep.py`, and an AST pass over the
+#  `with tab_*` form): **zero leaks**, because every expensive body is already
+#  a module-level `_fx_*` fragment closing over module globals.
+_PL_VIEWS = ["Leaders", "Ratings", "Impact & Splits", "Shot Lab",
+             "Compare", "Player Profile", "Lab", "Glossary"]
+# A session holding a value this switcher no longer offers (an option renamed
+# between deploys) would hand `segmented_control` a default outside its own
+# options and raise. Drop it rather than making a returning coach reload.
+if st.session_state.get("pl_view") not in (None, *_PL_VIEWS):
+    st.session_state.pop("pl_view", None)
+
+# ── Two ways in that must still land on the Player Profile ─────────────────────
+# Under `st.tabs` every body ran, so `_fx_prof` always got the chance to consume
+# these signals. Under lazy dispatch it only runs when its section is open — so
+# without this the deep link lands on Leaders and silently does nothing:
+#
+#   1. `?player=<id>` — a link out of a landing or search leaderboard.
+#   2. `_palette_player` — the sidebar command palette (`helpers.ui`), which is
+#      on EVERY page, and whose player buttons `switch_page` to here.
+#
+# Park the section the way `_sub_seg` parks a Charts destination: write the key
+# BEFORE the widget owning it is instantiated, which is the one moment Streamlit
+# allows it.
+#
+# Neither signal is CONSUMED here — `_fx_prof` owns that, and it dedupes the
+# query param on `_prof_deeplink` and pops the palette key. Peeking with the
+# same condition rather than consuming is what lets the coach click away to
+# another section afterwards while `?player=` is still sitting in the URL.
+_dl = st.query_params.get("player")
+if ((_dl and st.session_state.get("_prof_deeplink") != _dl)
+        or st.session_state.get("_palette_player") is not None):
+    st.session_state["pl_view"] = "Player Profile"
+
+_view = _seg("Section", _PL_VIEWS, default=_PL_VIEWS[0], key="pl_view",
+             label_visibility="collapsed") or _PL_VIEWS[0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 1 — LEADERS  (overview superlatives + Best Five category leaders)
+#  SECTION 1 — LEADERS  (overview superlatives + Best Five category leaders)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_lead:
+if _view == "Leaders":
     st.caption("The league at a glance — who scores, who rates out on top, and "
                "the full sortable stat table. Built from tracked-game events; "
                "small samples are directional.")
@@ -845,9 +887,9 @@ with tab_lead:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 2 — RATINGS
+#  SECTION 2 — RATINGS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_rate:
+if _view == "Ratings":
     if not _PAID:
         st.info(_LOCK)
     else:
@@ -992,12 +1034,12 @@ def _fx_best_five():
                     key=f"best_{group_name}_{key}")
 
 
-with tab_lead:
+if _view == "Leaders":
     _fx_best_five()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 4 — SHOT LAB  (court charts, zone efficiency, shot-making)
+#  SECTION 4 — SHOT LAB  (court charts, zone efficiency, shot-making)
 # ══════════════════════════════════════════════════════════════════════════════
 @st.fragment
 def _fx_shot():
@@ -1194,10 +1236,10 @@ def _fx_shot():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 3 — IMPACT & SPLITS  (rebuilt-engine dimensions: RAPM impact, defense /
+#  SECTION 3 — IMPACT & SPLITS  (rebuilt-engine dimensions: RAPM impact, defense /
 #  rebounding sub-ratings, playmaking depth, tracked-vs-box confidence)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_impact:
+if _view == "Impact & Splits":
     import helpers.advanced_ratings as ADV
     ADV.leaderboard(rows, _PAID, key="pl")
 
@@ -1266,9 +1308,9 @@ with tab_impact:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 5 — COMPARE
+#  SECTION 5 — COMPARE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_shot:
+if _view == "Shot Lab":
     if not _PAID:
         st.info(_LOCK)
     else:
@@ -1458,9 +1500,9 @@ def _fx_cmp():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 6 — PLAYER PROFILE
+#  SECTION 6 — PLAYER PROFILE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_cmp:
+if _view == "Compare":
     _fx_cmp()
 
 
@@ -1538,9 +1580,9 @@ def _fx_prof():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 7 — LAB  (badges · archetypes · stabilized stats · defensive matchups)
+#  SECTION 7 — LAB  (badges · archetypes · stabilized stats · defensive matchups)
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_prof:
+if _view == "Player Profile":
     _fx_prof()
 
 
@@ -1901,9 +1943,9 @@ def _fx_plab():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TAB 8 — GLOSSARY
+#  SECTION 8 — GLOSSARY
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_plab:
+if _view == "Lab":
     if not _PAID:
         st.info("🔒 The Lab — badges, archetypes, stabilized stats and matchup "
                 "intelligence — is a **Paid** feature. Upgrade to unlock.")
@@ -1911,5 +1953,5 @@ with tab_plab:
         _fx_plab()
 
 
-with tab_gloss:
+if _view == "Glossary":
     glossary_tab("pl_gloss")

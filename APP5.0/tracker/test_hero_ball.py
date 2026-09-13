@@ -95,8 +95,13 @@ ev = S.fetch_events(gids)
 floor = _event_floor(gids)
 
 c = HB.team_concentration(events=ev, floor=floor, team_id=1)
-print(f"    team 1: scoring {c['scoring_gini']:.3f}  raw {c['raw_gini']:.3f}  "
-      f"minutes {c['minutes_gini']:.3f}  ({c['players']} players, "
+# `:.3f` straight off the dict raised TypeError on a book with no rotation
+# behind team 1 — which is every brand-new coach's book, and the state the
+# gate three checks above deliberately produces. The engine returning None
+# there is correct; only this diagnostic line was not.
+_g3 = lambda v: "n/a" if v is None else f"{v:.3f}"
+print(f"    team 1: scoring {_g3(c['scoring_gini'])}  raw {_g3(c['raw_gini'])}  "
+      f"minutes {_g3(c['minutes_gini'])}  ({c['players']} players, "
       f"{c['games']} games)")
 ok(c["scoring_gini"] is not None, "team 1 produces a coefficient")
 ok(0 <= c["scoring_gini"] <= 1, "which is inside [0, 1]")

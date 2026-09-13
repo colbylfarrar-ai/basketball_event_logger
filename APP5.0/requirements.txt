@@ -12,7 +12,16 @@
 # deploy. `python -m tools.api_sweep`-style checking is not a substitute —
 # see tracker/test_playbook.py for the shape of a consumer-contract test.
 streamlit==1.58.0
-pandas>=2.3.3
+# pandas is pinned for the SAME reason, and it had drifted FURTHER than
+# streamlit ever did: on 2026-09-12 production ran 3.0.3 while the machine the
+# 495 pytest + 106 run_all checks run on sat at 2.3.3 — a MAJOR version apart,
+# in an app whose every page builds a DataFrame, across a release that made
+# copy-on-write the default and removed silent downcasting. The suites had
+# therefore never once been run against the pandas production actually uses.
+# They were, on the droplet, before this pin: no pandas-3 failure. Pinned to
+# what prod runs (not down to what the laptop ran), so the next drift is a
+# decision instead of a discovery.
+pandas==3.0.3
 plotly>=6.5.2
 numpy>=2.3.5
 # Analytics: confidence intervals & distributions (scipy.stats), regularized

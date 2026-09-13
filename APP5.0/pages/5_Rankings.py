@@ -2191,7 +2191,6 @@ def _fx_chart():
                     "Opp eFG%": round(ts[t]["oeFG"], 1),
                     "DRB%": round(ts[t]["DRBpct"], 1),
                 } for t in all_teams])
-                _export(ff, f"four_factors_{gender}", key="rk_ff_csv")
                 st.dataframe(
                     ff, hide_index=True, width="stretch",
                     height=min(560, 60 + 35 * len(ff)),
@@ -2204,6 +2203,7 @@ def _fx_chart():
                         "DRB%": st.column_config.NumberColumn("DRB%", format="%.1f"),
                         "TOV%": st.column_config.NumberColumn("TOV%", format="%.1f"),
                     })
+                _export(ff, f"four_factors_{gender}", key="rk_ff_csv")
                 st.caption("Full league — the team filter trims the graphs, not "
                            "the tables.")
 
@@ -2913,12 +2913,12 @@ def _fx_evr():
                                + ("  ⚡upset" if d["upset"] > 0.05 else "")),
                     "Drama": d["label"],
                 } for d in _board[:25]])
-                _export(_bdf, f"excitement_{gender}", key="rk_gei_csv")
                 st.dataframe(
                     _bdf, hide_index=True, width="stretch",
                     column_config={"Adj GEI": st.column_config.ProgressColumn(
                         "Adj GEI", format="%.2f", min_value=0,
                         max_value=max(4.0, _board[0]["adj_gei"]))})
+                _export(_bdf, f"excitement_{gender}", key="rk_gei_csv")
                 import helpers.excitement as _EX
                 st.caption("**Adj GEI** = GEI × (1 + stakes); Stakes = "
                            f"{int(_EX.GEI_QUAL_W * 100)}% × the two teams' mean "
@@ -2968,9 +2968,6 @@ def _fx_evr():
                     "Pct": (round(L["pct"]) if L["pct"] is not None else None),
                     "Tier": L["tier"], "_c": L["color"]}
                     for L in _pt_blk["leaders"]]
-                _export(pd.DataFrame(_pt_trows).drop(columns=["_c"],
-                                                     errors="ignore"),
-                        f"playtype_offense_{_pt_pick}", key="rk_pto_csv")
                 st.dataframe(
                     pd.DataFrame(_pt_trows).style.apply(
                         lambda r: [f"color:{r['_c']}"] * len(r), axis=1),
@@ -2982,6 +2979,9 @@ def _fx_evr():
                         "Share": st.column_config.NumberColumn(format="%d%%"),
                         "Pct": st.column_config.NumberColumn(
                             "Lg %ile", help="League percentile on this set")})
+                _export(pd.DataFrame(_pt_trows).drop(columns=["_c"],
+                                                     errors="ignore"),
+                        f"playtype_offense_{_pt_pick}", key="rk_pto_csv")
 
                 # ── PLAYER board for the same set: a player's own PPP finishing
                 #    the action, league-percentiled (8+ tagged possessions) ──
@@ -3061,9 +3061,6 @@ def _fx_evr():
                     "Pct": (round(L["pct"]) if L["pct"] is not None else None),
                     "Tier": L["tier"], "_c": L["color"]}
                     for L in _df_blk["leaders"]]
-                _export(pd.DataFrame(_df_trows).drop(columns=["_c"],
-                                                     errors="ignore"),
-                        f"playtype_defense_{_df_pick}", key="rk_ptd_csv")
                 st.dataframe(
                     pd.DataFrame(_df_trows).style.apply(
                         lambda r: [f"color:{r['_c']}"] * len(r), axis=1),
@@ -3075,6 +3072,9 @@ def _fx_evr():
                         "Share": st.column_config.NumberColumn(format="%d%%"),
                         "Pct": st.column_config.NumberColumn(
                             "Lg %ile", help="League percentile on this scheme")})
+                _export(pd.DataFrame(_df_trows).drop(columns=["_c"],
+                                                     errors="ignore"),
+                        f"playtype_defense_{_df_pick}", key="rk_ptd_csv")
 
                 # ── PLAYER board: who SCORES best facing this scheme (defense is a
                 #    team concept, so the player read is offense-only), 8+ poss ──

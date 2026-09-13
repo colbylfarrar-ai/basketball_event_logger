@@ -4377,7 +4377,6 @@ def _fx_formula():
         "Pts per SD": f["beta"],
         "Raw r": f["r"],
     } for f in show["factors"]])
-    _export(_fdf, "four_factor_pull", key="ff_pull_csv")
     st.dataframe(_fdf, hide_index=True, width="stretch",
                  column_config={
                      "Share of pull": st.column_config.ProgressColumn(
@@ -4401,6 +4400,7 @@ def _fx_formula():
                          help="Plain correlation with margin, before the other "
                               "three factors are accounted for."),
                  })
+    _export(_fdf, "four_factor_pull", key="ff_pull_csv")
 
     st.caption(
         "**Read this as an exchange rate, not a discovery.** The four factors "

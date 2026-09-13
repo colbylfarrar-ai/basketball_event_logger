@@ -1133,3 +1133,107 @@ over a table holding duplicates.
 **`--only dups` matters.** Without it the tool would also set `tracked=1` on
 games 4 and 13959, which your ruling says are live scout games. Do not drop
 that flag.
+
+---
+---
+
+# 17 · RE-FROZEN 2026-09-13, after the sicko run
+
+The freeze was deliberately broken for the overnight sicko run
+(`docs/OVERNIGHT_2026-09-13_SICKO.md`), 13 commits shipped, and production was
+deployed to `e12e550` by founder instruction at 04:03 UTC. This is the receipt
+that re-closes it.
+
+## 17.1 · The bar, re-measured
+
+| suite | where | 2026-09-12 | **2026-09-13** |
+|---|---|---:|---:|
+| `pytest -q` | local book | 498 | **541** |
+| `tracker/run_all.py` | local book | 107 · 0 · 0 | **107 · 0 · 0** |
+| `tools/freeze_smoke.py` | **the droplet** | 45 · 0 raised | **45 · 0 raised · 0 thin** |
+
+pytest rises by 43: `test_heat_table.py` (11), `test_refusals.py` (24), and
+eight cases added to `test_lineup_picker.py`. `script_files()` still returns
+107, so `run_all`'s denominator is unchanged.
+
+**`freeze_smoke` ran against a hot SNAPSHOT of the live book, not the live book
+itself, and that is not fussiness.** `telemetry._write` is an `INSERT INTO
+telemetry`, and `page_chrome` records a `page_view` on every render. Pointing
+the smoke at `/var/lib/app5` would have injected 45 synthetic page-views and
+every `empty_hit` they fire into the exact counters §21's delete-on-counters
+plan reads in October. Verified afterwards: **87 telemetry rows, 0 written in
+the twenty minutes covering the run**, and the live book's mtime unmoved.
+
+    .venv/bin/python -c "import sqlite3...backup..."   # /var/lib/app5 -> /tmp/freeze
+    .venv/bin/python tools/freeze_smoke.py --dir /tmp/freeze
+    rm -rf /tmp/freeze
+
+## 17.2 · Cold page cost — §16's table, one month on
+
+Same box, same persona, same method. §16's "after" column is this one's "before".
+
+| page | §16 (2026-09-12) | **2026-09-13** | |
+|---|---:|---:|---|
+| 9_War_Room | 17.78s | **18.80s** | +1.0s — the page this run changed most |
+| 2_Game_Tracker | 18.55s | **16.92s** | −1.6s, untouched this run |
+| 6_Team_Dashboard | 16.09s | **16.49s** | +0.4s |
+| 7_Players | 8.03s | **8.05s** | flat |
+| 14_Hall_of_Fame | 6.54s | **7.34s** | +0.8s — `table_with_export` on every record board |
+| 8_Officials | 6.03s | **5.11s** | −0.9s, untouched |
+| 5_Rankings | ≤ 5s | **2.55s** | |
+| everything else | ≤ 2.1s | **≤ 1.4s** | |
+
+**§16's headline survives: no page is over nineteen seconds.** War Room at
+18.80s is the closest any page has been to that line, and it is the one to watch
+— it absorbed the reordered bar, the lock-as-sell panel and a pooled-team count.
+
+**Read these as single samples on a shared 1 vCPU box, not as a controlled
+measurement.** Game Tracker moved −1.6s and Officials −0.9s without a line of
+code changing, which is the size of the noise floor; the three small increases
+are inside it too. What the table supports is "nothing blew up", not "+1.0s is
+attributable". §16 made the same disclaimer about its own unattributed rows and
+it still applies.
+
+## 17.3 · One behaviour change visible in the smoke, and it is the fix
+
+| `9_War_Room.py` | §16 | **now** |
+|---|---:|---:|
+| paid persona (solo, not co-op) | 2,366 chars · 4 widgets | **6,076 · 23** |
+| free persona | 2,366 chars · 4 widgets | **6,076 · 23** |
+
+That is `e12e550` — the Lineup Creator re-resolved "is this viewer league-wide"
+without knowing a PAST season is an open archive, so it offered a solo coach
+only their own team on a season where the rest of the page already handed
+everyone the league. It now reads `_wr_league_wide`.
+
+**This widens what Free and solo-Paid coaches see on an ARCHIVED season, and
+that is the standing ruling** (§18 of `THE_BOOK`: give away last season; any
+viewer, full depth, no gate) applied consistently — `_wr_team_pick` already
+behaved this way for the other two sub-views. **The live-season gate is
+unchanged**, verified directly: solo coach on a live season still gets exactly
+one team in the Creator.
+
+## 17.4 · Still outstanding, and still needs the founder
+
+`sudo systemctl restart app5-litestream`, to make `retention 168h→2160h` +
+`snapshot-interval 1h→24h` take. Unchanged since 2026-09-12: the droplet's
+sudoers rule covers `app5-web` and `app5-tracker` but **not** `app5-litestream`.
+Config already edited and validated; old file at
+`~/litestream.yml.bak-2026-09-12`.
+
+Two things this run learned about the box, recorded so the next re-freeze does
+not rediscover them:
+
+* the service venv is `/home/app5/app5/APP5.0/.venv` with
+  `APP5_DATA_DIR=/var/lib/app5`; the login shell's `python3` has neither pytest
+  nor streamlit, so every droplet command must use that interpreter explicitly
+* `~/app5` has a permanently dirty working tree — the walk-forward recal loop
+  appends to `docs/RECAL_LOG.md` on production (two entries since `66359ee`,
+  including an adopted `T6a 20.18→20.14` on 2026-09-08). It is prod-generated
+  audit data. Do not check it out; `git pull --ff-only` passes it cleanly
+* **`pandas` is 3.0.3 on the droplet against 2.3.3 in the suites, still
+  unpinned** — unchanged this month, and now carrying the first `Styler` in the
+  app (`ui.heat_table`). It rendered clean on the droplet, which is evidence
+  rather than a pin.
+
+**Re-frozen.** Next edit reopens it.

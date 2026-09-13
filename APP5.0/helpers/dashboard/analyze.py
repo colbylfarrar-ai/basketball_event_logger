@@ -12,8 +12,7 @@ same code powered a standalone page until 2026-09-13; it had not since the
 Input Hub consolidation. Do not restore that page — a second surface for the
 same read is the fluency tax THE_BOOK §4 already charges four times.)
 
-Folded out of the old Data Explorer page. The PCA "style galaxy" was dropped on
-purpose — it duplicated the Players page's data-driven archetypes; the k-means
+The PCA "style galaxy" was dropped on purpose — it duplicated the Players page's data-driven archetypes; the k-means
 Archetype label still rides along as a grid/scatter column.
 
 Tier gate: a WHOLE-LEAGUE (multi-team) pool, so tracked depth is a cross-team
@@ -173,8 +172,12 @@ def render(season=SEAS_DEFAULT):
                      help="Filter = sortable grid with per-column filters. "
                           "Heat map = percentile colour within this pool, for "
                           "scanning a field instead of reading it.")
-        st.caption(f"{len(gdf)} players · {len(gdf.columns)} columns. "
-                   "Click a column header to sort; AgGrid adds per-column filters.")
+        st.caption(
+            f"{len(gdf)} players · {len(gdf.columns)} columns. "
+            + ("Sweep it for colour, then read only those cells."
+               if _mode == "Heat map"
+               else "Click a column header to sort; AgGrid adds per-column "
+                    "filters."))
         if _mode == "Heat map":
             # The pool is the rendered table, because that is what the
             # percentile is computed over. A coach who filtered 240 players

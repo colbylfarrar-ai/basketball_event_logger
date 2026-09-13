@@ -26,6 +26,8 @@ from collections import defaultdict
 import pandas as pd
 import streamlit as st
 
+from helpers.ui import table_with_export as _table_with_export
+
 from database.db import query
 from helpers.ui import (page_chrome, page_header, gender_radio, empty_state,
                         seg as _seg)
@@ -366,8 +368,10 @@ def _season_lbl(m):
 
 
 def _board(rows, cols, key):
-    st.dataframe(pd.DataFrame(rows, columns=cols), hide_index=True,
-                 width="stretch", key=key)
+    # One renderer, every record board on the page — so `table_with_export`
+    # puts the CSV under all of them from here. A record board is exactly the
+    # kind of table somebody wants in their own spreadsheet.
+    _table_with_export(pd.DataFrame(rows, columns=cols), key, key=key)
 
 
 #  `_seg`, not `st.tabs`: st.tabs executes every body on every rerun, and this

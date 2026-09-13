@@ -26,6 +26,8 @@ import html as _html
 
 import streamlit as st
 
+from helpers.ui import export_button as _export
+
 import helpers.ui as _UI
 import helpers.cards as CARDS
 import helpers.pronouns as PRON
@@ -300,19 +302,21 @@ def render_defender_profiles(my_team_id, gender, my_game_ids=None):
         return
     import pandas as pd
     st.markdown("**Your defenders — what they actually allow**")
-    st.dataframe(pd.DataFrame([{
+    _def_df = pd.DataFrame([{
         "Defender": r["name"], "Contested": r["contested"],
         "FG% allowed": (r["FGpct"] or 0) * 100,
         "Pts/shot allowed": r["PPS"],
         "2s": r["twos"], "2P% allowed": (r["twos_pct"] or 0) * 100,
         "3s": r["threes"], "3P% allowed": (r["threes_pct"] or 0) * 100,
-    } for r in prof["rows"]]), hide_index=True, width="stretch",
+    } for r in prof["rows"]])
+    st.dataframe(_def_df, hide_index=True, width="stretch",
         column_config={
             "FG% allowed": st.column_config.NumberColumn(format="%.0f%%"),
             "2P% allowed": st.column_config.NumberColumn(format="%.0f%%"),
             "3P% allowed": st.column_config.NumberColumn(format="%.0f%%"),
             "Pts/shot allowed": st.column_config.NumberColumn(format="%.2f"),
         })
+    _export(_def_df, "defenders_allowed", key="sd_def_csv")
     st.caption(prof["note"])
 
 

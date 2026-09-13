@@ -1150,6 +1150,23 @@ def stat_help(abbr, *, icon="ⓘ", label=None):
             body += f"\n\n**Formula:** `{formula}`"
         if how:
             body += f"\n\n{how}"
+        # THE RELIABILITY CHIP, on every stat popover in the app from one site.
+        #
+        # `reliability.py` is this app's most credible asset — measured
+        # split-half reliabilities, and a metric killed on record — and until
+        # now a coach could not read a word of it. A college analyst has been
+        # burned by a black box; a number they cannot interrogate is one they
+        # will not stake a rotation change on.
+        #
+        # The phrase that does the work is "not yet measured", which is what a
+        # stat with no entry resolves to. It is the sentence no competitor
+        # prints, it is true, and it is worth more to a coaching staff than any
+        # chart in this app. Never fabricate a reliability to avoid printing it.
+        try:
+            from helpers import reliability as _REL
+            body += f"\n\n{_REL.chip_text(abbr)}"
+        except Exception:
+            pass
         info_popover(label or abbr, body, icon=icon)
     except Exception:
         pass
@@ -1174,6 +1191,20 @@ def glossary_key(*abbrs, label="Stat key", icon="📖"):
             line = f"**{a}** — {full}" + (f": {defn}" if defn else "")
             if formula:
                 line += f"  \n`{formula}`"
+            # Only the MEASURED ones get a chip in the multi-stat key. Printing
+            # "not yet measured" against twelve columns at once turns an honest
+            # disclosure into noise the eye learns to skip, which costs the
+            # phrase exactly the weight it is there to carry. The single-stat
+            # popover (`stat_help`) prints it for every stat, which is where a
+            # coach who is actually asking about one number will find it.
+            try:
+                from helpers import reliability as _REL
+                _sb, _lvl = _REL.for_stat(a)
+                if _lvl != "unmeasured":
+                    line += (f"  \n_{_REL.LEVEL_LABELS[_lvl]}_ "
+                             f"(r = {_sb:+.2f})")
+            except Exception:
+                pass
             lines.append(line)
         if lines:
             info_popover(label, "\n\n".join(lines), icon=icon)

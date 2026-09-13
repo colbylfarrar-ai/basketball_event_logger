@@ -6,6 +6,13 @@ the plain-text export on a 6h TTL and renders it natively — searchable,
 expander-per-question, with the source Doc linked. Open to every signed-in
 role (it's the "how do I track this" manual, mostly tracker-focused).
 Admins get a Refresh-now button for right-after-he-edits moments.
+
+It also carries the one section that is NOT synced: "What we measured and
+refused" (`faq.REFUSALS`), the reads this app declined to ship and the
+measurements that killed them. That is code, not a fetch, so it renders even
+when the Doc is unreachable — and it leads the page, because for an analyst who
+has been burned by a black box "why should I believe any of this" is the first
+question, not the last.
 """
 import sys
 from pathlib import Path
@@ -24,6 +31,39 @@ page_header("FAQ",
             sub="How to track, tag and read the numbers — straight from the "
                 "founder's playbook. Mostly tracker-focused; it grows as "
                 "questions come in.")
+
+
+def _render_refusals(filter_q=""):
+    """"What we measured and refused" — the app's most credible asset, finally
+    on a screen a coach can reach.
+
+    Placed ABOVE the synced Doc sections deliberately. The Doc answers "how do
+    I tag a play type"; this answers "why should I believe any of this", and for
+    an analyst who has been burned by a black box that is the first question,
+    not the last. It is also the only part of the FAQ that cannot go stale
+    without somebody editing code, so it leads.
+    """
+    rows = FAQ.refusals()
+    if filter_q:
+        rows = [r for r in rows
+                if any(filter_q in str(x).lower() for x in r)]
+    if not rows:
+        return 0
+    st.markdown("<div class='lab-hdr'>What we measured and refused</div>",
+                unsafe_allow_html=True)
+    st.caption(
+        "Every number in this app that carries a sentence has been measured "
+        "against itself first — and some of them failed. These are the reads "
+        "this app declined to ship, what the measurement said, and what "
+        "shipped instead. Nothing here is a hypothetical; each entry names the "
+        "file that computes it.")
+    for _id, claim, measurement, verdict, source in rows:
+        with st.expander(claim, expanded=bool(filter_q)):
+            st.markdown(f"**What we measured**\n\n{measurement}")
+            st.markdown(f"**Verdict**\n\n{verdict}")
+            st.caption(f"Source: `{source}`")
+    st.divider()
+    return len(rows)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -48,8 +88,13 @@ if _is_admin and not FAQ.offline():
 _data, _sections = _faq_bundle(_force)
 
 if not _data["text"]:
-    st.info("The FAQ hasn't synced yet — check your connection, or read it "
-            f"directly: [open the Doc]({_data['source_url']}).")
+    # The Doc half can be unreachable; the measured half never is. It is code,
+    # not a network fetch, so a page that stopped here would hide the one
+    # section that cannot go stale — and hide it precisely on the laptop with
+    # no connection, which is a gym.
+    _render_refusals()
+    st.info("The rest of the FAQ hasn't synced yet — check your connection, or "
+            f"read it directly: [open the Doc]({_data['source_url']}).")
     st.stop()
 
 if _data.get("offline"):
@@ -63,6 +108,9 @@ _qtext = st.text_input("Search the FAQ", key="faq_search",
                        placeholder="e.g. turnover, play type, live link…")
 _q = (_qtext or "").strip().lower()
 
+
+_ref_hits = _render_refusals(_q)
+
 _shown = 0
 for _question, _answer in _sections:
     if _q and _q not in _question.lower() and _q not in _answer.lower():
@@ -74,8 +122,11 @@ for _question, _answer in _sections:
     with st.expander(_question, expanded=bool(_q)):
         st.markdown(_answer if _answer else "_(see the Doc for this one)_")
 
-if not _shown:
+if not _shown and not _ref_hits:
     st.caption("No FAQ entries match that search.")
+elif not _shown and _ref_hits:
+    st.caption(f"No synced FAQ entries match that search — "
+               f"{_ref_hits} above, under what we measured and refused.")
 
 st.divider()
 _when = (_data["fetched_at"] or "—").replace("T", " ")

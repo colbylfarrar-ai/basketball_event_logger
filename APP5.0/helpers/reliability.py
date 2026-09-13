@@ -745,3 +745,67 @@ def measured(unit, metric, band=None):
 def band_level(unit, metric, band=None):
     """Reliability level for a (unit, metric, band) read — the caller's gate."""
     return level(measured(unit, metric, band))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FROM A GLOSSARY ABBREVIATION TO A MEASURED READ
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Everything above is keyed the way the ENGINES think — ("player", "band_fg"),
+# ("team", "quarter_pace"). A coach reading a stat popover is holding an
+# ABBREVIATION. This is the join, and it exists so a reliability chip can ride
+# every `ui.stat_help` popover in the app from one place instead of forty.
+#
+# THE DEFAULT IS THE POINT. A stat that is not in this map resolves to
+# `unmeasured`, which renders "not yet measured" — and that phrase will buy more
+# credibility with a college staff than any chart in this app, because it is the
+# sentence no competitor prints. It is also true: 110 engine modules produce far
+# more numbers than the ~30 reads anyone has run a split-half on.
+#
+# DO NOT ADD A ROW WITHOUT A MEASUREMENT. Mapping an abbreviation onto a
+# neighbouring metric's SB because the two feel similar is exactly the failure
+# `shot_kinds` made when it assumed the ACTION axis behaved like the band axis,
+# and the measurement came back at -0.135. An honest "not yet measured" costs
+# nothing; a borrowed reliability costs the whole surface.
+STAT_RELIABILITY = {
+    # shot difficulty / quality — the band book
+    "xPPS": ("player", "pps"),
+    "PPS": ("player", "pps"),
+    "SMOE": ("player", "pps"),
+    # defence, per defender (the guarded_by_id assignment reads)
+    "DSHOT%": ("defender", "allowed_fg"),
+    "AdjDFG%": ("defender", "allowed_fg"),
+    "DFGoe": ("defender", "allowed_fg"),
+    "DLOAD%": ("defender", "load"),
+    "Guarded%": ("team", "contest_share_allowed"),
+    # fouls — the most repeatable player-level defensive number in the book
+    "PF": ("player", "foul_rate"),
+    "PF/G": ("player", "foul_rate"),
+    # tempo — the one axis of the quarter read that survived
+    "Pace": ("team", "quarter_pace"),
+    # the shot clock
+    "Early%": ("team", "clock_share"),
+    # on/off, both sides — kept BECAUSE they are negative
+    "On/Off": ("player", "onoff_off"),
+    "ON-OFF": ("player", "onoff_off"),
+}
+
+
+def for_stat(abbr):
+    """(sb, level) for a glossary abbreviation. `(None, "unmeasured")` when
+    nobody has run a split-half on it, which is most of them and is the honest
+    answer rather than a gap."""
+    key = STAT_RELIABILITY.get(abbr)
+    sb = measured(*key) if key else None
+    return sb, level(sb)
+
+
+def chip_text(abbr):
+    """One short line for a stat popover: the measured reliability, or the
+    absence of one, said out loud."""
+    sb, lvl = for_stat(abbr)
+    if lvl == "unmeasured":
+        return ("**Reliability: not yet measured.** This number is a record of "
+                "the games that were played. Whether it repeats has not been "
+                "tested on this book.")
+    return f"**Reliability: {LEVEL_LABELS[lvl]}** (split-half r = {sb:+.2f})."

@@ -97,6 +97,37 @@ def pickable_teams(order, table, my_team=None, league_wide=True):
     return opts
 
 
+def default_pick_index(opts, table, my_team=None):
+    """Which option the picker should OPEN on — the first one that can build.
+
+    THE LIST AND THE LANDING ARE TWO QUESTIONS, and the day-one bug came from
+    them sharing one answer. `pickable_teams` puts the viewer's own team first
+    so a coach can find their own program; a Streamlit selectbox opens on index
+    0, so list position silently WAS the landing. On day one — own team rated,
+    zero tracked games — that opened the Lineup Creator on a team with no
+    tracked players and rendered an empty state, while every tracked team in the
+    league sat one click away in the same dropdown. Measured 2026-09-13
+    (`tools/dayone_read.py`): the War Room returned 0 data elements and 0 charts
+    for that persona, on the headline paid page.
+
+    So the list keeps its rule and this answers the other question. Falls back to
+    0 when NOTHING in the pool is tracked, because an empty league is not a
+    reason to send a coach to a stranger's team — their own program is the right
+    landing and `no_rotation_reason` is the honest message under it.
+
+    `my_team` is accepted for symmetry with `pickable_teams` and is deliberately
+    not consulted: the own team, when it has a book, is already first in `opts`,
+    so "the first option with tracked data" answers both cases with one rule.
+    """
+    if not opts:
+        return 0
+    tracked = {(r or {}).get("team_id") for r in (table or {}).values()}
+    for i, t in enumerate(opts):
+        if t in tracked:
+            return i
+    return 0
+
+
 def no_rotation_reason(n_games):
     """Why this team has no projection, in the coach's terms.
 

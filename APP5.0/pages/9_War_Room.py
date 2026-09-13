@@ -722,12 +722,15 @@ def _wr_team_pick(key):
 
     Not every RATED team — a rated team with no tracked player behind it has
     nothing for these views to build, and ranking the list put every league-wide
-    coach on the #1 team, which is one of them. Own team leads the list so the
-    picker opens on it. See lineup_projection.pickable_teams.
+    coach on the #1 team, which is one of them. Own team leads the LIST so a
+    coach can find their own program; `default_pick_index` decides where the
+    picker LANDS, which is a different question and used to share this answer.
+    See lineup_projection.pickable_teams.
     """
     _mine = _wr_ident.get("team_id")
-    opts = LP.pickable_teams(order, _wl_table(gender, season_pick),
-                             my_team=_mine, league_wide=_wr_league_wide)
+    _tbl = _wl_table(gender, season_pick)
+    opts = LP.pickable_teams(order, _tbl, my_team=_mine,
+                             league_wide=_wr_league_wide)
     if not opts:
         empty_state("No team to build for",
                     "Ask the admin to assign you a team with tracked games, "
@@ -735,6 +738,7 @@ def _wr_team_pick(key):
                     "build any team's lineups.")
         return None
     return st.selectbox("Team", opts,
+                        index=LP.default_pick_index(opts, _tbl, my_team=_mine),
                         format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
                         key=key)
 
@@ -1680,8 +1684,19 @@ if _wrview == "Lineups":
 if _wrview == "Lineups" and _lu_view == "Creator":
     # Solo (not League-wide) coaches build ONLY their own team — no "Any team"
     # mode and no cross-team selector. Admin / League-wide get every team.
-    _li = AUTH.current_user()
-    _li_any = ENT.viewer_is_league_wide(_li)
+    #
+    # READ THE PAGE'S ANSWER, do not re-derive it. This was `ENT.viewer_is_
+    # league_wide(_li)` and so never learned that a PAST season is an open
+    # archive — the ruling `_wr_league_wide` already applies at the top of the
+    # file. Two pickers on one page then answered the same question differently:
+    # Rotation optimizer and Compare offered every tracked team on an archived
+    # season while the Creator, which opens by default, offered a solo coach
+    # only their own. On day one that team has nothing tracked, so the headline
+    # paid page rendered an empty state with the whole league one click away.
+    # Same defect `entitlement.paid_or_open_archive` was written to kill, a
+    # level down. Guarded by tracker/test_lineup_picker.py::test_j.
+    _li = _wr_ident
+    _li_any = _wr_league_wide
     _my_team = _li.get("team_id")
     _modes = ["One team", "Any team"] if _li_any else ["One team"]
     _lmode = ((_seg("Build from", _modes, key="wl_mode") or "One team")
@@ -1715,7 +1730,14 @@ if _wrview == "Lineups" and _lu_view == "Creator":
                 st.session_state["_wl1_load_pids"] = list(_ld.get("pids") or [])
             else:
                 st.toast("That lineup's team isn't in your current pool.", icon="⚠️")
+        # The LANDING, not the list: `_team_opts` still leads with the coach's
+        # own team, but a team with nothing tracked behind it must not be what
+        # the page opens on — that is the day-one empty War Room. A staged
+        # lineup load above already wrote `wl1_team`, and Streamlit's session
+        # state outranks `index`, so a returning coach keeps their choice.
         _t = st.selectbox("Team", _team_opts,
+                          index=LP.default_pick_index(_team_opts, _tbl,
+                                                      my_team=_my_team),
                           format_func=lambda t: f"#{scored[t]['Rank']} {name_of[t]}",
                           key="wl1_team")
         _rows = [dict(r, _pid=pid) for pid, r in _tbl.items() if r["team_id"] == _t]

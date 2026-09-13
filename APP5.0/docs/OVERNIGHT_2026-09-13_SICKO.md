@@ -13,7 +13,7 @@ Governed by `THE_SICKO_BOOK_2026-09-12.md` §12–§15, inside `THE_BOOK_2026-09
 
 | suite | baseline, measured on this branch before anything moved | final |
 |---|---|---|
-| `pytest -q` | **498 passed** | **533 passed** |
+| `pytest -q` | **498 passed** | **541 passed** |
 | `tracker/run_all.py` | **107 passed · 0 failed · 0 timeout** | **107 passed · 0 failed · 0 timeout** |
 | `tools/freeze_smoke.py` | 45 renders / 0 exceptions | **45 renders · 0 raised · 0 thin** |
 
@@ -22,8 +22,9 @@ WITHOUT `APP5_DATA_DIR` exported, against `%LOCALAPPDATA%\APP5`, per its own
 contract; every AppTest harness and measurement tool was pointed at
 `~/app5_prod`.
 
-pytest RISES by 35 because this run added two test files —
-`tracker/test_heat_table.py` (11) and `tracker/test_refusals.py` (24).
+pytest RISES by 43 because this run added two test files —
+`tracker/test_heat_table.py` (11) and `tracker/test_refusals.py` (24) — and
+eight cases to `tracker/test_lineup_picker.py` for the day-one fix.
 `tracker/_test_kinds.script_files()` still returns 107, so `run_all`'s
 denominator is unchanged.
 
@@ -106,23 +107,67 @@ themselves.
 this run just promoted.** 0 data, 0 charts, one empty state: *"Not enough tracked
 games yet"*.
 
-The mechanism is worth writing down, because it is one line and it is a defensible
-decision with an undefended consequence. `lineup_projection.pickable_teams`
-(`helpers/lineup_projection.py:81`) always offers the viewer's own team *and puts
-it first so the picker opens on it* — deliberately: *"A coach is entitled to their
-own program, and to the honest reason it is empty."* For a day-one coach that
-means the War Room opens on the Creator for a team with no tracked players, and
-renders an empty state **while twenty-two fully tracked teams sit one click away
-in the same dropdown.**
+**FIXED after the run, and the first diagnosis in this document was wrong.**
+Both the wrong answer and the right one are kept here, because the wrong one is
+the more useful half: it is what a plausible reading of the code produces, and
+it survived writing down.
 
-**This does not reverse the "Lineups stays the default" constraint** — Analyze is
-co-op-gated by design and default-landing a gated view is still the worse
-failure. But on this book, for this persona, **Analyze is the only view on that
-page with anything in it**, and Lineups is an empty state. The cheapest fix is
-not a reorder: it is for `pickable_teams` to open on the own team only when that
-team has a rated player behind it, and otherwise fall through to the top of the
-list. **I did not make that change** — TASK 1 was scoped to report, not to fix,
-and this touches a documented decision rather than an oversight.
+*What this report first said.* `lineup_projection.pickable_teams` always offers
+the viewer's own team and puts it first *so the picker opens on it* — a
+Streamlit selectbox lands on index 0 — so a day-one coach opens the Creator on
+a team with no tracked players while the tracked league sits one click away in
+the same dropdown. The proposed fix was to stop leading with an empty own team.
+
+*What was actually wrong.* That reading is coherent and it is not what was
+happening. Implementing it changed the measurement by nothing at all — still 0
+data, 0 charts. The binding constraint was one line further down the page:
+
+```
+9_War_Room.py:566   _wr_league_wide = True if not _is_cur_season else viewer_is_league_wide(...)
+9_War_Room.py:1688  _li_any         = ENT.viewer_is_league_wide(_li)          # <- the bug
+```
+
+The page resolves "is this viewer league-wide" **twice**, and only the first one
+knows that a PAST season is an open archive. So the Lineup Creator — the
+sub-view that opens by default — took the solo branch of `pickable_teams` and
+offered a day-one coach **only their own team**, on a season where the rest of
+the page was already handing everyone the whole league. Rotation optimizer and
+Compare, which go through `_wr_team_pick`, read `_wr_league_wide` and behaved
+correctly. Two pickers, one page, one question, two answers.
+
+This is the same defect `entitlement.paid_or_open_archive` was written to kill —
+three page-level stops called `has_paid_plan` bare and hard-stopped Free on a
+past season — appearing a fourth time, one level down. Nobody decided it either.
+
+*The fix, and what it measures.* `_li_any` now reads `_wr_league_wide` instead of
+re-deriving it. Measured with the same tool that found it:
+
+| `9_War_Room.py`, day-one persona | before | after |
+|---|---:|---:|
+| data elements | 0 | **6** |
+| charts | 0 | **1** |
+| dead ends | 1 | **0** |
+| Team options in the Creator (archived season) | 1 | **22** |
+| Team options in the Creator (LIVE season, solo) | 1 | **1** |
+
+The last row is the one that matters for the gate: on a live season nothing
+moved. A solo coach still builds only their own team, which is the ruling.
+
+Shipped with it, because the first diagnosis was not *wrong* so much as
+*incomplete*: `lineup_projection.default_pick_index` now answers "where does the
+picker LAND" separately from "what is in the list". The list keeps its rule —
+own team first, always, so a coach can find their own program — and the landing
+goes to the first option that can actually build. Without it, a coach whose own
+team is empty but who IS league-wide would still have opened on nothing.
+
+Guarded by `tracker/test_lineup_picker.py::test_j`, a static assert that the
+War Room resolves league-wide exactly once. That failure is invisible at runtime
+until somebody opens an archived season as a solo coach, which is nobody until
+October.
+
+**None of this reverses "Lineups stays the default"** — Analyze is co-op-gated
+and default-landing a gated view is still the worse failure. It removes the
+reason the default was empty.
 
 ### What the instrumentation cost to get right
 
@@ -439,10 +484,12 @@ and the `_seg` deep-link bug) and neither was touched.
 `PYTHAG_EXP` and everything else are byte-identical to `ef4481b`. TASK 7
 measured and changed nothing, which was the assignment.
 
-**`pickable_teams`' own-team-first behaviour** (the War Room's day-one empty
-state above). Found in TASK 1, which was scoped to report. It touches a
-documented decision rather than an oversight, and it deserves a ruling rather
-than a patch at 2am.
+~~**`pickable_teams`' own-team-first behaviour**~~ — **DONE after the run, on
+request, and the diagnosis above it was wrong.** The cause was a second,
+archive-blind resolution of `viewer_is_league_wide` at `9_War_Room.py:1688`, not
+the option ordering. See the corrected TASK 1 section; the day-one War Room now
+measures 6 data elements and 1 chart where it measured nothing, and the live
+season gate is unchanged.
 
 ---
 
@@ -510,7 +557,9 @@ design than a page-level refusal. Nothing needed changing.
 right for a reason the book does not give.** On this book Analyze is *open* (past
 season), Lineups renders an empty state for a coach with no tracked games, and
 Analyze is the only view on the War Room with content in it for that persona. The
-reorder helps — but the binding constraint is `pickable_teams`, not the order.
+reorder helps — but the binding constraint was neither the order nor
+`pickable_teams`: it was the archive-blind `_li_any` at `9_War_Room.py:1688`,
+now fixed. See the correction in TASK 1.
 
 **4 · `THE_SICKO_BOOK` §2 grades exclusion discipline ❌ against Cleaning the
 Glass. After measuring it, the grade is too harsh in one direction and the fix it

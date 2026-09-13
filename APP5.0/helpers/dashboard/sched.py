@@ -22,6 +22,40 @@ import helpers.predictor as PRED
 import helpers.resume as RES
 import helpers.team_ratings as TR
 import helpers.forfeits as FF
+from helpers.ui import export_button as _export
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _deserved_rows(team_id, gids):
+    """{game_id: deserved row} for this team's tracked games — the residual that
+    belongs beside the result, not three pages away.
+
+    THE RESIDUAL GOES WHERE THE CLAIM IS. `deserved.py` splits every point of a
+    game's margin into volume, quality, making and free throws, it sums to the
+    final margin exactly, and until now the only place a coach could read it was
+    inside the Insights deck (`insights_deep.py:756`) — a different page from the
+    one showing the score it disagrees with. Savant's xBA is not powerful because
+    it exists; it is powerful because it sits in the same ROW as BA.
+
+    THE COST IS WHY THIS IS CACHED AND SCOPED. It is one event pass over this
+    team's tracked games (not the league's), keyed on the game-id tuple, behind
+    the same 600s TTL as every other read on this tab. The Schedule view is one
+    of the cheap ones and it must stay that way — `THE_SICKO_BOOK` §14's second
+    rule is that cost must not move either.
+    """
+    if not gids:
+        return {}
+    import helpers.deserved as DES
+    try:
+        led = DES.game_ledgers(game_ids=set(gids))
+    except Exception:
+        return {}
+    out = {}
+    for gid, row in (led or {}).items():
+        r = DES.for_team(row, team_id)
+        if r is not None:
+            out[gid] = r
+    return out
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -140,6 +174,18 @@ def render(ctx):
     _then = RES.opponent_ranks(ctx.log, getattr(ctx, "gender", None),
                                season=getattr(ctx, "season", None),
                                history=_hist) if _hist else {}
+    # The deserved margin, for the tracked games THIS VIEWER MAY AGGREGATE.
+    #
+    # The pool is `bundle["tracked_ids"]`, never `ctx.log`'s tracked flag. The
+    # game log is box-score level and deliberately unfiltered (Free sees every
+    # result); `tracked_ids` is the same list after `team_bundle` applies the
+    # AXIS-2 read filter, so a league-wide coach scouting another team gets that
+    # team's POOLED games and not its solo-tracked ones. Taking the flag off the
+    # log instead would leak a possession-level read past the gate on a column
+    # nobody would think to check.
+    _des = _deserved_rows(
+        ctx.team_id, tuple(sorted(getattr(ctx, "bundle", {}).get(
+            "tracked_ids") or ())))
     sched_rows = []
     for g in ctx.log:
         oid = g["opp_id"]
@@ -165,6 +211,17 @@ def render(ctx):
             "Margin": f"{g['margin']:+d}",
             "Tracked": "✓" if g["tracked"] else "",
         }
+        # ── the disagreement, in the row it disagrees with ──────────────────
+        # Deserved = the margin the possessions earned (volume + quality +
+        # making + free throws, summing to the final margin exactly). Gap =
+        # deserved − actual, and the GAP is what is rendered: a reader handed
+        # two numbers and left to subtract will not subtract.
+        _d = _des.get(g["game_id"])
+        if _d is not None and _d.get("xmargin") is not None:
+            row["Deserved"] = f"{_d['xmargin']:+.1f}"
+            row["Gap"] = f"{_d['xmargin'] - _d['margin']:+.1f}"
+        else:
+            row["Deserved"] = row["Gap"] = ""
         if any_film:
             row["Film"] = (g.get("video_url") or "").strip() or None
         sched_rows.append(row)
@@ -180,7 +237,25 @@ def render(ctx):
     if not _any_then:
         for r in sched_rows:
             r.pop("Rk @", None)
+    # Same rule the tracked-rank column already follows: a column of blanks
+    # advertises a feature with no data behind it. Untracked season, no columns.
+    if not any(r.get("Deserved") for r in sched_rows):
+        for r in sched_rows:
+            r.pop("Deserved", None)
+            r.pop("Gap", None)
     sched_cfg = {}
+    if any(r.get("Deserved") for r in sched_rows):
+        sched_cfg["Deserved"] = st.column_config.TextColumn(
+            "Deserved", width="small",
+            help="The margin these possessions earned: extra shots, the "
+                 "quality of the looks, whether they fell, and the free-throw "
+                 "margin — four terms that sum to the final margin exactly. "
+                 "Tracked games only.")
+        sched_cfg["Gap"] = st.column_config.TextColumn(
+            "Gap", width="small",
+            help="Deserved minus actual. Positive = the possessions were "
+                 "better than the scoreboard says. A description of a game "
+                 "that was played, never a claim about a rematch.")
     if _any_then:
         sched_cfg["Rk @"] = st.column_config.TextColumn(
             "Rk @", width="small",
@@ -192,9 +267,24 @@ def render(ctx):
         sched_cfg["Film"] = st.column_config.LinkColumn(
             "Film", display_text="▶ Watch", width="small",
             help="Opens the game's film (Hudl / YouTube / NFHS) in a new tab.")
-    st.dataframe(pd.DataFrame(sched_rows), hide_index=True, width="stretch",
+    _sched_df = pd.DataFrame(sched_rows)
+    st.dataframe(_sched_df, hide_index=True, width="stretch",
                  height=min(680, 60 + 35 * len(sched_rows)),
                  column_config=sched_cfg)
+    _export(_sched_df, f"schedule_{ctx.team_id}", key="sched_csv")
+    if any(r.get("Gap") for r in sched_rows):
+        # No verdict sentence here, and that is deliberate. The decomposition
+        # agrees with the scoreboard winner on 38 of 52 games out of sample
+        # (reliability.MEASURED ("game", "xmargin_picks_winner") = .731), which
+        # is a measured DESCRIPTIVE agreement and not a measure of whether a
+        # gap repeats. Nothing has measured that, so the number ships and the
+        # sentence does not.
+        st.caption("**Deserved** is the margin the possessions earned — extra "
+                   "shots, the quality of the looks, whether they fell, and "
+                   "the free-throw margin, summing to the final margin "
+                   "exactly. **Gap** is that minus the actual result: where "
+                   "the scoreboard and the possessions disagree. It describes "
+                   "the game that was played and says nothing about a rematch.")
     # Disclose the exclusion where the excluded rows are visible (Q6). A "(ff)"
     # on a row whose margin the rest of the page ignores is only honest if the
     # page says so once.

@@ -26,6 +26,10 @@ import helpers.cards as CARDS
 from helpers.cards import tier as _tier
 import helpers.team_analytics as TA
 from helpers.stats import ordinal as _ORD  # percentile suffixes: 71st, not 71th
+# Read at call time via the module, not snapshotted: GOOD/BAD are re-resolved
+# per style preset AND swapped for the colorblind-safe pair, and this module is
+# imported once into a cached page (`seg-conversion-leaks`, ui.py:35).
+import helpers.ui as _uimod
 # The season-scoped READ default, same as the engine layer (helpers/seasons).
 # These are render wrappers and every page passes an explicit season, so a bare
 # season="Current" here was latent rather than live — but it is the identical
@@ -295,6 +299,47 @@ def _banner_html(*, team_id, gender, season, power, rank, pool_n, wins, losses,
     # 29-3 over 40 are different seasons, and the record alone hides which.
     _gp_bit = f" · {games} G" if games else ""
 
+    # ── THE DISAGREEMENT LINE (the residual, staged where the claim is) ──────
+    #
+    # The app runs five residual engines — deserved, SMOE, Pythagorean luck,
+    # RAPM and adj_efficiency — on five pages under five names, and not one of
+    # them was framed as a residual. Savant's power is not that xBA exists; it
+    # is that xBA sits in the same ROW as BA, on every page, every time. The
+    # disagreement is the layout.
+    #
+    # So luck comes to the record instead of living in the Rankings Lab. It is
+    # results-math (points for, points against, `PYTHAG_EXP`), which makes it
+    # Free-safe and correct beside a record that is also results-math — no gate
+    # to resolve and no tracked depth in it.
+    #
+    # WHAT IS RENDERED IS THE GAP, not two numbers with the subtraction left to
+    # the reader. A coach who has to compute the interesting part will not.
+    #
+    # NO VERDICT SENTENCE. "Lucky" is a claim about repeatability, and whether
+    # a team's close-game record repeats has not been measured on this book
+    # (`reliability.MEASURED` holds no entry for it). The arithmetic is a fact
+    # about games that were played and ships as one; the sentence would be an
+    # assertion the measurement never made. See the run report.
+    _luck_bit = ""
+    _pw, _lw = fm.get("Pyth_W"), fm.get("Luck_wins")
+    _mg = fm.get("margin_games") or 0
+    # Two games cannot disagree with anything. The floor is the same instinct as
+    # POOL_FLOOR: a residual over a handful of games is arithmetic, not a read.
+    if _pw is not None and _lw is not None and _mg >= 6:
+        _lc = (_uimod.GOOD if _lw >= 1.0 else
+               _uimod.BAD if _lw <= -1.0 else "#8b949e")
+        _luck_bit = (
+            f"<div style='font-size:12px;color:var(--subtext);margin-top:3px' "
+            f"title='Pythagorean expectation from points scored and allowed "
+            f"over the {_mg} games with a real margin (forfeits excluded). "
+            f"The gap is how many wins the record sits above or below what "
+            f"the scoring says — a description of games played, not a "
+            f"prediction.'>"
+            f"record <b>{wins}-{losses}</b> · "
+            f"scoring says <b>{_pw:.1f}-{_mg - _pw:.1f}</b> · "
+            f"<span style='color:{_lc};font-weight:700'>{_lw:+.1f} W</span>"
+            f"</div>")
+
     # Tracked standing — DEPTH, so it renders only behind the resolved gate.
     _trk_bit = ""
     if has_tracked and trk:
@@ -329,7 +374,7 @@ def _banner_html(*, team_id, gender, season, power, rank, pool_n, wins, losses,
         f"{' · ' + _cls if _cls else ''} · {wins}-{losses}{_gp_bit}"
         f"{' · ' + _stk if _stk else ''} · "
         f"#{rank if rank is not None else '—'} of {pool_n}</div>"
-        f"{_trk_bit}</div>"
+        f"{_luck_bit}{_trk_bit}</div>"
         f"<div style='text-align:center'>"
         f"<div style='font-size:9px;color:{hue};letter-spacing:2px'>POWER</div>"
         f"<div style='font-size:46px;font-weight:900;color:{hue};line-height:1'>"
